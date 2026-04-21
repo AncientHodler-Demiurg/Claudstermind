@@ -2,6 +2,33 @@
 
 ---
 
+## 2026-04-22 — README commands reference consolidated
+
+**What happened:** Commands were scattered across the README (`::cmsync` in sync-model section, `::cmpush` in operating-mode section) and variants (`::cmresync`, `::cmrefresh`, `::cmcommit`) were only in skill files. Owner flagged incompleteness. Added a dedicated `## Commands reference` section between "Three flows" and "Where things live on disk" with three tables: bootstrap phrases (plain English, entrypoints used before Claudstermind is loaded), `::cm…` commands (short, post-load), and "What does NOT need a command" (continuous write-back behaviors that happen automatically).
+
+**Non-obvious:**
+- The full command inventory is just `::cmsync` (+ 2 variants) and `::cmpush` (+ `::cmcommit`). Grep across the whole Claudstermind repo confirms no others. Owner's intuition that "not all are listed" was correct — the README simply didn't aggregate them.
+- The bootstrap phrases (`"Read ../Claudstermind/README.md and …"`) aren't commands but they ARE canonical triggers — they belong in the reference because they're what the owner types most often when opening a fresh conversation.
+- Kept `::` prefix consistency so future commands (`::cmstatus`, `::cmhelp`, whatever comes next) stay under the same namespace.
+
+**Follow-ups:** none — reference is now complete and singular.
+
+---
+
+## 2026-04-22 — Claudstermind first push landed (commit `2be1f4b`)
+
+**What happened:** First-time git setup + initial push to `github.com/StoaChain/Claudstermind`. 25 files committed. `git branch -M main` failed pre-commit (no refs yet); recovered with `git symbolic-ref HEAD refs/heads/main` before the first commit. Token read from `.secret/github-token.txt` inline for the push URL, sed-redacted in output, never persisted to `.git/config`. Remote URL remained plain `https://github.com/StoaChain/Claudstermind.git`. Secret-file safety scan passed — no `.secret/` contents in staging.
+
+**Non-obvious:**
+- `git branch -M main` as documented in the skill doesn't work immediately after `git init` because there's no `master` branch to rename (nothing committed yet). The correct pre-commit move is `git symbolic-ref HEAD refs/heads/main`. Skill should be updated.
+- Windows LF→CRLF warnings on all 25 files during `git add -A` are harmless — git autocrlf is doing its thing. Not errors.
+- Output redaction via `sed "s|${TOKEN}|<REDACTED>|g"` works as an extra safety layer on top of git's own token-masking. Important because if the push output ever includes the URL (e.g. in error messages), the token bytes are scrubbed before Claude's output surfaces.
+
+**Follow-ups:**
+- Update `skills/push.md` first-time setup to use `git symbolic-ref HEAD refs/heads/main` instead of `git branch -M main` (the latter only works post-first-commit).
+
+---
+
 ## 2026-04-22 — Push skill added: `::cmpush` with `.secret/` token pattern
 
 **What happened:** Added [`skills/push.md`](../../skills/push.md) documenting `::cmpush` — the operator-triggered command that commits + pushes Claudstermind to `github.com/StoaChain/Claudstermind`. Mirrors the OuronetUI pattern: token lives in `.secret/github-token.txt` (gitignored, owner creates it), skill reads it inline at push time, never persists it into `.git/config`. Added `.gitignore` to block `.secret/`, and `.secret/README.md` documenting the setup steps for the owner.

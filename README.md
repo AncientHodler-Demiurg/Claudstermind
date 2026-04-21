@@ -69,6 +69,46 @@ You want to work on something that spans projects (e.g. "the AncientHoldings hub
 
 Claude reads every linked project's ONBOARDING + STATE + ARCHITECTURE, plus `meta/cluster-map.md`, and can now reason about all of them together. Much bigger context load, but exactly what you need for cross-project design.
 
+## Commands reference
+
+Two kinds of triggers exist — **bootstrap phrases** (plain English, used once per session before Claudstermind is loaded) and **`::cm…` commands** (short prefixed commands, usable anytime after the agent has loaded the cluster).
+
+### Bootstrap phrases
+
+Used when Claudstermind hasn't been loaded yet — a fresh Claude session at conversation start, or the very first time a project is linked. These **are the entrypoints**; they work without any prior cluster context.
+
+| Situation | Phrase |
+| --------- | ------ |
+| **Load cluster + this project's context** (most common — fresh session in a linked project) | *"Read `../Claudstermind/README.md` and the onboarding for this project."* |
+| **Register a new project** (currently working in an unlinked project you want to add) | *"Read `../Claudstermind/README.md` and add this project to Claudstermind."* |
+| **Load the full cluster** (cross-project reasoning across every linked project) | *"Read `Claudstermind/README.md` and load the full cluster."* |
+
+If Claudstermind doesn't live at `../Claudstermind` relative to the project, substitute the absolute path (e.g. `D:/_Claude/Claudstermind/README.md`).
+
+### `::cm…` commands
+
+Usable from the moment the agent has loaded the cluster. Short, unambiguous (the `::` prefix doesn't collide with Claude Code's `/` slash-commands or `!` bash-mode), consistent namespace.
+
+| Command | Keystrokes | Action | Skill | Accepted variants |
+| ------- | ---------: | ------ | ----- | ----------------- |
+| `::cmsync` | 8 | Re-read Claudstermind; report what changed since last sync. Two-phase: mtime scan first (~100 tokens if nothing new), then Read only the files that changed. | [`skills/sync.md`](skills/sync.md) | `::cmresync`, `::cmrefresh` |
+| `::cmpush` | 8 | Commit + push Claudstermind to `github.com/StoaChain/Claudstermind`. Uses the token in `.secret/github-token.txt` inline (never persisted). Includes a safety scan that aborts if anything secret-shaped is staged. | [`skills/push.md`](skills/push.md) | — |
+| `::cmcommit` | 10 | Same as `::cmpush` but **commits only, skips the push.** Useful for offline snapshots or when you want to review before pushing. | [`skills/push.md`](skills/push.md) §variants | — |
+
+Also accepted (less preferred, slower to type): the prose forms *"sync Claudstermind"*, *"push Claudstermind"*, *"what's new in the cluster?"*, etc. The `::cm…` keywords are the canonical fast-path.
+
+### What does NOT need a command
+
+These happen automatically via [§Operating mode](#operating-mode--continuous-write-back-mandatory) — **no explicit trigger needed, ever**:
+
+- Appending to `projects/<ThisProject>/LEARNINGS.md` when you share a non-obvious fact or correction
+- Refreshing `projects/<ThisProject>/STATE.md` when work lands
+- Appending to `LOG.md` when a session wraps
+- Promoting cluster-relevant facts to `meta/shared-facts.md`
+- Updating `MANIFEST.md` when a project's status changes
+
+**If you ever have to type *"update Claudstermind"*, the agent violated [Rule zero](meta/shared-conventions.md). Correct it in the next response.**
+
 ## Where things live on disk
 
 Expected convention: Claudstermind sits as a **sibling folder** to each linked project.

@@ -138,10 +138,11 @@ When the agent detects `.git/` missing, it **stops and asks**:
 Claudstermind is not yet a git repo. First-time setup needs:
   1. Verify .gitignore is in place (it is — Claudstermind/.gitignore)
   2. Verify token file exists at .secret/github-token.txt (owner creates this — see .secret/README.md)
-  3. git init + set initial branch to 'main'
-  4. git remote add origin https://github.com/StoaChain/Claudstermind.git
-  5. Initial commit with everything currently in the folder (safety-checked against secret-shaped files)
-  6. First push with the token: git push -u origin main
+  3. git init
+  4. git symbolic-ref HEAD refs/heads/main   ← sets branch name pre-commit; do NOT use `git branch -M main` here, it fails before any commit exists
+  5. git remote add origin https://github.com/StoaChain/Claudstermind.git
+  6. Initial commit with everything currently in the folder (safety-checked against secret-shaped files)
+  7. First push with the token: git push -u "https://${TOKEN}@.../Claudstermind.git" main
 Do you want me to run the above? (y/n)
 ```
 
