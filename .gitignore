@@ -1,0 +1,46 @@
+# Claudstermind .gitignore
+#
+# Claudstermind holds text knowledge about projects — conventions, state,
+# learnings. Secrets (tokens, SSH keys, API keys, passwords) MUST NEVER
+# land here in the first place. This .gitignore is belt-and-suspenders:
+# if something secret-shaped accidentally gets written, we catch it
+# before `git add -A` stages it.
+#
+# The skills/push.md protocol also aborts pushes when files matching
+# these patterns are detected in the staging area.
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Environment / secrets (must never be here; guarded anyway)
+.env
+.env.*
+*.env
+*.key
+*.pem
+*.pfx
+*.p12
+*.token
+*.credentials
+secrets/
+private/
+
+# Local token storage (::cmpush reads from here — MUST stay out of git)
+.secret/
+
+# Scratch / WIP (owner-local notes the owner doesn't want in the cluster history)
+scratch/
+_WIP/
+*.draft.md
+
+# Node / build artifacts (in case a project folder gets nested by accident)
+node_modules/
+dist/
+build/
+*.log
