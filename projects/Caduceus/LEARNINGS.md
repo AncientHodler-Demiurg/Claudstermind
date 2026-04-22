@@ -37,6 +37,18 @@
 **How to apply:** When designing a new module, classify the chain into one of the two groups before anything else. Own-node group: budget disk + sync time. RPC-pool group: design for cross-provider divergence handling.
 **Added:** 2026-04-22
 
+### Own-node containers run on hub-managed VPSes, NOT on the Caduceus host
+
+**Why:** Original sketch had `bitcoind` in the same Docker Compose as the Caduceus website. Wrong on four counts: (1) resource shape mismatch — the Caduceus host is small Node.js + nginx (~30 GB / 2 GB RAM); even pruned `bitcoind` doubles its disk and adds 24–48 h of cold-sync bandwidth; (2) lifecycle mismatch — website is stateless, `bitcoind` is stateful; (3) the AncientHoldings hub already deploys + supervises StoaChain containers on operator-owned VPSes — adding a `bitcoind` container type is an extension, not new ground; (4) hub UI gives free dashboards for "what chain containers run where". Caduceus services connect to the externally hosted node over a private channel (Tailscale / WireGuard / SSH tunnel), never a public RPC port.
+**How to apply:** Never propose adding `bitcoind` (or `litecoind`, `dogecoind`, `monerod`, `kaspad`, `cardano-node`) to `infra/docker/compose.prod.yml`. The Caduceus stack only contains TS services + the admin panel. Production-hosting docs (`docs/HOSTING.md`, `docs/HANDOFF.md`, `docs/ARCHITECTURE.md`, the per-module `DESIGN.md` files) must say "operator-managed" / "hub-managed" / "off-host". The dev compose (`infra/docker/compose.dev.yml`) is the only place a `bitcoin/bitcoin` image appears, and only in regtest. The hub-side spec lives at `Claudstermind/meta/foreign-chain-nodes.md` — link there from any new design doc that touches node hosting.
+**Added:** 2026-04-22
+
+### Recommended bitcoind image is `lncm/bitcoind:v27.0`, NOT `bitcoin/bitcoin:27`
+
+**Why:** `lncm/bitcoind` is small (~80 MB), well-maintained (used by BTCPay), and ships with sensible defaults for a server context. `bitcoin/bitcoin` is the upstream-published image and is fine for dev/CI but heavier and less production-tuned. Bridge ops need pruned (`prune=10000`, ~15–20 GB), no `txindex` (wallet labels + ZMQ are sufficient for shared-custody-address tracking), AssumeUTXO or BTCPay-snapshot bootstrap (cold sync is 24–48 h, AssumeUTXO is 6–12 h).
+**How to apply:** Production references → `lncm/bitcoind:v27.0`. Dev/regtest references → `bitcoin/bitcoin:27`. Never mix. Bootstrap the production node via AssumeUTXO first; fall back to a BTCPay snapshot only if AssumeUTXO doesn't apply.
+**Added:** 2026-04-22
+
 ### Per-source DPTF cents — never collapse stablecoins to a single token
 
 **Why:** USDC on Ethereum and USDC on Solana are distinct contracts with independent issuer risk. If Circle freezes a USDC address on BNB chain, that should not affect holders of USDC on other chains at the protocol level. Collapsing all USDC into a single DPTF would mask that risk.

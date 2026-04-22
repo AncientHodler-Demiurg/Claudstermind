@@ -64,6 +64,12 @@
 **How to apply:** `POST /api/admin/nodes/[id]/benchmark` returns 400 when `committed_gb ≤ 0` or no effective provision path exists. The Run benchmark button in NodeScoringCard is disabled in the same situations with a tooltip directing the operator to Step 2. UI + API both gate.
 **Added:** 2026-04-22
 
+### Uptime does NOT backfill earnings — accrual requires Ouronet set BEFORE the tick
+
+**Why:** The scoring worker's tick-level eligibility engine has Ouronet as gate 1 — if `effectiveOuronet` is null at the moment of the 60 s tick, `accrueTip` is never called and nothing writes to any pending/current/daily bucket. BUT the warmup CLOCK is peer-based and ticks independently (`scoring_warmup_since` stamps as soon as `peerCount ≥ 2`, completes after 24 h regardless of Ouronet). An operator who runs chainweb for weeks without setting their Ouronet ends up with `scoring_warmup_completed_at` stamped but **zero points banked**. When they finally set Ouronet, accrual starts fresh from that moment (direct to Current bucket, since warmup is already complete) — the uptime is NOT retroactively paid out.
+**How to apply:** The amber "no Ouronet set" banner on the NodeScoringCard is worded explicitly about this: *"the warmup clock ticks as soon as it peers. But every accrual tick requires an Ouronet account to attribute points to, so no StoicPower is earned (not even Pending)... Nothing that happens before the Ouronet is set is recoverable — the uptime itself does not backfill."* This is the correct security design (otherwise a malicious operator could pre-accumulate uptime on an anonymous node and redirect it to a fresh account as instant load). Never implement retroactive backfill.
+**Added:** 2026-04-22
+
 ### yabs.sh `-g` and `-f` flags SKIP the tests, not enable them
 
 **Why:** Handler's `BENCH_SCRIPT` had been invoking `/tmp/yabs.sh -i -n -g -f` since first ship. Upstream getopts parser: `-g` = SKIP geekbench (it's opt-OUT because Geekbench runs ~5 min), `-f` = SKIP fio. Net effect: yabs ran with every core test disabled. Every benchmark on every node produced null Geekbench + 0 fio, which the old CPU-fallback formula then inflated via sysbench × 20. This is why ALL old stamps were effectively commitment-ratio artifacts, not performance measurements.
@@ -122,4 +128,10 @@
 
 **Why:** per-login profile Ouronet refactor landed v0.7.6; per-node `nodes.ouronet_account` column is now an *override*, not the default. Code paths reading it directly see stale data.
 **How to apply:** always call `resolveNodeOuronetAccount(nodeId)` which walks per-node → profile → none. Includes the scoring-state API, earnings snapshot, and the "Earning into:" indicator on the node detail page.
+**Added:** 2026-04-22
+
+### Hub will manage a second container type — foreign-chain L1 nodes (Caduceus consumer)
+
+**Why:** Caduceus's bridge to Bitcoin (and 5 other own-node chains over time) needs a `bitcoind` reachable over RPC. Putting `bitcoind` next to Caduceus's small Node.js website was the wrong shape (resource mismatch + lifecycle mismatch + capability already exists here). Decision: the AncientHoldings hub adds `bitcoind` (and later `litecoind`, `dogecoind`, `monerod`, `kaspad`, `cardano-node`) as a second container type, mirroring the StoaChain supervision flow. Caduceus becomes a *consumer* over a private channel (Tailscale / WireGuard / SSH tunnel). Decided 2026-04-22; spec at [`Claudstermind/meta/foreign-chain-nodes.md`](../../meta/foreign-chain-nodes.md).
+**How to apply:** When the owner brings up Caduceus / Bitcoin / "the bridge node" in an AncientHoldings session, that spec is the brief. New code lives at `lib/drivers/install-bitcoind.ts` (mirror of `install-chainweb.ts`) + `lib/handlers/foreign-chain-control.ts` (mirror of `stoachain-control.ts`) + a new `foreign_chain_nodes` table (preferred over expanding `nodes`). Recommended image: `lncm/bitcoind:v27.0`. RPC creds are vault-sealed; surfaced once during Caduceus enrolment. The hub still does NOT carry dApp traffic — same constraint as StoaChain. **Do not start work without the owner explicitly triggering Phase 1 of this on the AncientHoldings side.**
 **Added:** 2026-04-22

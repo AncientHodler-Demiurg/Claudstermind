@@ -42,12 +42,26 @@
         │                     Caduceus                               │  Ouronet ↔ foreign-chain bridge
         │  — consumes operator-authored Pact modules                 │  (13 chains: BTC first, then
         │    (caduceus, bridge-ledger, per-chain DPTFs, stable-pool) │   ETH, LTC, DOGE, SOL, XRP,
-        │  — bundles foreign-chain own-nodes or RPC-pool clients     │   BNB, TRX, ADA, XMR, KAS,
-        │  — hosted on the Hub's VPS but independent policy surface  │   TAO, EGLD across 7 tiers)
+        │  — TS services + admin panel ONLY (no L1 nodes in stack)   │   BNB, TRX, ADA, XMR, KAS,
+        │  — hosted at caduceus.ancientholdings.eu                   │   TAO, EGLD across 7 tiers)
         └────────────────────────────────────────────────────────────┘
-                ▲                      ▲                       ▲
-          BTC/LTC/DOGE/...         StoaChain RPC         Hub VPS (Docker stack)
-          foreign L1s              (tx + events)         container lifecycle only
+                │                                                ▲
+                │ consumes RPC over private channel              │ tx + events
+                │ (Tailscale / WireGuard / SSH tunnel)           │
+                ▼                                                │
+        ┌────────────────────────────────────────────────────────┴────┐
+        │   Foreign-chain L1 node containers                          │  hub-managed, off-Caduceus-host
+        │   bitcoind (Phase 1), litecoind, dogecoind, monerod,        │  spec: meta/foreign-chain-nodes.md
+        │   kaspad, cardano-node                                      │
+        └────────────────────────────────────────────────────────┬────┘
+                ▲                                                │
+                │ deploy + supervise via outbound SSH            │
+                │ (same shape as StoaChain container management) │
+                │                                                │
+        ┌───────┴────────┐                                       │
+        │ AncientHoldings│ ──────────────────────────────────────┘
+        │   (the Hub)    │   second container type added 2026-04-22
+        └────────────────┘
 ```
 
 ## Dataflow / responsibility boundaries
@@ -90,10 +104,17 @@
 - **Consumes, not authors, Pact.** The `caduceus` module, `bridge-ledger` table, per-chain DPTFs, and `stable-pool` are all **operator-deployed**. Caduceus's TS services submit txs against those interfaces.
 - **Bridge flow is three txs with two-phase commit:** `notarize-*` on Ouronet → foreign-chain transfer (shared custody address, `bridge-id` in memo) → `finalize-*` or `void-*` on Ouronet. States on the bridge-ledger: `NOTARIZED → FINALIZED | VOIDED`. Proof of reserves is a deterministic walk of the bridge-ledger.
 - **Per-source DPTF cents**, not merged: `DPTF-USDC.eth` ≠ `DPTF-USDC.sol`. Equalization happens in a separate `stable-pool` Pact module (also operator-owned, **NOT part of Caduceus**), launching Phase 7 with the first four cents + Ignis.
-- **Hybrid node posture.** Own-node in-stack for cheap-state chains (BTC, LTC, DOGE, XMR, KAS, ADA); RPC-pool with ≥2-agreement rule for storage-heavy (ETH, BNB, TRX, EGLD, SOL, XRP, TAO).
-- **Hosting.** Docker stack on the Hub's VPS (`ssh ancientholdings`, the same box running AncientHoldings + email). Hub manages *container lifecycle*; Caduceus's own admin panel (on a separate origin, `admin.caduceus.ancientholdings.eu`) manages *policy* — HSM-held operator key, on-chain settings changes. Hub does not sign bridge txs.
+- **Hybrid node posture (off-host).** Own-node containers for cheap-state chains (BTC, LTC, DOGE, XMR, KAS, ADA) and RPC-pool with ≥2-agreement rule for storage-heavy (ETH, BNB, TRX, EGLD, SOL, XRP, TAO). The own-node containers do **NOT** run inside the Caduceus stack — they are hub-managed (see next bullet). Caduceus reaches them over a private channel (Tailscale / WireGuard / SSH tunnel).
+- **Hosting split.** The **Caduceus host** runs only TS services + admin panel (`caduceus.ancientholdings.eu` for the website + `admin.caduceus.ancientholdings.eu` for the policy panel). The **foreign-chain L1 node containers** run on operator-owned VPSes deployed + supervised by the AncientHoldings hub — same supervision pattern as StoaChain containers. Spec: [`meta/foreign-chain-nodes.md`](foreign-chain-nodes.md). Hub does not sign bridge txs (HSM-held operator key lives on the Caduceus host).
 - **Gas split.** Bridge pays Ouronet gas on the txs it signs (finalize-*); user pays foreign-chain gas on their deposit; bridge pays foreign-chain gas on every release from a per-chain native-asset reserve.
-- **Today Phase 0** — no code, just docs + a static landing page live at `caduceus.ancientholdings.eu`.
+- **Today Phase 0/1 boundary** — Caduceus repo has docs + a static landing page live at `caduceus.ancientholdings.eu`; Phase 1 (Bitcoin module TS code) ready to start on owner trigger. Hub-side `bitcoind` capability decided 2026-04-22, not started.
+
+### AncientHoldings (Hub) → foreign-chain L1 nodes (new capability, decided 2026-04-22)
+
+- **Why this lives on the hub:** the hub already deploys + supervises StoaChain containers on operator-owned VPSes via outbound SSH. Adding `bitcoind` (and later `litecoind`, `dogecoind`, `monerod`, `kaspad`, `cardano-node`) is the same supervision pattern with a different image. Avoids inflating the Caduceus host (which is small Node.js + nginx; even pruned `bitcoind` doubles its disk).
+- **Implementation outline:** new `foreign_chain_nodes` table (do not expand the 52-column `nodes`); new driver `lib/drivers/install-bitcoind.ts`; new handler `lib/handlers/foreign-chain-control.ts`; second admin-UI card grid alongside the StoaChain grid. Recommended bitcoind image `lncm/bitcoind:v27.0`; `prune=10000`; AssumeUTXO bootstrap. Full spec: [`meta/foreign-chain-nodes.md`](foreign-chain-nodes.md).
+- **Same constraint:** hub still does NOT carry dApp / bridge traffic. Foreign-chain RPC ports bind to a private network; Caduceus is the only consumer.
+- **Status:** spec written, no code yet. Owner triggers Phase 1 of this from an AncientHoldings session when ready.
 
 ### ChainwebMiningClient ↔ StoaChain
 
@@ -113,6 +134,7 @@ These are tracked in whichever project has the clearest ownership, but surface h
 | StoaChain certbot flow automation | AncientHoldings | partial — on-demand action works, daily rotate is broken |
 | ClaudeCurator error ingestion from the live hub | AncientHoldings | planned v0.9 |
 | ServerScore fairness review (yabs.sh fallback math when Geekbench unavailable) | AncientHoldings | flagged 2026-04-22, needs follow-up |
+| Foreign-chain L1 node containers as a hub capability (Caduceus consumer, BTC first) | AncientHoldings | spec'd 2026-04-22 (`meta/foreign-chain-nodes.md`), implementation pending owner trigger |
 
 ## When to add to this map
 
