@@ -10,6 +10,22 @@ The legal entity and brand umbrella. Ancient Holdings GmbH is owned by the clust
 
 The Smart Ouronet Account that holds staked/committed StoicPower before redemption. Mint-and-register-in-AQP is the efficient on-chain pattern (one tx updates N accounts' registers inside the pool).
 
+## Caduceus
+
+Ouronet ↔ foreign-chain bridge. Modular (one adapter per foreign L1; 13 target chains across 7 tiers). Mints/burns per-source DPTF tokens on Ouronet. Lives at `D:/_Claude/Caduceus/`; landing page at https://caduceus.ancientholdings.eu. Today Phase 0 (docs only). Consumes **operator-authored** Pact modules — not a Pact-authoring project.
+
+## bridge-ledger
+
+The on-chain Pact table (operator-authored, inside the `caduceus` module) that records every bridging operation Caduceus processes. One entry per operation with states `NOTARIZED → FINALIZED | VOIDED`. Proof of reserves is a deterministic walk of this table: (what was minted) − (what was burned) must equal (what's held in bridge custody) per foreign chain.
+
+## DPTF
+
+Depository Pact Token Format — the on-Ouronet representation of a bridged asset. One DPTF per source-chain-and-asset: `DPTF-BTC`, `DPTF-ETH`, `DPTF-USDC.eth`, `DPTF-USDC.sol`, `DPTF-USDT.tron`, etc. **Per-source cents are not merged** — collapsing across sources would mask issuer risk. Equalization happens in a separate `stable-pool` Pact module on Ouronet, not inside Caduceus.
+
+## Ignis
+
+StoaChain-native cent — a stablecoin that lives entirely on Ouronet, no foreign-chain backing. Anchor slot in the `stable-pool` module (slot 1 of 7). Not bridged; native. Distinguishes "bridged synthetic USD" (the DPTF cents) from "native Ouronet USD" (Ignis).
+
 ## Chainweb / chainweb-node
 
 The node binary. Chainweb-originated name because StoaChain is a fork. "Stop chainweb" means stop the node binary on a managed node; "chainweb is on 1848" refers to the P2P port.

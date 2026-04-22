@@ -25,6 +25,17 @@ Chainweb's P2P layer rejects self-signed certs as "unknown CA". Nodes need a cer
 
 ## Protocol layer
 
+### Operator authors Pact; integration teams consume it
+
+The cluster has a doctrinal separation of duties between **who writes Pact modules** and **who integrates with them**:
+
+- **Operator-authored Pact** — modules carrying governance capability (`GOVERN`), upgrade authority, and HSM-held signing keys. Lives in a separate authoring context, outside the consuming project's repo. Examples: `OuronetPact` (StoicPower mint, warmup-attest), Caduceus's `caduceus` module + `bridge-ledger` + per-chain DPTFs + `stable-pool`.
+- **Integration-team TypeScript** — submits txs against operator-deployed modules, consumes their events, reads their tables. Lives inside the consuming project's repo. Examples: AncientHoldings hub code that calls `batch-mint-into-aqp`; Caduceus's (future) sniffer/releaser TS services; OuronetUI's signing helpers.
+
+**Why this matters across projects:** when a request lands in a consuming project that says "write the Pact function that does X," pause and confirm which hat the owner is wearing. Operator-hat work belongs in the authoring repo; integration-hat work belongs in the consuming repo. Silent blurring of this line produces Pact sources scattered across consumer repos with no single upgrade authority.
+
+**Applies to today:** Caduceus (explicit invariant, `docs/HANDOFF.md § 1b` and `CONVENTIONS.md`), AncientHoldings (implicit — hub code calls into OuronetPact without authoring it), OuronetUI (consumes OuronetPact modules for DEX + wallet operations). Will apply to any future project that integrates with a Pact module.
+
 ### Standard Ouronet Account format
 
 Accounts used across the cluster are **not** Kadena `k:<hex>` format. They look like:
@@ -33,7 +44,7 @@ Accounts used across the cluster are **not** Kadena `k:<hex>` format. They look 
 Ѻ.<unicode body up to ~200 chars>
 ```
 
-The `Ѻ.` prefix is required. Body is Unicode — accounts can contain letters from multiple scripts. Hub's format validator lives at [AncientHoldings/lib/ouronet-account.ts](../../AncientHoldings/lib/ouronet-account.ts); OuronetCore should be the canonical source when it ships.
+The `Ѻ.` prefix is required. Body is Unicode — accounts can contain letters from multiple scripts. Hub's format validator lives at [AncientHoldings/lib/ouronet-account.ts](../../AncientHoldings/lib/ouronet-account.ts); the canonical source will be **`@stoachain/ouronet-core`** once the account-format module moves there (not yet — as of 2026-04-22, core has only `constants`/`network`/`gas`/`guard`/`signing` primitives from OuronetUI's Phase 1 extraction).
 
 ### Account-to-chain hash (stable, do not change)
 
@@ -42,6 +53,12 @@ blake2b(account)[0..1] % 10
 ```
 
 Once an account first mints on chain N, it always mints on chain N. This must not drift across projects or hub restarts.
+
+### `@stoachain/ouronet-core` is the cluster's shared TypeScript library
+
+Separate repo at `github.com/StoaChain/OuronetCore`, cloned to `D:/_Claude/OuronetCore/`. Holds Pact constants, StoaChain node-failover, ANU/STOA gas math, guard-analysis primitives (`analyzeGuard`, all 14 predicates), and Ed25519 public-key derivation. **Two consumers:** OuronetUI today (via `file:../OuronetCore` link, Phase 1 complete 2026-04-22), AncientHoldings HUB in the future (see `OuronetUI/docs/ANCIENTHOLDER_HUB_HANDOFF.md`). Both consume the SAME library so the signing / guard / Pact-code logic never diverges between browser and server. Phase 5 will publish it to GitHub Packages and drop the `file:` link.
+
+Anyone working in a second consumer (HUB, a future CLI, etc.) must not fork or copy-paste logic from this library — import it. Silent drift between copies is the failure mode we're avoiding.
 
 ## Infrastructure & deployment
 

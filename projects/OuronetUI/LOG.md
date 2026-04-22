@@ -1,0 +1,7 @@
+# Log — OuronetUI
+
+> One paragraph per meaningful session. Newest at the top. Not a commit log (that's `src/constants/changelog.ts`) — this is the higher-level "what happened in this session and what did we learn".
+
+## 2026-04-22 — Project added to Claudstermind; Phase 1 of core extraction landed
+
+Long multi-day session. Completed `docs/EXTRACT_OURONET_CORE_PLAN.md` phases -1.1 through 1 inclusive. Highlights: (1) bootstrapped GitHub Actions CI for OuronetUI for the first time in its life; (2) pruned 14 silently-red ICO tests and wired a working `npm test` pipeline; (3) wrote 227 regression tests across encryption, guard analysis, signing primitives, gas math, node failover, and Pact code templates — the "safety net" for the extraction; (4) three in-place portability refactors (`window.crypto` → `globalThis.crypto` etc.); (5) scaffolded the sibling `StoaChain/OuronetCore` repo and moved the first five pure modules into `@stoachain/ouronet-core@0.2.0`; (6) rewrote 164 import sites across the UI repo; (7) burned three CI follow-up commits (v0.29.1a→b→c) to unblock cross-org checkout, fix the secret name, and correct the install order; (8) established a secure git-push mechanism via a gitignored PAT file and git's credential-helper-inline pattern; (9) scaffolded this Claudstermind entry at session close. Both CIs green. 117 tests in UI + 110 in core = 227 total. Owner's smoke test of Phase 1 runtime behaviour is pending.
