@@ -1,25 +1,64 @@
 # State — OuronetUI
 
-- **Version at close:** `0.30.1` (from `src/constants/version.ts`, commit `32078c5` on `dev`)
-- **Open plan:** [`docs/EXTRACT_OURONET_CORE_PLAN.md`](../../../OuronetUI/docs/EXTRACT_OURONET_CORE_PLAN.md) — Phases -1.1, -1.3, -1.2, 1, 2a, 2b, 2c, 3a, 3b.1, 3b.2, 3b cleanup, 4, 5, **Tier 1 testing** complete. **Phase 6 next** (final) — docs cleanup + core 1.0.0.
-- **Companion repo state:** `D:/_Claude/OuronetCore/` at tag `v0.11.0` (commit `c3305f3` on `main`), version `0.11.0`. Published to GitHub Packages. **268 tests pass** (was 193 before Tier 1). CI green.
-- **New doc this session:** [`docs/TESTING_STRATEGY.md`](../../../OuronetUI/docs/TESTING_STRATEGY.md) — 300+ lines. Reference for why/what/when/how of tests. Three tiers explained (unit/integration/E2E), current state documented (268 core / 0 UI), Tier 1 plan + principles + roadmap.
-- **Last session (2026-04-22):** Tier 1 testing pass — colleague's suggestion, user approved, executed.
-  - **Core v0.11.0** (additive, no breaking):
-    - NEW `@stoachain/ouronet-core/pact/cfmBuilders` — 14 pure Pact-code string builders, one per CFM function (Transfer, ClearDispo, Sublimate, Compress, Coil, Curl, Brumate, Constrict, ColdRecovery, DirectRecovery, Cull, Awake, Slumber, Firestarter). Each takes typed params, returns the canonical Pact-code string. Replaces inline template literals that used to live in 23 UI modals.
-    - NEW `tests/cfm-builders.test.ts` — 35 tests. String-shape per builder + arg-order preservation + decimal/int formatting + edge cases (empty nonce list, single-item list, dayz as integer not decimal). Cross-cutting shape check.
-    - NEW `tests/codex-codec.test.ts` — 31 tests. Round-trip through serializeCodex/deserializeCodex, version-mismatch rejection, unicode preservation, idempotent migrateSeedType.
-    - NEW `tests/strategy.test.ts` — 9 tests. CodexSigningStrategy.execute with mock PactClient + mock KeyResolver + real nacl signing (RFC 8032 vectors). Call-order, gas-calibration flow, sim-failure halt, keypair dedup, extraSigners fold.
-    - EXTENDED `tests/guard.test.ts` — multi-guard scenarios (patron+resident), keyset-ref guard handling.
-  - **UI v0.30.1**: 23 CFM modals rewired to import `buildXPactCode` from core. Zero behavioural change — builders emit byte-identical output to old template literals. If any ever drifts, core's 35 builder tests catch it.
-- **Known outstanding:**
-  - **PACKAGE VISIBILITY STILL PRIVATE.** Repo is public now, but GitHub Packages has its own visibility toggle that's separate. Still 401 on `curl https://npm.pkg.github.com/@stoachain/ouronet-core`. User needs to flip it at `https://github.com/orgs/StoaChain/packages/npm/package/ouronet-core/settings` → Danger Zone → Change visibility → Public. Once that happens: no token needed anywhere. Ploi deploy auto-resolves. Verified via "a fake package name gives clean 404, real one gives auth-required 401" test.
-  - **Phase 6** (final, ~0.5 day) — CLAUDE.md stale "Kadena Integration" path table, CFM_BUILD_GUIDE references, cross-link OuronetCore/HUB_HANDOFF READMEs. After Phase 6: core v1.0.0 tag as the symbolic migration-complete release.
-- **User directives in play:**
-  - Flow B (publish + registry dep) since Phase 5. Cross-repo hot-reload uses `npm link` if needed.
-  - Kept package private ("fucke the rest of the world"), then made public (user flipped repo visibility, may need to flip package too).
-  - Colleague-driven shift: "explain tests, add them where they matter." Done.
-- **Test count trajectory:**
-  - Before this session: 193 core / 0 UI
-  - After this session:  **268 core / 0 UI** (UI component tests are a Phase 6+ roadmap item per TESTING_STRATEGY.md)
-- **Drift notes:** none. Every commit shipped with local `npm run validate` green + core tests green. No behavioural drift from the builder-extraction — byte-identical output by construction.
+- **Version at close:** `0.30.2` (from `src/constants/version.ts`, commit `107d0f6` on `dev`)
+- **Open plan:** [`docs/EXTRACT_OURONET_CORE_PLAN.md`](../../../OuronetUI/docs/EXTRACT_OURONET_CORE_PLAN.md) — **ALL PHASES COMPLETE** ✅ (-1.1, -1.3, -1.2, 1, 2a, 2b, 2c, 3a, 3b.1, 3b.2, 3b cleanup, 4, 5, Tier 1 testing, 6). **No open plan.** The extraction that ran from Phase -1.1 through Phase 6 is done.
+- **Companion repo state:** `D:/_Claude/OuronetCore/` at tag `v1.0.0` (commit `1fd1e1c` on `main`), version `1.0.0`. Published to GitHub Packages. 268 tests pass.
+- **Final session (2026-04-22):** Phase 6 — the docs-cleanup phase.
+  - **Core v1.0.0** — symbolic bump marking "extraction complete, public surface is now semver-committed". No API changes from v0.11.0. README fully rewritten (status: extraction complete, current submodule table including the 14 `buildXxxPactCode` helpers, `npm link` dev-loop documented, tag-push publish workflow documented). CHANGELOG notes what 1.0.0 commits to: 10 subpath exports, `"version": "1.2"` codex backup shape, `CodexSigningStrategy.execute` contract.
+  - **UI v0.30.2**:
+    - `CLAUDE.md` — stale "Kadena Integration" section replaced with "Shared Core — @stoachain/ouronet-core" subpath table. Added "UI-side glue" (ReduxCodexResolver, useCFMStrategy, smart-encrypt-browser, LocalStorageCodexAdapter). Added "Cross-repo dev loop" with `npm link` recipe. Key Patterns block rewritten around strategy.execute + buildXPactCode — full canonical CFM handleExecute example ~30 lines.
+    - `docs/CFM_BUILD_GUIDE.md` — 250-line skeleton rewritten. Old A-F pipeline pattern → new strategy.execute + buildXxxPactCode pattern. Shared Component Map + Hard Rules table updated.
+    - Dep bump: `^0.11.0` → `^1.0.0`.
+
+## Final stats
+
+| Metric | Start of migration (~3 months ago) | End of session |
+|--------|-----------------------------------|----------------|
+| Blockchain code in UI | ~4000 LOC across `src/kadena/`, `src/lib/*encrypt*`, `src/lib/universalSign`, etc. | ~120 LOC (ReduxCodexResolver + useCFMStrategy + smart-encrypt-browser + LocalStorageCodexAdapter = the consumer-side adapters only) |
+| Blockchain code in core | 0 (package didn't exist) | ~8500 LOC across `src/{constants,network,gas,guard,crypto,signing,codex,reads,pact,interactions}/` |
+| Tests | some in UI (scattered) | **268 in core** across 9 test files |
+| CFM modal handleExecute | ~50 LOC each × 23 = ~1150 LOC of duplicated A-F pipeline | ~30 LOC each × 23 = ~690 LOC, all delegating to `strategy.execute` |
+| UI tests | 0 | 0 (Tier 1 UI tests are a roadmap item per TESTING_STRATEGY.md) |
+
+## What consuming OuronetCore looks like now
+
+```ts
+// A typical CFM modal in OuronetUI after the migration:
+import { useCFMStrategy } from "@/lib/signing/useCFMStrategy";
+import { buildCoilPactCode, safeCreationTime } from "@stoachain/ouronet-core/pact";
+import { KADENA_CHAIN_ID, KADENA_NAMESPACE, KADENA_NETWORK, STOA_AUTONOMIC_OURONETGASSTATION }
+  from "@stoachain/ouronet-core/constants";
+import { Pact } from "@kadena/client";
+
+const strategy = useCFMStrategy();
+// ...
+const pactCode = buildCoilPactCode({ patron, coiler, atsId, rewardTokenId, amount });
+const { requestKey, raw } = await strategy.execute({
+  build: ({ gasLimit, capsKeyPub, guardPubs }) => Pact.builder.execution(pactCode)...createTransaction(),
+  guards: [patronGuard, residentGuard],
+  paymentKey: null,
+});
+```
+
+That's the whole shape. 23 modals now fit this pattern.
+
+## Known outstanding (not blocking, roadmap items)
+
+- **UI component tests** (Tier 1 for UI side — skipped during migration because modals were moving targets): `@testing-library/react` tests per CFM modal. Estimated ~1 day of work.
+- **Tier 2 integration tests** (identified in TESTING_STRATEGY.md): encryption V1→V2 upgrade flow, redux-persist migration chain, full-stack unlock→sign smoke. Estimated ~5-6 hours.
+- **Tier 3 E2E** (Playwright): post-1.0.0. Estimated ~1 week initial harness.
+- **Package visibility**: user made the GitHub repo public, may still need to flip the separate per-package visibility toggle at `https://github.com/orgs/StoaChain/packages/npm/package/ouronet-core/settings`. If `curl https://npm.pkg.github.com/@stoachain/ouronet-core` still returns 401 (auth required) instead of 200 (JSON manifest), the package is still private and consumers need NPM_TOKEN.
+- **HUB integration**: now that core is 1.0.0 and publicly installable (or at least registry-installable), the AncientHolder HUB can start consuming it. Separate project, not this repo's problem.
+
+## Drift notes
+
+None. Every one of the ~15 commits in this session's final phases shipped
+with local `npm run validate` green + 268 core tests green. No behavioural
+drift — the builder extraction was byte-identical to the inline template
+literals, and Phase 6 was pure docs.
+
+## Archive note
+
+This STATE.md has tracked the OuronetUI → OuronetCore extraction from
+Phase -1.1 through Phase 6. Future sessions on this project should be
+feature work, not migration work. The extraction is done.
