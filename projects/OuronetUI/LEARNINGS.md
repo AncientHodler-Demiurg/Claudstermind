@@ -2,6 +2,56 @@
 
 > Append-only. Non-obvious facts, corrections, tricks that came out of real sessions. Newest at the top. Each entry gets a date + one-line headline + the detail underneath.
 
+## 2026-04-23 — DALOS curve is mathematically sound (independent math verification)
+
+All 7 curve-parameter tests pass via independent Python (gmpy2 + sympy, projective twisted-Edwards scalar mult) AND Sage verification — under 1 second runtime. P = 2^1605 + 2315 is prime, Q = 2^1603 + K is prime (50-round Miller-Rabin, error prob ≤ 2⁻¹⁰⁰), cofactor = 4, d = -26 is a quadratic non-residue mod P (Bernstein-Lange addition-law completeness holds), generator G = (2, Y_G) lies on the curve, **[Q]·G = O** (G has prime order Q), safe-scalar 1600 ≤ log₂(Q) = 1604. The DALOS author ran a multi-day prime search on a 32-thread Ryzen 5950X years ago; the value 2^1605+2315 holds up against industrial-strength probabilistic testing. Verification scripts committed at `D:/_Claude/DALOS_Crypto/verification/`.
+
+## 2026-04-23 — AES in DALOS is AES-256-GCM + Blake3 KDF; impacts NO account strings
+
+`D:/_Claude/DALOS_Crypto/AES/AES.go` is a 135-line wrapper around Go stdlib `crypto/aes` + `crypto/cipher`. Uses AES-256-GCM (authenticated encryption, the right choice). Key derivation is **single-pass Blake3 → 32 bytes**, NO salt, NO iteration — weak for low-entropy passwords but documented. The AES wrapper is used ONLY by the CLI's `ExportPrivateKey` / `ImportPrivateKey` (saving encrypted key-file to disk). **The OuronetUI does NOT use this AES at all** — it uses ouronet-core's V1/V2 codex encryption instead. Changing the DALOS AES KDF to Argon2id WOULD change encrypted-file format but WOULD NOT affect account/address generation. Decision: keep DALOS AES as-is in the TS port; note weak-KDF in AUDIT.md as "user responsibility to choose strong password".
+
+## 2026-04-23 — Genesis freeze policy: key-gen path output is immutable forever
+
+Every bit of DALOS Genesis key-gen output — bitstring → scalar → public key → `Ѻ.xxx` / `Σ.xxx` address — is permanently frozen at commit `d136e8d` (tag `v1.0.0`). Any proposed change that would alter output becomes a **Gen-2 feature** with its own primitive ID in the `CryptographicRegistry`, not a change to Genesis. This preserves every existing Ouronet account forever. Schnorr is exempt because no on-chain DALOS Schnorr signatures exist — 7 Category-B hardening items can be applied freely in the TS port without user impact.
+
+## 2026-04-23 — 40×40 bitmap = exactly 1600 bits = new 6th key-gen input type
+
+40 × 40 = 1600 pixels = 1600 bits = the DALOS safe-scalar size exactly. Conventions LOCKED for Genesis: **black pixel = 1, white pixel = 0** (owner's choice), **row-major top-to-bottom, left-to-right** scan, **strict pure B/W** (pure 0x000000 or 0xFFFFFF; reject any other pixel value). Treated as a PRIVATE KEY — don't print on business cards, don't photograph. Bitmap-as-secret, stored encrypted like any other key material. Scan-order variants are a future opt-in feature (`FUTURE.md` §2); for Genesis there's ONE scan order. Total key-gen inputs in the TS API: 6 (random, bitstring, int10, int49, seed-words, bitmap). To be added to the Go reference first in Phase 0a (`Exec: begin Phase 0a` pending) so test vectors exist before TS porting.
+
+## 2026-04-23 — Schnorr has 7 Category-B hardening items, applied in TS port only
+
+`Elliptic/Schnorr.go` audit findings (all preserve math correctness; they harden production-readiness):
+1. **Fiat-Shamir transcript is ambiguous** — concat of `big.Int.Text(2)` strips leading zeros. Fix: length-prefix each term.
+2. **Random nonces only** — vulnerable to RNG compromise (Sony PS3 bug). Fix: RFC-6979 deterministic nonces (adapted for Blake3).
+3. **No domain-separation tag** — collides with any other Blake3-using protocol. Fix: prepend `"DALOS-gen1/SchnorrHash/v1"`.
+4. **No on-curve validation of R** on verify. Fix: check before math.
+5. **No range check `0 < s < Q`** on verify. Fix: reject malformed.
+6. **Errors discarded with `if err == nil { ... }`** — nil deref on bad input. Fix: explicit `Result<T>` / typed errors.
+7. **Non-constant-time scalar mult** inherited from `ScalarMultiplier`. Fix: use Phase-2 Montgomery ladder variant.
+
+These are Category-B (output-changing) fixes. Applied ONLY in the TS port — no existing on-chain Schnorr sigs to preserve. Genesis Go Schnorr stays unchanged; the TS port produces a new, hardened signature format.
+
+## 2026-04-23 — DALOS repo self-contained after Blake3/AES inline (v1.1.0)
+
+Previous imports: `Cryptographic-Hash-Functions/Blake3` + `.../AES` (external repo, GOPATH-style import, wouldn't build on module-mode Go without setup). Now: `DALOS_Crypto/Blake3` + `DALOS_Crypto/AES`, source files inlined from `StoaChain/Blake3` fork (which itself contains BOTH `Blake3/` and `AES/` subdirs). `go build ./...` + `go vet ./...` clean. This is a prerequisite for the TS port to have a buildable Go reference for the test-vector generator.
+
+## 2026-04-23 — Post-quantum direction is NEW primitives, NOT bigger curves
+
+Shor's algorithm breaks ECDLP in polynomial time regardless of curve size. A hypothetical 2500-bit DALOS (50×50 bitmap) falls to a CRQC at nearly the same timeline as the current 1606-bit curve. The 1600-bit classical security margin (2¹⁶⁰⁰ = comical already — more than atoms in the observable universe) is already more than anyone needs against classical adversaries. Future work is in **different primitive families**: lattice-based (Kyber/Dilithium), hash-based (SPHINCS+, XMSS), code-based (Classic McEliece). Registered alongside Genesis via the `CryptographicPrimitive` interface, with a new prefix character (e.g., `Q.`) for PQ accounts. Fully documented in `DALOS_Crypto/docs/FUTURE.md`.
+
+## 2026-04-23 — npm package architecture is 3 layers
+
+Target state after TS port:
+- `@stoachain/dalos-blake3` (published from `StoaChain/Blake3/ts/`) — wraps `@noble/hashes/blake3`, adds seven-fold + XOF helpers
+- `@stoachain/dalos-crypto` (published from `StoaChain/DALOS_Crypto/ts/`) — all DALOS Genesis primitives, registry, `DalosGenesis` instance
+- `@stoachain/ouronet-core` (already live v1.2.2) — consumes dalos-crypto, adds Codex + Pact + signing
+
+Each layer independently audit-able + publishable + versionable. Third parties can consume `@stoachain/dalos-crypto` without the blockchain weight of ouronet-core. Confirmed package architecture during DALOS planning (2026-04-23).
+
+## 2026-04-23 — GitHub Packages requires auth even for "public" scoped packages
+
+Migrating `@stoachain/ouronet-core` from GitHub Packages to npmjs.org because GitHub Packages' "public" scoped packages STILL require `npm login` with a PAT token — breaks Ploi auto-deploys which pull as anonymous. npmjs.org has no such restriction for published public packages. Three attempts to get the GitHub Actions publish.yml right: v1.2.0 (ENEEDAUTH — setup-node's `scope`+`registry-url` didn't wire NODE_AUTH_TOKEN correctly), v1.2.1 (same error — workflow referenced `NPM_TOKEN` but secret was actually named `NPMPUSHER`), v1.2.2 (fixed workflow to read `NPMPUSHER`, writes explicit `.npmrc` before publish; worked). Result: UI's `.npmrc` deleted, fresh install pulls from default npmjs registry, Ploi deploys working.
+
 ## 2026-04-22 — Foreign-key signing: capability in core, only the React modal in UI
 
 Do not say "ForeignKeySignModal stays UI-only, therefore foreign-key signing is UI-only." That's wrong and misleading. The **capability** is three layers, split cleanly:

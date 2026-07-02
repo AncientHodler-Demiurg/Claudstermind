@@ -7,20 +7,24 @@
 - **Cluster name:** ancient-holdings-suite
 - **Owner:** Mihai (bica.mihai.g@gmail.com)
 - **Claudstermind location:** `D:/_Claude/Claudstermind/`
-- **Default project root:** `D:/_Claude/` (linked projects sit as siblings)
-- **Last updated:** 2026-04-22 (Caduceus linked)
+- **Default project root:** `D:/_Claude/` (most linked projects sit as siblings)
+- **Workspace root:** `D:/_Claude/StoaOuronet/` (a sub-cluster grouping the publish-cascade members — `stoa-js`, `DALOS_Crypto`, `OuronetUI`, `AncientHoldings` — managed by `/wasp:cross-pollinate`. From any of these the path to Claudstermind is `../../Claudstermind/` not `../Claudstermind/`.)
+- **Last updated:** 2026-05-24 (AncientHoldings folder moved into the StoaOuronet workspace; OuronetUI + DALOS_Crypto were already there. Path column updated; the cluster IS the same — only the disk location moved.)
 
 ## Linked projects
 
 | Name                 | Path                                 | Role                                                                 | Knowledge base                                                   | Status    |
 | -------------------- | ------------------------------------ | -------------------------------------------------------------------- | ---------------------------------------------------------------- | --------- |
-| AncientHoldings      | `D:/_Claude/AncientHoldings/`        | Control hub (Next.js 16) + marketing site                            | [projects/AncientHoldings/](projects/AncientHoldings/)           | active    |
-| OuronetUI            | `D:/_Claude/OuronetUI/`              | Customer-facing DEX / wallet / Codex UI (React 19 SPA)               | [projects/OuronetUI/](projects/OuronetUI/)                       | active    |
+| AncientHoldings      | `D:/_Claude/StoaOuronet/AncientHoldings/` | Control hub (Next.js 16) + marketing site. Moved into the StoaOuronet workspace 2026-05-24 — now a `@stoachain/*` consumer alongside OuronetUI, joining the cross-pollinate cascade. | [projects/AncientHoldings/](projects/AncientHoldings/) | active |
+| OuronetUI            | `D:/_Claude/StoaOuronet/OuronetUI/`  | Customer-facing DEX / wallet / Codex UI (React 19 SPA). Lives inside the StoaOuronet workspace. | [projects/OuronetUI/](projects/OuronetUI/) | active |
 | StoaChain            | `D:/_Claude/StoaChain/`              | The blockchain itself — Haskell fork of `chainweb-node`              | [projects/StoaChain/](projects/StoaChain/)                       | active    |
 | StoaExplorer         | `D:/_Claude/StoaExplorer/`           | Block explorer for StoaChain — NestJS indexer + React 19 SPA, Socket.IO live | [projects/StoaExplorer/](projects/StoaExplorer/)         | active    |
 | StoaLive             | `D:/_Claude/StoaLive/`               | Real-time 3D live-activity viewer for StoaChain (spec-only; Phase 0) | [projects/StoaLive/](projects/StoaLive/)                         | planning  |
-| ChainwebMiningClient | `D:/_Claude/ChainwebMiningClient/`   | Upstream Kadena mining client (Haskell) — reference repo             | [projects/ChainwebMiningClient/](projects/ChainwebMiningClient/) | reference |
+| ChainwebMiningClient | `D:/_Claude/ChainwebMiningClient/`   | StoaChain fork of Kadena mining client — publishes `ghcr.io/stoachain/chainweb-mining-client`; `origin` still points at Kadena upstream, `stoachain` remote added for push | [projects/ChainwebMiningClient/](projects/ChainwebMiningClient/) | active    |
 | Caduceus             | `D:/_Claude/Caduceus/`               | Ouronet ↔ foreign-chain bridge (13 chains, Bitcoin first) — Phase 0 design | [projects/Caduceus/](projects/Caduceus/)                     | active    |
+| DALOS_Crypto         | `D:/_Claude/StoaOuronet/DALOS_Crypto/` | Ouronet cryptography — custom 1606-bit Twisted Edwards curve, Schnorr, 40×40 bitmap private-key input. Go reference (Genesis frozen at v1.0.0; current `v1.1.3`). TypeScript port underway (14-phase `docs/TS_PORT_PLAN.md`). Every `Ѻ.` / `Σ.` account in the cluster originates here. Lives inside the StoaOuronet workspace as a cross-pollinate cascade member. | [projects/DALOS_Crypto/](projects/DALOS_Crypto/) | active |
+| Cryptographic-Hash-Functions | `D:/_Claude/Cryptographic-Hash-Functions/` | Upstream Go Blake3 XOF + AES-256-GCM wrapper (Crypt0plasm). Ancestor of `StoaChain/Blake3` fork, which in turn was inlined into DALOS_Crypto at v1.1.0. Cluster role: provenance anchor, read-only. | [projects/Cryptographic-Hash-Functions/](projects/Cryptographic-Hash-Functions/) | reference |
+| Blake3               | `D:/_Claude/Blake3/`                 | `StoaChain/Blake3` fork of Crypt0plasm/Cryptographic-Hash-Functions. Working fork between upstream and DALOS_Crypto's inlined copies. Contains both `Blake3/` and `AES/`. | _(no separate kb yet; covered by DALOS_Crypto + Cryptographic-Hash-Functions KBs)_ | reference |
 
 ## Projects known but not yet linked
 

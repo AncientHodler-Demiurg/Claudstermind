@@ -36,7 +36,24 @@
         │  OuronetCore   │              │  OuronetUI  │
         │ (TS library:   │              │ (wallet /   │
         │  Ѻ. accounts)  │              │  account)   │
-        └────────────────┘              └─────────────┘
+        └───────┬────────┘              └─────────────┘
+                │ (TS port planned) produces Ѻ. / Σ. addresses
+                ▼
+        ┌────────────────────────────────────────────────┐
+        │                  DALOS_Crypto                  │  custom 1606-bit Twisted Edwards curve
+        │    Go reference (Genesis frozen at v1.0.0)     │  + Schnorr + AES + 6 key-gen input types
+        │    TypeScript port in progress — 14 phases     │  runs at go.ouronetwork.io/api/generate
+        └────────────────┬───────────────────────────────┘
+                         │ Blake3 + AES inlined at v1.1.0 from
+                         ▼
+        ┌───────────────────────────────────────────────┐
+        │          StoaChain/Blake3 (fork)              │  working fork, D:/_Claude/Blake3/
+        └────────────────┬──────────────────────────────┘
+                         │ forked from (provenance anchor)
+                         ▼
+        ┌───────────────────────────────────────────────┐
+        │        Cryptographic-Hash-Functions           │  Crypt0plasm upstream — read-only reference
+        └───────────────────────────────────────────────┘
 
         ┌────────────────────────────────────────────────────────────┐
         │                     Caduceus                               │  Ouronet ↔ foreign-chain bridge
@@ -51,8 +68,8 @@
                 ▼                                                │
         ┌────────────────────────────────────────────────────────┴────┐
         │   Foreign-chain L1 node containers                          │  hub-managed, off-Caduceus-host
-        │   bitcoind (Phase 1), litecoind, dogecoind, monerod,        │  spec: meta/foreign-chain-nodes.md
-        │   kaspad, cardano-node                                      │
+        │   Arweave node (Phase 1 MVP), bitcoind (Phase 5),           │  spec: meta/foreign-chain-nodes.md
+        │   litecoind, dogecoind, monerod, kaspad, cardano-node       │
         └────────────────────────────────────────────────────────┬────┘
                 ▲                                                │
                 │ deploy + supervise via outbound SSH            │
@@ -104,10 +121,10 @@
 - **Consumes, not authors, Pact.** The `caduceus` module, `bridge-ledger` table, per-chain DPTFs, and `stable-pool` are all **operator-deployed**. Caduceus's TS services submit txs against those interfaces.
 - **Bridge flow is three txs with two-phase commit:** `notarize-*` on Ouronet → foreign-chain transfer (shared custody address, `bridge-id` in memo) → `finalize-*` or `void-*` on Ouronet. States on the bridge-ledger: `NOTARIZED → FINALIZED | VOIDED`. Proof of reserves is a deterministic walk of the bridge-ledger.
 - **Per-source DPTF cents**, not merged: `DPTF-USDC.eth` ≠ `DPTF-USDC.sol`. Equalization happens in a separate `stable-pool` Pact module (also operator-owned, **NOT part of Caduceus**), launching Phase 7 with the first four cents + Ignis.
-- **Hybrid node posture (off-host).** Own-node containers for cheap-state chains (BTC, LTC, DOGE, XMR, KAS, ADA) and RPC-pool with ≥2-agreement rule for storage-heavy (ETH, BNB, TRX, EGLD, SOL, XRP, TAO). The own-node containers do **NOT** run inside the Caduceus stack — they are hub-managed (see next bullet). Caduceus reaches them over a private channel (Tailscale / WireGuard / SSH tunnel).
+- **Hybrid node posture (off-host).** Own-node containers for cheap-state chains (AR, BTC, LTC, DOGE, XMR, KAS, ADA) and RPC-pool with ≥2-agreement rule for storage-heavy (ETH, BNB, TRX, EGLD, SOL, XRP, TAO). The own-node containers do **NOT** run inside the Caduceus stack — they are hub-managed (see next bullet). Caduceus reaches them over a private channel (Tailscale / WireGuard / SSH tunnel).
 - **Hosting split.** The **Caduceus host** runs only TS services + admin panel (`caduceus.ancientholdings.eu` for the website + `admin.caduceus.ancientholdings.eu` for the policy panel). The **foreign-chain L1 node containers** run on operator-owned VPSes deployed + supervised by the AncientHoldings hub — same supervision pattern as StoaChain containers. Spec: [`meta/foreign-chain-nodes.md`](foreign-chain-nodes.md). Hub does not sign bridge txs (HSM-held operator key lives on the Caduceus host).
 - **Gas split.** Bridge pays Ouronet gas on the txs it signs (finalize-*); user pays foreign-chain gas on their deposit; bridge pays foreign-chain gas on every release from a per-chain native-asset reserve.
-- **Today Phase 0/1 boundary** — Caduceus repo has docs + a static landing page live at `caduceus.ancientholdings.eu`; Phase 1 (Bitcoin module TS code) ready to start on owner trigger. Hub-side `bitcoind` capability decided 2026-04-22, not started.
+- **Today Phase 0/1 boundary** — Caduceus repo has docs + a static landing page live at `caduceus.ancientholdings.eu`. **Tier structure restructured 2026-07-03**: Arweave is now the Tier I MVP module (Phases 1–4); Bitcoin dropped to Tier II Gateway (Phase 5) beside Ethereum (Phase 6); roadmap grew from 10 to 11 phases. Bitcoin TS scaffold committed under `a2ffc8f` stays in the tree as Phase-5 pre-work. Strategic reason for Arweave promotion: bridged AR anchors sSTOA liquidity via an 80/20 sSTOA/DPTF-AR weighted pool at Phase 4 launch.
 
 ### AncientHoldings (Hub) → foreign-chain L1 nodes (new capability, decided 2026-04-22)
 
@@ -115,6 +132,15 @@
 - **Implementation outline:** new `foreign_chain_nodes` table (do not expand the 52-column `nodes`); new driver `lib/drivers/install-bitcoind.ts`; new handler `lib/handlers/foreign-chain-control.ts`; second admin-UI card grid alongside the StoaChain grid. Recommended bitcoind image `lncm/bitcoind:v27.0`; `prune=10000`; AssumeUTXO bootstrap. Full spec: [`meta/foreign-chain-nodes.md`](foreign-chain-nodes.md).
 - **Same constraint:** hub still does NOT carry dApp / bridge traffic. Foreign-chain RPC ports bind to a private network; Caduceus is the only consumer.
 - **Status:** spec written, no code yet. Owner triggers Phase 1 of this from an AncientHoldings session when ready.
+
+### DALOS_Crypto → every `Ѻ.` / `Σ.` account in the cluster
+
+- DALOS_Crypto is the Go reference for the Ouronet address-derivation pipeline. Input → safe-scalar → `[k]·G` → sevenfold Blake3 XOF → 16×16 Unicode matrix → 160-char address with `Ѻ.` or `Σ.` prefix. Curve: custom Twisted Edwards over `P = 2^1605 + 2315`, order `Q = 2^1603 + K`, cofactor 4, `d = -26` (QNR → complete addition law).
+- **Genesis frozen at v1.0.0** (`d136e8d`). Every existing Ouronet account is derived from this code; any output-changing change becomes a Gen-2 feature with a new primitive ID, not an edit to Genesis. 85 reproducible test vectors are the oracle for future ports.
+- Today: the Go reference runs as a service at `go.ouronetwork.io/api/generate`. OuronetUI calls it remotely for key generation.
+- Future: 14-phase TypeScript port lands `@stoachain/dalos-blake3` → `@stoachain/dalos-crypto` → (existing) `@stoachain/ouronet-core` → OuronetUI local-only. Eliminates the remote hop.
+- **Schnorr signatures** exist in the code but aren't used on-chain. 7 hardening items (Category-B, output-changing) apply only in the TS port. Genesis Go Schnorr stays unchanged.
+- Provenance chain for inlined Blake3 + AES: `Crypt0plasm/Cryptographic-Hash-Functions` → `StoaChain/Blake3` (fork) → inlined into `DALOS_Crypto/Blake3/` + `DALOS_Crypto/AES/` at v1.1.0 (copy, not submodule). All three are linked in the cluster for audit traceability.
 
 ### ChainwebMiningClient ↔ StoaChain
 

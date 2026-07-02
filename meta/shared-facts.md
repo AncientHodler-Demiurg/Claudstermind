@@ -88,7 +88,7 @@ User does NOT manage the dev worker. Every code change → Claude bumps `lib/ver
 
 ### Home node addressing (Telekom rotates IPs)
 
-When adding the owner's home Linux test machine (`bytales@192.168.2.112:2222` locally, `bytales.duckdns.org:2222` externally) to the hub, use the DuckDNS hostname, never the raw IPv4 — Telekom rotates.
+The owner's home Linux test machine — hostname `ancient-WTR-MAX`, Ubuntu 26.04, 16 cores / 30 GB RAM, 3.5 TB disk. As of 2026-05-11 reachable at `ancient@192.168.2.148:22` locally; DuckDNS hostname `bytales.duckdns.org:2222` may still resolve externally (untested). On the owner's Windows dev box (windows-gamer) there is an SSH alias `home-linux` configured at `~/.ssh/config` using a dedicated key `~/.ssh/home_linux`. When adding the box to the hub or any external system, prefer the DuckDNS hostname over raw IPv4 — Telekom rotates. Earlier records of this address (`bytales@192.168.2.112:2222`) are stale — superseded 2026-05-11.
 
 ### Every manual help-up must become a UI feature
 

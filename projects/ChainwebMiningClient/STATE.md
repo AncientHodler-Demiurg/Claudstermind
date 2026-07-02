@@ -1,11 +1,17 @@
 # State — ChainwebMiningClient
 
-- **Version at close:** `0.5` (from `chainweb-mining-client.cabal`; CHANGELOG 2022-11-23) — no version drift expected
-- **Upstream HEAD (local checkout):** `bdd2c73` "Fix and modernize nix builds to flake.nix + haskell.nix (#29)"
-- **Open plan:** none — reference-only in this cluster
-- **Last session (2026-04-22):** added to Claudstermind. Ran `init` skill; created `CLAUDE.md` at project root summarising build/run/test + architecture. Registered in MANIFEST. Cross-referenced StoaChain (which names this client in its own ARCHITECTURE as the mining path).
+- **Status in cluster:** **active** (was "reference") — the fork at `StoaChain/ChainwebMiningClient` is now where releases for StoaChain mining clients live. Update [MANIFEST.md](../../MANIFEST.md) accordingly.
+- **Local checkout remote:** `origin` still points at `kadena-io/chainweb-mining-client` (intentional — for upstream tracking). A second remote `stoachain` was added pointing at `https://github.com/StoaChain/ChainwebMiningClient.git` and is used for all push operations.
+- **Cabal version on disk:** still `0.5` (Kadena never bumps the cabal file across their own 0.6/0.7/master releases — their convention).
+- **Fork release version:** **`1.0.0`** at tag `1.0.0`, commit `961f311` (Kadena master `bdd2c73` + StoaChain fork-publishing patches on top).
+- **Docker image:** `ghcr.io/stoachain/chainweb-mining-client` published with four tags: `1.0.0`, `1.0`, `1`, `latest`. Digest `sha256:b3632318d8b70f9e4f05644a3bd7cba063057dc7779b3edde466d9b837816456`. **Public** visibility, **linked** to the repo. Built locally on home-linux (see LEARNINGS for why), not by CI.
+- **GitHub Release:** https://github.com/StoaChain/ChainwebMiningClient/releases/tag/1.0.0 (live, public).
+- **CI status:** **working** as of commit `81a4450` (2026-05-11). The workflow publishes to `ghcr.io/stoachain/chainweb-mining-client` and produces `:sha-XXX` + `:master` (for branch pushes) plus `:1.X.X` + `:1.X` + `:1` + `:latest` (for semver tag pushes — `flavor: latest=auto`). Matrix narrowed to GHC 9.2.8 / ubuntu-22.04 (single job, ~12 min cold build). Three patches made CI green: bumped `aeson <2` → `<3` in the cabal file (source happens to compile against aeson 2.x), pinned `index-state: 2023-06-27T00:00:00Z` in cabal.project for reproducibility, dropped the multi-GHC matrix that hit independent autodocodec bit-rot on 8.10/9.0 and was untested on 9.4.
+- **Local build host:** `home-linux` (alias in `~/.ssh/config` on the windows-gamer dev box; resolves to `ancient@192.168.2.148:22`). GHC 9.2.8 + cabal 3.8.1.0 installed via ghcup, plus `binutils-gold` from apt (Ubuntu 26.04 needs explicit install — cabal/hsc2hs uses `-fuse-ld=gold`). Build dir at `~/build/ChainwebMiningClient/`.
+- **Last session (2026-05-10/11):** stood up the StoaChain fork as a real release target. Cut v1.0.0 (locally built and pushed to GHCR, since CI was broken at that point). Then fixed CI in commit `81a4450` — bumped `aeson < 3`, pinned `index-state`, narrowed matrix to GHC 9.2.8. CI now produces images automatically on every push.
+- **Open plan:** none.
 - **Known outstanding:**
-  - `CLAUDE.md` at `D:/_Claude/ChainwebMiningClient/CLAUDE.md` is untracked (this is Kadena's repo; don't push to `origin/main`)
-  - No fork created yet; if StoaChain ever needs modifications, step 1 is "fork under StoaChain/ or Mihai's account"
-  - No local testing against StoaChain bootstrap nodes yet — unverified assumption that protocol matches. (Expected to, since StoaChain kept the chainweb-node mining API shape.)
-- **Drift notes:** checkout is on upstream main, clean apart from the new untracked `CLAUDE.md`. No local patches.
+  - `CLAUDE.md` at the project root remains untracked (now gitignored on the StoaChain fork too, since the file references Claudstermind paths that only exist on the owner's box).
+  - Cabal version `0.5` in the cabal file is out of sync with the release tag `1.0.0` — matches Kadena's own convention but is a smell; bump if it ever bites.
+  - The narrowed CI matrix only tests GHC 9.2.8 / ubuntu-22.04. If wider compatibility is ever needed, the older GHCs (8.10/9.0) need autodocodec bit-rot resolved separately, and 9.4 needs a real test. Not blocking anything today.
+- **Drift notes:** Windows-side checkout: HEAD `81a4450` (CI fix on top of `961f311` which is what the v1.0.0 tag points at). Tag `1.0.0` stays at `961f311` deliberately — the published image's `org.opencontainers.image.revision` label points there.

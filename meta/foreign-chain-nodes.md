@@ -66,6 +66,7 @@ hub-side implementation detail.
 
 | Chain    | RPC interface     | Required capability                                                          |
 | -------- | ----------------- | ---------------------------------------------------------------------------- |
+| **Arweave** | HTTP JSON        | `/tx/pending`, `/block/current`, `/block/height/N`, `/tx/<id>/status`, `/tx` POST, `/wallet/<addr>/balance`. Native transaction tags (no OP_RETURN equivalent needed). Also observe AO-process messages targeting the custody address for passive-AO-yield accounting. |
 | Bitcoin  | JSON-RPC + ZMQ    | `getblockhash`, `getblock`, `getrawtransaction`, `sendrawtransaction`, ZMQ `rawtx`+`hashblock`, wallet load (for `signrawtransactionwithwallet`) |
 | Litecoin | JSON-RPC + ZMQ    | same shape as bitcoind (Litecoin is a fork)                                  |
 | Dogecoin | JSON-RPC          | bitcoind-shaped RPC; ZMQ optional                                            |
@@ -199,9 +200,10 @@ Decided per-chain, but the shape stays the same:
 
 | Phase | Chain    | Image (recommended)              | Notes                                                      |
 | ----- | -------- | -------------------------------- | ---------------------------------------------------------- |
-| 1     | Bitcoin  | `lncm/bitcoind:v27.0`            | this doc                                                   |
-| 2     | Litecoin | `litecoinproject/litecoin-core`  | bitcoind clone; same driver shape                          |
-| 3     | Dogecoin | `dogecoinproject/dogecoin`       | bitcoind clone; ZMQ optional                               |
+| **1** | **Arweave** | Arweave upstream image (final pick TBD in Caduceus Phase 1) | **MVP module** since the 2026-07 tier-restructure. Modest resources — bridge needs headers + wallet + tag index only, not the full data weave. Node also observes AO-process messages for passive-AO-yield accounting on custody AR. Direct HTTP RPC over the private channel. Section 4 below is a Bitcoin-specific one; add an Arweave-specific section when this container ships. |
+| 2     | Bitcoin  | `lncm/bitcoind:v27.0`            | Tier II Gateway (formerly MVP). Section 4 below.           |
+| 3     | Litecoin | `litecoinproject/litecoin-core`  | bitcoind clone; same driver shape                          |
+| 4     | Dogecoin | `dogecoinproject/dogecoin`       | bitcoind clone; ZMQ optional                               |
 | 7     | Monero   | `sethforprivacy/simple-monerod`  | view-key wallet model; different scanning approach         |
 | 8     | Kaspa    | `supertypo/rusty-kaspa`          | gRPC interface; very different from bitcoind shape         |
 | 9     | Cardano  | `inputoutput/cardano-node` + `cardanosolutions/ogmios` | two containers; Ogmios websocket is the practical interface |

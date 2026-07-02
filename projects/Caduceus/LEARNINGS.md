@@ -43,6 +43,30 @@
 **How to apply:** Never propose adding `bitcoind` (or `litecoind`, `dogecoind`, `monerod`, `kaspad`, `cardano-node`) to `infra/docker/compose.prod.yml`. The Caduceus stack only contains TS services + the admin panel. Production-hosting docs (`docs/HOSTING.md`, `docs/HANDOFF.md`, `docs/ARCHITECTURE.md`, the per-module `DESIGN.md` files) must say "operator-managed" / "hub-managed" / "off-host". The dev compose (`infra/docker/compose.dev.yml`) is the only place a `bitcoin/bitcoin` image appears, and only in regtest. The hub-side spec lives at `Claudstermind/meta/foreign-chain-nodes.md` — link there from any new design doc that touches node hosting.
 **Added:** 2026-04-22
 
+### Arweave is Tier I MVP (2026-07 tier-restructure)
+
+**Why:** Bridged AR anchors sSTOA liquidity. An 80/20 sSTOA/DPTF-AR weighted pool seeded at Phase 4 mainnet launch gives sSTOA its first external-value backing via a bridged real asset — the operator holds the sSTOA supply (mines all of it), so the pool defines the effective AR-out exchange rate and gives operator control of the sSTOA/USD anchor point. Bitcoin was originally MVP but got reframed to Tier II (Phase 5) alongside Ethereum. The Bitcoin scaffold from commit `a2ffc8f` stays in the tree as Phase-5 pre-work.
+**How to apply:** All doc + memory references to "MVP" and "first module" now mean Arweave. Bitcoin is Tier II Gateway. If user asks about ETH/BTC/etc., reference their new tier + phase. The user's design decision here rests on operator sSTOA-supply dominance; without that dominance the anchor-pool argument weakens.
+**Added:** 2026-07-03
+
+### Bridge AR only, not AO/ARIO/PI
+
+**Why:** Arweave L1 (the "blockweave") is one chain. AO is a compute layer on top (actor-model, message-passing; not a smart-contract EVM). AO/ARIO/PI are AO-process tokens — like ERC-20s on the AO layer. Only AR is L1-native. Live mcap check (July 2026): AR ~$132M / #153, AO ~$17M / #779, ARIO ~$872K / #2979, PI (Permaweb Index — distinct from Pi Network) not on aggregators. Bridging costs (custody, HSM, node, DPTF, audit) don't pay back on the last three at those numbers, and the market makes clear that AR carries ~90% of the ecosystem's economic weight. AR alone gets bridged in Phase 1.
+**How to apply:** Never propose AO/ARIO/PI bridging as part of the MVP. If user asks whether to expand, cite the mcap gap. Adding AO later is a small module-config lift; the sniffer/releaser architecture doesn't change. ARIO/PI would need a 10× mcap growth or a clear demand signal to be worth the ops cost.
+**Added:** 2026-07-03
+
+### Direct DPTF-AR.arweave mint, not wrapped-through-Stoic-Fungible
+
+**Why:** The per-source DPTF cent invariant (`DPTF-USDC.eth ≠ DPTF-USDC.sol`) is a load-bearing rule; making Arweave the exception with a Stoic-Fungible-plus-wrap layer breaks the pattern. Every user's first act with bridged AR is DeFi (the 80/20 pool), so a wrap step adds ceremony for no benefit. Stoic Fungible's 5000-recipient bulk-transfer advantage doesn't apply to bridged assets. Gas-station-funded means the Ouronet-gas overhead of DPTF vs Stoic Fungible is operator OpEx, not user-visible.
+**How to apply:** Every module mints DPTF directly. Never propose a wrap/unwrap intermediate. If someone wants mass-distribution of bridged value, they can convert on the fly — that use case doesn't drive the bridge design.
+**Added:** 2026-07-03
+
+### Passive AO yield on custody AR is a real accounting question
+
+**Why:** The AR-holder emission is protocol-native — any Arweave address holding AR passively accrues AO drops (~36% of AO's ~21M max supply flows to AR holders over the emission schedule). The Caduceus custody address will accumulate AO whether we design for it or not. Without an explicit policy, custody holds more than the DPTF supply implies (in AR-value terms), which breaks the proof-of-reserves narrative. Governance-hostile readers will point at it.
+**How to apply:** Phase 1 must pick a policy — three options: (1) sweep to operator treasury address (MVP recommendation, simplest, encoded as `bridge.ar.ao-yield-sweep-address` governable setting), (2) pro-rata distribution to `DPTF-AR.arweave` holders (user-fair but complex, defer to v2), (3) auto-convert AO to sSTOA and top the anchor pool (self-reinforcing but depends on a live external swap route). Never leave undefined.
+**Added:** 2026-07-03
+
 ### Recommended bitcoind image is `lncm/bitcoind:v27.0`, NOT `bitcoin/bitcoin:27`
 
 **Why:** `lncm/bitcoind` is small (~80 MB), well-maintained (used by BTCPay), and ships with sensible defaults for a server context. `bitcoin/bitcoin` is the upstream-published image and is fine for dev/CI but heavier and less production-tuned. Bridge ops need pruned (`prune=10000`, ~15–20 GB), no `txindex` (wallet labels + ZMQ are sufficient for shared-custody-address tracking), AssumeUTXO or BTCPay-snapshot bootstrap (cold sync is 24–48 h, AssumeUTXO is 6–12 h).

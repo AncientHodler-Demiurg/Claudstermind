@@ -1,24 +1,26 @@
 # State — AncientHoldings
 
-- **Version at close:** `0.7.6w-dev` (worker restarted + confirmed banner, dev server on same)
-- **Open plan:** [`plans/v0.8-hub-scalability.md`](../../../AncientHoldings/plans/v0.8-hub-scalability.md)
-- **Last session (2026-04-22):** built benchmark-history delete controls. Two new API endpoints (`DELETE /benchmarks/[runId]`, `POST /benchmarks/reset`) with earning-preserving default semantics. UI in ServerScoreCard: per-row `×` delete on hover + "Prune — keep best only" button + collapsed ⚠ danger zone for the full-clear path. Password-re-auth gated + site-styled confirms.
+- **Version at close:** `G.1.0` "Genesis" (Genesis-era launch shipped 2026-05-01; post-launch polish 2026-05-02 commit `55d817c`). New versioning scheme — G-codes (`G.MAJOR.MINOR`) replace `0.X.Y-letter-dev`. Roster of codenames + version mapping in [`lib/genesis-codenames.ts`](../../../AncientHoldings/lib/genesis-codenames.ts); chronological spine in [`lib/genesis.ts`](../../../AncientHoldings/lib/genesis.ts).
+- **Active spec:** **Cerberus** = `v.G.1.1` firewall control. Located at `.bee/specs/2026-05-02-cerberus-firewall-control/` (main worktree only — see workflow note below). All 6 phases `PLAN_REVIEWED`. ~57 tasks across 19 waves. Cross-plan consistency review iter 1 done (10 inter-phase findings captured as inline fix tags). Last `/bee:plan-all` at 2026-05-02T13:30Z reports: *"Ready for /bee:ship or /bee:execute-phase 1."*
+- **Workflow:** AncientHoldings now develops exclusively via the **Bee plugin**. `.bee/specs/<date>-<slug>/` is the canonical planning surface. The legacy `plans/*.md` folder is frozen — no new work goes there.
+- **Worktrees (3):**
+  - `Z:/AncientHoldings` — branch `main`, at v0.7.12m30 (PRE-Genesis). `.bee/` lives here. **Run `/bee:ship` from this worktree.**
+  - `Z:/AncientHoldings/.claude/worktrees/genesis` — branch `genesis`, at G.1.0. Genesis launch shipped from this branch; not yet merged to main.
+  - `Z:/AncientHoldings/.claude/worktrees/eloquent-volhard-dfe15f` — Claude-isolated copy at G.1.0; no `.bee/` (per-worktree, not tracked).
+- **Recent shipped (since 2026-04-22):**
+  - v0.7.10 connectivity-and-integrity, tunneler-self-containers, seamless-segregated-convert, tunnelee peering research
+  - v0.7.11 decimal-precision
+  - v0.7.12 segregated-containers + 30 patch revisions (m1 → m30) — covered orphan port allocations, slave install slot suffixing, sysbench multi-thread tolerance, GATE 7 chainweb-stopped suppression, hub-stats fleet counter shape, etc.
+  - **v.G.1.0 "Genesis" launch rehaul** (2026-05-01, commit `58a1f23`) — 6-phase Bee campaign: rename infrastructure → Genesis extractor → per-codename release pages → hand-polish 5 most-recent codenames → CHANGELOG rebuild → `lib/version.ts` trim. All phases REVIEWED.
+  - **Post-launch polish** (2026-05-02, commit `55d817c`) — chapters restored, mining calc ESM, papyrus release, navbar trim.
+- **Codename roster (operator-confirmed 2026-05-01):**
+  - Genesis-era shipped: Cassandra (G.0.1) · Prometheus (G.0.2) · Pythagoras (G.0.3) · Hydra (G.0.4) · Medusa (G.0.5)
+  - Launch milestone: Genesis (G.1.0)
+  - Forward planned: Cerberus (G.1.1, in flight) · AncientTome (G.1.2, queued) · Athena · Iris · Hermes · Zeus · Mnemosyne · Atlas · Hephaestus · Phalanx · Nike · Aegis · Agora · Apotheosis
 - **Known outstanding:**
-  - **Owner still needs to re-add SSH keys** for the 4 nodes (StoaNodeOne/Two, AncientLinux, IonosFiveVPS) — vault was cleared in v0.7.6r recovery
-  - **IonosFive stamped `server_score = 13.8`** can now be cleaned up via Prune (deletes the inflated partial row, keeps best remaining success — but IonosFive has no other success runs, so owner may need to re-benchmark THEN prune)
-  - yabs.sh Geekbench / librespeed / fio-on-tmp fixes still pending (partial-run-scoring-guard in v0.7.6q masks but doesn't solve upstream)
-  - Worker still single-job-at-a-time (v0.8 T2 plan item 7)
+  - SSH-key re-add for 4 nodes (StoaNodeOne/Two, AncientLinux, IonosFiveVPS) — vault was cleared in v0.7.6r recovery, never re-seated
+  - yabs.sh Geekbench / librespeed / fio-on-tmp upstream fixes still pending (partial-run-scoring guards in place, but root causes remain)
+  - Worker still single-job-at-a-time (v0.8 T2 plan item 7) — blocks fleet-wide re-benchmark
   - ClaudeCurator not built
-  - No `.git` locally; deploys go VPS-side. Open question whether to `git init` locally.
-
-- **Incoming work — Caduceus foreign-chain nodes (decided 2026-04-22, not started):**
-  - **What:** add `bitcoind` (and later 5 more L1s) as a second container type, mirroring the existing StoaChain supervision flow. Caduceus connects over a private channel; hub does *not* carry bridge traffic.
-  - **Why here:** the Caduceus host is too small for a `bitcoind` and the hub already does container-on-VPS supervision better than anyone else in the cluster — keeps Caduceus stateless.
-  - **Brief:** [`Claudstermind/meta/foreign-chain-nodes.md`](../../meta/foreign-chain-nodes.md). Read it whole before code. Implementation outline:
-    - New table `foreign_chain_nodes` (do NOT expand the 52-column `nodes`).
-    - `lib/drivers/install-bitcoind.ts` (mirror `install-chainweb.ts`); image `lncm/bitcoind:v27.0`; `prune=10000`; AssumeUTXO bootstrap.
-    - `lib/handlers/foreign-chain-control.ts` (mirror `stoachain-control.ts`).
-    - New admin-UI card grid alongside the StoaChain grid; `requireOwnedNodeApi()` for actions, `ancient` role for Caduceus enrolment.
-  - **Trigger:** owner will explicitly say "start the Caduceus node support" or similar from the AncientHoldings side. Do not pre-build.
-  - **Cross-team contact:** the Caduceus side is in Phase 1; spec edits there land in `Caduceus/docs/HOSTING.md`, `HANDOFF.md`, `ARCHITECTURE.md`, `modules/ouronet-bitcoin/DESIGN.md` — all already say "operator-managed / hub-managed / off-host".
-- **Drift notes:** Worker is running v0.7.6r-dev; dev server runs v0.7.6s-dev. They're only out-of-sync in banner — functionally consistent because the new endpoints + UI don't touch worker-dispatched code paths.
+  - Caduceus foreign-chain nodes (`bitcoind` etc.) — decided 2026-04-22, not started; trigger is owner saying "start the Caduceus node support"
+- **Drift notes:** none — STATE refreshed 2026-05-02 to current reality.
