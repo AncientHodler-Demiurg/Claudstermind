@@ -2,7 +2,7 @@
 
 > **When:** the owner types `::cmpush` (or an equivalent phrase). This is the **explicit opt-in** for the otherwise-forbidden auto-commit/push behavior. **Never** auto-fired.
 >
-> **Goal:** snapshot the current state of Claudstermind to `github.com/StoaChain/Claudstermind`, preserving the accumulated brain.
+> **Goal:** snapshot the current state of Claudstermind to `github.com/AncientHodler-Demiurg/Claudstermind`, preserving the accumulated brain.
 
 ## Why this skill exists
 
@@ -32,7 +32,7 @@ Before doing anything, the agent confirms:
 
 1. **Claudstermind exists** at the expected path (`D:/_Claude/Claudstermind/`).
 2. **It's a git repo** (`.git/` exists). If not → this is the first push; see §First-time setup below.
-3. **Remote is configured.** `git -C <path> remote -v` shows `origin` pointing at `https://github.com/StoaChain/Claudstermind.git`.
+3. **Remote is configured.** `git -C <path> remote -v` shows `origin` pointing at `https://github.com/AncientHodler-Demiurg/Claudstermind.git`.
 4. **Token file exists and is readable:** `D:/_Claude/Claudstermind/.secret/github-token.txt` contains a valid PAT (see [`../.secret/README.md`](../.secret/README.md) for how the owner creates it).
 5. **`.secret/` is gitignored.** `git -C Claudstermind check-ignore .secret/github-token.txt` should exit 0 and print the path. If it doesn't, **abort** — the token would be pushed to GitHub.
 
@@ -102,7 +102,7 @@ EOF
 
 ```bash
 TOKEN=$(cat D:/_Claude/Claudstermind/.secret/github-token.txt)
-git -C D:/_Claude/Claudstermind push "https://${TOKEN}@github.com/StoaChain/Claudstermind.git" HEAD
+git -C D:/_Claude/Claudstermind push "https://${TOKEN}@github.com/AncientHodler-Demiurg/Claudstermind.git" HEAD
 unset TOKEN
 ```
 
@@ -125,7 +125,7 @@ Report concisely:
 ::cmpush → committed + pushed
   <commit SHA>  <first line of commit message>
   <N files changed, +L additions, -D deletions>
-  https://github.com/StoaChain/Claudstermind/commit/<SHA>
+  https://github.com/AncientHodler-Demiurg/Claudstermind/commit/<SHA>
 ```
 
 If push fails (network, auth, branch divergence, etc.), surface the **exact** git error — do not paper over it. The owner decides next step.
@@ -140,7 +140,7 @@ Claudstermind is not yet a git repo. First-time setup needs:
   2. Verify token file exists at .secret/github-token.txt (owner creates this — see .secret/README.md)
   3. git init
   4. git symbolic-ref HEAD refs/heads/main   ← sets branch name pre-commit; do NOT use `git branch -M main` here, it fails before any commit exists
-  5. git remote add origin https://github.com/StoaChain/Claudstermind.git
+  5. git remote add origin https://github.com/AncientHodler-Demiurg/Claudstermind.git
   6. Initial commit with everything currently in the folder (safety-checked against secret-shaped files)
   7. First push with the token: git push -u "https://${TOKEN}@.../Claudstermind.git" main
 Do you want me to run the above? (y/n)

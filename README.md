@@ -92,7 +92,7 @@ Usable from the moment the agent has loaded the cluster. Short, unambiguous (the
 | Command | Keystrokes | Action | Skill | Accepted variants |
 | ------- | ---------: | ------ | ----- | ----------------- |
 | `::cmsync` | 8 | Re-read Claudstermind; report what changed since last sync. Two-phase: mtime scan first (~100 tokens if nothing new), then Read only the files that changed. | [`skills/sync.md`](skills/sync.md) | `::cmresync`, `::cmrefresh` |
-| `::cmpush` | 8 | Commit + push Claudstermind to `github.com/StoaChain/Claudstermind`. Uses the token in `.secret/github-token.txt` inline (never persisted). Includes a safety scan that aborts if anything secret-shaped is staged. | [`skills/push.md`](skills/push.md) | — |
+| `::cmpush` | 8 | Commit + push Claudstermind to `github.com/AncientHodler-Demiurg/Claudstermind`. Uses the token in `.secret/github-token.txt` inline (never persisted). Includes a safety scan that aborts if anything secret-shaped is staged. | [`skills/push.md`](skills/push.md) | — |
 | `::cmcommit` | 10 | Same as `::cmpush` but **commits only, skips the push.** Useful for offline snapshots or when you want to review before pushing. | [`skills/push.md`](skills/push.md) §variants | — |
 
 Also accepted (less preferred, slower to type): the prose forms *"sync Claudstermind"*, *"push Claudstermind"*, *"what's new in the cluster?"*, etc. The `::cm…` keywords are the canonical fast-path.
