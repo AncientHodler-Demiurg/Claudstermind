@@ -1,0 +1,1026 @@
+{
+  "meta": {
+    "generated": "2026-07-14",
+    "model": "Pantheon = shared machines",
+    "root": "D:/_Claude",
+    "note": "Canonical machine-readable map of everything under Ancient Holdings. Doubles as the seed for master-graph.yml (master-pollinate). Org 'target' reflects the greenlit 2026-07-14 reorg; 'current' is disk/GitHub reality at generation time.",
+    "reorgStatus": "Phase-1 folder reorg COMPLETE 2026-07-14 — all repos in ecosystem/role homes. Scope-rename/split (Phase 4) still pending."
+  },
+  "orgs": {
+    "AncientPantheon": {
+      "scope": "@ancientpantheon",
+      "kind": "pantheon",
+      "color": "#c084fc",
+      "desc": "Shared cross-chain MACHINES — Constructors + Automatons. The reusable Pantheonic entities."
+    },
+    "StoaChain": {
+      "scope": "@stoachain",
+      "kind": "ecosystem",
+      "color": "#38bdf8",
+      "desc": "The L1 chain + chain infra + native Daimons/Seers + chain websites."
+    },
+    "OuroborosNetwork": {
+      "scope": "@ouronet",
+      "kind": "ecosystem",
+      "color": "#34d399",
+      "desc": "Ouronet — the sovereign DeFi layer on StoaChain (own crypto, gas, pact, wallet, explorer)."
+    },
+    "AncientClients": {
+      "scope": null,
+      "kind": "clients",
+      "color": "#f59e0b",
+      "desc": "Client projects (may consume @ouronet/@ancientpantheon as master-pollinate leaves)."
+    },
+    "AncientHodler-Demiurg": {
+      "scope": null,
+      "kind": "personal",
+      "color": "#94a3b8",
+      "desc": "Personal account — orchestrator + tooling + media."
+    }
+  },
+  "roles": {
+    "constructor": {
+      "label": "Constructor",
+      "consumes": [],
+      "color": "#c084fc",
+      "glyph": "◈"
+    },
+    "automaton": {
+      "label": "Automaton",
+      "consumes": [
+        "pythia",
+        "codex",
+        "khronoton"
+      ],
+      "color": "#f472b6",
+      "glyph": "⚙"
+    },
+    "daimon": {
+      "label": "Daimon",
+      "consumes": [
+        "pythia",
+        "codex"
+      ],
+      "color": "#fbbf24",
+      "glyph": "☿"
+    },
+    "seer": {
+      "label": "Seer",
+      "consumes": [
+        "pythia"
+      ],
+      "color": "#60a5fa",
+      "glyph": "◉"
+    },
+    "infra": {
+      "label": "Infrastructure",
+      "consumes": [],
+      "color": "#64748b",
+      "glyph": "■"
+    },
+    "website": {
+      "label": "Website",
+      "consumes": [],
+      "color": "#22d3ee",
+      "glyph": "◐"
+    },
+    "tool": {
+      "label": "Tool",
+      "consumes": [],
+      "color": "#a3a3a3",
+      "glyph": "⚒"
+    },
+    "orchestrator": {
+      "label": "Orchestrator",
+      "consumes": [],
+      "color": "#e879f9",
+      "glyph": "★"
+    },
+    "media": {
+      "label": "Media",
+      "consumes": [],
+      "color": "#fb923c",
+      "glyph": "◑"
+    },
+    "client": {
+      "label": "Client",
+      "consumes": [],
+      "color": "#f59e0b",
+      "glyph": "△"
+    }
+  },
+  "constructors": {
+    "pythia": "@ancientpantheon/pythia-client",
+    "codex": "@ancientpantheon/codex",
+    "khronoton": "@ancientpantheon/khronoton-core"
+  },
+  "cascadeRule": {
+    "seer": [
+      "pythia"
+    ],
+    "daimon": [
+      "pythia",
+      "codex"
+    ],
+    "automaton": [
+      "pythia",
+      "codex",
+      "khronoton"
+    ],
+    "note": "A repo's role determines which Constructors it consumes -> which Constructor publishes cause it to bump. This is the master-pollinate cascade rule."
+  },
+  "repos": [
+    {
+      "id": "pythia",
+      "name": "Pythia",
+      "role": "constructor",
+      "layer": 2,
+      "ecosystem": "Pantheon",
+      "org": {
+        "current": "AncientPantheon",
+        "target": "AncientPantheon"
+      },
+      "localPath": "AncientPantheon/constructors/Pythia",
+      "localCurrent": "AncientPantheon/constructors/Pythia",
+      "packages": [
+        {
+          "name": "@ancientpantheon/pythia-client",
+          "version": "1.1.0",
+          "private": false
+        }
+      ],
+      "movement": [],
+      "status": "active",
+      "notes": "Oracle / read-data Constructor. Chain-agnostic; multichain via pythia-adapters-{stoachain,arweave,bitcoin,ethereum}."
+    },
+    {
+      "id": "codex",
+      "name": "Codex",
+      "role": "constructor",
+      "layer": 2,
+      "ecosystem": "Pantheon",
+      "org": {
+        "current": "AncientPantheon",
+        "target": "AncientPantheon"
+      },
+      "localPath": "AncientPantheon/constructors/Codex",
+      "localCurrent": "AncientPantheon/constructors/Codex",
+      "branch": "feat/codex-migration-c-d",
+      "packages": [
+        {
+          "name": "@ancientpantheon/codex",
+          "version": "0.6.0",
+          "private": false
+        },
+        {
+          "name": "@ancientpantheon/codex-core",
+          "version": "0.2.0",
+          "private": true
+        },
+        {
+          "name": "@ancientpantheon/codex-ui",
+          "version": "0.4.0",
+          "private": true
+        },
+        {
+          "name": "@ancientpantheon/codex-ouronet",
+          "version": "0.6.0",
+          "private": true
+        },
+        {
+          "name": "@ancientpantheon/codex-arweave",
+          "version": "0.2.0",
+          "private": true
+        },
+        {
+          "name": "@ancientpantheon/arweave-core",
+          "version": "0.2.0",
+          "private": false
+        }
+      ],
+      "movement": [],
+      "status": "active",
+      "notes": "Identity/state Constructor. codex-<chain> adapters are the multichain path. codex-ouronet peer-deps the @ouronet/@stoachain libs (cross-org)."
+    },
+    {
+      "id": "khronoton",
+      "name": "Khronoton",
+      "role": "constructor",
+      "layer": 2,
+      "ecosystem": "Pantheon",
+      "org": {
+        "current": "AncientPantheon",
+        "target": "AncientPantheon"
+      },
+      "localPath": "AncientPantheon/constructors/Khronoton",
+      "localCurrent": "AncientPantheon/constructors/Khronoton",
+      "packages": [
+        {
+          "name": "@ancientpantheon/khronoton-core",
+          "version": "0.4.0",
+          "private": false
+        }
+      ],
+      "movement": [],
+      "status": "active",
+      "notes": "Time / scheduling / autonomous-transactions Constructor. Only Automatons consume it."
+    },
+    {
+      "id": "caduceus",
+      "name": "Caduceus",
+      "role": "automaton",
+      "layer": 3,
+      "ecosystem": "Ouronet",
+      "org": {
+        "current": "AncientPantheon",
+        "target": "AncientPantheon"
+      },
+      "localPath": "AncientPantheon/automatons/Caduceus",
+      "localCurrent": "AncientPantheon/automatons/Caduceus",
+      "branch": "main",
+      "packages": [
+        {
+          "name": "caduceus",
+          "version": "0.1.0-phase1",
+          "private": true
+        },
+        {
+          "name": "@caduceus/pact-client",
+          "version": "0.1.0",
+          "private": true
+        },
+        {
+          "name": "@caduceus/btc-sniffer",
+          "version": "0.1.0",
+          "private": true
+        },
+        {
+          "name": "@caduceus/btc-releaser",
+          "version": "0.1.0",
+          "private": true
+        }
+      ],
+      "consumes": [
+        "pythia",
+        "codex",
+        "khronoton"
+      ],
+      "movement": [
+        "✅ org moved StoaChain → AncientPantheon (2026-07-14); remote repointed",
+        "local: StoaOuronet/Caduceus → AncientPantheon/automatons/Caduceus (pending)",
+        "⚠️ divergent duplicate ./Caduceus at top level holds unique files — merge before removing"
+      ],
+      "status": "active",
+      "notes": "Ouronet↔foreign-chain bridge (14 chains, Arweave Tier-I MVP). Foreign-chain modules @caduceus/* live in-repo. Automaton — GitHub org move to AncientPantheon DONE."
+    },
+    {
+      "id": "aletheia",
+      "name": "Aletheia",
+      "role": "automaton",
+      "layer": 3,
+      "ecosystem": "Pantheon",
+      "org": {
+        "current": "AncientPantheon",
+        "target": "AncientPantheon"
+      },
+      "localPath": "AncientPantheon/automatons/Aletheia",
+      "localCurrent": "AncientPantheon/automatons/Aletheia",
+      "packages": [],
+      "consumes": [
+        "pythia",
+        "codex",
+        "khronoton"
+      ],
+      "movement": [],
+      "status": "active",
+      "notes": "Automaton app composing all three Constructors."
+    },
+    {
+      "id": "mnemosyne",
+      "name": "Mnemosyne",
+      "role": "automaton",
+      "layer": 3,
+      "ecosystem": "Pantheon",
+      "org": {
+        "current": "AncientPantheon",
+        "target": "AncientPantheon"
+      },
+      "localPath": "AncientPantheon/automatons/Mnemosyne",
+      "localCurrent": "AncientPantheon/automatons/Mnemosyne",
+      "packages": [
+        {
+          "name": "mnemosyne",
+          "version": "0.4.0",
+          "private": true
+        }
+      ],
+      "consumes": [
+        "pythia",
+        "codex",
+        "khronoton"
+      ],
+      "movement": [
+        "🔨 FIRST Automaton being properly implemented (active work) — reference impl"
+      ],
+      "status": "active",
+      "notes": "Automaton (Next.js). The first Automaton to get a real Pythia+Codex+Khronoton implementation. Consumes @stoachain/* + @ancientpantheon/*."
+    },
+    {
+      "id": "dalos",
+      "name": "Dalos",
+      "role": "automaton",
+      "layer": 3,
+      "ecosystem": "Ouronet",
+      "org": {
+        "current": "StoaChain",
+        "target": "StoaChain"
+      },
+      "localPath": "StoaChain/_hub/AncientHoldings (embedded)",
+      "localCurrent": "StoaChain/_hub/AncientHoldings (embedded)",
+      "packages": [],
+      "consumes": [
+        "pythia",
+        "codex",
+        "khronoton"
+      ],
+      "movement": [
+        "EMBEDDED: lives inside ancientholdings-hub, not a standalone repo"
+      ],
+      "status": "planned",
+      "notes": "Crypto/key-gen Automaton. Housed inside the AncientHoldings Hub (exception to 'Automatons live in AncientPantheon' — it is code in the Hub, not a repo)."
+    },
+    {
+      "id": "ouronetui",
+      "name": "OuronetUI",
+      "role": "daimon",
+      "layer": 3,
+      "ecosystem": "Ouronet",
+      "org": {
+        "current": "OuroborosNetwork",
+        "target": "OuroborosNetwork"
+      },
+      "localPath": "OuroborosNetwork/daimons/OuronetUI",
+      "localCurrent": "OuroborosNetwork/daimons/OuronetUI",
+      "branch": "dev",
+      "packages": [
+        {
+          "name": "dapp",
+          "version": "0.0.0",
+          "private": true
+        }
+      ],
+      "consumes": [
+        "pythia",
+        "codex"
+      ],
+      "movement": [
+        "⚠️ NOT yet migrated to Pantheonic architecture — still on OLD arch"
+      ],
+      "status": "active",
+      "architectureStatus": "old — consumes @stoachain/* libs directly; Constructor (Pythia/Codex) edges are PLANNED, not active",
+      "notes": "Ouronet DEX / wallet / Codex UI (React 19 SPA). Leaf consumer. Currently pins @stoachain/{kadena-stoic-legacy,stoa-core,ouronet-core,ouronet-codex,dalos-crypto} directly (old architecture). Already correct org."
+    },
+    {
+      "id": "stoawallet",
+      "name": "StoaWallet",
+      "role": "daimon",
+      "layer": 3,
+      "ecosystem": "StoaChain",
+      "org": {
+        "current": "StoaChain",
+        "target": "StoaChain"
+      },
+      "localPath": "StoaChain/daimons/StoaWallet",
+      "localCurrent": "StoaChain/daimons/StoaWallet",
+      "branch": "codex-1.3-reader-widen",
+      "packages": [
+        {
+          "name": "stoawallet",
+          "version": "0.0.0",
+          "private": true
+        }
+      ],
+      "consumes": [
+        "codex"
+      ],
+      "movement": [
+        "review: currently pins @ouronet/* libs via file: — confirm it only needs chain-libs + Codex"
+      ],
+      "status": "active",
+      "notes": "MetaMask-style chrome extension (→ mobile). NATIVE StoaChain only (Stoa + UrStoa). Imports Codex only to bring in StoaChain seeds/accounts. NOT Ouronet."
+    },
+    {
+      "id": "streaming",
+      "name": "Streaming Platform",
+      "role": "daimon",
+      "layer": 3,
+      "ecosystem": "Ouronet",
+      "org": {
+        "current": null,
+        "target": "OuroborosNetwork"
+      },
+      "localPath": "(no repo yet)",
+      "localCurrent": "(no repo yet)",
+      "packages": [],
+      "consumes": [
+        "pythia",
+        "codex"
+      ],
+      "movement": [
+        "NEW: create when built"
+      ],
+      "status": "future",
+      "notes": "Upcoming streaming platform Daimon. No repo presence yet."
+    },
+    {
+      "id": "stoaexplorer",
+      "name": "StoaExplorer",
+      "role": "seer",
+      "layer": 3,
+      "ecosystem": "StoaChain",
+      "org": {
+        "current": "StoaChain",
+        "target": "StoaChain"
+      },
+      "localPath": "StoaChain/seers/StoaExplorer",
+      "localCurrent": "StoaChain/seers/StoaExplorer",
+      "branch": "feature/ouronet-explorer",
+      "packages": [
+        {
+          "name": "backend",
+          "version": "0.0.1",
+          "private": true
+        },
+        {
+          "name": "frontend (stoa)",
+          "version": "0.0.0",
+          "private": true
+        },
+        {
+          "name": "frontend-ouronet",
+          "version": "0.0.0",
+          "private": true
+        }
+      ],
+      "consumes": [
+        "pythia"
+      ],
+      "movement": [
+        "two-Seer monorepo kept as one repo in StoaChain org"
+      ],
+      "status": "active",
+      "notes": "One backend + TWO frontends: frontend-stoa (StoaExplorer Seer) and frontend-ouronet (OuronetExplorer Seer). Deliberate cross-ecosystem straddle."
+    },
+    {
+      "id": "stoalive",
+      "name": "StoaLive",
+      "role": "seer",
+      "layer": 3,
+      "ecosystem": "StoaChain",
+      "org": {
+        "current": "StoaChain",
+        "target": "StoaChain"
+      },
+      "localPath": "StoaChain/seers/StoaLive",
+      "localCurrent": "StoaChain/seers/StoaLive",
+      "packages": [],
+      "consumes": [
+        "pythia"
+      ],
+      "movement": [],
+      "status": "planning",
+      "notes": "Seer — DAG-style visualizer of the tx graph (hash-references between txs, tx sizes). Spec/Phase-0."
+    },
+    {
+      "id": "stoa-chain",
+      "name": "stoa-chain (L1)",
+      "role": "infra",
+      "layer": 0,
+      "ecosystem": "StoaChain",
+      "org": {
+        "current": "StoaChain",
+        "target": "StoaChain"
+      },
+      "localPath": "StoaChain/_infra/stoa-chain",
+      "localCurrent": "StoaChain/_infra/stoa-chain",
+      "branch": "main",
+      "packages": [],
+      "movement": [],
+      "status": "active",
+      "notes": "The chain itself — Haskell fork of chainweb-node. Own build+release lifecycle; not a wasp cascade member."
+    },
+    {
+      "id": "blake3",
+      "name": "Blake3",
+      "role": "infra",
+      "layer": 0,
+      "ecosystem": "StoaChain",
+      "org": {
+        "current": "StoaChain",
+        "target": "StoaChain"
+      },
+      "localPath": "StoaChain/_infra/Blake3",
+      "localCurrent": "StoaChain/_infra/Blake3",
+      "branch": "master",
+      "packages": [],
+      "movement": [
+        "move out of _Archive → Infrastructure/chain"
+      ],
+      "status": "reference",
+      "notes": "StoaChain/Blake3 fork of Crypt0plasm hash functions. Inlined into dalos-crypto at v1.1.0."
+    },
+    {
+      "id": "mining-client",
+      "name": "chainweb-mining-client",
+      "role": "infra",
+      "layer": 0,
+      "ecosystem": "StoaChain",
+      "org": {
+        "current": "kadena-io (fork)",
+        "target": "StoaChain"
+      },
+      "localPath": "StoaChain/_infra/chainweb-mining-client",
+      "localCurrent": "StoaChain/_infra/chainweb-mining-client",
+      "branch": "pool-event-emit",
+      "packages": [],
+      "movement": [
+        "origin still kadena-io upstream; push to 'stoachain' remote only"
+      ],
+      "status": "active",
+      "notes": "Upstream Kadena mining binary, forked. Publishes ghcr.io/stoachain/chainweb-mining-client. Reference / local use."
+    },
+    {
+      "id": "ancientholdings",
+      "name": "AncientHoldings (Hub)",
+      "role": "infra",
+      "layer": 0,
+      "ecosystem": "StoaChain",
+      "org": {
+        "current": "StoaChain",
+        "target": "StoaChain"
+      },
+      "localPath": "StoaChain/_hub/AncientHoldings",
+      "localCurrent": "StoaChain/_hub/AncientHoldings",
+      "branch": "pythia-node-pool",
+      "packages": [
+        {
+          "name": "ancientholdings",
+          "version": "0.6.0",
+          "private": true
+        }
+      ],
+      "movement": [
+        "rename repo: ancientholdings-website → ancientholdings-hub",
+        "local folder stays 'AncientHoldings'"
+      ],
+      "status": "active",
+      "architectureStatus": "Dalos Automaton present by NAME only — not implemented on the Hub yet",
+      "notes": "Operations Hub (Next.js 16). Node/email/pool handler + facilitator; manages StoaChain + foreign-chain nodes over SSH. Will HOST the Dalos Automaton (name-only today). See meta/migration-state-2026-07.md for the Dalos↔Pythia↔Hub redundant-data-path design note. Consumes @stoachain/* + @ancientpantheon/*."
+    },
+    {
+      "id": "stoa-chain-libs",
+      "name": "stoa-chain-libs",
+      "role": "infra",
+      "layer": 1,
+      "ecosystem": "StoaChain",
+      "org": {
+        "current": "StoaChain",
+        "target": "StoaChain"
+      },
+      "localPath": "StoaChain/_infra/stoa-js (pre-split)",
+      "localCurrent": "StoaChain/_infra/stoa-js (pre-split)",
+      "branch": "codex-1.3-reader-widen",
+      "packages": [
+        {
+          "name": "@stoachain/stoa-core",
+          "version": "4.3.6",
+          "private": false
+        },
+        {
+          "name": "@stoachain/kadena-stoic-legacy",
+          "version": "4.3.6",
+          "private": false
+        }
+      ],
+      "movement": [
+        "SPLIT from stoa-js: the chain-level half stays @stoachain/*"
+      ],
+      "status": "active",
+      "notes": "The chain-level libraries. stoa-core deps dalos-crypto + kadena-stoic-legacy. Consumed by everything."
+    },
+    {
+      "id": "ouronet-libs",
+      "name": "ouronet-libs",
+      "role": "infra",
+      "layer": 1,
+      "ecosystem": "Ouronet",
+      "org": {
+        "current": "StoaChain",
+        "target": "OuroborosNetwork"
+      },
+      "localPath": "StoaChain/_infra/stoa-js (pre-split)",
+      "localCurrent": "StoaChain/_infra/stoa-js (pre-split)",
+      "packages": [
+        {
+          "name": "@ouronet/ouronet-core",
+          "version": "4.3.6",
+          "private": false,
+          "was": "@stoachain/ouronet-core"
+        },
+        {
+          "name": "@ouronet/ouronet-codex",
+          "version": "0.5.7",
+          "private": false,
+          "was": "@stoachain/ouronet-codex"
+        }
+      ],
+      "movement": [
+        "SPLIT from stoa-js → new repo",
+        "org: StoaChain → OuroborosNetwork",
+        "scope: @stoachain/* → @ouronet/*",
+        "re-pin every consumer (drive via master-pollinate)"
+      ],
+      "status": "active",
+      "notes": "The Ouronet-level libraries. ouronet-core peer-deps stoa-core + kadena-stoic-legacy. Highest re-pin blast radius of the reorg."
+    },
+    {
+      "id": "dalos-crypto",
+      "name": "dalos-crypto",
+      "role": "infra",
+      "layer": 1,
+      "ecosystem": "Ouronet",
+      "org": {
+        "current": "StoaChain",
+        "target": "OuroborosNetwork"
+      },
+      "localPath": "OuroborosNetwork/_libs/DALOS_Crypto",
+      "localCurrent": "OuroborosNetwork/_libs/DALOS_Crypto",
+      "branch": "main",
+      "packages": [
+        {
+          "name": "@ouronet/dalos-crypto",
+          "version": "4.0.3",
+          "private": false,
+          "was": "@stoachain/dalos-crypto"
+        }
+      ],
+      "movement": [
+        "rename repo: DALOS_Crypto → dalos-crypto",
+        "org: StoaChain → OuroborosNetwork",
+        "scope: @stoachain → @ouronet"
+      ],
+      "status": "active",
+      "notes": "Ouronet custom 1606-bit Twisted Edwards curve + Schnorr. Go Genesis frozen at v1.0.0; TS port is @ouronet/dalos-crypto. Independent v4.x line."
+    },
+    {
+      "id": "ouronet-pact",
+      "name": "ouronet-pact",
+      "role": "infra",
+      "layer": 0,
+      "ecosystem": "Ouronet",
+      "org": {
+        "current": "StoaChain",
+        "target": "OuroborosNetwork"
+      },
+      "localPath": "OuroborosNetwork/_onchain/Ouronet",
+      "localCurrent": "OuroborosNetwork/_onchain/Ouronet",
+      "branch": "main",
+      "packages": [],
+      "movement": [
+        "rename repo: Ouronet → ouronet-pact",
+        "org: StoaChain → OuroborosNetwork",
+        "move out of _Archive"
+      ],
+      "status": "active",
+      "notes": "On-chain DeFi primitives (Pact): SOVEREIGN/SLAVE modules, batch-mint-into-aqp, redeem, warmup-attest. The DeFi layer's on-chain half."
+    },
+    {
+      "id": "stoa-website",
+      "name": "stoa-website",
+      "role": "website",
+      "layer": 3,
+      "ecosystem": "StoaChain",
+      "org": {
+        "current": "StoaChain",
+        "target": "StoaChain"
+      },
+      "localPath": "StoaChain/websites/stoa-website",
+      "localCurrent": "StoaChain/websites/stoa-website",
+      "branch": "master",
+      "packages": [],
+      "movement": [],
+      "status": "active",
+      "notes": "StoaChain marketing site (Vite+React+Three/Vanta). Live: stoachain.com"
+    },
+    {
+      "id": "stoachain-docs",
+      "name": "StoaChain-Docs",
+      "role": "website",
+      "layer": 3,
+      "ecosystem": "StoaChain",
+      "org": {
+        "current": "StoaChain",
+        "target": "StoaChain"
+      },
+      "localPath": "StoaChain/websites/StoaChain-Docs",
+      "localCurrent": "StoaChain/websites/StoaChain-Docs",
+      "branch": "master",
+      "packages": [],
+      "movement": [],
+      "status": "active",
+      "notes": "StoaChain public documentation."
+    },
+    {
+      "id": "ouroscan",
+      "name": "Ouroscan",
+      "role": "website",
+      "layer": 3,
+      "ecosystem": "Ouronet",
+      "org": {
+        "current": "OuroborosNetwork",
+        "target": "OuroborosNetwork"
+      },
+      "localPath": "OuroborosNetwork/websites/Ouroscan",
+      "localCurrent": "OuroborosNetwork/websites/Ouroscan",
+      "branch": "main",
+      "packages": [
+        {
+          "name": "ouroscan",
+          "version": "0.0.0",
+          "private": true
+        }
+      ],
+      "movement": [],
+      "status": "active",
+      "notes": "RWA-tokenization (ESDA) presentation site for Ouronet DeFi on StoaChain. Website only — distinct from OuronetExplorer. Live: ouroscan.io"
+    },
+    {
+      "id": "ouronet-website",
+      "name": "ouronetwork-website",
+      "role": "website",
+      "layer": 3,
+      "ecosystem": "Ouronet",
+      "org": {
+        "current": "OuroborosNetwork",
+        "target": "OuroborosNetwork"
+      },
+      "localPath": "OuroborosNetwork/websites/ouronetwork-website",
+      "localCurrent": "OuroborosNetwork/websites/ouronetwork-website",
+      "branch": "master",
+      "packages": [
+        {
+          "name": "coindox-react",
+          "version": "0.0.0",
+          "private": true
+        }
+      ],
+      "movement": [],
+      "status": "active",
+      "notes": "Ouronet marketing website. Live: ouro.network"
+    },
+    {
+      "id": "pantheon-site",
+      "name": "Pantheon",
+      "role": "website",
+      "layer": 3,
+      "ecosystem": "Pantheon",
+      "org": {
+        "current": "AncientPantheon",
+        "target": "AncientPantheon"
+      },
+      "localPath": "AncientPantheon/websites/Pantheon",
+      "localCurrent": "AncientPantheon/websites/Pantheon",
+      "branch": "main",
+      "packages": [
+        {
+          "name": "pantheon-site",
+          "version": "0.1.0",
+          "private": true
+        }
+      ],
+      "movement": [],
+      "status": "active",
+      "notes": "Ancient Pantheon aggregator site (Next.js static export). Live: pantheon.ancientholdings.eu"
+    },
+    {
+      "id": "zarlo",
+      "name": "Zarlo",
+      "role": "client",
+      "layer": 3,
+      "ecosystem": "Clients",
+      "org": {
+        "current": null,
+        "target": "AncientClients"
+      },
+      "localPath": "AncientClients/Zarlo",
+      "localCurrent": "AncientClients/Zarlo",
+      "packages": [],
+      "movement": [
+        "NEW remote: create github.com/AncientClients/Zarlo (none yet)"
+      ],
+      "status": "wip",
+      "notes": "First client project. No remote yet. Port 4001 reserved in LocalHost."
+    },
+    {
+      "id": "claudstermind",
+      "name": "Claudstermind",
+      "role": "orchestrator",
+      "layer": 4,
+      "ecosystem": "Meta",
+      "org": {
+        "current": "AncientHodler-Demiurg",
+        "target": "AncientHodler-Demiurg"
+      },
+      "localPath": "Claudstermind",
+      "localCurrent": "Claudstermind",
+      "branch": "main",
+      "packages": [],
+      "movement": [
+        "hosts this dashboard + the master-graph"
+      ],
+      "status": "active",
+      "notes": "The overseer / brain. Holds the cluster registry, cluster-map, master-graph, and this dashboard. Sits at root."
+    },
+    {
+      "id": "wasp-dev",
+      "name": "wasp-dev",
+      "role": "tool",
+      "layer": 4,
+      "ecosystem": "Meta",
+      "org": {
+        "current": "AncientHodler-Demiurg",
+        "target": "AncientHodler-Demiurg"
+      },
+      "localPath": "Tools/wasp-dev",
+      "localCurrent": "Tools/wasp-dev",
+      "branch": "main",
+      "packages": [],
+      "movement": [
+        "implements /wasp:master-pollinate (v1.5.0, 2026-07-14)"
+      ],
+      "status": "active",
+      "notes": "The wasp/bee plugin fork. Home of /wasp:pollinate, /wasp:cross-pollinate, and /wasp:master-pollinate (tier-1 suite cascade, added v1.5.0)."
+    },
+    {
+      "id": "localhost",
+      "name": "LocalHost",
+      "role": "tool",
+      "layer": 4,
+      "ecosystem": "Meta",
+      "org": {
+        "current": "AncientHodler-Demiurg",
+        "target": "AncientHodler-Demiurg"
+      },
+      "localPath": "LocalHost",
+      "localCurrent": "LocalHost",
+      "branch": "main",
+      "packages": [
+        {
+          "name": "localhost-aggregator",
+          "version": "1.0.0",
+          "private": true
+        }
+      ],
+      "movement": [
+        "serves this dashboard"
+      ],
+      "status": "active",
+      "notes": "Central port registry + control panel for every _Claude localhost site."
+    },
+    {
+      "id": "ancientwisdom",
+      "name": "AncientWisdom",
+      "role": "tool",
+      "layer": 4,
+      "ecosystem": "Meta",
+      "org": {
+        "current": "AncientHodler-Demiurg",
+        "target": "AncientHodler-Demiurg"
+      },
+      "localPath": "Tools/AncientWisdom",
+      "localCurrent": "Tools/AncientWisdom",
+      "branch": "main",
+      "packages": [],
+      "movement": [],
+      "status": "active",
+      "notes": "Tooling / knowledge utility."
+    },
+    {
+      "id": "ouroborosfont",
+      "name": "OuroborosFont",
+      "role": "media",
+      "layer": 4,
+      "ecosystem": "Meta",
+      "org": {
+        "current": null,
+        "target": "AncientHodler-Demiurg"
+      },
+      "localPath": "Media/OuroborosFont",
+      "localCurrent": "Media/OuroborosFont",
+      "packages": [],
+      "movement": [
+        "no product remote; iosevka-src is upstream"
+      ],
+      "status": "active",
+      "notes": "Font work (Iosevka-based). Media project."
+    }
+  ],
+  "edges": [
+    {
+      "from": "@ouronet/dalos-crypto",
+      "to": "@stoachain/stoa-core",
+      "field": "dependencies",
+      "cross": true
+    },
+    {
+      "from": "@stoachain/kadena-stoic-legacy",
+      "to": "@stoachain/stoa-core",
+      "field": "peerDependencies",
+      "cross": false
+    },
+    {
+      "from": "@stoachain/kadena-stoic-legacy",
+      "to": "@ouronet/ouronet-core",
+      "field": "peerDependencies",
+      "cross": true
+    },
+    {
+      "from": "@stoachain/stoa-core",
+      "to": "@ouronet/ouronet-core",
+      "field": "peerDependencies",
+      "cross": true
+    },
+    {
+      "from": "@ouronet/ouronet-core",
+      "to": "@ouronet/ouronet-codex",
+      "field": "peerDependencies",
+      "cross": false
+    },
+    {
+      "from": "@ouronet/dalos-crypto",
+      "to": "@ouronet/ouronet-codex",
+      "field": "peerDependencies",
+      "cross": false
+    },
+    {
+      "from": "@stoachain/stoa-core",
+      "to": "@ancientpantheon/codex",
+      "field": "peerDependencies",
+      "cross": true
+    },
+    {
+      "from": "@ouronet/ouronet-core",
+      "to": "@ancientpantheon/codex",
+      "field": "peerDependencies",
+      "cross": true
+    },
+    {
+      "from": "@ouronet/dalos-crypto",
+      "to": "@ancientpantheon/codex",
+      "field": "peerDependencies",
+      "cross": true
+    },
+    {
+      "from": "@ancientpantheon/pythia-client",
+      "to": "OuronetUI",
+      "field": "role:daimon",
+      "cross": true
+    },
+    {
+      "from": "@ancientpantheon/codex",
+      "to": "OuronetUI",
+      "field": "role:daimon",
+      "cross": true
+    },
+    {
+      "from": "@ancientpantheon/pythia-client",
+      "to": "Caduceus",
+      "field": "role:automaton",
+      "cross": false
+    },
+    {
+      "from": "@ancientpantheon/codex",
+      "to": "Caduceus",
+      "field": "role:automaton",
+      "cross": false
+    },
+    {
+      "from": "@ancientpantheon/khronoton-core",
+      "to": "Caduceus",
+      "field": "role:automaton",
+      "cross": false
+    },
+    {
+      "from": "@ancientpantheon/pythia-client",
+      "to": "StoaExplorer",
+      "field": "role:seer",
+      "cross": true
+    },
+    {
+      "from": "@ancientpantheon/pythia-client",
+      "to": "Mnemosyne",
+      "field": "role:automaton",
+      "cross": false
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "claudstermind-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Visual map of everything under Ancient Holdings — orgs, Pantheonic roles, dependency graph, versions, and proposed movements. Served via the LocalHost aggregator.",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node server.mjs"
+  },
+  "dependencies": {
+    "jose": "^5.10.0"
+  }
+}

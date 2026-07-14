@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Claudstermind — Master Map</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body data-theme="dark">
+  <header class="top">
+    <div class="brand">
+      <span class="star">★</span>
+      <div>
+        <h1>Claudstermind</h1>
+        <p class="sub">Master map of everything under <b>Ancient Holdings</b></p>
+      </div>
+    </div>
+    <div class="top-right">
+      <span class="model-pill" id="modelPill">model: —</span>
+      <span class="model-pill" id="genPill">—</span>
+      <span class="model-pill" id="authPill" hidden>—</span>
+      <button id="themeBtn" class="ghost" title="Toggle theme">◐</button>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button data-view="overview" class="active">Overview</button>
+    <button data-view="tree">Map</button>
+    <button data-view="matrix">Org × Role</button>
+    <button data-view="graph">Dependency graph</button>
+    <button data-view="movements">Movements</button>
+    <button data-view="packages">Packages</button>
+    <button data-view="cascade">Cascade</button>
+    <button data-view="tokens">Tokens</button>
+    <button data-view="brain">Brain</button>
+    <button data-view="ops" id="tabOps">Ops</button>
+  </nav>
+
+  <main id="main">
+    <section id="statbar" class="statbar"></section>
+    <section id="view" class="view"></section>
+  </main>
+
+  <div id="tooltip" class="tooltip" hidden></div>
+
+  <footer class="foot">
+    <span id="legend" class="legend"></span>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
