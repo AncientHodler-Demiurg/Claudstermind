@@ -112,7 +112,9 @@ function render() {
   // has already torn out of the document, and throws on every tick forever after.
   if (VIEW !== "cascade" && CASCADE_TIMER) { clearInterval(CASCADE_TIMER); CASCADE_TIMER = null; }
   if (VIEW !== "ops" && OPS_TIMER) { clearInterval(OPS_TIMER); OPS_TIMER = null; }
+  if (VIEW !== "git" && GIT_TIMER) { clearInterval(GIT_TIMER); GIT_TIMER = null; }
   if (VIEW === "cascade") v.replaceChildren(viewCascade());
+  else if (VIEW === "git") v.replaceChildren(viewGit());
   else if (VIEW === "overview") v.replaceChildren(viewOverview());
   else if (VIEW === "matrix") v.replaceChildren(viewMatrix());
   else if (VIEW === "graph") v.replaceChildren(viewGraph());
@@ -453,6 +455,133 @@ function viewCascade() {
       el("code", {}, [".wasp"]),
       " state files — so a run an agent started in a terminal shows here exactly like one fired from Ops. Polls every 2s.",
     ]),
+    box,
+  ]);
+}
+
+/* ---------- git state: uncommitted + unpushed, per repo ----------
+   The question this answers: across dozens of repos, what have I NOT saved? Two
+   distinct hazards, coloured distinctly:
+     • never-pushed branch  → RED    (work that exists ONLY on this disk — the scariest)
+     • unpushed commits     → BLUE   (committed, but not on the remote yet)
+     • uncommitted changes  → AMBER  (dirty working tree)
+   A full sweep spawns a git process per repo (~3-4s), so this does NOT poll fast:
+   it loads on open, offers a manual refresh, and re-checks every 25s. */
+let GIT_TIMER = null;
+const GIT_COLOR = { never: "#f87171", unpushed: "#60a5fa", dirty: "#fbbf24", clean: "#34d399" };
+
+function badge(text, color, title) {
+  return el("span", {
+    title: title || "",
+    style: `display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;margin:2px 4px 2px 0;` +
+      `color:${color};border:1px solid ${color}55;background:${color}18`,
+  }, [text]);
+}
+
+function gitRepoCard(r) {
+  const u = r.uncommitted, s = r.summary;
+  const badges = [];
+
+  // never-pushed first — loudest.
+  for (const b of s.neverPushedBranches) {
+    badges.push(badge(`⚠ ${b}: never pushed`, GIT_COLOR.never, "This branch exists only on your disk — no remote copy at all."));
+  }
+  for (const b of s.aheadBranches) {
+    badges.push(badge(`↑ ${b.name}: ${b.ahead} unpushed`, GIT_COLOR.unpushed, "Commits that exist locally but not on the remote."));
+  }
+  if (s.dirty) {
+    const parts = [];
+    if (u.staged) parts.push(`${u.staged} staged`);
+    if (u.unstaged) parts.push(`${u.unstaged} unstaged`);
+    if (u.untracked) parts.push(`${u.untracked} untracked`);
+    if (u.conflicted) parts.push(`${u.conflicted} conflicted`);
+    badges.push(badge(`✎ ${u.total} uncommitted`, GIT_COLOR.dirty, parts.join(" · ")));
+  }
+  for (const b of s.behindBranches) {
+    badges.push(badge(`↓ ${b.name}: ${b.behind} behind`, "#a78bfa", "The remote has commits you don't — a pull would fetch them."));
+  }
+
+  // the dirty file list, tucked behind a details toggle so the card stays scannable.
+  const fileList = s.dirty && u.files.length
+    ? el("details", { style: "margin-top:6px" }, [
+        el("summary", { class: "hint", style: "cursor:pointer" }, [`show ${u.total} changed file${u.total > 1 ? "s" : ""}`]),
+        el("div", { style: "font-family:ui-monospace,monospace;font-size:11px;color:var(--ink-dim);padding-top:5px;white-space:pre-wrap;max-height:220px;overflow:auto" },
+          [u.files.join("\n") + (u.total > u.files.length ? `\n… +${u.total - u.files.length} more` : "")]),
+      ])
+    : null;
+
+  const bar = s.dirty ? GIT_COLOR.dirty : s.neverPushedBranches.length ? GIT_COLOR.never : GIT_COLOR.unpushed;
+  return el("div", { class: "orgcard", style: `padding:10px;margin-bottom:8px;border-left:3px solid ${bar}` }, [
+    el("div", { class: "desc" }, [
+      el("b", {}, [r.name]),
+      el("span", { class: "ver" }, [`  ${r.localPath}  ·  on ${r.branch}`]),
+    ]),
+    el("div", { style: "margin-top:4px" }, badges),
+    ...(fileList ? [fileList] : []),
+  ]);
+}
+
+function viewGit() {
+  if (GIT_TIMER) { clearInterval(GIT_TIMER); GIT_TIMER = null; }
+  const box = el("div", { id: "gitBox" }, [el("div", { class: "hint" }, ["Scanning every tracked repo (git status + push state)…"])]);
+  const refreshBtn = el("button", { class: "ghost" }, ["↻ Rescan"]);
+
+  async function refresh(force) {
+    if (force) box.replaceChildren(el("div", { class: "hint" }, ["Rescanning…"]));
+    let d;
+    try { d = await (await fetch("/api/git" + (force ? "?refresh=1" : ""))).json(); }
+    catch (e) { return box.replaceChildren(el("div", { class: "hint" }, [`Could not reach the server: ${e}`])); }
+    if (d.error) return box.replaceChildren(el("div", { class: "movecard", style: `border-color:${GIT_COLOR.never}` }, [String(d.error)]));
+
+    const t = d.totals || {};
+    const attention = d.repos.filter((r) => r.summary.attention);
+    const clean = d.repos.filter((r) => !r.summary.attention);
+
+    const head = el("div", { class: "statbar" }, [
+      el("div", { class: "stat" }, [el("div", { class: "n" }, [String(t.repos || 0)]), el("div", { class: "l" }, ["tracked repos"])]),
+      el("div", { class: "stat" }, [el("div", { class: "n", style: `color:${t.needAttention ? GIT_COLOR.dirty : GIT_COLOR.clean}` }, [String(t.needAttention || 0)]), el("div", { class: "l" }, ["need attention"])]),
+      el("div", { class: "stat" }, [el("div", { class: "n", style: `color:${t.neverPushedBranches ? GIT_COLOR.never : "inherit"}` }, [String(t.neverPushedBranches || 0)]), el("div", { class: "l" }, ["never-pushed branches"])]),
+      el("div", { class: "stat" }, [el("div", { class: "n", style: `color:${t.withUnpushed ? GIT_COLOR.unpushed : "inherit"}` }, [String(t.withUnpushed || 0)]), el("div", { class: "l" }, ["repos with unpushed"])]),
+      el("div", { class: "stat" }, [el("div", { class: "n", style: `color:${t.dirty ? GIT_COLOR.dirty : "inherit"}` }, [String(t.dirty || 0)]), el("div", { class: "l" }, ["dirty working trees"])]),
+    ]);
+
+    const kids = [head];
+    if (d.cachedAgeMs > 500) kids.push(el("div", { class: "hint" }, [`as of ${Math.round(d.cachedAgeMs / 1000)}s ago · click Rescan to refresh`]));
+
+    if (attention.length) {
+      kids.push(el("h3", { style: "margin:14px 0 6px" }, [`Needs attention (${attention.length})`]));
+      kids.push(...attention.map(gitRepoCard));
+    } else {
+      kids.push(el("div", { class: "movecard", style: `border-color:${GIT_COLOR.clean}` }, [
+        el("b", { style: `color:${GIT_COLOR.clean}` }, ["✓ Everything is committed and pushed"]),
+      ]));
+    }
+    if (clean.length) {
+      kids.push(el("details", { style: "margin-top:10px" }, [
+        el("summary", { class: "hint", style: "cursor:pointer" }, [`${clean.length} clean repo${clean.length > 1 ? "s" : ""} (committed + pushed)`]),
+        el("div", { style: "padding-top:6px" }, clean.map((r) =>
+          el("div", { class: "repo" }, [
+            el("span", { class: "glyph", style: `color:${GIT_COLOR.clean}` }, ["✓"]),
+            el("span", { class: "rn" }, [r.name]),
+            el("span", { class: "ver" }, [`  ${r.branch}`]),
+          ]))),
+      ]));
+    }
+    box.replaceChildren(...kids);
+  }
+
+  refreshBtn.addEventListener("click", () => refresh(true));
+  refresh(false);
+  GIT_TIMER = setInterval(() => refresh(false), 25000);
+
+  return el("div", {}, [
+    el("div", { class: "hint" }, [
+      "Across every tracked repo: what is ", el("b", { style: `color:${GIT_COLOR.dirty}` }, ["uncommitted"]),
+      ", what is ", el("b", { style: `color:${GIT_COLOR.unpushed}` }, ["committed but not pushed"]),
+      ", and — loudest — any ", el("b", { style: `color:${GIT_COLOR.never}` }, ["branch that lives only on this disk"]),
+      ". Local git only, so it's a snapshot of what your machine knows.",
+    ]),
+    el("div", { class: "graph-controls" }, [refreshBtn]),
     box,
   ]);
 }

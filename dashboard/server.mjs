@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import { readActivity, readLastBackup } from "../orchestrator/activity.mjs";
 import { listArchives } from "../orchestrator/archives.mjs";
 import { readCascade } from "../lib/cascade.mjs";
+import { allReposGitStatus } from "../lib/gitStatus.mjs";
 import { readOidcConfig } from "./auth/oidcConfig.mjs";
 import { handleAuthRoute, guard, denyPage } from "./auth/routes.mjs";
 
@@ -35,6 +36,12 @@ const FALLBACK_PORT = 3020;
 
 // Throws on a half-set OIDC env — a typo'd var must not silently boot an open server.
 const OIDC = readOidcConfig();
+
+// The git sweep is the one expensive endpoint (spawns a git process per repo), so a
+// short cache keeps a chatty UI from re-sweeping every few seconds. `?refresh=1` busts it.
+const GIT_TTL_MS = 8000;
+const GIT_CACHE = { at: 0, data: null };
+const nowMs = () => Date.now();
 
 function resolvePort() {
   try {
@@ -184,6 +191,25 @@ const handler = async (req, res) => {
     res.setHeader("cache-control", "no-store");
     try { return sendJSON(res, 200, readCascade(MASTER_ROOT)); }
     catch (e) { return sendJSON(res, 200, { running: false, everRun: false, error: String(e), workspaces: [], repos: [], master: null }); }
+  }
+
+  // ---- git: per-repo uncommitted + unpushed, across every tracked repo ----
+  // A full sweep spawns ~90 git processes (~2-3s), so cache it briefly; `?refresh=1`
+  // forces a fresh sweep for the UI's manual refresh button.
+  if (path === "/api/git") {
+    const fresh = url.searchParams.get("refresh") === "1";
+    const now = nowMs();
+    if (!fresh && GIT_CACHE.at && now - GIT_CACHE.at < GIT_TTL_MS) {
+      return sendJSON(res, 200, { ...GIT_CACHE.data, cachedAgeMs: now - GIT_CACHE.at });
+    }
+    try {
+      const map = JSON.parse(await readFileAsync(join(DATA_DIR, "map.json"), "utf8"));
+      const data = allReposGitStatus(map.repos || [], MASTER_ROOT);
+      GIT_CACHE.at = now; GIT_CACHE.data = data;
+      return sendJSON(res, 200, { ...data, cachedAgeMs: 0 });
+    } catch (e) {
+      return sendJSON(res, 200, { repos: [], totals: {}, error: String(e) });
+    }
   }
 
   // ---- backups: the dated archives on X: ----
