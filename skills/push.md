@@ -57,14 +57,14 @@ Auto-generate a summary from the diff. Format:
 Claudstermind update YYYY-MM-DD
 
 <terse summary of what changed, grouped by top-level folder>
-- projects/<Name>: <short change list>
+- brain/<Name>: <short change list>
 - meta/…: <short change list>
 - skills/…: <short change list>
 ```
 
 Examples:
-- `Claudstermind update 2026-04-22\n\n- projects/AncientHoldings: LOG +2 entries, STATE refreshed to 0.7.6p-dev\n- meta/shared-conventions.md: added Rule zero (continuous write-back)`
-- `Claudstermind update 2026-04-22\n\n- projects/OuronetCore: initial onboarding (add-project run)\n- MANIFEST.md: +OuronetCore linked`
+- `Claudstermind update 2026-04-22\n\n- brain/AncientHoldings: LOG +2 entries, STATE refreshed to 0.7.6p-dev\n- meta/shared-conventions.md: added Rule zero (continuous write-back)`
+- `Claudstermind update 2026-04-22\n\n- brain/OuronetCore: initial onboarding (add-project run)\n- MANIFEST.md: +OuronetCore linked`
 
 Do NOT invent detail the diff doesn't support. If you can't produce a meaningful summary, fall back to `Claudstermind update YYYY-MM-DD — <N> files changed across <M> projects`.
 
@@ -92,7 +92,7 @@ If anything matches, **abort immediately** — something leaked past the `.gitig
 git -C D:/_Claude/Claudstermind commit -m "$(cat <<'EOF'
 Claudstermind update 2026-04-22
 
-- projects/AncientHoldings: LOG +2 entries, STATE refreshed to 0.7.6p-dev
+- brain/AncientHoldings: LOG +2 entries, STATE refreshed to 0.7.6p-dev
 - meta/shared-conventions.md: added Rule zero (continuous write-back)
 EOF
 )"

@@ -24,10 +24,10 @@ The agent does not guess. If an answer requires sibling data, the agent either r
 1. Identify the sibling project from the question.
 2. Check [`../MANIFEST.md`](../MANIFEST.md) — is it linked? If not, tell the owner — the cluster doesn't have context on it yet.
 3. If linked, read **fresh from disk**:
-   - `../projects/<SiblingProject>/STATE.md` — current state
-   - `../projects/<SiblingProject>/LEARNINGS.md` — full (not just last few)
-   - `../projects/<SiblingProject>/ARCHITECTURE.md` — if the question is architectural
-   - The last 5 entries of `../projects/<SiblingProject>/LOG.md`
+   - `../brain/<SiblingProject>/STATE.md` — current state
+   - `../brain/<SiblingProject>/LEARNINGS.md` — full (not just last few)
+   - `../brain/<SiblingProject>/ARCHITECTURE.md` — if the question is architectural
+   - The last 5 entries of `../brain/<SiblingProject>/LOG.md`
 4. If the question touches *structural* parts of the sibling project (not just knowledge), read the sibling repo directly too — the Claudstermind knowledge base describes intent + state, but the repo is truth.
 5. Answer with the cross-project view.
 6. If this cross-project interaction surfaced a fact that's relevant to **both** projects, promote it to `../meta/shared-facts.md` or `../meta/cluster-map.md` per the normal continuous-write-back rule.

@@ -8,7 +8,7 @@ Each project on the owner's dev box (AncientHoldings hub, StoaChain node, Ourone
 
 Instead of duplicating that knowledge base inside every project's repo, Claudstermind holds all of them in one place:
 
-- **`projects/<name>/`** — one folder per linked project, containing that project's onboarding + state + architecture + conventions
+- **`brain/<name>/`** — one folder per linked project, containing that project's onboarding + state + architecture + conventions
 - **`meta/`** — facts and conventions that are *cluster-wide* (true across multiple projects), so they live once, not N times
 - **`skills/`** — step-by-step recipes a Claude agent follows for cluster operations (load the cluster, add a project, close a session)
 - **`MANIFEST.md`** — the registry that tells any agent which projects are in the cluster, where they live on disk, and how they relate
@@ -28,8 +28,8 @@ A Claude agent working in a linked project **must** update Claudstermind continu
 
 | Trigger in the conversation | What Claude writes, same turn |
 | --------------------------- | ----------------------------- |
-| Owner shares a non-obvious fact, preference, constraint, or correction | Append a new entry to `projects/<ThisProject>/LEARNINGS.md` |
-| A piece of work lands (feature, fix, refactor, successful typecheck + commit) | Refresh `projects/<ThisProject>/STATE.md` (overwrite the relevant sections, not append) |
+| Owner shares a non-obvious fact, preference, constraint, or correction | Append a new entry to `brain/<ThisProject>/LEARNINGS.md` |
+| A piece of work lands (feature, fix, refactor, successful typecheck + commit) | Refresh `brain/<ThisProject>/STATE.md` (overwrite the relevant sections, not append) |
 | Owner corrects Claude's approach ("no, don't do X", "always do Y") | Append to LEARNINGS **and** — if the correction applies beyond this project — promote to `meta/shared-conventions.md` or `meta/shared-facts.md` |
 | A cross-project fact surfaces (affects ≥2 linked projects) | Add to `meta/shared-facts.md` immediately; link from the project's LEARNINGS |
 | Owner says "stop / done / pick this up later" or the conversation is clearly ending | Append a LOG.md entry summarising the session; re-verify STATE.md reflects reality |
@@ -59,7 +59,7 @@ You're working in a project that isn't in Claudstermind yet. You tell Claude:
 
 > Read `../Claudstermind/README.md` and add this project to Claudstermind.
 
-Claude follows [`skills/add-project.md`](skills/add-project.md): inspects the project (reads its CLAUDE.md, git log, package.json, key source files), copies `projects/_TEMPLATE/` into `projects/<name>/`, fills in the facts it gathered, asks clarifying questions only where it can't infer, updates MANIFEST.md, and adds a one-line pointer to the project's CLAUDE.md so future sessions know the cluster exists.
+Claude follows [`skills/add-project.md`](skills/add-project.md): inspects the project (reads its CLAUDE.md, git log, package.json, key source files), copies `brain/_TEMPLATE/` into `brain/<name>/`, fills in the facts it gathered, asks clarifying questions only where it can't infer, updates MANIFEST.md, and adds a one-line pointer to the project's CLAUDE.md so future sessions know the cluster exists.
 
 ### Flow 3 — Cross-cluster reasoning
 
@@ -101,8 +101,8 @@ Also accepted (less preferred, slower to type): the prose forms *"sync Claudster
 
 These happen automatically via [§Operating mode](#operating-mode--continuous-write-back-mandatory) — **no explicit trigger needed, ever**:
 
-- Appending to `projects/<ThisProject>/LEARNINGS.md` when you share a non-obvious fact or correction
-- Refreshing `projects/<ThisProject>/STATE.md` when work lands
+- Appending to `brain/<ThisProject>/LEARNINGS.md` when you share a non-obvious fact or correction
+- Refreshing `brain/<ThisProject>/STATE.md` when work lands
 - Appending to `LOG.md` when a session wraps
 - Promoting cluster-relevant facts to `meta/shared-facts.md`
 - Updating `MANIFEST.md` when a project's status changes
@@ -123,7 +123,7 @@ D:/_Claude/
 │   ├── README.md              ← you are here
 │   ├── MANIFEST.md
 │   ├── meta/
-│   ├── projects/
+│   ├── brain/
 │   └── skills/
 └── …
 ```

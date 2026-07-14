@@ -25,7 +25,7 @@ Read in this order:
 
 ### 3. Read this project's knowledge base
 
-Under `../projects/<ThisProject>/`:
+Under `../brain/<ThisProject>/`:
 
 1. **`ONBOARDING.md`** — the durable orientation (who / what / critical context)
 2. **`STATE.md`** — **most recent** session-close snapshot; authoritative for current version + in-flight work + open questions

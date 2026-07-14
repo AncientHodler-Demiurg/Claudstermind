@@ -59,8 +59,8 @@ Only `Read` files whose mtime is newer than the baseline. Skip everything else.
 
 ```
 ::cmsync →
-- projects/StoaChain/STATE.md  updated (v0.3.2; 1 new outstanding item)
-- projects/StoaChain/LOG.md    +1 entry (chainweb fork upstream merge)
+- brain/StoaChain/STATE.md  updated (v0.3.2; 1 new outstanding item)
+- brain/StoaChain/LOG.md    +1 entry (chainweb fork upstream merge)
 - meta/shared-facts.md         +1 section (gas schedule refinement for chain 0)
 
 No changes: AncientHoldings, OuronetCore, OuronetUI, MANIFEST.md
@@ -78,10 +78,10 @@ All `.md` files under `D:/_Claude/Claudstermind/`:
 
 - Top-level: `README.md`, `MANIFEST.md`
 - `meta/*.md` — shared facts, conventions, glossary, cluster-map
-- `projects/*/STATE.md`, `LEARNINGS.md`, `LOG.md` — the living files
-- `projects/*/ONBOARDING.md`, `ARCHITECTURE.md`, `CONVENTIONS.md` — less frequent but scan anyway
+- `brain/*/STATE.md`, `LEARNINGS.md`, `LOG.md` — the living files
+- `brain/*/ONBOARDING.md`, `ARCHITECTURE.md`, `CONVENTIONS.md` — less frequent but scan anyway
 
-Skip `projects/_TEMPLATE/*` — that's template content, doesn't change in normal operation.
+Skip `brain/_TEMPLATE/*` — that's template content, doesn't change in normal operation.
 
 ## Edge cases
 

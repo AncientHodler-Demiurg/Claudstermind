@@ -23,7 +23,7 @@ Scan every response for these. If any triggered, write before sending the respon
 
 **Examples:** "we always use foo over bar because …", "don't do X; it burned us last quarter", "use DuckDNS not the raw IP", "never use window.confirm", "I want terse responses."
 
-**Action:** Append a new entry to `projects/<ThisProject>/LEARNINGS.md`:
+**Action:** Append a new entry to `brain/<ThisProject>/LEARNINGS.md`:
 
 ```markdown
 ### <short fact or rule>
@@ -39,7 +39,7 @@ Do not overwrite existing entries. If the new fact refines an older one, leave t
 
 **Examples:** feature shipped, bug fixed, refactor complete, typecheck green, tests green, commit made.
 
-**Action:** Overwrite the relevant sections of `projects/<ThisProject>/STATE.md`. Always update:
+**Action:** Overwrite the relevant sections of `brain/<ThisProject>/STATE.md`. Always update:
 - `Version at close` — from `lib/version.ts` (or equivalent)
 - `Last session (YYYY-MM-DD)` — one sentence about what just landed
 - `Known outstanding` — remove items that are now done, add new ones if this session surfaced them

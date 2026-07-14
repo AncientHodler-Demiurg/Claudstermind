@@ -42,7 +42,7 @@ Max 3 questions. Batch them. Then proceed.
 Copy the template structure:
 
 ```
-../projects/_TEMPLATE/  →  ../projects/<ProjectName>/
+../brain/_TEMPLATE/  →  ../brain/<ProjectName>/
 ```
 
 Fill in each file:
@@ -75,7 +75,7 @@ This project is linked to Claudstermind at `../Claudstermind/`. Run the cluster-
 See [`../Claudstermind/skills/load-cluster.md`](../Claudstermind/skills/load-cluster.md) for the full procedure. Claudstermind holds this project's onboarding, current state, and accumulated learnings — always check there before re-briefing Claude.
 ```
 
-If the project already has an older `docs/CLAUDE_ONBOARDING.md`, leave it but add a one-line pointer at the top: *"This onboarding is now superseded by `../Claudstermind/projects/<Name>/` — the version here may lag."* We don't delete it; Claudstermind is still young and the owner may want to roll back.
+If the project already has an older `docs/CLAUDE_ONBOARDING.md`, leave it but add a one-line pointer at the top: *"This onboarding is now superseded by `../Claudstermind/brain/<Name>/` — the version here may lag."* We don't delete it; Claudstermind is still young and the owner may want to roll back.
 
 ### 7. Promote any cluster-relevant facts
 
@@ -85,7 +85,7 @@ Walk through the new project's gathered facts: anything that's already relevant 
 
 ```
 Added <project> to Claudstermind.
-Knowledge base: projects/<Name>/ (ONBOARDING, STATE, ARCHITECTURE, CONVENTIONS, LEARNINGS, LOG).
+Knowledge base: brain/<Name>/ (ONBOARDING, STATE, ARCHITECTURE, CONVENTIONS, LEARNINGS, LOG).
 Hooked: <Name>/CLAUDE.md now points to Claudstermind.
 Promoted: <list of facts moved to meta/shared-facts.md, or "none">.
 Ready.

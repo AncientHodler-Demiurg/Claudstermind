@@ -1,0 +1,12 @@
+{
+  "2026-07-14": {
+    "kb": 441749,
+    "changes": 1,
+    "repos": [
+      "AncientPantheon/constructors/Pythia"
+    ],
+    "commits": [
+      "feat(admin): dedicated /admin dashboard + admin-managed verifier registry"
+    ]
+  }
+}
