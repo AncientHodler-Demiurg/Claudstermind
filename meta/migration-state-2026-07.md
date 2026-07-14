@@ -2,6 +2,18 @@
 
 > Live status of the org/folder reorg and what is *actually* built vs. named. Read this before assuming a repo matches its target architecture. Updated as the reorg proceeds.
 
+## Pre-Phase-4 landing (2026-07-15)
+
+The codex 1.2→1.3 migration — the stated Phase-4 blocker — is **landed, pushed, green**:
+- `stoa-js` main ← codex-1.3 reader-widen (D1) + writer-flip (D2), merged `dcc13c3`. Reader accepts {1.2,1.3} BEFORE the writer emits 1.3 (the code flags the inverse as funds-loss). Full suite green (2,100 tests). Pushed.
+- `StoaWallet` main ← codex-1.3 importCodex widen + foreignkeys-blindness, merged `0f428f7`. Pushed. (The disk-only `codex-1.3-reader-widen` branch was pushed to origin first.)
+- **nodeFailover privacy fix completed** (`c6ace5d`, pushed): a custom node is its OWN fallback, never node2 — StoaWallet already shipped committed "no-leak regression lock" tests demanding it; this supplied the stoa-core source + fixed the one stale producer test. Found uncommitted in the working tree during the landing.
+- **stoa-js file: links** in StoaWallet fully repaired (the earlier fix missed `apps/extension`; all 8 links now resolve to `_infra/stoa-js`).
+
+**Known, out of scope:** StoaWallet `storageKeys.test.ts` has 1 pre-existing failing pin test (a storage key added/removed without updating the membership list) — unrelated to codex, not a Phase-4 blocker. The Codex constructor's `feat/codex-migration-c-d` (30 commits: connection layer, Arweave, Kadena→StoaChain rename, rekeyCodex v0.6.0) is a separate large feature branch, safely pushed, NOT merged — awaiting a decision, not a Phase-4 dependency.
+
+**Token placement (user action — I never handle secret values):** renewed `StoaCorePublisher` npm token goes in 3 places: repo secret `NPMPUSHER` on `StoaChain/stoa-js` and `StoaChain/DALOS_Crypto`, org secret `NPM_TOKEN` on `AncientPantheon` (Codex/Pythia/Khronoton have no repo secret and rely on the org one). All 5 repos are public, so the org secret reaches them.
+
 ## Reorg status (as of 2026-07-14)
 
 - **Model locked:** "Pantheon = shared machines" — the `AncientPantheon` GitHub org holds all Constructors (Pythia, Codex, Khronoton) + all Automatons (Caduceus, Aletheia, Mnemosyne). `StoaChain` = chain infra + native Daimons/Seers. `OuroborosNetwork` = Ouronet DeFi layer (`@ouronet/*`).
