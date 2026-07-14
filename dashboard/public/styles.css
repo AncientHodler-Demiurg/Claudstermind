@@ -63,6 +63,27 @@ main { padding: 18px 22px 60px; max-width: 1400px; margin: 0 auto; }
 .orgcard .desc { padding: 8px 14px; font-size: 11.5px; color: var(--ink-dim); border-bottom: 1px solid var(--line); }
 .orgcard .body { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
 
+/* ---- org "greater cardboard": an organisation container holding repo cards.
+   Shared by Brain + Git-state so a repo sits in the same place in every tab. ---- */
+.orggroup { border: 1px solid var(--line); border-left: 4px solid var(--org, var(--line)); border-radius: 14px;
+  background: var(--panel2); margin-bottom: 16px; overflow: hidden; box-shadow: var(--shadow); }
+.orggroup-hd { display: flex; align-items: center; gap: 9px; padding: 11px 15px; background: var(--panel);
+  border-bottom: 1px solid var(--line); }
+.orggroup-hd .dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.orggroup-hd b { font-size: 14.5px; letter-spacing: .2px; }
+.orggroup-hd .scope { font-size: 11px; color: var(--ink-dim); font-family: ui-monospace, monospace; }
+.orggroup-hd .grouptag { margin-left: auto; }
+.orggroup-body { padding: 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(255px, 1fr)); gap: 10px; }
+/* the repo "cardboard" inside a group */
+.repocard { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--stripe, var(--line));
+  border-radius: 11px; padding: 9px 11px; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.repocard .rc-hd { display: flex; align-items: center; gap: 7px; }
+.repocard .rc-hd .rc-name { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.repocard .rc-hd .rc-branch { margin-left: auto; font-size: 10.5px; color: var(--ink-dim); font-family: ui-monospace, monospace;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+.repocard .rc-sub { font-size: 11px; color: var(--ink-dim); }
+.repocard.is-muted { opacity: .5; }
+
 .repo { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; background: var(--panel2); border: 1px solid transparent; cursor: default; }
 .repo:hover { border-color: var(--line); }
 .repo .glyph { width: 18px; text-align: center; flex: none; }

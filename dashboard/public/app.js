@@ -23,6 +23,68 @@ function roleOf(id) { return MAP.roles[id] || { label: id, color: "#64748b", gly
 function repoOrg(r) { return r.org[ORGMODE] || r.org.current || r.org.target; }
 function isMoving(r) { return r.org.current !== r.org.target || (r.movement && r.movement.length); }
 
+/* ---------- shared org-grouped card layout ----------
+   Map, Brain and Git-state all lay repos out the SAME way: organisations in the
+   Map's order, each a "greater cardboard" holding its repo cards in the Map's
+   within-org order. So a repo is always in the same spot, and you learn the shape
+   once. These helpers are the single source of that order. */
+const normPath = (p) => (p || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+
+/** Join an endpoint's repo list onto MAP repos by localPath (then name/id). */
+function repoIndex(items, pathOf, nameOf) {
+  const byPath = new Map(), byName = new Map();
+  for (const it of items || []) {
+    const p = normPath(pathOf(it));
+    if (p) byPath.set(p, it);
+    const n = (nameOf(it) || "").toLowerCase();
+    if (n && !byName.has(n)) byName.set(n, it);
+  }
+  return {
+    get: (r) => byPath.get(normPath(r.localPath)) || byName.get((r.name || "").toLowerCase()) || byName.get((r.id || "").toLowerCase()),
+    all: items || [],
+  };
+}
+
+/** The tracked repos of one org, in Map order. */
+function orgRepos(org) {
+  return MAP.repos.filter((r) => repoOrg(r) === org && r.localPath && !/no repo|embedded|\(/i.test(r.localPath));
+}
+
+/** Walk orgs in Map order; call cb(org, meta, repos) for each non-empty org. */
+function eachOrg(cb) {
+  for (const [org, meta] of Object.entries(MAP.orgs)) {
+    const repos = orgRepos(org);
+    if (repos.length) cb(org, meta, repos);
+  }
+}
+
+/** The "greater cardboard": an org container wrapping its repo cards. */
+function orgGroup(org, meta, repoCards, tagEl) {
+  return el("div", { class: "orggroup", style: `--org:${meta.color}` }, [
+    el("div", { class: "orggroup-hd" }, [
+      el("span", { class: "dot", style: `background:${meta.color}` }),
+      el("b", {}, [org]),
+      el("span", { class: "scope" }, [meta.scope || ""]),
+      tagEl ? el("span", { class: "grouptag" }, [tagEl]) : "",
+    ]),
+    el("div", { class: "orggroup-body" }, repoCards),
+  ]);
+}
+
+/** A repo "cardboard" — shared shell; callers fill sub-lines + the left stripe colour. */
+function repoCard(r, { stripe, branch, sublines = [], muted = false, extra = [] }) {
+  const role = roleOf(r.role);
+  return el("div", { class: "repocard" + (muted ? " is-muted" : ""), style: `--stripe:${stripe || role.color}` }, [
+    el("div", { class: "rc-hd" }, [
+      el("span", { class: "glyph", style: `color:${role.color}` }, [role.glyph]),
+      el("span", { class: "rc-name", title: r.localPath }, [r.name]),
+      branch ? el("span", { class: "rc-branch", title: branch }, [branch]) : "",
+    ]),
+    ...sublines.map((s) => (typeof s === "string" ? el("div", { class: "rc-sub" }, [s]) : s)),
+    ...extra,
+  ]);
+}
+
 async function boot() {
   // Who am I, and therefore what may this page even offer? In local mode the answer
   // is "everything" and nothing below changes. On the live deployment it decides
@@ -191,32 +253,38 @@ function viewBrain() {
     let d; try { d = await (await fetch("/api/brain")).json(); } catch { body.replaceChildren(el("div", { class: "hint" }, ["brain not reachable"])); return; }
     const fmtB = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? (n / 1024).toFixed(1) + " KB" : (n || 0) + " B";
     const base = (p) => (p || "").split(/[\\/]/).pop();
-    const byKey = {}; (d.repos || []).forEach((r) => (byKey[r.key] = r));
-    // every tracked repo gets a card, ordered exactly like the Map tab (by local path)
-    const tracked = MAP.repos.filter((r) => r.localPath && !/no repo|embedded|\(/i.test(r.localPath))
-      .slice().sort((a, b) => (a.localPath || "").localeCompare(b.localPath || ""));
-    const maxCtx = Math.max(1, ...tracked.map((r) => (byKey[base(r.localPath)] || {}).contextBytes || 0));
-    const grid = el("div", { class: "grid-orgs" });
-    for (const r of tracked) {
-      const b = byKey[base(r.localPath)] || {};
-      const role = roleOf(r.role);
-      const pct = Math.round(100 * (b.contextBytes || 0) / maxCtx);
-      grid.append(el("div", { class: "orgcard" }, [
-        el("div", { class: "hd" }, [
-          el("span", { class: "glyph", style: `color:${role.color}` }, [role.glyph]),
-          el("b", {}, [r.name]),
-          el("span", { class: "scope" }, [b.updated ? b.updated.slice(0, 16).replace("T", " ") : "—"]),
-        ]),
-        el("div", { class: "desc" }, [r.localPath]),
-        el("div", { class: "body" }, [
-          b.hasState
-            ? el("div", { class: "repo" }, [el("span", { class: "rn" }, ["state"]), el("span", { class: "ver" }, [" " + (b.branch || "") + " · " + (b.dirty || "clean")])])
-            : el("div", { class: "repo" }, [el("span", { class: "ver", style: "color:var(--ink-dim)" }, [b.contextBytes ? "curated only — not worked in yet" : "no brain yet"])]),
-          el("div", { class: "repo" }, [el("span", { class: "rn" }, ["context"]), el("span", { class: "ver" }, [" " + fmtB(b.contextBytes || 0) + " · " + (b.curatedFiles || 0) + " docs · " + (b.worklogCount || 0) + " log"])]),
-          el("div", { style: "height:6px;border-radius:4px;background:var(--chip);overflow:hidden;margin:2px 8px 6px" }, [el("div", { style: `height:100%;width:${pct}%;background:${role.color}` })]),
-        ]),
-      ]));
-    }
+    // Join brain data onto MAP repos by local path (fallback: folder key / name).
+    const idx = repoIndex(d.repos, (r) => r.repo, (r) => r.key);
+    const maxCtx = Math.max(1, ...(d.repos || []).map((r) => r.contextBytes || 0));
+
+    // Org "greater cardboards" in Map order, each holding its repo brain-cards.
+    const grid = el("div", {});
+    eachOrg((org, meta, repos) => {
+      let orgBytes = 0, withBrain = 0;
+      const cards = repos.map((r) => {
+        const b = idx.get(r) || {};
+        orgBytes += b.contextBytes || 0;
+        if (b.hasState) withBrain++;
+        const pct = Math.round(100 * (b.contextBytes || 0) / maxCtx);
+        const stateLine = b.hasState
+          ? `${(b.branch || "").split("  ")[0]} · ${b.dirty || "clean"}`
+          : (b.contextBytes ? "curated only — not worked in yet" : "no brain yet");
+        return repoCard(r, {
+          stripe: b.hasState ? roleOf(r.role).color : "var(--line)",
+          branch: b.updated ? b.updated.slice(5, 16).replace("T", " ") : "",
+          muted: !b.hasState && !b.contextBytes,
+          sublines: [
+            stateLine,
+            `${fmtB(b.contextBytes || 0)} · ${b.curatedFiles || 0} docs · ${b.worklogCount || 0} log`,
+          ],
+          extra: [el("div", { style: "height:5px;border-radius:4px;background:var(--chip);overflow:hidden;margin-top:2px" },
+            [el("div", { style: `height:100%;width:${pct}%;background:${roleOf(r.role).color}` })])],
+        });
+      });
+      grid.append(orgGroup(org, meta, cards,
+        el("span", { class: "was", style: "font-size:11px" }, [`${withBrain}/${repos.length} active · ${fmtB(orgBytes)}`])));
+    });
+    const tracked = MAP.repos.filter((r) => r.localPath && !/no repo|embedded|\(/i.test(r.localPath));
     // daily knowledge log
     const days = Object.keys(d.daily || {}).sort();
     const dailyStrip = el("div", { class: "statbar" }, days.slice(-14).map((day) => {
@@ -478,11 +546,15 @@ function badge(text, color, title) {
   }, [text]);
 }
 
-function gitRepoCard(r) {
-  const u = r.uncommitted, s = r.summary;
+// A git repo cardboard, built on the shared repoCard shell so it lines up with Brain.
+// `mr` is the MAP repo (for name/role/order); `g` is the git-status data (may be absent).
+function gitRepoCard(mr, g) {
+  if (!g) {
+    // In the map, but no git data — the folder is missing or isn't a git repo.
+    return repoCard(mr, { stripe: "var(--line)", muted: true, sublines: ["not a git repo on disk"] });
+  }
+  const u = g.uncommitted, s = g.summary;
   const badges = [];
-
-  // never-pushed first — loudest.
   for (const b of s.neverPushedBranches) {
     badges.push(badge(`⚠ ${b}: never pushed`, GIT_COLOR.never, "This branch exists only on your disk — no remote copy at all."));
   }
@@ -500,25 +572,26 @@ function gitRepoCard(r) {
   for (const b of s.behindBranches) {
     badges.push(badge(`↓ ${b.name}: ${b.behind} behind`, "#a78bfa", "The remote has commits you don't — a pull would fetch them."));
   }
+  if (!badges.length) badges.push(badge("✓ clean & pushed", GIT_COLOR.clean));
 
-  // the dirty file list, tucked behind a details toggle so the card stays scannable.
   const fileList = s.dirty && u.files.length
-    ? el("details", { style: "margin-top:6px" }, [
-        el("summary", { class: "hint", style: "cursor:pointer" }, [`show ${u.total} changed file${u.total > 1 ? "s" : ""}`]),
-        el("div", { style: "font-family:ui-monospace,monospace;font-size:11px;color:var(--ink-dim);padding-top:5px;white-space:pre-wrap;max-height:220px;overflow:auto" },
+    ? el("details", {}, [
+        el("summary", { class: "hint", style: "cursor:pointer;font-size:11px" }, [`show ${u.total} changed file${u.total > 1 ? "s" : ""}`]),
+        el("div", { style: "font-family:ui-monospace,monospace;font-size:11px;color:var(--ink-dim);padding-top:5px;white-space:pre-wrap;max-height:200px;overflow:auto" },
           [u.files.join("\n") + (u.total > u.files.length ? `\n… +${u.total - u.files.length} more` : "")]),
       ])
     : null;
 
-  const bar = s.dirty ? GIT_COLOR.dirty : s.neverPushedBranches.length ? GIT_COLOR.never : GIT_COLOR.unpushed;
-  return el("div", { class: "orgcard", style: `padding:10px;margin-bottom:8px;border-left:3px solid ${bar}` }, [
-    el("div", { class: "desc" }, [
-      el("b", {}, [r.name]),
-      el("span", { class: "ver" }, [`  ${r.localPath}  ·  on ${r.branch}`]),
-    ]),
-    el("div", { style: "margin-top:4px" }, badges),
-    ...(fileList ? [fileList] : []),
-  ]);
+  const stripe = s.neverPushedBranches.length ? GIT_COLOR.never
+    : s.hasUnpushed ? GIT_COLOR.unpushed
+    : s.dirty ? GIT_COLOR.dirty
+    : GIT_COLOR.clean;
+  return repoCard(mr, {
+    stripe,
+    branch: g.branch,
+    muted: !s.attention,
+    extra: [el("div", { style: "display:flex;flex-wrap:wrap;margin-top:2px" }, badges), ...(fileList ? [fileList] : [])],
+  });
 }
 
 function viewGit() {
@@ -534,8 +607,7 @@ function viewGit() {
     if (d.error) return box.replaceChildren(el("div", { class: "movecard", style: `border-color:${GIT_COLOR.never}` }, [String(d.error)]));
 
     const t = d.totals || {};
-    const attention = d.repos.filter((r) => r.summary.attention);
-    const clean = d.repos.filter((r) => !r.summary.attention);
+    const idx = repoIndex(d.repos, (r) => r.localPath, (r) => r.name);
 
     const head = el("div", { class: "statbar" }, [
       el("div", { class: "stat" }, [el("div", { class: "n" }, [String(t.repos || 0)]), el("div", { class: "l" }, ["tracked repos"])]),
@@ -548,25 +620,15 @@ function viewGit() {
     const kids = [head];
     if (d.cachedAgeMs > 500) kids.push(el("div", { class: "hint" }, [`as of ${Math.round(d.cachedAgeMs / 1000)}s ago · click Rescan to refresh`]));
 
-    if (attention.length) {
-      kids.push(el("h3", { style: "margin:14px 0 6px" }, [`Needs attention (${attention.length})`]));
-      kids.push(...attention.map(gitRepoCard));
-    } else {
-      kids.push(el("div", { class: "movecard", style: `border-color:${GIT_COLOR.clean}` }, [
-        el("b", { style: `color:${GIT_COLOR.clean}` }, ["✓ Everything is committed and pushed"]),
-      ]));
-    }
-    if (clean.length) {
-      kids.push(el("details", { style: "margin-top:10px" }, [
-        el("summary", { class: "hint", style: "cursor:pointer" }, [`${clean.length} clean repo${clean.length > 1 ? "s" : ""} (committed + pushed)`]),
-        el("div", { style: "padding-top:6px" }, clean.map((r) =>
-          el("div", { class: "repo" }, [
-            el("span", { class: "glyph", style: `color:${GIT_COLOR.clean}` }, ["✓"]),
-            el("span", { class: "rn" }, [r.name]),
-            el("span", { class: "ver" }, [`  ${r.branch}`]),
-          ]))),
-      ]));
-    }
+    // Org "greater cardboards" in Map order, each holding its repo git-cards.
+    eachOrg((org, meta, repos) => {
+      const cards = repos.map((r) => gitRepoCard(r, idx.get(r)));
+      const att = repos.filter((r) => idx.get(r)?.summary.attention).length;
+      const tag = att
+        ? badge(`${att} need attention`, GIT_COLOR.dirty)
+        : badge("all clean", GIT_COLOR.clean);
+      kids.push(orgGroup(org, meta, cards, tag));
+    });
     box.replaceChildren(...kids);
   }
 
