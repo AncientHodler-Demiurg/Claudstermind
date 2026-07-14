@@ -47,3 +47,4 @@ build/
 
 # Token hygiene inventory — metadata only, but recon-sensitive (which tokens exist where). Never commit.
 dashboard/data/tokens.json
+.media/

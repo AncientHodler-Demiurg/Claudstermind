@@ -21,8 +21,7 @@ body {
 }
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand .star { font-size: 26px; color: var(--accent); filter: drop-shadow(0 0 8px var(--accent)); }
-.brand .brainmark { display: inline-flex; filter: drop-shadow(0 0 7px rgba(59, 130, 246, .55)); }
-.brand .brainmark svg { display: block; }
+.brand .brainmark { display: block; filter: drop-shadow(0 0 7px rgba(59, 130, 246, .5)); }
 .brand h1 { margin: 0; font-size: 19px; letter-spacing: .3px; }
 .brand .sub { margin: 0; color: var(--ink-dim); font-size: 12px; }
 .top-right { display: flex; align-items: center; gap: 8px; }
