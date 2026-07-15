@@ -29,6 +29,7 @@ import { allReposGitStatus } from "../lib/gitStatus.mjs";
 import { resolveRepo, pushRepo, commitRepo } from "../lib/gitActions.mjs";
 import { parseOriginUrl, scanSecrets, tokenIdentity } from "../lib/tokenScan.mjs";
 import { readRegistry, enrich, groupTokens, tokenTotals, saveSecret } from "../lib/tokenRegistry.mjs";
+import { buildUsageIndex, secretUsage } from "../lib/secretUsage.mjs";
 import { readOidcConfig } from "./auth/oidcConfig.mjs";
 import { handleAuthRoute, guard, denyPage } from "./auth/routes.mjs";
 
@@ -257,7 +258,7 @@ const handler = async (req, res) => {
     // Derive scan targets from each tracked repo's real git origin (accurate owner/repo),
     // plus each distinct org.
     let map; try { map = JSON.parse(await readFileAsync(join(DATA_DIR, "map.json"), "utf8")); } catch { map = { repos: [] }; }
-    const repoTargets = [], owners = new Set(), seen = new Set();
+    const repoTargets = [], owners = new Set(), seen = new Set(), absByKey = [];
     for (const r of map.repos || []) {
       const abs = resolveRepo(r.localPath, MASTER_ROOT);
       if (!abs) continue;
@@ -267,6 +268,7 @@ const handler = async (req, res) => {
       const key = `${parsed.owner}/${parsed.repo}`.toLowerCase();
       if (seen.has(key)) continue; seen.add(key);
       repoTargets.push({ label: `${parsed.owner}/${parsed.repo}`, owner: parsed.owner, repo: parsed.repo });
+      absByKey.push({ owner: parsed.owner, repo: parsed.repo, abs });   // for the usage index
       owners.add(parsed.owner);
     }
     const orgTargets = [...owners].map((o) => ({ label: `${o} (org)`, owner: o }));
@@ -274,6 +276,19 @@ const handler = async (req, res) => {
     try {
       const identity = await tokenIdentity(token);
       const scan = await scanSecrets([...repoTargets, ...orgTargets], token);
+
+      // Cross-reference each detected secret against the local workflow files: is it
+      // actually read by a workflow, or is it dead weight? This is what turns "do I
+      // need this?" into evidence.
+      const usage = buildUsageIndex(absByKey);
+      for (const t of scan.targets || []) {
+        for (const s of (t.secrets || [])) {
+          const u = t.repo ? secretUsage(usage, "repo", `${t.owner}/${t.repo}`, s.name)
+            : secretUsage(usage, "org", t.owner, s.name);
+          s.used = u.used; s.usedBy = u.usedBy;
+        }
+      }
+
       const payload = { ok: true, identity, ...scan, scannedAt: new Date().toISOString() };
       SCAN_CACHE.at = nowMs(); SCAN_CACHE.data = payload;
       return sendJSON(res, 200, { ...payload, cachedAgeMs: 0 });
