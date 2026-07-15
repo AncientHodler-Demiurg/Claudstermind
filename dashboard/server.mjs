@@ -26,7 +26,7 @@ import { listArchives } from "../orchestrator/archives.mjs";
 import { readBackupConfig, writeBackupConfig, isBackupDue } from "../orchestrator/backupConfig.mjs";
 import { readCascade } from "../lib/cascade.mjs";
 import { allReposGitStatus, repoGitStatus } from "../lib/gitStatus.mjs";
-import { resolveRepo, pushRepo, commitRepo } from "../lib/gitActions.mjs";
+import { resolveRepo, pushRepo, commitRepo, pullRepo } from "../lib/gitActions.mjs";
 import { parseOriginUrl, scanSecrets, tokenIdentity } from "../lib/tokenScan.mjs";
 import { readRegistry, enrich, groupTokens, tokenTotals, saveSecret } from "../lib/tokenRegistry.mjs";
 import { buildUsageIndex, secretUsage } from "../lib/secretUsage.mjs";
@@ -247,16 +247,18 @@ const handler = async (req, res) => {
   }
 
   // ---- git actions: commit / push a specific repo (mutations, gated) ----
-  if (req.method === "POST" && (path === "/api/git/push" || path === "/api/git/commit")) {
+  if (req.method === "POST" && (path === "/api/git/push" || path === "/api/git/commit" || path === "/api/git/pull")) {
     if (!sameOrigin(req)) return sendJSON(res, 403, { ok: false, reason: "cross-origin" });
     if (!who.localActionsAvailable) return sendJSON(res, 403, { ok: false, reason: "local-only", message: "Git actions run on the work machine — local dashboard only." });
-    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The ancient role is required to commit or push." });
+    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The ancient role is required for git actions." });
     let body = ""; for await (const c of req) body += c;
     let b = {}; try { b = JSON.parse(body || "{}"); } catch {}
     const abs = resolveRepo(b.localPath, MASTER_ROOT);
     if (!abs) return sendJSON(res, 400, { ok: false, message: `Not a resolvable git repo: ${b.localPath}` });
     GIT_CACHE.at = 0;                                    // a mutation invalidates the status cache
-    const r = path === "/api/git/push" ? pushRepo(abs) : commitRepo(abs, b.message);
+    const r = path === "/api/git/push" ? pushRepo(abs)
+      : path === "/api/git/pull" ? pullRepo(abs)
+      : commitRepo(abs, b.message);
     return sendJSON(res, 200, r);
   }
 

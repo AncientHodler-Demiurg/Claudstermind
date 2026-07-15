@@ -599,10 +599,14 @@ function gitRepoCard(mr, g) {
     : s.dirty ? GIT_COLOR.dirty
     : GIT_COLOR.clean;
 
-  // Act, don't just observe: commit the dirty tree / push the branch, in place.
+  // Act, don't just observe: commit the dirty tree / pull remote work / push the branch.
   const actions = [];
   if (s.dirty) {
     actions.push(el("button", { class: "gitbtn", title: "Stage everything and commit", onclick: (e) => gitCommit(g, e.currentTarget) }, ["✎ Commit"]));
+  }
+  const behind = (s.behindBranches || []).reduce((n, b) => n + (b.behind || 0), 0);
+  if (behind) {
+    actions.push(el("button", { class: "gitbtn", title: "Pull the remote commits (from another machine) and rebase your work on top", onclick: (e) => gitPull(g, e.currentTarget) }, [`↓ Pull ${behind}`]));
   }
   if (s.hasUnpushed) {
     const label = s.neverPushedBranches.length ? "⚠ Push (first push)" : `↑ Push ${s.unpushedCommits || ""}`.trim();
@@ -734,6 +738,15 @@ async function gitPush(g, btn) {
     confirmLabel: "↑ Push",
   });
   if (ok) gitPost("/api/git/push", { localPath: g.localPath }, btn, g);
+}
+async function gitPull(g, btn) {
+  const behind = (g.summary?.behindBranches || []).reduce((n, b) => n + (b.behind || 0), 0);
+  const ok = await showModal({
+    title: `Pull from origin — ${g.name}`,
+    sub: `Bring in ${behind} commit(s) the remote has (likely from another machine) and rebase your local work on top — keeps history linear. Needs a clean tree; if it conflicts, it reverts and asks you to resolve in a terminal.`,
+    confirmLabel: "↓ Pull (rebase)",
+  });
+  if (ok) gitPost("/api/git/pull", { localPath: g.localPath }, btn, g);
 }
 async function gitCommit(g, btn) {
   const suggestion = suggestCommitMessage(g.uncommitted && g.uncommitted.files);
