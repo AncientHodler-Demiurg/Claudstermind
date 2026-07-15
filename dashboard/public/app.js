@@ -1057,11 +1057,12 @@ function scopeSecrets(entity, scope, tokens, scan) {
     return el("div", { class: "was", style: "font-size:12px" }, ["npm tokens are account-level — nothing to set per-" + (scope === "org" ? "org" : "repo") + "."]);
   }
 
+  const scanOk = Boolean(scan && scan.ok);
   const rows = new Map();   // `secret@target` → merged row
   for (const dp of declaredDeployments(tokens, scope)) {
     rows.set(`${dp.secret}@${dp.target}`.toLowerCase(), { secret: dp.secret, target: dp.target, token: dp.token, declared: true });
   }
-  if (scan && scan.ok) {
+  if (scanOk) {
     for (const t of (scan.targets || []).filter((x) => (scope === "org" ? !x.repo : !!x.repo))) {
       for (const s of (t.secrets || [])) {
         const target = scope === "org" ? t.owner : `${t.owner}/${t.repo}`;
@@ -1072,6 +1073,9 @@ function scopeSecrets(entity, scope, tokens, scan) {
       }
     }
   }
+  // A declared secret the scan ran and did NOT find (with admin:org, so it CAN see) is a
+  // phantom — deleted on GitHub but still in the registry ledger. Flag it, don't hide it.
+  for (const r of rows.values()) r.phantom = r.declared && !r.detected && scanOk;
   const list = [...rows.values()].sort((a, b) => a.secret.localeCompare(b.secret) || a.target.localeCompare(b.target));
 
   // admin:org warning only when the token genuinely lacks the scope (see earlier note).
@@ -1088,12 +1092,14 @@ function scopeSecrets(entity, scope, tokens, scan) {
   } else {
     parts.push(el("div", { style: "overflow-x:auto" }, [el("table", { class: "pkgtable" }, [
       el("thead", {}, [el("tr", {}, ["Secret", scope === "org" ? "Organisation" : "Repository", "Holds", "Updated", "Used by a workflow?", ""].map((h) => el("th", {}, [h])))]),
-      el("tbody", {}, list.map((r) => el("tr", {}, [
-        el("td", {}, [el("code", {}, [r.secret]), (r.declared && r.detected) ? el("span", { style: "color:#34d399;font-size:10px", title: "configured here and confirmed by the scan" }, ["  ✓"]) : ""]),
+      el("tbody", {}, list.map((r) => el("tr", { style: r.phantom ? "opacity:.7" : "" }, [
+        el("td", {}, [el("code", {}, [r.secret]),
+          r.phantom ? el("span", { style: "color:#f87171;font-size:10px", title: "In the registry but NOT found on GitHub — deleted? It no longer applies." }, ["  ⚠ not on GitHub"])
+            : (r.declared && r.detected) ? el("span", { style: "color:#34d399;font-size:10px", title: "configured here and confirmed by the scan" }, ["  ✓"]) : ""]),
         el("td", { class: "was" }, [r.target]),
         el("td", { class: "was" }, [r.token || "—"]),
-        el("td", { class: "was" }, [(r.updated || "").slice(0, 10) || "—"]),
-        el("td", {}, [usageCell(r)]),
+        el("td", { class: "was" }, [r.phantom ? "deleted?" : ((r.updated || "").slice(0, 10) || "—")]),
+        el("td", {}, [r.phantom ? el("span", { class: "was" }, ["—"]) : usageCell(r)]),
         el("td", {}, [mgmtLink(scope, linkTarget(r))]),
       ]))),
     ])]));
