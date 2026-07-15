@@ -145,13 +145,18 @@
       "packages": [
         {
           "name": "@ancientpantheon/pythia-client",
-          "version": "1.1.0",
+          "version": "1.7.0",
           "private": false
+        },
+        {
+          "name": "ghcr.io/ancientpantheon/pythia",
+          "version": "1.7.0",
+          "private": true
         }
       ],
       "movement": [],
       "status": "active",
-      "notes": "Oracle / read-data Constructor. Chain-agnostic; multichain via pythia-adapters-{stoachain,arweave,bitcoin,ethereum}."
+      "notes": "Constructor-service: ships TWO artifacts on ONE version — the public npm client @ancientpantheon/pythia-client AND the container ghcr.io/ancientpantheon/pythia (the live deployed read gateway + website). Oracle / read-data Constructor; multichain via pythia-adapters-{stoachain,arweave,bitcoin,ethereum}."
     },
     {
       "id": "codex",
