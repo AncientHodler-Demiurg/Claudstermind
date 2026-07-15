@@ -963,13 +963,6 @@ function viewTokens() {
       const em = ENTITY_META[ent];
       const account = (g[ent]?.account || []).map((t) => accountTokenCard(t, load));
 
-      // org/repo GitHub secrets come from the scan (npm has none of these).
-      let orgExtra = "", repoExtra = "";
-      if (ent === "github" && TOK_SCAN) {
-        orgExtra = scanScopeTable(TOK_SCAN, "org");
-        repoExtra = scanScopeTable(TOK_SCAN, "repo");
-      }
-
       return el("div", { class: "orggroup", style: `--org:${em.color}` }, [
         el("div", { class: "orggroup-hd" }, [
           el("span", { class: "dot", style: `background:${em.color}` }),
@@ -978,8 +971,8 @@ function viewTokens() {
         ]),
         el("div", { style: "padding:10px 14px" }, [
           scopeSection("account", account),
-          scopeSection("org", [], ent === "github" ? (orgExtra || el("div", { class: "was", style: "font-size:12px" }, ["Run the scan to list org-level Actions secrets."])) : el("div", { class: "was", style: "font-size:12px" }, ["npm tokens are account-level; there are no org secrets to list."])),
-          scopeSection("repo", [], ent === "github" ? (repoExtra || el("div", { class: "was", style: "font-size:12px" }, ["Run the scan to list repo-level Actions secrets."])) : ""),
+          scopeSection("org", [], scopeExtra(ent, "org", d.tokens || [], TOK_SCAN)),
+          scopeSection("repo", [], scopeExtra(ent, "repo", d.tokens || [], TOK_SCAN)),
         ]),
       ]);
     });
@@ -1003,25 +996,82 @@ function viewTokens() {
   return wrap;
 }
 
-// Render the scan's org- or repo-level secrets as a table under the right scope.
-function scanScopeTable(scan, scope) {
+// Direct link to a secret's GitHub management page.
+function secretMgmtUrl(scope, target) {
+  return scope === "org"
+    ? `https://github.com/organizations/${target}/settings/secrets/actions`         // target = org name
+    : `https://github.com/${target}/settings/secrets/actions`;                       // target = owner/repo
+}
+const mgmtLink = (scope, target) => el("a", { href: secretMgmtUrl(scope, target), target: "_blank", rel: "noopener", class: "gitbtn", style: "text-decoration:none" }, ["↗ open"]);
+
+// The org/repo deployments the registry DECLARES (what we deliberately set up), e.g.
+// NPM_PUBLISHER in the StoaChain + AncientPantheon orgs. These are GitHub Actions
+// SECRETS — so they belong under the GitHub entity even when the value they hold is an
+// npm token (the "Token" column names which token feeds each). Shown even when the scan
+// can't confirm them (no admin:org), so nothing you configured is ever invisible.
+function declaredDeployments(tokens, scope) {
+  const out = [];
+  for (const t of tokens || []) {
+    for (const dp of (t.deployments || [])) if (dp.scope === scope) out.push({ ...dp, token: t.label });
+  }
+  return out;
+}
+
+// One scope section's body: declared deployments (GitHub secrets) + live-scan finds.
+function scopeExtra(entity, scope, tokens, scan) {
+  // org/repo secrets are a GitHub concept; the npm entity has none of them.
+  const declared = entity === "github" ? declaredDeployments(tokens, scope) : [];
+  const parts = [];
+
+  if (declared.length) {
+    parts.push(
+      el("div", { class: "hint", style: "margin:2px 0 4px" }, ["Configured (from the registry):"]),
+      el("table", { class: "pkgtable" }, [
+        el("thead", {}, [el("tr", {}, ["Secret", scope === "org" ? "Organisation" : "Repository", "Token", ""].map((h) => el("th", {}, [h])))]),
+        el("tbody", {}, declared.map((dp) => el("tr", {}, [
+          el("td", {}, [el("code", {}, [dp.secret])]),
+          el("td", { class: "was" }, [dp.target]),
+          el("td", { class: "was" }, [dp.token]),
+          el("td", {}, [mgmtLink(dp.scope, dp.target)]),
+        ]))),
+      ]),
+    );
+  }
+
+  if (entity === "github") {
+    parts.push(scan ? scanScopeTable(scan, scope, declared)
+      : el("div", { class: "was", style: "font-size:12px;margin-top:6px" }, ["Run the scan to discover any other " + scope + "-level secrets."]));
+  } else if (!declared.length) {
+    parts.push(el("div", { class: "was", style: "font-size:12px" }, [scope === "org" ? "npm tokens are account-level — nothing to set per-org." : "npm tokens are account-level — nothing to set per-repo."]));
+  }
+  return el("div", {}, parts);
+}
+
+// The scan's org/repo secrets, each with a management link. `declared` lets us mark
+// which ones we already know about (confirmed) vs newly discovered.
+function scanScopeTable(scan, scope, declared = []) {
   if (!scan.ok) return el("div", { class: "movecard", style: "border-color:#f87171;font-size:12px" }, [scan.message || "scan failed"]);
   const targets = (scan.targets || []).filter((t) => (scope === "org" ? !t.repo : !!t.repo));
+  const known = new Set(declared.map((d) => `${d.secret}@${d.target}`.toLowerCase()));
   const rows = [];
   for (const t of targets) {
-    for (const s of (t.secrets || [])) rows.push({ where: t.label, name: s.name, updated: s.updated });
+    for (const s of (t.secrets || [])) rows.push({ target: t.label, owner: t.owner, repo: t.repo, name: s.name, updated: s.updated });
   }
   const orgMissing = scope === "org" && targets.some((t) => !t.reachable && /no access/.test(t.reason || ""));
   return el("div", {}, [
-    orgMissing ? el("div", { class: "movecard", style: "border-color:#fbbf24;font-size:12px;margin-bottom:6px" }, ["⚠ Org secrets need the ", el("code", {}, ["admin:org"]), " scope on your token — add it to see org-level secrets like ", el("code", {}, ["NPM_TOKEN"]), "."]) : "",
-    rows.length ? el("table", { class: "pkgtable" }, [
-      el("thead", {}, [el("tr", {}, ["Secret", scope === "org" ? "Organisation" : "Repository", "Updated"].map((h) => el("th", {}, [h])))]),
-      el("tbody", {}, rows.sort((a, b) => a.name.localeCompare(b.name)).map((r) => el("tr", {}, [
-        el("td", {}, [el("code", {}, [r.name])]),
-        el("td", { class: "was" }, [r.where]),
-        el("td", { class: "was" }, [(r.updated || "").slice(0, 10)]),
-      ]))),
-    ]) : el("div", { class: "was", style: "font-size:12px" }, ["No " + scope + "-level secrets found."]),
+    orgMissing ? el("div", { class: "movecard", style: "border-color:#fbbf24;font-size:12px;margin:6px 0" }, ["⚠ The scan can't read org-level secrets — your token lacks the ", el("code", {}, ["admin:org"]), " scope. The configured ones above still show; add the scope to have the scan confirm them and reveal any others."]) : "",
+    rows.length ? el("div", {}, [
+      el("div", { class: "hint", style: "margin:6px 0 4px" }, ["Discovered by the scan:"]),
+      el("table", { class: "pkgtable" }, [
+        el("thead", {}, [el("tr", {}, ["Secret", scope === "org" ? "Organisation" : "Repository", "Updated", ""].map((h) => el("th", {}, [h])))]),
+        el("tbody", {}, rows.sort((a, b) => a.name.localeCompare(b.name)).map((r) => el("tr", {}, [
+          el("td", {}, [el("code", {}, [r.name]), known.has(`${r.name}@${r.target}`.toLowerCase()) ? el("span", { style: "color:#34d399;font-size:10px" }, ["  ✓ known"]) : ""]),
+          el("td", { class: "was" }, [r.target]),
+          el("td", { class: "was" }, [(r.updated || "").slice(0, 10)]),
+          el("td", {}, [mgmtLink(scope, scope === "org" ? r.owner : `${r.owner}/${r.repo}`)]),
+        ]))),
+      ]),
+    ]) : (scope === "org" && orgMissing ? "" : el("div", { class: "was", style: "font-size:12px;margin-top:6px" }, ["No " + scope + "-level secrets found by the scan."])),
   ]);
 }
 
