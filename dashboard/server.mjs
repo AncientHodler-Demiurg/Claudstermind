@@ -48,6 +48,10 @@ const OIDC = readOidcConfig();
 const GIT_TTL_MS = 8000;
 const GIT_CACHE = { at: 0, data: null };
 const nowMs = () => Date.now();
+// The token scan hits the GitHub API for ~30 targets (~20s), so cache it longer — the
+// Tokens tab auto-scans on open, and secrets rarely change minute-to-minute.
+const SCAN_TTL_MS = 5 * 60 * 1000;
+const SCAN_CACHE = { at: 0, data: null };
 
 function resolvePort() {
   try {
@@ -239,7 +243,13 @@ const handler = async (req, res) => {
   // ---- tokens: live scan of GitHub Actions secrets across every tracked repo ----
   // The PAT is read HERE (server-side) and never sent to the browser; only secret
   // names + last-updated dates cross the wire (the API never returns values).
+  // Cached ~5 min so the tab can auto-scan on open without a slow GitHub round-trip
+  // every time; `?refresh=1` forces a fresh scan (the Re-scan button, or after a delete).
   if (path === "/api/tokens/scan") {
+    const fresh = url.searchParams.get("refresh") === "1";
+    if (!fresh && SCAN_CACHE.at && nowMs() - SCAN_CACHE.at < SCAN_TTL_MS) {
+      return sendJSON(res, 200, { ...SCAN_CACHE.data, cachedAgeMs: nowMs() - SCAN_CACHE.at });
+    }
     let token = "";
     try { token = readFileSync(resolve(MASTER_ROOT, ".secrets", "pat.txt"), "utf8").trim(); }
     catch { return sendJSON(res, 200, { ok: false, message: "No token found at .secrets/pat.txt — cannot scan GitHub." }); }
@@ -264,7 +274,9 @@ const handler = async (req, res) => {
     try {
       const identity = await tokenIdentity(token);
       const scan = await scanSecrets([...repoTargets, ...orgTargets], token);
-      return sendJSON(res, 200, { ok: true, identity, ...scan, scannedAt: new Date().toISOString() });
+      const payload = { ok: true, identity, ...scan, scannedAt: new Date().toISOString() };
+      SCAN_CACHE.at = nowMs(); SCAN_CACHE.data = payload;
+      return sendJSON(res, 200, { ...payload, cachedAgeMs: 0 });
     } catch (e) {
       return sendJSON(res, 200, { ok: false, message: `Scan failed: ${e}` });
     }

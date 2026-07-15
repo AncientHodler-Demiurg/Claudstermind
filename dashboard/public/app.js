@@ -954,9 +954,10 @@ function viewTokens() {
       el("div", { class: "stat" }, [el("div", { class: "n", style: `color:${T.missing ? TOK_COLOR.expiring : "inherit"}` }, [String(T.missing || 0)]), el("div", { class: "l" }, ["not yet stored"])]),
     ]);
 
-    // The live scan feeds the org/repo GitHub scopes.
-    const scanBtn = el("button", { class: "ghost" }, [TOK_SCAN ? "↻ Re-scan repositories" : "🔎 Scan GitHub secrets (org + repo)"]);
-    scanBtn.addEventListener("click", runScan);
+    // The live scan feeds the org/repo GitHub scopes — auto-run on open, cached ~5 min.
+    const scanBtn = el("button", { class: "ghost" }, [TOK_SCANNING ? "… scanning secrets" : TOK_SCAN ? "↻ Re-scan repositories" : "🔎 Scan now"]);
+    scanBtn.disabled = TOK_SCANNING;
+    scanBtn.addEventListener("click", () => runScan(true));   // manual button = force fresh
 
     const g = d.grouped || { github: {}, npm: {} };
     const entities = ["github", "npm"].map((ent) => {
@@ -978,23 +979,32 @@ function viewTokens() {
     });
 
     wrap.replaceChildren(
-      el("div", { class: "hint" }, ["Every token, organised by ", el("b", {}, ["entity × scope"]), ". Values are never shown — only where each lives, when it expires, and a field to store a renewed value into ", el("code", {}, [".secrets/"]), " (one place for the whole workspace). ", el("b", {}, ["↗ Manage"]), " opens the exact page to renew it."]),
+      el("div", { class: "hint" }, ["Every token and secret, organised by ", el("b", {}, ["entity × scope"]), " — detected live from your GitHub token (scans on open). Values are never shown, only where each lives and when it expires. ", el("b", {}, ["↗ open"]), " jumps to a secret's settings page so you can remove the ones you don't need."]),
       summary,
       ...entities,
     );
+
+    // Auto-scan the first time the tab is opened this session (server-cached ~5 min,
+    // so switching away and back is instant). The manual button forces a fresh scan.
+    if (!TOK_SCAN && !TOK_SCANNING) runScan(false);
   }
 
-  async function runScan() {
-    const btns = wrap.querySelectorAll(".orggroup-hd .ghost");
-    btns.forEach((b) => { b.disabled = true; b.textContent = "… scanning (~20s)"; });
-    try { TOK_SCAN = await (await fetch("/api/tokens/scan")).json(); }
+  async function runScan(force) {
+    if (TOK_SCANNING) return;
+    TOK_SCANNING = true;
+    // reflect the scanning state without a full reload (keeps the account cards steady)
+    const btn = wrap.querySelector(".orggroup-hd .ghost");
+    if (btn) { btn.disabled = true; btn.textContent = "… scanning secrets (~20s)"; }
+    try { TOK_SCAN = await (await fetch("/api/tokens/scan" + (force ? "?refresh=1" : ""))).json(); }
     catch (e) { TOK_SCAN = { ok: false, message: String(e) }; }
+    TOK_SCANNING = false;
     load();
   }
 
   load();
   return wrap;
 }
+let TOK_SCANNING = false;
 
 // Direct link to a secret's GitHub management page.
 function secretMgmtUrl(scope, target) {
@@ -1057,9 +1067,13 @@ function scanScopeTable(scan, scope, declared = []) {
   for (const t of targets) {
     for (const s of (t.secrets || [])) rows.push({ target: t.label, owner: t.owner, repo: t.repo, name: s.name, updated: s.updated });
   }
-  const orgMissing = scope === "org" && targets.some((t) => !t.reachable && /no access/.test(t.reason || ""));
+  // Only warn about the admin:org scope when the token actually LACKS it. If it has
+  // admin:org, an unreadable org just means you don't administer it (e.g. an upstream
+  // fork like kadena-io) — expected, not actionable.
+  const hasAdminOrg = (scan.identity?.scopes || []).includes("admin:org");
+  const scopeBlocked = scope === "org" && !hasAdminOrg && targets.some((t) => !t.reachable && /no access/.test(t.reason || ""));
   return el("div", {}, [
-    orgMissing ? el("div", { class: "movecard", style: "border-color:#fbbf24;font-size:12px;margin:6px 0" }, ["⚠ The scan can't read org-level secrets — your token lacks the ", el("code", {}, ["admin:org"]), " scope. The configured ones above still show; add the scope to have the scan confirm them and reveal any others."]) : "",
+    scopeBlocked ? el("div", { class: "movecard", style: "border-color:#fbbf24;font-size:12px;margin:6px 0" }, ["⚠ The scan can't read org-level secrets — your token lacks the ", el("code", {}, ["admin:org"]), " scope. The configured ones above still show; add the scope to have the scan confirm them and reveal any others."]) : "",
     rows.length ? el("div", {}, [
       el("div", { class: "hint", style: "margin:6px 0 4px" }, ["Discovered by the scan:"]),
       el("table", { class: "pkgtable" }, [
