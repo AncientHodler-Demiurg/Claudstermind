@@ -861,79 +861,167 @@ function viewOps() {
   ]);
 }
 
-/* ---------- tokens: hygiene inventory ---------- */
-function viewTokens() {
-  const t = (TOKENS && TOKENS.tokens) || [];
-  const statusColor = { active: "#34d399", expiring: "#fbbf24", expired: "#f87171", unknown: "#94a3b8", stale: "#f59e0b" };
-  const counts = t.reduce((a, x) => ((a[x.status] = (a[x.status] || 0) + 1), a), {});
-  const summary = el("div", { class: "statbar" }, Object.entries({ Total: t.length, ...counts }).map(([l, n]) =>
-    el("div", { class: "stat" }, [el("div", { class: "n", style: statusColor[l] ? `color:${statusColor[l]}` : "" }, [String(n)]), el("div", { class: "l" }, [l])])));
-  const rows = [...t].sort((a, b) => (a.kind || "").localeCompare(b.kind || ""));
-  const table = el("table", { class: "pkgtable" }, [
-    el("thead", {}, [el("tr", {}, ["Status", "Kind", "Name / Location", "Owner", "Scope", "Expiry", "Action"].map((h) => el("th", {}, [h])))]),
-    el("tbody", {}, rows.map((x) => el("tr", {}, [
-      el("td", {}, [el("span", { style: `color:${statusColor[x.status] || "#94a3b8"};font-weight:700` }, ["● " + (x.status || "?")])]),
-      el("td", {}, [el("code", {}, [x.kind || "—"])]),
-      el("td", {}, [el("b", {}, [x.name || x.id]), el("div", { class: "was" }, [x.location || ""])]),
-      el("td", {}, [x.owner || "—"]),
-      el("td", {}, [el("code", {}, [x.scope || "—"])]),
-      el("td", {}, [x.expiry || "unknown"]),
-      el("td", { class: "was" }, [x.action || ""]),
-    ]))),
-  ]);
-  const inspect = (TOKENS && TOKENS.inspectionTargets) || {};
-  const checklist = el("div", { class: "movecard" }, [
-    el("h4", {}, ["🔎 Inspection targets (browse logged-in; record names/expiry only, never values)"]),
-    el("ul", {}, [
-      el("li", {}, ["GitHub PATs: ", el("code", {}, [inspect.github_account_pats || "github.com/settings/tokens"])]),
-      el("li", {}, ["npm tokens: ", el("code", {}, [inspect.npm_tokens || "npmjs.com/settings/~/tokens"])]),
-      el("li", {}, ["GitHub org secrets: StoaChain · OuroborosNetwork · AncientPantheon · AncientClients"]),
-      el("li", {}, ["GitHub repo secrets: RELEASE_TOKEN + NPMPUSHER in each publishing repo"]),
-    ]),
-  ]);
-  // Live scan of GitHub Actions secrets across every tracked repo (names + dates only).
-  const scanBox = el("div", { id: "scanBox" });
-  const scanBtn = el("button", { class: "ghost" }, ["🔎 Scan repositories (GitHub API)"]);
-  async function runScan() {
-    scanBtn.disabled = true; const old = scanBtn.textContent; scanBtn.textContent = "… scanning (~20s)";
-    scanBox.replaceChildren(el("div", { class: "hint" }, ["Querying the GitHub API for Actions secrets across every tracked repo…"]));
-    let d; try { d = await (await fetch("/api/tokens/scan")).json(); }
-    catch (e) { scanBox.replaceChildren(el("div", { class: "hint" }, ["Scan error: " + e])); scanBtn.disabled = false; scanBtn.textContent = old; return; }
-    scanBtn.disabled = false; scanBtn.textContent = old;
-    if (!d.ok) { scanBox.replaceChildren(el("div", { class: "movecard", style: "border-color:#f87171" }, [d.message || "scan failed"])); return; }
+/* ---------- tokens: one dashboard, organised by entity × scope ----------
+   GitHub and npm, each split into Account / Organisation / Repository. Account tokens
+   come from the registry (metadata only) + the .secrets store; org/repo GitHub Actions
+   secrets are discovered live by the scan. Values are never shown — only where each
+   token lives, when it expires, and a field to paste a renewed value into the store. */
+const TOK_COLOR = { active: "#34d399", expiring: "#fbbf24", expired: "#f87171", none: "#94a3b8" };
+const ENTITY_META = {
+  github: { label: "GitHub", color: "#8b95ff", icon: "◆" },
+  npm: { label: "npm", color: "#cb3837", icon: "▲" },
+};
+const SCOPE_META = {
+  account: { label: "Account (global)", hint: "one token, used everywhere it's granted" },
+  org: { label: "Organisation", hint: "org-level Actions secrets, inherited by repos" },
+  repo: { label: "Repository", hint: "secrets set on a single repo" },
+};
 
-    const id = d.identity || {};
-    const orgMissing = (d.targets || []).some((t) => !t.repo && /no access/.test(t.reason || ""));
-    scanBox.replaceChildren(
-      el("div", { class: "statbar" }, [
-        el("div", { class: "stat" }, [el("div", { class: "n", style: "font-size:13px" }, [id.login || "—"]), el("div", { class: "l" }, ["token account"])]),
-        el("div", { class: "stat" }, [el("div", { class: "n" }, [String(d.counts.reachable) + "/" + d.counts.targetsScanned]), el("div", { class: "l" }, ["targets reachable"])]),
-        el("div", { class: "stat" }, [el("div", { class: "n" }, [String(d.counts.distinctSecrets)]), el("div", { class: "l" }, ["distinct secrets"])]),
-      ]),
-      el("div", { class: "hint" }, ["Token scopes: ", el("code", {}, [(id.scopes || []).join(", ") || "—"]), " · scanned " + (d.scannedAt || "").slice(0, 16).replace("T", " ")]),
-      orgMissing ? el("div", { class: "movecard", style: "border-color:#fbbf24;font-size:12px" }, ["⚠ Organisation-level secrets couldn't be read — your token lacks the ", el("code", {}, ["admin:org"]), " scope. Add it to see org secrets like ", el("code", {}, ["NPM_TOKEN"]), "; repo-level secrets are shown regardless."]) : "",
-      el("table", { class: "pkgtable" }, [
-        el("thead", {}, [el("tr", {}, ["Secret", "Where it lives", "Newest update"].map((h) => el("th", {}, [h])))]),
-        el("tbody", {}, (d.secretsByName || []).map((s) => el("tr", {}, [
-          el("td", {}, [el("code", {}, [s.name])]),
-          el("td", {}, [s.locations.map((l) => l.where).join(", ")]),
-          el("td", { class: "was" }, [(s.newest || "").slice(0, 10)]),
-        ]))),
-      ]),
+let TOKREG = null;   // cached registry response for re-renders after a save
+
+function tokPill(t) {
+  const c = TOK_COLOR[t.status] || TOK_COLOR.none;
+  const label = t.status === "none" ? "no expiry"
+    : t.status === "expired" ? `expired ${-t.daysLeft}d ago`
+    : t.status === "expiring" ? `expires in ${t.daysLeft}d`
+    : `${t.daysLeft}d left`;
+  return el("span", { style: `font-size:11px;font-weight:700;color:${c};border:1px solid ${c}55;background:${c}18;border-radius:999px;padding:2px 9px` }, [label]);
+}
+
+// One account-token card: identity, expiry, where it's deployed, manage link, renew field.
+function accountTokenCard(t, onSaved) {
+  const store = t.stored === true ? el("span", { style: "color:#34d399;font-size:11px" }, ["✓ stored in .secrets/" + t.secretFile])
+    : t.stored === false ? el("span", { style: "color:#fbbf24;font-size:11px" }, ["⚠ not stored — paste it below to save to .secrets/" + t.secretFile])
+    : el("span", { class: "was" }, ["not stored locally"]);
+
+  const input = el("input", { type: "password", placeholder: "paste renewed token…",
+    style: "flex:1;min-width:160px;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:5px 9px;font-family:ui-monospace,monospace;font-size:12px" });
+  const saveBtn = el("button", { class: "gitbtn" }, ["Save to .secrets"]);
+  const msg = el("span", { class: "was", style: "font-size:11px" });
+  saveBtn.addEventListener("click", async () => {
+    if (!input.value.trim()) { msg.textContent = "paste a value first"; return; }
+    saveBtn.disabled = true; msg.textContent = "saving…";
+    try {
+      const r = await (await fetch("/api/tokens/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ secretFile: t.secretFile, value: input.value }) })).json();
+      msg.textContent = r.ok ? "✓ saved" : (r.message || "failed");
+      msg.style.color = r.ok ? "#34d399" : "#f87171";
+      input.value = "";
+      if (r.ok && onSaved) onSaved();
+    } catch (e) { msg.textContent = String(e); }
+    saveBtn.disabled = false;
+  });
+
+  const stripe = TOK_COLOR[t.status] || TOK_COLOR.none;
+  return el("div", { class: "repocard", style: `--stripe:${stripe}` }, [
+    el("div", { class: "rc-hd" }, [
+      el("span", { class: "rc-name", title: t.notes || "" }, [t.label || t.id]),
+      el("span", { style: "margin-left:auto" }, [tokPill(t)]),
+    ]),
+    el("div", { class: "rc-sub" }, [el("code", {}, [t.kind]), t.expires ? `  ·  ${t.expires}` : "  ·  never expires"]),
+    (t.deployedAs && t.deployedAs.length) ? el("div", { class: "rc-sub" }, ["deployed as: ", ...t.deployedAs.map((d) => el("code", { style: "margin-right:5px" }, [d]))]) : "",
+    el("div", { class: "rc-sub" }, [store]),
+    el("div", { style: "display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:3px" }, [
+      el("a", { href: t.manageUrl, target: "_blank", rel: "noopener", class: "gitbtn", style: "text-decoration:none" }, ["↗ Manage / renew"]),
+    ]),
+    el("div", { style: "display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:3px" }, [input, saveBtn, msg]),
+  ]);
+}
+
+function scopeSection(scope, cards, extra) {
+  const m = SCOPE_META[scope];
+  return el("div", { style: "margin:8px 0 4px" }, [
+    el("div", { class: "hint", style: "margin-bottom:6px" }, [el("b", {}, [m.label]), "  — " + m.hint]),
+    cards.length || extra ? el("div", { class: "orggroup-body", style: "padding:0" }, cards) : el("div", { class: "was", style: "font-size:12px;opacity:.7" }, ["none"]),
+    extra || "",
+  ]);
+}
+
+let TOK_SCAN = null;   // last scan result, merged into the org/repo scopes
+
+function viewTokens() {
+  const wrap = el("div", { id: "tokWrap" }, [el("div", { class: "hint" }, ["Loading tokens…"])]);
+
+  async function load() {
+    let d; try { d = await (await fetch("/api/tokens")).json(); } catch { wrap.replaceChildren(el("div", { class: "hint" }, ["tokens not reachable"])); return; }
+    TOKREG = d;
+    const T = d.totals || {};
+
+    const summary = el("div", { class: "statbar" }, [
+      el("div", { class: "stat" }, [el("div", { class: "n" }, [String(T.total || 0)]), el("div", { class: "l" }, ["account tokens"])]),
+      el("div", { class: "stat" }, [el("div", { class: "n", style: `color:${T.expired ? TOK_COLOR.expired : "inherit"}` }, [String(T.expired || 0)]), el("div", { class: "l" }, ["expired"])]),
+      el("div", { class: "stat" }, [el("div", { class: "n", style: `color:${T.expiring ? TOK_COLOR.expiring : "inherit"}` }, [String(T.expiring || 0)]), el("div", { class: "l" }, ["expiring ≤30d"])]),
+      el("div", { class: "stat" }, [el("div", { class: "n", style: `color:${TOK_COLOR.active}` }, [String(T.stored || 0)]), el("div", { class: "l" }, ["stored in .secrets"])]),
+      el("div", { class: "stat" }, [el("div", { class: "n", style: `color:${T.missing ? TOK_COLOR.expiring : "inherit"}` }, [String(T.missing || 0)]), el("div", { class: "l" }, ["not yet stored"])]),
+    ]);
+
+    // The live scan feeds the org/repo GitHub scopes.
+    const scanBtn = el("button", { class: "ghost" }, [TOK_SCAN ? "↻ Re-scan repositories" : "🔎 Scan GitHub secrets (org + repo)"]);
+    scanBtn.addEventListener("click", runScan);
+
+    const g = d.grouped || { github: {}, npm: {} };
+    const entities = ["github", "npm"].map((ent) => {
+      const em = ENTITY_META[ent];
+      const account = (g[ent]?.account || []).map((t) => accountTokenCard(t, load));
+
+      // org/repo GitHub secrets come from the scan (npm has none of these).
+      let orgExtra = "", repoExtra = "";
+      if (ent === "github" && TOK_SCAN) {
+        orgExtra = scanScopeTable(TOK_SCAN, "org");
+        repoExtra = scanScopeTable(TOK_SCAN, "repo");
+      }
+
+      return el("div", { class: "orggroup", style: `--org:${em.color}` }, [
+        el("div", { class: "orggroup-hd" }, [
+          el("span", { class: "dot", style: `background:${em.color}` }),
+          el("b", {}, [em.icon + " " + em.label]),
+          ent === "github" ? el("span", { class: "grouptag" }, [scanBtn]) : "",
+        ]),
+        el("div", { style: "padding:10px 14px" }, [
+          scopeSection("account", account),
+          scopeSection("org", [], ent === "github" ? (orgExtra || el("div", { class: "was", style: "font-size:12px" }, ["Run the scan to list org-level Actions secrets."])) : el("div", { class: "was", style: "font-size:12px" }, ["npm tokens are account-level; there are no org secrets to list."])),
+          scopeSection("repo", [], ent === "github" ? (repoExtra || el("div", { class: "was", style: "font-size:12px" }, ["Run the scan to list repo-level Actions secrets."])) : ""),
+        ]),
+      ]);
+    });
+
+    wrap.replaceChildren(
+      el("div", { class: "hint" }, ["Every token, organised by ", el("b", {}, ["entity × scope"]), ". Values are never shown — only where each lives, when it expires, and a field to store a renewed value into ", el("code", {}, [".secrets/"]), " (one place for the whole workspace). ", el("b", {}, ["↗ Manage"]), " opens the exact page to renew it."]),
+      summary,
+      ...entities,
     );
   }
-  scanBtn.addEventListener("click", runScan);
 
+  async function runScan() {
+    const btns = wrap.querySelectorAll(".orggroup-hd .ghost");
+    btns.forEach((b) => { b.disabled = true; b.textContent = "… scanning (~20s)"; });
+    try { TOK_SCAN = await (await fetch("/api/tokens/scan")).json(); }
+    catch (e) { TOK_SCAN = { ok: false, message: String(e) }; }
+    load();
+  }
+
+  load();
+  return wrap;
+}
+
+// Render the scan's org- or repo-level secrets as a table under the right scope.
+function scanScopeTable(scan, scope) {
+  if (!scan.ok) return el("div", { class: "movecard", style: "border-color:#f87171;font-size:12px" }, [scan.message || "scan failed"]);
+  const targets = (scan.targets || []).filter((t) => (scope === "org" ? !t.repo : !!t.repo));
+  const rows = [];
+  for (const t of targets) {
+    for (const s of (t.secrets || [])) rows.push({ where: t.label, name: s.name, updated: s.updated });
+  }
+  const orgMissing = scope === "org" && targets.some((t) => !t.reachable && /no access/.test(t.reason || ""));
   return el("div", {}, [
-    el("div", { class: "hint" }, ["Token & secret hygiene. No secret VALUES are stored or shown — only location, scope, expiry, status. ", el("b", {}, [String(t.length) + " tracked"]), " in the manual inventory below."]),
-    summary,
-    el("div", { class: "movecard" }, [
-      el("div", { class: "desc" }, [el("b", {}, ["Live secret scan"])]),
-      el("div", { class: "hint" }, ["Reads each tracked repo's GitHub Actions secrets via the API — ", el("b", {}, ["names + last-updated only"]), ", never the values (the API can't return them). Uses your central PAT server-side. GitHub has no API to list account PATs, so this covers secrets-in-repos, not the tokens themselves."]),
-      el("div", { class: "graph-controls" }, [scanBtn]),
-      scanBox,
-    ]),
-    checklist, table,
+    orgMissing ? el("div", { class: "movecard", style: "border-color:#fbbf24;font-size:12px;margin-bottom:6px" }, ["⚠ Org secrets need the ", el("code", {}, ["admin:org"]), " scope on your token — add it to see org-level secrets like ", el("code", {}, ["NPM_TOKEN"]), "."]) : "",
+    rows.length ? el("table", { class: "pkgtable" }, [
+      el("thead", {}, [el("tr", {}, ["Secret", scope === "org" ? "Organisation" : "Repository", "Updated"].map((h) => el("th", {}, [h])))]),
+      el("tbody", {}, rows.sort((a, b) => a.name.localeCompare(b.name)).map((r) => el("tr", {}, [
+        el("td", {}, [el("code", {}, [r.name])]),
+        el("td", { class: "was" }, [r.where]),
+        el("td", { class: "was" }, [(r.updated || "").slice(0, 10)]),
+      ]))),
+    ]) : el("div", { class: "was", style: "font-size:12px" }, ["No " + scope + "-level secrets found."]),
   ]);
 }
 

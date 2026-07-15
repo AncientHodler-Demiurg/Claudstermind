@@ -28,6 +28,7 @@ import { readCascade } from "../lib/cascade.mjs";
 import { allReposGitStatus } from "../lib/gitStatus.mjs";
 import { resolveRepo, pushRepo, commitRepo } from "../lib/gitActions.mjs";
 import { parseOriginUrl, scanSecrets, tokenIdentity } from "../lib/tokenScan.mjs";
+import { readRegistry, enrich, groupTokens, tokenTotals, saveSecret } from "../lib/tokenRegistry.mjs";
 import { readOidcConfig } from "./auth/oidcConfig.mjs";
 import { handleAuthRoute, guard, denyPage } from "./auth/routes.mjs";
 
@@ -35,7 +36,9 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dir, "public");
 const DATA_DIR = join(__dir, "data");
 const MASTER_ROOT = resolve(__dir, "..", "..");   // D:/_Claude
+const SECRETS_DIR = join(MASTER_ROOT, ".secrets"); // the single token store for the workspace
 const FALLBACK_PORT = 3020;
+const todayStr = () => new Date().toLocaleDateString("sv-SE");   // YYYY-MM-DD, local
 
 // Throws on a half-set OIDC env — a typo'd var must not silently boot an open server.
 const OIDC = readOidcConfig();
@@ -400,19 +403,30 @@ const handler = async (req, res) => {
       totals: { published: found.filter((p) => !p.private).length, sub: found.filter((p) => p.private && !p.isRoot).length, apps: found.filter((p) => p.private && p.isRoot).length, all: found.length } });
   }
 
-  if (path === "/api/map" || path === "/api/tokens") {
-    const file = path === "/api/map" ? "map.json" : "tokens.json";
+  // ---- tokens: the registry, enriched with store-presence + expiry, grouped ----
+  if (path === "/api/tokens") {
+    const reg = readRegistry(DATA_DIR);
+    const tokens = enrich(reg.tokens, SECRETS_DIR, todayStr());
+    return sendJSON(res, 200, { meta: reg.meta || {}, tokens, grouped: groupTokens(tokens), totals: tokenTotals(tokens) });
+  }
+
+  // ---- tokens: renew — save a pasted value into .secrets/<file> (never logged) ----
+  if (req.method === "POST" && path === "/api/tokens/save") {
+    if (!sameOrigin(req)) return sendJSON(res, 403, { ok: false, reason: "cross-origin" });
+    if (!who.localActionsAvailable) return sendJSON(res, 403, { ok: false, reason: "local-only", message: "Token storage is local-only." });
+    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only" });
+    let body = ""; for await (const c of req) body += c;
+    let b = {}; try { b = JSON.parse(body || "{}"); } catch {}
+    const r = saveSecret(SECRETS_DIR, DATA_DIR, b.secretFile, b.value);   // value never echoed/logged
+    return sendJSON(res, 200, r);
+  }
+
+  if (path === "/api/map") {
     try {
-      const data = await readFileAsync(join(DATA_DIR, file), "utf8");
+      const data = await readFileAsync(join(DATA_DIR, "map.json"), "utf8");
       res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
       res.end(data);
     } catch (e) {
-      // tokens.json is gitignored and may be absent on a fresh clone — return an empty shell, not a 500.
-      if (path === "/api/tokens") {
-        res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify({ meta: { note: "tokens.json not present (gitignored). Run the token inspection pass to generate it." }, tokens: [] }));
-        return;
-      }
       res.writeHead(500, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: String(e) }));
     }
