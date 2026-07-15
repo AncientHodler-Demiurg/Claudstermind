@@ -25,7 +25,7 @@ import { readActivity, readLastBackup } from "../orchestrator/activity.mjs";
 import { listArchives } from "../orchestrator/archives.mjs";
 import { readBackupConfig, writeBackupConfig, isBackupDue } from "../orchestrator/backupConfig.mjs";
 import { readCascade } from "../lib/cascade.mjs";
-import { allReposGitStatus } from "../lib/gitStatus.mjs";
+import { allReposGitStatus, repoGitStatus } from "../lib/gitStatus.mjs";
 import { resolveRepo, pushRepo, commitRepo } from "../lib/gitActions.mjs";
 import { parseOriginUrl, scanSecrets, tokenIdentity } from "../lib/tokenScan.mjs";
 import { readRegistry, enrich, groupTokens, tokenTotals, saveSecret } from "../lib/tokenRegistry.mjs";
@@ -206,6 +206,25 @@ const handler = async (req, res) => {
     res.setHeader("cache-control", "no-store");
     try { return sendJSON(res, 200, readCascade(MASTER_ROOT)); }
     catch (e) { return sendJSON(res, 200, { running: false, everRun: false, error: String(e), workspaces: [], repos: [], master: null }); }
+  }
+
+  // ---- git: status for ONE repo (fast) — used to refresh a single card after an
+  // action, instead of re-sweeping the whole workspace and blanking the view. ----
+  if (path === "/api/git/repo") {
+    const rel = (url.searchParams.get("path") || "").replace(/^_Claude[\\/]/, "");
+    const abs = resolve(MASTER_ROOT, rel);
+    if (!rel || !abs.startsWith(resolve(MASTER_ROOT))) return sendJSON(res, 400, { error: "bad path" });
+    const status = repoGitStatus(abs);
+    if (!status) return sendJSON(res, 200, { error: "not a git repo", localPath: rel });
+    // Match the shape of one entry in /api/git so the card renders identically.
+    let name = rel.split(/[\\/]/).pop(), id = null;
+    try {
+      const map = JSON.parse(await readFileAsync(join(DATA_DIR, "map.json"), "utf8"));
+      const m = (map.repos || []).find((r) => (r.localPath || "").replace(/\\/g, "/").toLowerCase() === rel.replace(/\\/g, "/").toLowerCase());
+      if (m) { name = m.name || name; id = m.id; }
+    } catch { /* fall back to the folder name */ }
+    GIT_CACHE.at = 0;   // a card just changed — invalidate the full-sweep cache
+    return sendJSON(res, 200, { id, name, localPath: rel, ...status });
   }
 
   // ---- git: per-repo uncommitted + unpushed, across every tracked repo ----

@@ -623,19 +623,27 @@ function gitRepoCard(mr, g) {
   });
 }
 
-// Report an action's result on the card, then rescan so the badges update.
-function gitActionDone(btn, result) {
+// Report an action's result on the card, then refresh JUST THAT CARD — not the whole
+// workspace — so the rest of the view stays put instead of blanking during a re-scan.
+async function gitActionDone(btn, result, g) {
   const card = btn.closest(".repocard");
   const msg = card && card.querySelector(".gitmsg");
   if (msg) { msg.hidden = false; msg.textContent = result.message || (result.ok ? "done" : "failed"); msg.style.color = result.ok ? GIT_COLOR.clean : GIT_COLOR.never; }
-  if (result.ok && typeof GIT_REFRESH === "function") setTimeout(() => GIT_REFRESH(true), 400);
+  if (!result.ok || !card || !g) return;
+  try {
+    const fresh = await (await fetch("/api/git/repo?path=" + encodeURIComponent(g.localPath))).json();
+    if (fresh && !fresh.error) {
+      const mr = (MAP.repos || []).find((r) => r.id === fresh.id) || { name: fresh.name, localPath: fresh.localPath, role: "infra", org: { target: "" } };
+      card.replaceWith(gitRepoCard(mr, fresh));   // swap only this card in place
+    }
+  } catch { /* leave the card; the periodic 25s scan will reconcile */ }
 }
-async function gitPost(pathq, body, btn) {
+async function gitPost(pathq, body, btn, g) {
   const old = btn.textContent; btn.disabled = true; btn.textContent = "…";
   try {
     const r = await (await fetch(pathq, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
-    gitActionDone(btn, r);
-  } catch (e) { gitActionDone(btn, { ok: false, message: String(e) }); }
+    await gitActionDone(btn, r, g);
+  } catch (e) { await gitActionDone(btn, { ok: false, message: String(e) }, g); }
   btn.disabled = false; btn.textContent = old;
 }
 /* ---------- themed modal — replaces window.prompt/confirm ---------- */
@@ -725,7 +733,7 @@ async function gitPush(g, btn) {
     sub: `Push ${g.branch}${g.summary?.neverPushedBranches?.includes(g.branch) ? " (first push — sets upstream)" : ""} to origin.`,
     confirmLabel: "↑ Push",
   });
-  if (ok) gitPost("/api/git/push", { localPath: g.localPath }, btn);
+  if (ok) gitPost("/api/git/push", { localPath: g.localPath }, btn, g);
 }
 async function gitCommit(g, btn) {
   const suggestion = suggestCommitMessage(g.uncommitted && g.uncommitted.files);
@@ -737,7 +745,7 @@ async function gitCommit(g, btn) {
     confirmLabel: "✓ Commit",
   });
   if (msg == null || !msg.trim()) return;
-  gitPost("/api/git/commit", { localPath: g.localPath, message: msg }, btn);
+  gitPost("/api/git/commit", { localPath: g.localPath, message: msg }, btn, g);
 }
 let GIT_REFRESH = null;   // set by viewGit so a card action can trigger a rescan
 
