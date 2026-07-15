@@ -32,6 +32,8 @@ import { readRegistry, enrich, groupTokens, tokenTotals } from "../lib/tokenRegi
 import { buildUsageIndex, secretUsage } from "../lib/secretUsage.mjs";
 import { readBrain, scanPackages } from "../lib/snapshot.mjs";
 import { executeCommand } from "../lib/commands.mjs";
+import { createBridge } from "../agent/agent.mjs";
+import { readRelayConfig, writeRelayConfig, readDeviceSecret, saveDeviceSecret } from "../lib/relayConfig.mjs";
 import { readOidcConfig } from "./auth/oidcConfig.mjs";
 import { handleAuthRoute, guard, denyPage } from "./auth/routes.mjs";
 
@@ -127,6 +129,39 @@ const LOCAL_ONLY = new Set(["/api/backup", "/api/restore", "/api/master-pollinat
 // bridge uses. Local buttons and relayed commands run through one whitelist + executor,
 // so a command can't exist on one path and not the other.
 const cmdCtx = { root: MASTER_ROOT, secretsDir: SECRETS_DIR, dataDir: DATA_DIR, orchDir: ORCH, runProc, readActivity };
+
+// ---- the relay bridge, supervised in-process ----
+// This is what makes the LocalHost dashboard the single control point for the online
+// site: configure the relay address + device secret on the Ops tab, flip it on, and the
+// dashboard holds the outbound tunnel itself — no separate `node agent/agent.mjs`. Only
+// the LOCAL dashboard runs a bridge; the live relay deployment (OIDC set) never does.
+let BRIDGE = null;
+let BRIDGE_ERR = null;
+function stopBridge() { try { BRIDGE?.stop(); } catch {} BRIDGE = null; }
+function startBridgeFromConfig() {
+  stopBridge(); BRIDGE_ERR = null;
+  if (OIDC) return;                                   // the live relay has no local workspace to bridge
+  const cfg = readRelayConfig(DATA_DIR);
+  if (!cfg.enabled || !cfg.url) return;
+  const secret = readDeviceSecret(SECRETS_DIR);
+  if (!secret || secret.length < 32) { BRIDGE_ERR = "no device secret saved (paste it in the Relay panel)"; return; }
+  try {
+    const loopback = /^wss?:\/\/(127\.0\.0\.1|localhost)(:|\/)/i.test(cfg.url);   // dev-only: ws:// to localhost
+    BRIDGE = createBridge({
+      url: cfg.url, deviceSecret: secret, allowInsecure: loopback,
+      paths: { root: MASTER_ROOT, dataDir: DATA_DIR, brainDir: resolve(__dir, "..", "brain"), secretsDir: SECRETS_DIR, orchDir: ORCH },
+      log: (...a) => console.log("[bridge]", ...a),
+    }).start();
+  } catch (e) { BRIDGE_ERR = e.message; }
+}
+function relayStatus() {
+  const cfg = readRelayConfig(DATA_DIR);
+  const rs = BRIDGE?.socket?.readyState;
+  const state = rs === 0 ? "connecting" : rs === 1 ? "connected" : rs === 2 ? "closing"
+    : rs === 3 ? "reconnecting" : (cfg.enabled ? "starting" : "off");
+  return { enabled: cfg.enabled, url: cfg.url, hasSecret: Boolean(readDeviceSecret(SECRETS_DIR)),
+    connected: rs === 1, state, error: BRIDGE_ERR, available: !OIDC };
+}
 
 /**
  * CSRF: reject a state-changing request that a DIFFERENT origin initiated.
@@ -344,6 +379,29 @@ const handler = async (req, res) => {
     return sendJSON(res, 200, { config: readBackupConfig(), schedule: scheduleState() });
   }
 
+  // ---- relay: the bridge to the online site — status + config ----
+  if (path === "/api/relay") {
+    res.setHeader("cache-control", "no-store");
+    return sendJSON(res, 200, relayStatus());
+  }
+  if (req.method === "POST" && path === "/api/relay/config") {
+    if (!sameOrigin(req)) return sendJSON(res, 403, { ok: false, reason: "cross-origin" });
+    if (!who.localActionsAvailable) return sendJSON(res, 403, { ok: false, reason: "local-only", message: "The bridge runs on the work machine — configured on the local dashboard only." });
+    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only" });
+    let body = ""; for await (const c of req) body += c;
+    let b = {}; try { b = JSON.parse(body || "{}"); } catch {}
+    if (typeof b.deviceSecret === "string" && b.deviceSecret.trim()) {
+      const r = saveDeviceSecret(SECRETS_DIR, b.deviceSecret);   // value never echoed/logged
+      if (!r.ok) return sendJSON(res, 200, r);
+    }
+    const patch = {};
+    if (typeof b.url === "string") patch.url = b.url;
+    if (typeof b.enabled === "boolean") patch.enabled = b.enabled;
+    const cfg = writeRelayConfig(DATA_DIR, patch);
+    startBridgeFromConfig();                                     // apply the change immediately
+    return sendJSON(res, 200, { ok: true, config: cfg, status: relayStatus() });
+  }
+
   // ---- restore: the one irreversible action. Needs the id typed back. ----
   // Routes through the shared executor (which spawns restore.mjs with NO timeout —
   // killing the wrapper would orphan the tar and half-overwrite the workspace).
@@ -489,6 +547,10 @@ server.listen(PORT, HOST, () => {
     setTimeout(() => { backupTick().catch((e) => console.error("backup scheduler:", e)); }, 30_000);
     setInterval(() => { backupTick().catch((e) => console.error("backup scheduler:", e)); }, 10 * 60 * 1000);
     const c = readBackupConfig();
-    console.log(`  Daily backup: ${c.enabled ? `ON — ${c.location} at ${String(c.hour).padStart(2, "0")}:00` : "off (enable it on the Ops tab)"}\n`);
+    console.log(`  Daily backup: ${c.enabled ? `ON — ${c.location} at ${String(c.hour).padStart(2, "0")}:00` : "off (enable it on the Ops tab)"}`);
+    // Bring up the relay bridge if it's configured + enabled — the dashboard supervises it.
+    startBridgeFromConfig();
+    const rc = readRelayConfig(DATA_DIR);
+    console.log(`  Relay bridge: ${rc.enabled && rc.url ? `ON — ${rc.url}` : "off (configure it on the Ops tab)"}\n`);
   }
 });

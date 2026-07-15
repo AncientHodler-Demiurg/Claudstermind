@@ -48,3 +48,6 @@ build/
 # Token hygiene inventory — metadata only, but recon-sensitive (which tokens exist where). Never commit.
 dashboard/data/tokens.json
 .media/
+
+# Relay bridge config (points at the online relay; recon-sensitive). Never commit.
+dashboard/data/relay.json

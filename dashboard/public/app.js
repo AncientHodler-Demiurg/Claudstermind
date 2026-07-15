@@ -237,6 +237,7 @@ function render() {
   // has already torn out of the document, and throws on every tick forever after.
   if (VIEW !== "cascade" && CASCADE_TIMER) { clearInterval(CASCADE_TIMER); CASCADE_TIMER = null; }
   if (VIEW !== "ops" && OPS_TIMER) { clearInterval(OPS_TIMER); OPS_TIMER = null; }
+  if (VIEW !== "ops" && RELAY_TIMER) { clearInterval(RELAY_TIMER); RELAY_TIMER = null; }
   if (VIEW !== "git" && GIT_TIMER) { clearInterval(GIT_TIMER); GIT_TIMER = null; }
   if (VIEW === "cascade") v.replaceChildren(viewCascade());
   else if (VIEW === "git") v.replaceChildren(viewGit());
@@ -874,8 +875,10 @@ function viewGit() {
 
 /* ---------- ops: activity + backup + master-pollinate ---------- */
 let OPS_TIMER = null;
+let RELAY_TIMER = null;
 function viewOps() {
   if (OPS_TIMER) { clearInterval(OPS_TIMER); OPS_TIMER = null; }
+  if (RELAY_TIMER) { clearInterval(RELAY_TIMER); RELAY_TIMER = null; }
   const statusBox = el("div", { id: "opsStatus" }, [el("div", { class: "hint" }, ["Loading activity…"])]);
   const out = el("div", { id: "opsOut", class: "movecard", style: "display:none;white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px" });
   const backupBtn = el("button", { class: "ghost", id: "btnBackup" }, ["💾 Back up now"]);
@@ -924,6 +927,71 @@ function viewOps() {
     );
   }
   loadSched();
+
+  /* --- relay: point this machine at the online site (brain.ancientholdings.eu) --- */
+  // Only meaningful on the LOCAL dashboard — the bridge runs here, on the work machine.
+  const relayBox = (ME.mode === "local")
+    ? el("div", { class: "movecard", style: "margin-top:10px" }, [el("div", { class: "hint" }, ["Loading relay settings…"])])
+    : null;
+  const relayStatusEl = el("div", { style: "font-size:12px;margin-top:2px" });
+  async function updateRelayStatus() {
+    let s; try { s = await (await fetch("/api/relay", { cache: "no-store" })).json(); } catch { return; }
+    const color = s.connected ? "#34d399" : s.enabled ? "#fbbf24" : "#94a3b8";
+    const label = s.connected ? `● connected to ${s.url}`
+      : s.enabled ? `○ ${s.state}…${s.url ? " — " + s.url : ""}`
+      : "○ off";
+    relayStatusEl.replaceChildren(
+      el("span", { style: `color:${color};font-weight:700` }, [label]),
+      s.error ? el("span", { style: "color:#f87171" }, ["  · " + s.error]) : "",
+    );
+  }
+  async function loadRelay() {
+    if (!relayBox) return;
+    let s; try { s = await (await fetch("/api/relay", { cache: "no-store" })).json(); } catch { return; }
+    const urlInput = el("input", { type: "text", value: s.url || "", placeholder: "brain.ancientholdings.eu",
+      style: "flex:1;min-width:220px;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:5px 9px;font-family:ui-monospace,monospace;font-size:12px" });
+    const secretInput = el("input", { type: "password",
+      placeholder: s.hasSecret ? "•••••• device secret saved — leave blank to keep" : "paste the relay's device secret",
+      style: "flex:1;min-width:220px;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:5px 9px;font-family:ui-monospace,monospace;font-size:12px" });
+    const toggle = el("input", { type: "checkbox" });
+    if (s.enabled) toggle.setAttribute("checked", "checked");
+    const saveBtn = el("button", { class: "ghost" }, ["Save & connect"]);
+    const msg = el("span", { class: "was", style: "font-size:11px" });
+
+    async function save(patch) {
+      const body = { url: urlInput.value, enabled: toggle.checked, ...patch };
+      if (secretInput.value.trim()) body.deviceSecret = secretInput.value;   // sent once, saved to .secrets, never shown again
+      msg.textContent = "saving…";
+      try {
+        const r = await (await fetch("/api/relay/config", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+        secretInput.value = "";
+        msg.textContent = r.ok ? "✓ saved" : (r.message || r.reason || "failed");
+        msg.style.color = r.ok ? "#34d399" : "#f87171";
+      } catch (e) { msg.textContent = String(e); }
+      loadRelay(); updateRelayStatus();
+    }
+    toggle.addEventListener("change", () => save({ enabled: toggle.checked }));
+    saveBtn.addEventListener("click", () => save({}));
+
+    relayBox.replaceChildren(
+      el("div", { class: "desc" }, [el("b", {}, ["Online relay"]), " — mirror this dashboard to the web"]),
+      el("div", { style: "display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0" }, [
+        el("span", { class: "was" }, ["address"]), urlInput,
+      ]),
+      el("div", { style: "display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0" }, [
+        el("span", { class: "was" }, ["device secret"]), secretInput,
+      ]),
+      el("div", { style: "display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:6px 0" }, [
+        el("label", { style: "display:inline-flex;align-items:center;gap:6px;font-size:13px" }, [toggle, "Connect to relay"]),
+        saveBtn, msg,
+      ]),
+      relayStatusEl,
+      el("div", { class: "hint", style: "margin-top:4px" }, ["When on, this dashboard holds an outbound tunnel to the online site so you can view — and, as the ancient admin, drive — your workspace from ", el("b", {}, ["brain.ancientholdings.eu"]), ". The device secret must match the relay's ", el("code", {}, ["AGENT_DEVICE_SECRET"]), ". It's stored locally in .secrets and never shown again."]),
+    );
+    updateRelayStatus();
+  }
+  loadRelay();
+  if (relayBox) RELAY_TIMER = setInterval(updateRelayStatus, 3000);
 
   async function post(pathq, btn, label) {
     btn.disabled = true; const old = btn.textContent; btn.textContent = "… running";
@@ -1035,6 +1103,7 @@ function viewOps() {
     el("div", { class: "hint" }, ["Orchestration — live agent-activity detection, ", el("b", {}, ["dated archive backups"]), " with restore, and gated ", el("b", {}, ["master-pollinate"]), ". Buttons are enabled only when no agent is working."]),
     controls, out, statusBox,
     schedBox,
+    relayBox || "",
     el("h3", { style: "margin:18px 0 6px" }, ["Archives"]),
     el("div", { class: "hint" }, ["Each backup is an immutable point in time — a corrupted tree can only overwrite the newest archive, never the older ones. Restore rewinds the files the archive contains; anything created since is left alone."]),
     archiveBox,
