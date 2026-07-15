@@ -128,7 +128,7 @@ svg text { font-family: ui-sans-serif, system-ui, sans-serif; }
 /* packages */
 .pkgtable { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .pkgtable th, .pkgtable td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
-.pkgtable th { color: var(--ink-dim); font-weight: 600; position: sticky; top: 96px; background: var(--bg); }
+.pkgtable th { color: var(--ink-dim); font-weight: 600; background: var(--bg); }
 .pkgtable code { font-family: ui-monospace, monospace; }
 .pkgtable .pub { color: #34d399; } .pkgtable .priv { color: var(--ink-dim); }
 .was { color: var(--ink-dim); font-size: 11px; }

@@ -97,20 +97,32 @@ async function boot() {
   $("#modelPill").textContent = "model: " + MAP.meta.model;
   $("#genPill").textContent = "generated " + MAP.meta.generated;
   buildLegend();
+
+  // Tab routing: each tab has its own URL via the hash (#tokens, #git, …), so a tab is
+  // linkable/bookmarkable and back/forward works. Clicking a tab updates the hash;
+  // changing the hash (link, bookmark, history) switches the tab.
+  const VIEWS = new Set([...$("#tabs").querySelectorAll("button[data-view]")].map((b) => b.dataset.view));
+  function applyView(view, { push = true } = {}) {
+    if (!VIEWS.has(view)) view = "overview";
+    VIEW = view;
+    [...$("#tabs").children].forEach((x) => x.classList.toggle("active", x.dataset.view === view));
+    if (push && ("#" + view) !== location.hash) location.hash = view;   // fires hashchange → no double render
+    else render();
+  }
   $("#tabs").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-view]");
-    if (!b) return;
-    VIEW = b.dataset.view;
-    [...$("#tabs").children].forEach((x) => x.classList.toggle("active", x === b));
-    render();
+    if (b) applyView(b.dataset.view);
   });
+  window.addEventListener("hashchange", () => applyView(location.hash.replace(/^#/, ""), { push: false }));
+
   $("#themeBtn").addEventListener("click", () => {
     const b = document.body;
     b.dataset.theme = b.dataset.theme === "dark" ? "light" : "dark";
     if (VIEW === "graph") render();
   });
   renderStatbar();
-  render();
+  // Open the tab named in the URL hash (deep link / bookmark), else the default.
+  applyView(location.hash.replace(/^#/, "") || "overview", { push: false });
 }
 
 /* ---------- auth: the header pill + hiding what the live site cannot do ---------- */
