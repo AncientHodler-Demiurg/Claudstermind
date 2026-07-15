@@ -80,8 +80,9 @@ function repoCard(r, { stripe, branch, sublines = [], muted = false, extra = [] 
   const nameEl = el("span", { class: "rc-name", title: `${r.name}\n${r.localPath || ""}`.trim() }, [nameInner]);
   nameEl.addEventListener("mouseenter", () => {
     const over = nameInner.scrollWidth - nameEl.clientWidth;
-    nameEl.style.setProperty("--marq", over > 2 ? `-${over + 10}px` : "0px");   // only long names actually move
+    if (over > 2) { nameEl.style.setProperty("--marq", `-${over + 10}px`); nameInner.classList.add("train"); }   // only long names move
   });
+  nameEl.addEventListener("mouseleave", () => nameInner.classList.remove("train"));
   return el("div", { class: "repocard" + (muted ? " is-muted" : ""), style: `--stripe:${stripe || role.color}` }, [
     el("div", { class: "rc-hd" }, [
       el("span", { class: "glyph", style: `color:${role.color}` }, [role.glyph]),
