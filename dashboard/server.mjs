@@ -26,10 +26,12 @@ import { listArchives } from "../orchestrator/archives.mjs";
 import { readBackupConfig, writeBackupConfig, isBackupDue } from "../orchestrator/backupConfig.mjs";
 import { readCascade } from "../lib/cascade.mjs";
 import { allReposGitStatus, repoGitStatus } from "../lib/gitStatus.mjs";
-import { resolveRepo, pushRepo, commitRepo, pullRepo } from "../lib/gitActions.mjs";
+import { resolveRepo } from "../lib/gitActions.mjs";
 import { parseOriginUrl, scanSecrets, tokenIdentity } from "../lib/tokenScan.mjs";
-import { readRegistry, enrich, groupTokens, tokenTotals, saveSecret } from "../lib/tokenRegistry.mjs";
+import { readRegistry, enrich, groupTokens, tokenTotals } from "../lib/tokenRegistry.mjs";
 import { buildUsageIndex, secretUsage } from "../lib/secretUsage.mjs";
+import { readBrain, scanPackages } from "../lib/snapshot.mjs";
+import { executeCommand } from "../lib/commands.mjs";
 import { readOidcConfig } from "./auth/oidcConfig.mjs";
 import { handleAuthRoute, guard, denyPage } from "./auth/routes.mjs";
 
@@ -55,6 +57,9 @@ const SCAN_TTL_MS = 5 * 60 * 1000;
 const SCAN_CACHE = { at: 0, data: null };
 
 function resolvePort() {
+  // An explicit PORT env wins — useful for a second instance, tests, or a container.
+  const fromEnv = Number(process.env.PORT);
+  if (Number.isInteger(fromEnv) && fromEnv > 0) return fromEnv;
   try {
     const reg = JSON.parse(readFileSync(resolve(__dir, "..", "..", "LocalHost", "registry.json"), "utf8"));
     const entry = reg.projects.find((p) => p.key === "claudstermind");
@@ -117,6 +122,11 @@ function runProc(cmd, argv, opts = {}) {
 // Machine-local actions: they act on THIS disk, so the live deployment refuses them
 // outright — no role can grant them remotely. `ancient` is the second lock, not the only one.
 const LOCAL_ONLY = new Set(["/api/backup", "/api/restore", "/api/master-pollinate"]);
+
+// The context handed to executeCommand — the SAME single command path the online
+// bridge uses. Local buttons and relayed commands run through one whitelist + executor,
+// so a command can't exist on one path and not the other.
+const cmdCtx = { root: MASTER_ROOT, secretsDir: SECRETS_DIR, dataDir: DATA_DIR, orchDir: ORCH, runProc, readActivity };
 
 /**
  * CSRF: reject a state-changing request that a DIFFERENT origin initiated.
@@ -253,12 +263,9 @@ const handler = async (req, res) => {
     if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The ancient role is required for git actions." });
     let body = ""; for await (const c of req) body += c;
     let b = {}; try { b = JSON.parse(body || "{}"); } catch {}
-    const abs = resolveRepo(b.localPath, MASTER_ROOT);
-    if (!abs) return sendJSON(res, 400, { ok: false, message: `Not a resolvable git repo: ${b.localPath}` });
     GIT_CACHE.at = 0;                                    // a mutation invalidates the status cache
-    const r = path === "/api/git/push" ? pushRepo(abs)
-      : path === "/api/git/pull" ? pullRepo(abs)
-      : commitRepo(abs, b.message);
+    const type = path === "/api/git/push" ? "git.push" : path === "/api/git/pull" ? "git.pull" : "git.commit";
+    const r = await executeCommand(type, { localPath: b.localPath, message: b.message }, cmdCtx);
     return sendJSON(res, 200, r);
   }
 
@@ -338,63 +345,21 @@ const handler = async (req, res) => {
   }
 
   // ---- restore: the one irreversible action. Needs the id typed back. ----
+  // Routes through the shared executor (which spawns restore.mjs with NO timeout —
+  // killing the wrapper would orphan the tar and half-overwrite the workspace).
   if (req.method === "POST" && path === "/api/restore") {
-    const id = url.searchParams.get("id");
-    const confirm = url.searchParams.get("confirm");
-    const dry = url.searchParams.get("dry") === "1";
-    const argv = [join(ORCH, "restore.mjs")];
-    if (id) argv.push("--id", id);
-    if (confirm) argv.push("--confirm", confirm);
-    if (dry) argv.push("--dry");
-
-    // NO timeout. Killing the wrapper would not kill the `tar.exe` it spawned — on
-    // Windows that grandchild survives, so we would tell the user the restore failed
-    // while it was still busily overwriting their workspace. Extracting a 30-repo tree
-    // can legitimately run long; let it finish and report the truth.
-    const r = await runProc(process.execPath, argv, { timeout: 0 });
-    let payload;
-    try { payload = JSON.parse((r.stdout.trim().split(/\r?\n/).pop()) || "{}"); }
-    catch {
-      payload = {
-        ok: false,
-        message: "The restore process produced no parseable result. It MAY STILL BE RUNNING — check D:/_Claude before doing anything else.",
-        raw: r.stdout.slice(-500), stderr: r.stderr.slice(-300),
-      };
-    }
+    const payload = await executeCommand("restore", {
+      id: url.searchParams.get("id"),
+      confirm: url.searchParams.get("confirm"),
+      dry: url.searchParams.get("dry") === "1",
+    }, cmdCtx);
     return sendJSON(res, 200, payload);
   }
 
   // ---- brain: per-repo folders (auto state + curated knowledge) ----
+  // Shared with the online bridge's snapshot, so both surfaces render identical data.
   if (path === "/api/brain") {
-    const brainDir = resolve(__dir, "..", "brain");
-    const { readdirSync, statSync, existsSync } = await import("node:fs");
-    const dirSize = (d, depth = 0) => { let b = 0; if (depth > 6 || !existsSync(d)) return 0;
-      try { for (const e of readdirSync(d, { withFileTypes: true })) { if (e.name === ".git") continue; const p = join(d, e.name);
-        if (e.isDirectory()) b += dirSize(p, depth + 1); else try { b += statSync(p).size; } catch {} } } catch {} return b; };
-    const out = { repos: [], worklog: [], totals: {} };
-    let worklogLines = [];
-    try { worklogLines = (await readFileAsync(join(brainDir, "_worklog.md"), "utf8")).split(/\r?\n/).filter((l) => l.startsWith("- ")); } catch {}
-    try {
-      const folders = readdirSync(brainDir, { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== "_TEMPLATE")
-        .map((e) => e.name);
-      for (const key of folders) {
-        const folder = join(brainDir, key);
-        const hasState = existsSync(join(folder, "_state.md"));
-        let g = () => ""; let updated = "";
-        if (hasState) { const md = await readFileAsync(join(folder, "_state.md"), "utf8");
-          g = (l) => (md.match(new RegExp("\\*\\*" + l + ":\\*\\*\\s*(.*)")) || [])[1]?.trim() || ""; updated = g("updated"); }
-        const curated = readdirSync(folder).filter((f) => f.endsWith(".md") && !f.startsWith("_"));
-        const repoPath = g("path") || key;
-        out.repos.push({ repo: repoPath, key, branch: g("branch"), dirty: g("uncommitted"), focus: g("last focus"),
-          updated, contextBytes: dirSize(folder), curatedFiles: curated.length, hasState,
-          worklogCount: worklogLines.filter((l) => l.includes("**" + repoPath + "**")).length });
-      }
-      out.repos.sort((a, b) => (b.updated || "").localeCompare(a.updated || "") || b.contextBytes - a.contextBytes);
-    } catch {}
-    out.worklog = worklogLines.slice(-40).reverse();
-    try { out.daily = JSON.parse(await readFileAsync(join(brainDir, "_daily.json"), "utf8")); } catch { out.daily = {}; }
-    out.totals = { contextBytes: out.repos.reduce((s, r) => s + r.contextBytes, 0), repos: out.repos.length, worklogEntries: worklogLines.length, withState: out.repos.filter((r) => r.hasState).length };
-    return sendJSON(res, 200, out);
+    return sendJSON(res, 200, readBrain(resolve(__dir, "..", "brain")));
   }
 
   // ---- orchestrator: on-demand backup to the configured location (idle-gated) ----
@@ -405,50 +370,13 @@ const handler = async (req, res) => {
 
   // ---- orchestrator: master-pollinate DRY-RUN (safe, read-only). Real --execute stays terminal-only. ----
   if (req.method === "POST" && path === "/api/master-pollinate") {
-    const act = readActivity();
-    const command = "/wasp:master-pollinate --dry-run";
-    if (act.active) return sendJSON(res, 200, { ok: false, reason: "active", message: `Suite active (${act.activeRepos.join(", ")}). master-pollinate is gated until idle.`, command });
-    // Attempt a headless dry-run if the claude CLI is available; else hand back the command to run in a terminal.
-    const r = await runProc("claude", ["-p", command], { shell: true, timeout: 300000 });
-    if (r.spawnFailed) return sendJSON(res, 200, { ok: true, ran: false, command, message: "Idle ✓. claude CLI not reachable from the server — run this in a terminal:", note: "Real --execute (publishing) is intentionally NOT a one-click button; run it in a terminal so its AskUserQuestion safety gates apply." });
-    return sendJSON(res, 200, { ok: true, ran: true, command, code: r.code, output: (r.stdout || "").slice(-4000), note: "Dry-run only. --execute stays terminal-driven." });
+    return sendJSON(res, 200, await executeCommand("pollinate.dryrun", {}, cmdCtx));
   }
 
   // ---- packages: live scan of every package.json → published / sub / app, grouped by repo ----
+  // Shared with the online bridge's snapshot (lib/snapshot.mjs).
   if (path === "/api/packages") {
-    const { readdirSync, existsSync } = await import("node:fs");
-    const ROOT = resolve(__dir, "..", "..");
-    const SKIP = new Set(["node_modules", ".next", ".git", "dist", "build", ".turbo", ".vite", ".pnpm-store", "_Archive", ".wasp", ".bee", "iosevka-src"]);
-    const found = [];
-    const repoAt = (dir) => { let d = dir; for (let i = 0; i < 12; i++) { if (existsSync(join(d, ".git"))) return d; const p = dirname(d); if (p === d) break; d = p; } return null; };
-    const walk = (dir, depth) => {
-      if (depth > 8) return;
-      let entries = []; try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
-      if (entries.some((e) => e.isFile() && e.name === "package.json")) {
-        try { const pj = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
-          if (pj.name) { const repo = repoAt(dir); found.push({ name: pj.name, version: pj.version || "?", private: !!pj.private,
-            scope: pj.name.startsWith("@") ? pj.name.split("/")[0] : "(unscoped)",
-            repo: repo ? repo.slice(ROOT.length).replace(/^[\\/]+/, "").replace(/\\/g, "/") : "?",
-            isRoot: repo ? resolve(dir) === resolve(repo) : false }); } } catch {}
-      }
-      for (const e of entries) if (e.isDirectory() && !SKIP.has(e.name)) walk(join(dir, e.name), depth + 1);
-    };
-    for (const eco of ["StoaChain", "OuroborosNetwork", "AncientPantheon", "AncientClients", "Tools", "Media"]) walk(join(ROOT, eco), 0);
-    // group by repo, classify
-    const repos = {};
-    for (const p of found) { (repos[p.repo] = repos[p.repo] || { repo: p.repo, published: [], sub: [], appRoot: null }); }
-    for (const p of found) {
-      const r = repos[p.repo];
-      if (!p.private) r.published.push(p);
-      else if (p.isRoot) r.appRoot = p;   // the private root package = the app itself
-      else r.sub.push(p);
-    }
-    const repoList = Object.values(repos).sort((a, b) => (b.published.length - a.published.length) || a.repo.localeCompare(b.repo));
-    const scopes = {};
-    for (const p of found) if (!p.private) (scopes[p.scope] = scopes[p.scope] || []).push(p);
-    for (const s in scopes) scopes[s].sort((a, b) => a.name.localeCompare(b.name));
-    return sendJSON(res, 200, { scopes, repos: repoList,
-      totals: { published: found.filter((p) => !p.private).length, sub: found.filter((p) => p.private && !p.isRoot).length, apps: found.filter((p) => p.private && p.isRoot).length, all: found.length } });
+    return sendJSON(res, 200, scanPackages(resolve(__dir, "..", "..")));
   }
 
   // ---- tokens: the registry, enriched with store-presence + expiry, grouped ----
@@ -465,7 +393,7 @@ const handler = async (req, res) => {
     if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only" });
     let body = ""; for await (const c of req) body += c;
     let b = {}; try { b = JSON.parse(body || "{}"); } catch {}
-    const r = saveSecret(SECRETS_DIR, DATA_DIR, b.secretFile, b.value);   // value never echoed/logged
+    const r = await executeCommand("tokens.save", { secretFile: b.secretFile, value: b.value }, cmdCtx);   // value never echoed/logged
     return sendJSON(res, 200, r);
   }
 
@@ -491,11 +419,7 @@ const handler = async (req, res) => {
 // Run backup.mjs to the CONFIGURED location, returning its parsed result.
 async function runBackup({ force = false } = {}) {
   const cfg = readBackupConfig();
-  const argv = [join(ORCH, "backup.mjs"), "--dest", cfg.location];
-  if (force) argv.push("--force");
-  const r = await runProc(process.execPath, argv, { timeout: 600000 });
-  try { return JSON.parse((r.stdout.trim().split(/\r?\n/).pop()) || "{}"); }
-  catch { return { ok: false, message: "backup produced no parseable result", raw: r.stdout.slice(-500), stderr: r.stderr.slice(-300) }; }
+  return executeCommand("backup", { dest: cfg.location, force }, cmdCtx);
 }
 
 // The daily-backup scheduler. In-process: it runs while the dashboard (the overseer)

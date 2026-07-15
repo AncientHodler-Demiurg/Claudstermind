@@ -5,10 +5,24 @@
 // files on X:. listArchives() reconciles the two, so an archive deleted by hand on
 // the drive disappears from the list, and one restored from elsewhere still shows up.
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname, posix } from "node:path";
+import { homedir } from "node:os";
 import { ACTIVITY_DIR, ensureDir } from "./activity.mjs";
 
-export const BACKUP_ROOT = "X:\\_Claude-backup";
+/**
+ * The default backup location, per platform — the workspace runs on Windows AND Ubuntu.
+ * Windows keeps the dedicated X: backup drive; elsewhere it lands under the home dir.
+ * The user can always override this from the Ops tab (backupConfig.location), so this is
+ * only the out-of-the-box default. Injectable for testing.
+ */
+export function defaultBackupRoot(platform = process.platform, home = homedir()) {
+  if (platform === "win32") return "X:\\_Claude-backup";
+  // posix.join so a Linux target path is correct even when this constant is computed
+  // on a Windows host (join() would otherwise use backslashes).
+  return posix.join(home, "claude-backup");
+}
+
+export const BACKUP_ROOT = defaultBackupRoot();
 export const REGISTRY = join(ACTIVITY_DIR, "backups.json");
 
 /**
@@ -52,16 +66,28 @@ export function recordArchive(entry) {
  * Every archive that actually exists on the drive, newest first, enriched with
  * whatever the registry remembers about it (duration, the exclusions used).
  */
-export function listArchives(root = BACKUP_ROOT) {
-  const remembered = new Map(readRegistry().archives.map((a) => [a.id, a]));
-  if (!existsSync(root)) {
-    // Two very different situations that must not read the same. The drive being
-    // absent is a problem; the folder not existing yet just means "no backup taken".
+/**
+ * Distinguish "the backup root just doesn't exist yet" (fine — first backup makes it)
+ * from "the place it should live is unreachable" (a problem). On Windows that means the
+ * X: drive is unmounted; on posix it means the parent directory is absent. Pure +
+ * platform-injectable so the logic is testable off its host OS.
+ */
+export function describeMissingRoot(root, platform = process.platform) {
+  if (platform === "win32") {
     const drive = root.slice(0, 3);                     // "X:\"
     return existsSync(drive)
       ? { available: true, root, archives: [], totalBytes: 0, message: `No archives yet — ${root} will be created by the first backup.` }
       : { available: false, root, archives: [], message: `${drive} is not reachable — the backup drive is not mounted.` };
   }
+  const parent = dirname(root);
+  return existsSync(parent)
+    ? { available: true, root, archives: [], totalBytes: 0, message: `No archives yet — ${root} will be created by the first backup.` }
+    : { available: false, root, archives: [], message: `${parent} is not reachable — the backup location's parent does not exist.` };
+}
+
+export function listArchives(root = BACKUP_ROOT) {
+  const remembered = new Map(readRegistry().archives.map((a) => [a.id, a]));
+  if (!existsSync(root)) return describeMissingRoot(root);
   const archives = [];
   for (const f of readdirSync(root)) {
     const m = ARCHIVE_RE.exec(f);

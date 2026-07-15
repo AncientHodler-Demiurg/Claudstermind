@@ -1,0 +1,7 @@
+# Caddy provisions and renews TLS for your domain automatically, and reverse-proxies
+# everything (including the /agent WebSocket upgrade — Caddy handles that transparently)
+# to the relay container. The domain comes from RELAY_DOMAIN in .env.
+{$RELAY_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy relay:8080
+}

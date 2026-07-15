@@ -1,0 +1,39 @@
+# Claudstermind online relay — one command on the live box: `docker compose up -d`.
+#
+# Two services: the Node relay (no host Node needed) and Caddy, which terminates TLS for
+# your domain automatically (Let's Encrypt) and reverse-proxies — WebSocket upgrades on
+# /agent included — to the relay. All config comes from .env (see .env.example); nothing
+# is baked into the image.
+services:
+  relay:
+    build:
+      context: ..                       # the Claudstermind root — the image needs lib/ + dashboard/
+      dockerfile: relay/Dockerfile
+    image: claudstermind-relay:latest
+    env_file: .env                      # OIDC_*, SESSION_SECRET, AGENT_DEVICE_SECRET
+    environment:
+      - PORT=8080
+      - HOST=0.0.0.0
+    expose:
+      - "8080"                          # internal only — reached via Caddy, never published directly
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      - relay
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"                   # HTTP/3
+    environment:
+      - RELAY_DOMAIN=${RELAY_DOMAIN}    # the site address Caddy serves + provisions a cert for
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data                # persisted certificates — do not delete
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

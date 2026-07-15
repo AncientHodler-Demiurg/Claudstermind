@@ -1,0 +1,146 @@
+// The bridge — the outbound half of the reverse tunnel, run ON the work machine.
+//
+//   RELAY_URL=wss://brain.ancientholdings.eu/agent \
+//   AGENT_DEVICE_SECRET=… \
+//   node agent/agent.mjs
+//
+// It dials OUT to the relay (no inbound ports, no firewall change), authenticates with
+// the device secret, then:
+//   • pushes a fresh snapshot on connect and every interval, and
+//   • executes commands the relay forwards down — through the SAME lib/commands.mjs
+//     whitelist the local dashboard uses. An unknown command type is refused there.
+//
+// Cross-platform: Node builtins + the global WebSocket client (Node 22+). No new
+// dependency, runs identically on Windows and Ubuntu.
+import { spawn } from "node:child_process";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { FRAME, validateFrame } from "../lib/protocol.mjs";
+import { buildSnapshot as realBuildSnapshot } from "../lib/snapshot.mjs";
+import { executeCommand as realExecuteCommand } from "../lib/commands.mjs";
+import { readActivity } from "../orchestrator/activity.mjs";
+import { readBackupConfig } from "../orchestrator/backupConfig.mjs";
+
+const __dir = dirname(fileURLToPath(import.meta.url));
+
+/** The spawn helper the long-running commands (backup/restore/pollinate) use. */
+function runProc(cmd, argv, opts = {}) {
+  return new Promise((res) => {
+    let out = "", err = "", child;
+    try { child = spawn(cmd, argv, { cwd: opts.cwd || __dir, shell: opts.shell || false, windowsHide: true }); }
+    catch (e) { return res({ code: -1, stdout: "", stderr: String(e), spawnFailed: true }); }
+    const ms = opts.timeout === 0 ? 0 : (opts.timeout || 180000);
+    const to = ms ? setTimeout(() => { try { child.kill(); } catch {} }, ms) : null;
+    child.stdout.on("data", (d) => (out += d));
+    child.stderr.on("data", (d) => (err += d));
+    child.on("error", (e) => { if (to) clearTimeout(to); res({ code: -1, stdout: out, stderr: String(e), spawnFailed: true }); });
+    child.on("close", (code) => { if (to) clearTimeout(to); res({ code, stdout: out, stderr: err }); });
+  });
+}
+
+export function defaultPaths() {
+  const root = resolve(__dir, "..", "..");                     // D:/_Claude (or the Ubuntu equivalent)
+  return {
+    root,
+    dataDir: resolve(__dir, "..", "dashboard", "data"),
+    brainDir: resolve(__dir, "..", "brain"),
+    secretsDir: resolve(root, ".secrets"),
+    orchDir: resolve(__dir, "..", "orchestrator"),
+  };
+}
+
+/**
+ * Build a bridge. Injectable (url, secret, snapshot/command fns, WebSocket impl) so the
+ * tunnel behavior is testable against a stub relay without scanning the real workspace.
+ */
+export function createBridge(opts = {}) {
+  const url = opts.url ?? process.env.RELAY_URL;
+  const deviceSecret = opts.deviceSecret ?? process.env.AGENT_DEVICE_SECRET;
+  const allowInsecure = opts.allowInsecure ?? process.env.AGENT_ALLOW_INSECURE === "1";
+  const snapshotIntervalMs = opts.snapshotIntervalMs ?? 15_000;
+  const paths = opts.paths ?? defaultPaths();
+  const buildSnapshot = opts.buildSnapshot ?? realBuildSnapshot;
+  const executeCommand = opts.executeCommand ?? realExecuteCommand;
+  const WebSocketImpl = opts.WebSocketImpl ?? globalThis.WebSocket;
+  const log = opts.log ?? ((...a) => console.log("[bridge]", ...a));
+
+  if (!url) throw new Error("RELAY_URL is required (wss://<domain>/agent).");
+  if (!deviceSecret || deviceSecret.length < 32) throw new Error("AGENT_DEVICE_SECRET must be set and at least 32 characters.");
+  if (url.startsWith("ws://") && !allowInsecure) {
+    throw new Error("Refusing an insecure ws:// relay URL. Use wss://, or set AGENT_ALLOW_INSECURE=1 for local testing.");
+  }
+
+  const ctx = { ...paths, runProc, readActivity };
+  let sock = null, snapTimer = null, reconnectTimer = null, backoff = 1000, stopped = false;
+
+  async function pushSnapshot() {
+    if (!sock || sock.readyState !== 1) return;
+    try {
+      const data = await buildSnapshot(paths);
+      sock.send(JSON.stringify({ t: FRAME.SNAPSHOT, data }));
+    } catch (e) { log("snapshot failed:", e.message); }
+  }
+
+  async function handleCommand(frame) {
+    const args = { ...(frame.cmd.args || {}) };
+    // The relay can't know the local backup location — fill it from local config.
+    if (frame.cmd.type === "backup" && !args.dest) {
+      try { args.dest = readBackupConfig().location; } catch {}
+    }
+    let result;
+    try { result = await executeCommand(frame.cmd.type, args, ctx); }
+    catch (e) { result = { ok: false, message: `command threw: ${e.message}` }; }
+    if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
+  }
+
+  function onMessage(ev) {
+    let frame; try { frame = JSON.parse(typeof ev.data === "string" ? ev.data : ev.data.toString()); } catch { return; }
+    if (!validateFrame(frame).ok) return;
+    if (frame.t === FRAME.WELCOME) {
+      log("connected — pushing snapshot");
+      backoff = 1000;
+      pushSnapshot();
+      clearInterval(snapTimer);
+      snapTimer = setInterval(pushSnapshot, snapshotIntervalMs);
+    } else if (frame.t === FRAME.COMMAND) {
+      handleCommand(frame);
+    } else if (frame.t === FRAME.PING) {
+      if (sock?.readyState === 1) sock.send(JSON.stringify({ t: FRAME.PONG }));
+    }
+  }
+
+  function connect() {
+    if (stopped) return;
+    sock = new WebSocketImpl(url);
+    sock.addEventListener("open", () => sock.send(JSON.stringify({ t: FRAME.HELLO, deviceSecret })));
+    sock.addEventListener("message", onMessage);
+    sock.addEventListener("close", () => { scheduleReconnect(); });
+    sock.addEventListener("error", () => { /* close will follow */ });
+  }
+
+  function scheduleReconnect() {
+    clearInterval(snapTimer);
+    if (stopped) return;
+    reconnectTimer = setTimeout(connect, backoff);
+    backoff = Math.min(backoff * 2, 30_000);
+  }
+
+  return {
+    start() { stopped = false; connect(); return this; },
+    stop() {
+      stopped = true;
+      clearInterval(snapTimer); clearTimeout(reconnectTimer);
+      try { sock?.close(); } catch {}
+    },
+    pushSnapshot,
+    get socket() { return sock; },
+  };
+}
+
+// Run directly → start the bridge and keep it alive.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const bridge = createBridge().start();
+  console.log(`[bridge] dialing ${process.env.RELAY_URL} …`);
+  process.on("SIGINT", () => { bridge.stop(); process.exit(0); });
+  process.on("SIGTERM", () => { bridge.stop(); process.exit(0); });
+}

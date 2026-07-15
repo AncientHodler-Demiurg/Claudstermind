@@ -1,7 +1,13 @@
 // Claudstermind Dashboard — renders the master map from /api/map.
 let MAP = null;
 let TOKENS = null;
-let ME = { mode: "local", authenticated: true, canExecute: true, localActionsAvailable: true, roles: [] };
+let ME = { mode: "local", authenticated: true, canExecute: true, localActionsAvailable: true, localConnected: true, roles: [] };
+
+// May this page offer an ACTION control? True when the viewer can execute AND the
+// action can actually run — on the local dashboard always (local machine); on the
+// online relay only for an `ancient` admin while the local bridge is connected.
+// One helper so every action surface (git buttons, token renew, ops) agrees.
+const canAct = () => ME.canExecute && ME.localActionsAvailable;
 let VIEW = "overview";
 let ORGMODE = "target"; // 'current' | 'target'
 
@@ -124,6 +130,19 @@ async function boot() {
   });
   window.addEventListener("hashchange", () => applyView(location.hash.replace(/^#/, ""), { push: false }));
 
+  // On the online relay, the tunnel can come up or drop while the page is open. Poll
+  // /api/me so the banner and action buttons track the live connection state; when it
+  // flips, re-render the current view so buttons appear/disappear accordingly.
+  if (ME.mode === "live") {
+    setInterval(async () => {
+      let next; try { next = await (await fetch("/api/me", { cache: "no-store" })).json(); } catch { return; }
+      const flipped = next.localConnected !== ME.localConnected || next.localActionsAvailable !== ME.localActionsAvailable;
+      ME = next;
+      renderAuthPill();
+      if (flipped) render();
+    }, 10_000);
+  }
+
   $("#themeBtn").addEventListener("click", () => {
     const b = document.body;
     b.dataset.theme = b.dataset.theme === "dark" ? "light" : "dark";
@@ -153,10 +172,33 @@ function renderAuthPill() {
     pill.innerHTML = `${escapeHtml(ME.name || ME.sub || "signed in")} <span style="opacity:.65">· ${tier}</span> · <a href="/auth/logout">sign out</a>`;
   }
 
-  // Backup / restore / cascade-trigger act on the work machine's disk. The live
-  // deployment cannot perform them at all, so the tab is removed rather than shown
-  // full of dead buttons.
-  if (opsTab && !ME.localActionsAvailable) opsTab.remove();
+  // Backup / restore / cascade-trigger act on the work machine's disk. When they are
+  // unavailable (a modern viewer, or the bridge is offline) the tab is removed rather
+  // than shown full of dead buttons.
+  if (opsTab) opsTab.hidden = !ME.localActionsAvailable;
+  renderConnBanner();
+}
+
+/**
+ * The online site's connection state. On the relay (mode "live") the dashboard is only
+ * live when the local bridge is connected; otherwise every action is disabled and this
+ * banner says so. On the local dashboard (mode "local") there is no banner — you ARE the
+ * local machine.
+ */
+function renderConnBanner() {
+  let bar = $("#connBanner");
+  if (!bar) {
+    bar = el("div", { id: "connBanner", class: "conn-banner", hidden: true });
+    document.querySelector("header.top")?.insertAdjacentElement("afterend", bar);
+  }
+  const disconnected = ME.mode === "live" && ME.authenticated && !ME.localConnected;
+  bar.hidden = !disconnected;
+  if (disconnected) {
+    bar.replaceChildren(
+      el("span", { class: "conn-dot" }, []),
+      el("span", {}, ["Local Claudstermind not connected — showing the last data received. Start the dashboard (and bridge) on your work machine to go live."]),
+    );
+  }
 }
 const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -609,17 +651,21 @@ function gitRepoCard(mr, g) {
     : GIT_COLOR.clean;
 
   // Act, don't just observe: commit the dirty tree / pull remote work / push the branch.
+  // Only when the viewer may actually act (ancient + — on the relay — bridge connected);
+  // a modern/read-only or disconnected viewer sees the state without dead buttons.
   const actions = [];
-  if (s.dirty) {
-    actions.push(el("button", { class: "gitbtn", title: "Stage everything and commit", onclick: (e) => gitCommit(g, e.currentTarget) }, ["✎ Commit"]));
-  }
-  const behind = (s.behindBranches || []).reduce((n, b) => n + (b.behind || 0), 0);
-  if (behind) {
-    actions.push(el("button", { class: "gitbtn", title: "Pull the remote commits (from another machine) and rebase your work on top", onclick: (e) => gitPull(g, e.currentTarget) }, [`↓ Pull ${behind}`]));
-  }
-  if (s.hasUnpushed) {
-    const label = s.neverPushedBranches.length ? "⚠ Push (first push)" : `↑ Push ${s.unpushedCommits || ""}`.trim();
-    actions.push(el("button", { class: "gitbtn", title: "Push the current branch to origin", onclick: (e) => gitPush(g, e.currentTarget) }, [label]));
+  if (canAct()) {
+    if (s.dirty) {
+      actions.push(el("button", { class: "gitbtn", title: "Stage everything and commit", onclick: (e) => gitCommit(g, e.currentTarget) }, ["✎ Commit"]));
+    }
+    const behind = (s.behindBranches || []).reduce((n, b) => n + (b.behind || 0), 0);
+    if (behind) {
+      actions.push(el("button", { class: "gitbtn", title: "Pull the remote commits (from another machine) and rebase your work on top", onclick: (e) => gitPull(g, e.currentTarget) }, [`↓ Pull ${behind}`]));
+    }
+    if (s.hasUnpushed) {
+      const label = s.neverPushedBranches.length ? "⚠ Push (first push)" : `↑ Push ${s.unpushedCommits || ""}`.trim();
+      actions.push(el("button", { class: "gitbtn", title: "Push the current branch to origin", onclick: (e) => gitPush(g, e.currentTarget) }, [label]));
+    }
   }
   const msg = el("div", { class: "rc-sub gitmsg", hidden: true });
 
@@ -892,8 +938,8 @@ function viewOps() {
   });
   mpBtn.addEventListener("click", () => post("/api/master-pollinate", mpBtn, "master-pollinate dry-run"));
 
-  /* --- the archives on X:, and restoring from one --- */
-  const archiveBox = el("div", { id: "archiveBox" }, [el("div", { class: "hint" }, ["Reading X:\\_Claude-backup…"])]);
+  /* --- the archives at the configured backup location, and restoring from one --- */
+  const archiveBox = el("div", { id: "archiveBox" }, [el("div", { class: "hint" }, ["Reading backups…"])]);
   const human = (b) => (b > 1e9 ? (b / 1e9).toFixed(2) + " GB" : Math.round(b / 1e6) + " MB");
 
   async function restore(a, btn) {
@@ -902,7 +948,7 @@ function viewOps() {
     // the human-readable half of it.
     const typed = window.prompt(
       `RESTORE ${a.file}\n\n` +
-      `This overwrites files in D:\\_Claude with the versions from ${a.date}. ` +
+      `This overwrites files in your workspace with the versions from ${a.date}. ` +
       `Any uncommitted work newer than that archive is lost for every file it contains. ` +
       `Files created since then are left alone.\n\n` +
       `Type the archive id to confirm: ${a.id}`,
@@ -933,7 +979,7 @@ function viewOps() {
       return;
     }
     if (!d.archives.length) {
-      archiveBox.replaceChildren(el("div", { class: "hint" }, [`No archives yet in ${d.root}. Hit “Backup to X:” to write the first one.`]));
+      archiveBox.replaceChildren(el("div", { class: "hint" }, [`No archives yet in ${d.root}. Hit “Back up now” to write the first one.`]));
       return;
     }
     archiveBox.replaceChildren(
@@ -975,10 +1021,10 @@ function viewOps() {
         el("div", { class: "stat" }, [el("div", { class: "n", style: `color:${color}` }, [idle ? "IDLE" : "ACTIVE"]), el("div", { class: "l" }, ["suite status"])]),
         el("div", { class: "stat" }, [el("div", { class: "n" }, [String(a.liveSessionCount || 0)]), el("div", { class: "l" }, ["live sessions"])]),
         el("div", { class: "stat" }, [el("div", { class: "n" }, [a.activeRepos && a.activeRepos.length ? a.activeRepos.join(", ") : "—"]), el("div", { class: "l" }, ["active repos"])]),
-        el("div", { class: "stat" }, [el("div", { class: "n", style: "font-size:13px" }, [lb ? (lb.ok ? "✅ " : "❌ ") + (lb.finishedAt || "").slice(0, 16).replace("T", " ") : "never"]), el("div", { class: "l" }, ["last backup → X:"])]),
+        el("div", { class: "stat" }, [el("div", { class: "n", style: "font-size:13px" }, [lb ? (lb.ok ? "✅ " : "❌ ") + (lb.finishedAt || "").slice(0, 16).replace("T", " ") : "never"]), el("div", { class: "l" }, ["last backup"])]),
       ]),
       el("div", { class: "hint" }, [idle
-        ? "Suite is idle — backup and master-pollinate are enabled. Backup writes a dated tar archive to X:\\_Claude-backup (excludes node_modules/.next/dist; keeps .git, .secrets and uncommitted work)."
+        ? "Suite is idle — backup and master-pollinate are enabled. Backup writes a dated tar archive to the configured backup location (excludes node_modules/.next/dist; keeps .git, .secrets and uncommitted work)."
         : "An agent is working — buttons gated until idle (activity detected via Claude Code hooks; see orchestrator/README). Tick 'force' to override backup."]),
       rows.length ? el("div", { class: "orgcard", style: "padding:8px" }, [el("div", { class: "desc" }, ["Sessions (heartbeats)"]), ...rows]) : el("div", { class: "hint" }, ["No session heartbeats yet — wire the hooks (orchestrator/README) so activity is tracked."]),
     );
@@ -1057,7 +1103,9 @@ function accountTokenCard(t, onSaved) {
     el("div", { style: "display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:3px" }, [
       el("a", { href: t.manageUrl, target: "_blank", rel: "noopener", class: "gitbtn", style: "text-decoration:none" }, ["↗ Manage / renew"]),
     ]),
-    el("div", { style: "display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:3px" }, [input, saveBtn, msg]),
+    // The renew field writes a secret value to the local .secrets — only an executor
+    // (ancient) with the bridge up sees it; a read-only viewer does not.
+    canAct() ? el("div", { style: "display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:3px" }, [input, saveBtn, msg]) : "",
   ]);
 }
 

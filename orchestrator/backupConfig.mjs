@@ -6,12 +6,13 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { ACTIVITY_DIR, ensureDir } from "./activity.mjs";
+import { defaultBackupRoot } from "./archives.mjs";
 
 export const CONFIG_PATH = join(ACTIVITY_DIR, "backup-config.json");
 
 const DEFAULTS = {
   enabled: false,               // the toggle — daily backup off until the user turns it on
-  location: "X:\\_Claude-backup", // where archives are written (user-editable)
+  location: defaultBackupRoot(), // where archives are written (platform default, user-editable)
   hour: 3,                       // local hour-of-day to run the daily backup (0–23)
   lastRunDate: null,             // "YYYY-MM-DD" of the last successful auto-run (idempotency)
   lastResult: null,              // the last auto-run's result payload (for the UI)

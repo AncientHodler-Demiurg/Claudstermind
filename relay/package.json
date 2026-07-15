@@ -1,0 +1,14 @@
+{
+  "name": "claudstermind-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Claudstermind online relay — the containerized public gateway that mirrors the local dashboard over a reverse WebSocket tunnel.",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "jose": "^5.10.0",
+    "ws": "^8.18.0"
+  }
+}
