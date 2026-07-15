@@ -891,9 +891,49 @@ function viewTokens() {
       el("li", {}, ["GitHub repo secrets: RELEASE_TOKEN + NPMPUSHER in each publishing repo"]),
     ]),
   ]);
+  // Live scan of GitHub Actions secrets across every tracked repo (names + dates only).
+  const scanBox = el("div", { id: "scanBox" });
+  const scanBtn = el("button", { class: "ghost" }, ["🔎 Scan repositories (GitHub API)"]);
+  async function runScan() {
+    scanBtn.disabled = true; const old = scanBtn.textContent; scanBtn.textContent = "… scanning (~20s)";
+    scanBox.replaceChildren(el("div", { class: "hint" }, ["Querying the GitHub API for Actions secrets across every tracked repo…"]));
+    let d; try { d = await (await fetch("/api/tokens/scan")).json(); }
+    catch (e) { scanBox.replaceChildren(el("div", { class: "hint" }, ["Scan error: " + e])); scanBtn.disabled = false; scanBtn.textContent = old; return; }
+    scanBtn.disabled = false; scanBtn.textContent = old;
+    if (!d.ok) { scanBox.replaceChildren(el("div", { class: "movecard", style: "border-color:#f87171" }, [d.message || "scan failed"])); return; }
+
+    const id = d.identity || {};
+    const orgMissing = (d.targets || []).some((t) => !t.repo && /no access/.test(t.reason || ""));
+    scanBox.replaceChildren(
+      el("div", { class: "statbar" }, [
+        el("div", { class: "stat" }, [el("div", { class: "n", style: "font-size:13px" }, [id.login || "—"]), el("div", { class: "l" }, ["token account"])]),
+        el("div", { class: "stat" }, [el("div", { class: "n" }, [String(d.counts.reachable) + "/" + d.counts.targetsScanned]), el("div", { class: "l" }, ["targets reachable"])]),
+        el("div", { class: "stat" }, [el("div", { class: "n" }, [String(d.counts.distinctSecrets)]), el("div", { class: "l" }, ["distinct secrets"])]),
+      ]),
+      el("div", { class: "hint" }, ["Token scopes: ", el("code", {}, [(id.scopes || []).join(", ") || "—"]), " · scanned " + (d.scannedAt || "").slice(0, 16).replace("T", " ")]),
+      orgMissing ? el("div", { class: "movecard", style: "border-color:#fbbf24;font-size:12px" }, ["⚠ Organisation-level secrets couldn't be read — your token lacks the ", el("code", {}, ["admin:org"]), " scope. Add it to see org secrets like ", el("code", {}, ["NPM_TOKEN"]), "; repo-level secrets are shown regardless."]) : "",
+      el("table", { class: "pkgtable" }, [
+        el("thead", {}, [el("tr", {}, ["Secret", "Where it lives", "Newest update"].map((h) => el("th", {}, [h])))]),
+        el("tbody", {}, (d.secretsByName || []).map((s) => el("tr", {}, [
+          el("td", {}, [el("code", {}, [s.name])]),
+          el("td", {}, [s.locations.map((l) => l.where).join(", ")]),
+          el("td", { class: "was" }, [(s.newest || "").slice(0, 10)]),
+        ]))),
+      ]),
+    );
+  }
+  scanBtn.addEventListener("click", runScan);
+
   return el("div", {}, [
-    el("div", { class: "hint" }, ["Token & secret hygiene. No secret VALUES are stored — only location, scope, expiry, status. Data file is gitignored. ", el("b", {}, [String(t.length) + " tracked"]), "; account/org/repo entries filled by a browser inspection pass."]),
-    summary, checklist, table,
+    el("div", { class: "hint" }, ["Token & secret hygiene. No secret VALUES are stored or shown — only location, scope, expiry, status. ", el("b", {}, [String(t.length) + " tracked"]), " in the manual inventory below."]),
+    summary,
+    el("div", { class: "movecard" }, [
+      el("div", { class: "desc" }, [el("b", {}, ["Live secret scan"])]),
+      el("div", { class: "hint" }, ["Reads each tracked repo's GitHub Actions secrets via the API — ", el("b", {}, ["names + last-updated only"]), ", never the values (the API can't return them). Uses your central PAT server-side. GitHub has no API to list account PATs, so this covers secrets-in-repos, not the tokens themselves."]),
+      el("div", { class: "graph-controls" }, [scanBtn]),
+      scanBox,
+    ]),
+    checklist, table,
   ]);
 }
 

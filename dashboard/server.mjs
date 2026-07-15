@@ -18,7 +18,7 @@
 import http from "node:http";
 import { readFile, readFileSync } from "node:fs";
 import { readFile as readFileAsync } from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { join, extname, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readActivity, readLastBackup } from "../orchestrator/activity.mjs";
@@ -27,6 +27,7 @@ import { readBackupConfig, writeBackupConfig, isBackupDue } from "../orchestrato
 import { readCascade } from "../lib/cascade.mjs";
 import { allReposGitStatus } from "../lib/gitStatus.mjs";
 import { resolveRepo, pushRepo, commitRepo } from "../lib/gitActions.mjs";
+import { parseOriginUrl, scanSecrets, tokenIdentity } from "../lib/tokenScan.mjs";
 import { readOidcConfig } from "./auth/oidcConfig.mjs";
 import { handleAuthRoute, guard, denyPage } from "./auth/routes.mjs";
 
@@ -230,6 +231,40 @@ const handler = async (req, res) => {
     GIT_CACHE.at = 0;                                    // a mutation invalidates the status cache
     const r = path === "/api/git/push" ? pushRepo(abs) : commitRepo(abs, b.message);
     return sendJSON(res, 200, r);
+  }
+
+  // ---- tokens: live scan of GitHub Actions secrets across every tracked repo ----
+  // The PAT is read HERE (server-side) and never sent to the browser; only secret
+  // names + last-updated dates cross the wire (the API never returns values).
+  if (path === "/api/tokens/scan") {
+    let token = "";
+    try { token = readFileSync(resolve(MASTER_ROOT, ".secrets", "pat.txt"), "utf8").trim(); }
+    catch { return sendJSON(res, 200, { ok: false, message: "No token found at .secrets/pat.txt — cannot scan GitHub." }); }
+
+    // Derive scan targets from each tracked repo's real git origin (accurate owner/repo),
+    // plus each distinct org.
+    let map; try { map = JSON.parse(await readFileAsync(join(DATA_DIR, "map.json"), "utf8")); } catch { map = { repos: [] }; }
+    const repoTargets = [], owners = new Set(), seen = new Set();
+    for (const r of map.repos || []) {
+      const abs = resolveRepo(r.localPath, MASTER_ROOT);
+      if (!abs) continue;
+      const originUrl = spawnSync("git", ["-C", abs, "remote", "get-url", "origin"], { encoding: "utf8", windowsHide: true }).stdout || "";
+      const parsed = parseOriginUrl(originUrl);
+      if (!parsed) continue;
+      const key = `${parsed.owner}/${parsed.repo}`.toLowerCase();
+      if (seen.has(key)) continue; seen.add(key);
+      repoTargets.push({ label: `${parsed.owner}/${parsed.repo}`, owner: parsed.owner, repo: parsed.repo });
+      owners.add(parsed.owner);
+    }
+    const orgTargets = [...owners].map((o) => ({ label: `${o} (org)`, owner: o }));
+
+    try {
+      const identity = await tokenIdentity(token);
+      const scan = await scanSecrets([...repoTargets, ...orgTargets], token);
+      return sendJSON(res, 200, { ok: true, identity, ...scan, scannedAt: new Date().toISOString() });
+    } catch (e) {
+      return sendJSON(res, 200, { ok: false, message: `Scan failed: ${e}` });
+    }
   }
 
   // ---- backups: the dated archives at the configured location ----
