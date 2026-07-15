@@ -1026,17 +1026,14 @@ function secretMgmtUrl(scope, target) {
 }
 const mgmtLink = (scope, target) => el("a", { href: secretMgmtUrl(scope, target), target: "_blank", rel: "noopener", class: "gitbtn", style: "text-decoration:none" }, ["↗ open"]);
 
-// The org/repo deployments the registry DECLARES (what we deliberately set up), e.g.
-// NPM_PUBLISHER in the StoaChain + AncientPantheon orgs. These are GitHub Actions
-// SECRETS — so they belong under the GitHub entity even when the value they hold is an
-// npm token (the "Token" column names which token feeds each). Shown even when the scan
-// can't confirm them (no admin:org), so nothing you configured is ever invisible.
-function declaredDeployments(tokens, scope) {
-  const out = [];
-  for (const t of tokens || []) {
-    for (const dp of (t.deployments || [])) if (dp.scope === scope) out.push({ ...dp, token: t.label });
-  }
-  return out;
+// Map a secret NAME to the token whose value it holds, from each token's `deployedAs`
+// (a plain list of secret names). Detection finds WHERE a secret lives; this only
+// annotates the "Holds" column with WHICH token feeds a detected secret — no manual
+// per-location declaration to keep in sync.
+function secretHolders(tokens) {
+  const m = {};
+  for (const t of tokens || []) for (const name of (t.deployedAs || [])) m[name.toLowerCase()] = t.label;
+  return m;
 }
 
 // The "Used by a workflow?" cell — the evidence for whether a secret is dead weight.
@@ -1049,58 +1046,46 @@ function usageCell(r) {
   return el("span", { class: "was" }, ["—"]);
 }
 
-// ONE aligned table per scope: declared deployments (registry) + scan-discovered
-// secrets, merged by secret@target, each with what token it holds, when it changed,
-// whether a workflow actually uses it, and a management link.
+// ONE aligned table per scope, driven purely by DETECTION (the scan). Each row: the
+// detected secret, where it lives, which token it holds (matched by name), when it
+// changed, whether a workflow uses it, and a management link.
 function scopeSecrets(entity, scope, tokens, scan) {
   if (entity !== "github") {
     return el("div", { class: "was", style: "font-size:12px" }, ["npm tokens are account-level — nothing to set per-" + (scope === "org" ? "org" : "repo") + "."]);
   }
+  if (!scan) return el("div", { class: "was", style: "font-size:12px" }, ["Scanning…"]);
+  if (!scan.ok) return el("div", { class: "movecard", style: "border-color:#f87171;font-size:12px" }, [scan.message || "scan failed"]);
 
-  const scanOk = Boolean(scan && scan.ok);
-  const rows = new Map();   // `secret@target` → merged row
-  for (const dp of declaredDeployments(tokens, scope)) {
-    rows.set(`${dp.secret}@${dp.target}`.toLowerCase(), { secret: dp.secret, target: dp.target, token: dp.token, declared: true });
-  }
-  if (scanOk) {
-    for (const t of (scan.targets || []).filter((x) => (scope === "org" ? !x.repo : !!x.repo))) {
-      for (const s of (t.secrets || [])) {
-        const target = scope === "org" ? t.owner : `${t.owner}/${t.repo}`;
-        const key = `${s.name}@${target}`.toLowerCase();
-        const r = rows.get(key) || { secret: s.name, target };
-        Object.assign(r, { owner: t.owner, repo: t.repo, updated: s.updated, used: s.used, usedBy: s.usedBy, detected: true });
-        rows.set(key, r);
-      }
+  const holders = secretHolders(tokens);
+  const rows = [];
+  for (const t of (scan.targets || []).filter((x) => (scope === "org" ? !x.repo : !!x.repo))) {
+    for (const s of (t.secrets || [])) {
+      const target = scope === "org" ? t.owner : `${t.owner}/${t.repo}`;
+      rows.push({ secret: s.name, target, owner: t.owner, repo: t.repo, updated: s.updated, used: s.used, usedBy: s.usedBy, holds: holders[s.name.toLowerCase()] });
     }
   }
-  // A declared secret the scan ran and did NOT find (with admin:org, so it CAN see) is a
-  // phantom — deleted on GitHub but still in the registry ledger. Flag it, don't hide it.
-  for (const r of rows.values()) r.phantom = r.declared && !r.detected && scanOk;
-  const list = [...rows.values()].sort((a, b) => a.secret.localeCompare(b.secret) || a.target.localeCompare(b.target));
+  rows.sort((a, b) => a.secret.localeCompare(b.secret) || a.target.localeCompare(b.target));
 
-  // admin:org warning only when the token genuinely lacks the scope (see earlier note).
-  const hasAdminOrg = (scan?.identity?.scopes || []).includes("admin:org");
-  const scopeBlocked = scope === "org" && scan?.ok && !hasAdminOrg &&
+  // admin:org warning only when the token genuinely lacks the scope.
+  const hasAdminOrg = (scan.identity?.scopes || []).includes("admin:org");
+  const scopeBlocked = scope === "org" && !hasAdminOrg &&
     (scan.targets || []).some((t) => !t.repo && !t.reachable && /no access/.test(t.reason || ""));
 
-  const linkTarget = (r) => scope === "org" ? (r.owner || r.target) : (r.owner && r.repo ? `${r.owner}/${r.repo}` : r.target);
   const parts = [];
-  if (scopeBlocked) parts.push(el("div", { class: "movecard", style: "border-color:#fbbf24;font-size:12px;margin:2px 0 6px" }, ["⚠ The scan can't read org-level secrets — your token lacks the ", el("code", {}, ["admin:org"]), " scope. Add it and re-scan to confirm them."]));
+  if (scopeBlocked) parts.push(el("div", { class: "movecard", style: "border-color:#fbbf24;font-size:12px;margin:2px 0 6px" }, ["⚠ The scan can't read org-level secrets — your token lacks the ", el("code", {}, ["admin:org"]), " scope. Add it and re-scan."]));
 
-  if (!list.length) {
-    parts.push(el("div", { class: "was", style: "font-size:12px" }, [scan ? "No " + scope + "-level secrets found." : "Scanning…"]));
+  if (!rows.length) {
+    parts.push(el("div", { class: "was", style: "font-size:12px" }, ["No " + scope + "-level secrets found."]));
   } else {
     parts.push(el("div", { style: "overflow-x:auto" }, [el("table", { class: "pkgtable" }, [
       el("thead", {}, [el("tr", {}, ["Secret", scope === "org" ? "Organisation" : "Repository", "Holds", "Updated", "Used by a workflow?", ""].map((h) => el("th", {}, [h])))]),
-      el("tbody", {}, list.map((r) => el("tr", { style: r.phantom ? "opacity:.7" : "" }, [
-        el("td", {}, [el("code", {}, [r.secret]),
-          r.phantom ? el("span", { style: "color:#f87171;font-size:10px", title: "In the registry but NOT found on GitHub — deleted? It no longer applies." }, ["  ⚠ not on GitHub"])
-            : (r.declared && r.detected) ? el("span", { style: "color:#34d399;font-size:10px", title: "configured here and confirmed by the scan" }, ["  ✓"]) : ""]),
+      el("tbody", {}, rows.map((r) => el("tr", {}, [
+        el("td", {}, [el("code", {}, [r.secret])]),
         el("td", { class: "was" }, [r.target]),
-        el("td", { class: "was" }, [r.token || "—"]),
-        el("td", { class: "was" }, [r.phantom ? "deleted?" : ((r.updated || "").slice(0, 10) || "—")]),
-        el("td", {}, [r.phantom ? el("span", { class: "was" }, ["—"]) : usageCell(r)]),
-        el("td", {}, [mgmtLink(scope, linkTarget(r))]),
+        el("td", { class: "was" }, [r.holds || "—"]),
+        el("td", { class: "was" }, [(r.updated || "").slice(0, 10) || "—"]),
+        el("td", {}, [usageCell(r)]),
+        el("td", {}, [mgmtLink(scope, scope === "org" ? r.owner : `${r.owner}/${r.repo}`)]),
       ]))),
     ])]));
   }

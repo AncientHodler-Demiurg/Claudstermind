@@ -83,8 +83,15 @@ ${dirty.length ? "### working changes\n" + dirty.slice(0, 40).map((l) => "- `" +
         const dailyPath = join(BRAIN, "_daily.json");
         const day = ts.slice(0, 10);
         let daily = {}; try { daily = JSON.parse(readFileSync(dailyPath, "utf8")); } catch {}
-        const brainBytes = (function size(d) { let b = 0; try { for (const e of readdirSync(d, { withFileTypes: true })) {
-          const p = join(d, e.name); if (e.isDirectory()) b += size(p); else try { b += statSync(p).size; } catch {} } } catch {} return b; })(BRAIN);
+        // Measure the SAME thing the dashboard's "total knowledge base" does: the sum of
+        // the per-repo brain folders (excluding the _TEMPLATE scaffolding and top-level
+        // bookkeeping files), so the daily log and the total always agree.
+        const size = (d) => { let b = 0; try { for (const e of readdirSync(d, { withFileTypes: true })) {
+          if (e.name === ".git") continue; const p = join(d, e.name);
+          if (e.isDirectory()) b += size(p); else try { b += statSync(p).size; } catch {} } } catch {} return b; };
+        let brainBytes = 0;
+        try { for (const e of readdirSync(BRAIN, { withFileTypes: true })) {
+          if (e.isDirectory() && e.name !== "_TEMPLATE") brainBytes += size(join(BRAIN, e.name)); } } catch {}
         const e = daily[day] || { kb: 0, changes: 0, repos: [], commits: [] };
         e.kb = brainBytes;
         e.changes = (e.changes || 0) + 1;
