@@ -78,6 +78,11 @@ test("full tunnel: not-connected → connected → ancient executes → modern r
   });
   assert.equal(gotGit, true, "the snapshot's git view should reach the browser");
 
+  // The receiving-end indicator: /api/me exposes how fresh the last snapshot is.
+  const meConn = await (await fetch(`${base}/api/me`, { headers: { cookie: ancient } })).json();
+  assert.equal(typeof meConn.snapshotAgeMs, "number", "connected → snapshotAgeMs should be a number for the 'updated Xs ago' indicator");
+  assert.ok(meConn.snapshotAgeMs >= 0);
+
   // 4. An ancient command is relayed down and EXECUTED on the local repo.
   writeFileSync(join(ws.repo, "b.txt"), "new work");
   const res = await (await fetch(`${base}/api/git/commit`, { method: "POST", headers: { cookie: ancient, "content-type": "application/json" }, body: JSON.stringify({ localPath: "repo", message: "relayed commit" }) })).json();

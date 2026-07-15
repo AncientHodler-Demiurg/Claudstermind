@@ -104,7 +104,7 @@ async function boot() {
   // Who am I, and therefore what may this page even offer? In local mode the answer
   // is "everything" and nothing below changes. On the live deployment it decides
   // whether the Ops tab exists at all.
-  try { ME = await (await fetch("/api/me")).json(); } catch { /* keep the local default */ }
+  try { ME = await (await fetch("/api/me")).json(); ME._fetchedAt = Date.now(); } catch { /* keep the local default */ }
   renderAuthPill();
 
   MAP = await (await fetch("/api/map")).json();
@@ -137,10 +137,13 @@ async function boot() {
     setInterval(async () => {
       let next; try { next = await (await fetch("/api/me", { cache: "no-store" })).json(); } catch { return; }
       const flipped = next.localConnected !== ME.localConnected || next.localActionsAvailable !== ME.localActionsAvailable;
+      next._fetchedAt = Date.now();
       ME = next;
       renderAuthPill();
       if (flipped) render();
     }, 10_000);
+    // A faster tick just for the "updated Xs ago" freshness on the receiving-end pill.
+    setInterval(renderLinkPill, 2_000);
   }
 
   $("#themeBtn").addEventListener("click", () => {
@@ -177,6 +180,42 @@ function renderAuthPill() {
   // than shown full of dead buttons.
   if (opsTab) opsTab.hidden = !ME.localActionsAvailable;
   renderConnBanner();
+  renderLinkPill();
+}
+
+const agoText = (ms) => {
+  if (ms == null || ms < 0) return "";
+  const s = Math.round(ms / 1000);
+  if (s < 2) return "just now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  return m < 60 ? `${m}m ago` : `${Math.round(m / 60)}h ago`;
+};
+
+/**
+ * The receiving-end indicator — ONLY on the live site (mode "live"). The online relay
+ * doesn't initiate anything; it reports what it's receiving from the local machine. A
+ * green "● Local host connected · updated Xs ago" when the tunnel is up, muted when not.
+ * (The local dashboard IS the machine, so it shows nothing here — its outbound status
+ * lives in the Ops → Relay panel instead.)
+ */
+function renderLinkPill() {
+  if (ME.mode !== "live" || !ME.authenticated) return;
+  let pill = $("#linkPill");
+  if (!pill) {
+    pill = el("span", { id: "linkPill", class: "model-pill" });
+    $("#authPill")?.insertAdjacentElement("beforebegin", pill);
+  }
+  pill.hidden = false;
+  if (ME.localConnected) {
+    // freshness = server-reported age at fetch + elapsed since (avoids client/server clock skew)
+    const age = ME.snapshotAgeMs != null ? ME.snapshotAgeMs + (Date.now() - (ME._fetchedAt || Date.now())) : null;
+    pill.style.color = "#34d399";
+    pill.textContent = `● Local host connected${age != null ? " · updated " + agoText(age) : " · receiving"}`;
+  } else {
+    pill.style.color = "var(--ink-dim)";
+    pill.textContent = "○ Local host offline";
+  }
 }
 
 /**

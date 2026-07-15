@@ -120,6 +120,9 @@ export function createRelay(opts = {}) {
         sub: who.session?.sub ?? null, name: who.session?.name ?? null, roles: who.session?.roles ?? [],
         canRead: who.canRead, canExecute: who.canExecute,
         localConnected: connected,
+        // How long ago the last snapshot arrived from the bridge — lets the UI show
+        // "receiving · updated Xs ago" on the live site's receiving-end indicator.
+        snapshotAgeMs: link.snapshotAt ? Date.now() - link.snapshotAt : null,
         localActionsAvailable: connected,   // on the relay, actions exist iff the tunnel is up
       });
     }
