@@ -654,10 +654,52 @@ function viewOps() {
   if (OPS_TIMER) { clearInterval(OPS_TIMER); OPS_TIMER = null; }
   const statusBox = el("div", { id: "opsStatus" }, [el("div", { class: "hint" }, ["Loading activity…"])]);
   const out = el("div", { id: "opsOut", class: "movecard", style: "display:none;white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px" });
-  const backupBtn = el("button", { class: "ghost", id: "btnBackup" }, ["💾 Backup to X:"]);
+  const backupBtn = el("button", { class: "ghost", id: "btnBackup" }, ["💾 Back up now"]);
   const mpBtn = el("button", { class: "ghost", id: "btnMP" }, ["⚙ master-pollinate (dry-run)"]);
   const forceWrap = el("label", { style: "font-size:11px;color:var(--ink-dim);display:inline-flex;gap:5px;align-items:center" }, [el("input", { type: "checkbox", id: "forceBk" }), "force (ignore activity gate)"]);
   const controls = el("div", { class: "graph-controls" }, [backupBtn, mpBtn, forceWrap]);
+
+  /* --- automated daily backup: toggle, location, schedule, state --- */
+  const schedBox = el("div", { class: "movecard", style: "margin-top:10px" }, [el("div", { class: "hint" }, ["Loading backup settings…"])]);
+  async function loadSched() {
+    let s; try { s = await (await fetch("/api/backup/config")).json(); } catch { return; }
+    const c = s.config || {};
+    const toggle = el("input", { type: "checkbox", id: "bkEnabled" });
+    if (c.enabled) toggle.setAttribute("checked", "checked");
+    const loc = el("input", { type: "text", id: "bkLoc", value: c.location || "",
+      style: "flex:1;min-width:200px;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:5px 9px;font-family:ui-monospace,monospace;font-size:12px" });
+    const hour = el("input", { type: "number", id: "bkHour", min: "0", max: "23", value: String(c.hour ?? 3),
+      style: "width:56px;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:5px 7px" });
+    const saveBtn = el("button", { class: "ghost" }, ["Save settings"]);
+
+    async function save(patch) {
+      const body = { location: loc.value, hour: Number(hour.value), enabled: toggle.checked, ...patch };
+      const r = await (await fetch("/api/backup/config", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+      if (!r.ok) { out.style.display = "block"; out.textContent = "Could not save backup settings: " + (r.message || r.reason || "error"); }
+      loadSched();
+    }
+    toggle.addEventListener("change", () => save({ enabled: toggle.checked }));
+    saveBtn.addEventListener("click", () => save({}));
+
+    const stateBits = [];
+    stateBits.push(el("span", { style: `font-weight:700;color:${c.enabled ? "#34d399" : "#94a3b8"}` }, [c.enabled ? "● ON" : "○ OFF"]));
+    if (c.enabled) stateBits.push(el("span", { class: "was" }, [`  runs daily at ${String(c.hour).padStart(2, "0")}:00 when the suite is idle`]));
+    if (c.lastRunDate) stateBits.push(el("span", { class: "was" }, [`  · last auto-run ${c.lastRunDate}`]));
+    if (s.schedule?.lastAutoRun?.deferred) stateBits.push(el("span", { style: "color:#fbbf24" }, ["  · deferred (agent active) — will catch up when idle"]));
+
+    schedBox.replaceChildren(
+      el("div", { class: "desc" }, [el("b", {}, ["Automated daily backup"])]),
+      el("div", { style: "display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:6px 0" }, [
+        el("label", { style: "display:inline-flex;align-items:center;gap:6px;font-size:13px" }, [toggle, "Enabled"]),
+        el("div", { style: "display:flex;align-items:center;gap:6px;flex:1;min-width:220px" }, [el("span", { class: "was" }, ["location"]), loc]),
+        el("div", { style: "display:flex;align-items:center;gap:6px" }, [el("span", { class: "was" }, ["hour"]), hour, el("span", { class: "was" }, [":00"])]),
+        saveBtn,
+      ]),
+      el("div", { style: "font-size:12px" }, stateBits),
+      el("div", { class: "hint", style: "margin-top:4px" }, ["The scheduler runs inside this dashboard, so keep it open (or auto-started) for daily backups. It writes to the location above — any drive or folder — and skips itself while an agent is working."]),
+    );
+  }
+  loadSched();
 
   async function post(pathq, btn, label) {
     btn.disabled = true; const old = btn.textContent; btn.textContent = "… running";
@@ -766,9 +808,10 @@ function viewOps() {
   refresh(); OPS_TIMER = setInterval(refresh, 4000);
   refreshArchives();
   return el("div", {}, [
-    el("div", { class: "hint" }, ["Orchestration — live agent-activity detection, ", el("b", {}, ["dated archive backups"]), " to X: with restore, and gated ", el("b", {}, ["master-pollinate"]), ". Buttons are enabled only when no agent is working."]),
+    el("div", { class: "hint" }, ["Orchestration — live agent-activity detection, ", el("b", {}, ["dated archive backups"]), " with restore, and gated ", el("b", {}, ["master-pollinate"]), ". Buttons are enabled only when no agent is working."]),
     controls, out, statusBox,
-    el("h3", { style: "margin:18px 0 6px" }, ["Archives on X:"]),
+    schedBox,
+    el("h3", { style: "margin:18px 0 6px" }, ["Archives"]),
     el("div", { class: "hint" }, ["Each backup is an immutable point in time — a corrupted tree can only overwrite the newest archive, never the older ones. Restore rewinds the files the archive contains; anything created since is left alone."]),
     archiveBox,
   ]);

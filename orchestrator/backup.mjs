@@ -27,9 +27,14 @@ export const EXCLUDE_DIRS = [
   "node_modules", ".next", "dist", "build", ".turbo", ".vite", ".pnpm-store",
 ];
 
-const args = new Set(process.argv.slice(2));
+const argv0 = process.argv.slice(2);
+const args = new Set(argv0);
 const force = args.has("--force");
 const dry = args.has("--dry");
+// --dest <path> overrides the archive destination (the daily scheduler passes the
+// user-configured location; falls back to the BACKUP_ROOT default when absent).
+const destArg = (() => { const i = argv0.indexOf("--dest"); return i >= 0 ? argv0[i + 1] : null; })();
+const DEST = destArg || BACKUP_ROOT;
 
 const result = (obj) => { console.log(JSON.stringify(obj)); return obj; };
 const human = (b) => (b > 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${Math.round(b / 1e6)} MB`);
@@ -100,13 +105,15 @@ function run() {
     });
   }
 
-  // 2. Is the drive there?
-  if (!existsSync("X:\\")) {
-    return result({ ok: false, reason: "no-drive", message: "X: drive is not mounted — nowhere to write the archive." });
+  // 2. Is the destination reachable? Check the drive/root of the CONFIGURED location,
+  // not a hardcoded X:.
+  const destRoot = DEST.slice(0, 3);   // e.g. "X:\" or "D:\"
+  if (/^[A-Za-z]:[\\/]/.test(DEST) && !existsSync(destRoot)) {
+    return result({ ok: false, reason: "no-drive", message: `Backup drive ${destRoot} is not mounted — nowhere to write the archive.`, dest: DEST });
   }
-  if (!existsSync(BACKUP_ROOT)) {
-    try { mkdirSync(BACKUP_ROOT, { recursive: true }); }
-    catch (e) { return result({ ok: false, reason: "no-target", message: `Cannot create ${BACKUP_ROOT}: ${e.message}` }); }
+  if (!existsSync(DEST)) {
+    try { mkdirSync(DEST, { recursive: true }); }
+    catch (e) { return result({ ok: false, reason: "no-target", message: `Cannot create ${DEST}: ${e.message}` }); }
   }
 
   // 3. Name it: date for humans, short id for uniqueness (several runs in one day).
@@ -117,7 +124,7 @@ function run() {
   const date = startedAt.toLocaleDateString("sv-SE");   // sv-SE renders as YYYY-MM-DD
   const id = randomBytes(3).toString("hex");
   const file = `claude-${date}-${id}.tar`;
-  const archivePath = join(BACKUP_ROOT, file);
+  const archivePath = join(DEST, file);
   // Written under .partial and renamed only once it verifies. tar streams to disk, so
   // a kill / power loss / X: unplug would otherwise leave a truncated file sitting at
   // the FINAL name — where it lists as the newest archive and is offered as the
@@ -142,7 +149,7 @@ function run() {
       command: `${tarBin()} ${tarArgs.join(" ")}`,
       excluded: EXCLUDE_DIRS,
       danglingLinks: dangling, skippedDirs,
-      message: `Dry run — would write ${file} to ${BACKUP_ROOT}, excluding ${EXCLUDE_DIRS.join(", ")}.${skipNote}`,
+      message: `Dry run — would write ${file} to ${DEST}, excluding ${EXCLUDE_DIRS.join(", ")}.${skipNote}`,
     });
   }
 

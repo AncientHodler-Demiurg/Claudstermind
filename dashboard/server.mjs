@@ -23,6 +23,7 @@ import { join, extname, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readActivity, readLastBackup } from "../orchestrator/activity.mjs";
 import { listArchives } from "../orchestrator/archives.mjs";
+import { readBackupConfig, writeBackupConfig, isBackupDue } from "../orchestrator/backupConfig.mjs";
 import { readCascade } from "../lib/cascade.mjs";
 import { allReposGitStatus } from "../lib/gitStatus.mjs";
 import { readOidcConfig } from "./auth/oidcConfig.mjs";
@@ -216,9 +217,23 @@ const handler = async (req, res) => {
     }
   }
 
-  // ---- backups: the dated archives on X: ----
+  // ---- backups: the dated archives at the configured location ----
   if (path === "/api/backups") {
-    return sendJSON(res, 200, listArchives());
+    return sendJSON(res, 200, listArchives(readBackupConfig().location));
+  }
+
+  // ---- backup config: the daily-backup toggle, location, schedule + state ----
+  if (path === "/api/backup/config") {
+    if (req.method === "POST") {
+      if (!sameOrigin(req)) return sendJSON(res, 403, { ok: false, reason: "cross-origin" });
+      if (!who.localActionsAvailable) return sendJSON(res, 403, { ok: false, reason: "local-only", message: "Backup settings are local-only." });
+      if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only" });
+      let body = ""; for await (const c of req) body += c;
+      let patch = {}; try { patch = JSON.parse(body || "{}"); } catch {}
+      const cfg = writeBackupConfig(patch);
+      return sendJSON(res, 200, { ok: true, config: cfg, schedule: scheduleState() });
+    }
+    return sendJSON(res, 200, { config: readBackupConfig(), schedule: scheduleState() });
   }
 
   // ---- restore: the one irreversible action. Needs the id typed back. ----
@@ -281,13 +296,10 @@ const handler = async (req, res) => {
     return sendJSON(res, 200, out);
   }
 
-  // ---- orchestrator: backup to X: (gated on idle inside backup.mjs) ----
+  // ---- orchestrator: on-demand backup to the configured location (idle-gated) ----
   if (req.method === "POST" && path === "/api/backup") {
-    const force = url.searchParams.get("force") === "1";
-    const argv = [join(ORCH, "backup.mjs")]; if (force) argv.push("--force");
-    const r = await runProc(process.execPath, argv, { timeout: 600000 });
-    let payload; try { payload = JSON.parse((r.stdout.trim().split(/\r?\n/).pop()) || "{}"); } catch { payload = { ok: false, message: "backup produced no parseable result", raw: r.stdout.slice(-500), stderr: r.stderr.slice(-300) }; }
-    return sendJSON(res, 200, payload);
+    const r = await runBackup({ force: url.searchParams.get("force") === "1" });
+    return sendJSON(res, 200, r);
   }
 
   // ---- orchestrator: master-pollinate DRY-RUN (safe, read-only). Real --execute stays terminal-only. ----
@@ -364,6 +376,53 @@ const handler = async (req, res) => {
 // briefly unreachable during /auth/login, a DNS blip, a malformed request — becomes
 // an unhandled rejection and Node kills the process. A failed request must degrade
 // one request, not take the dashboard offline.
+// Run backup.mjs to the CONFIGURED location, returning its parsed result.
+async function runBackup({ force = false } = {}) {
+  const cfg = readBackupConfig();
+  const argv = [join(ORCH, "backup.mjs"), "--dest", cfg.location];
+  if (force) argv.push("--force");
+  const r = await runProc(process.execPath, argv, { timeout: 600000 });
+  try { return JSON.parse((r.stdout.trim().split(/\r?\n/).pop()) || "{}"); }
+  catch { return { ok: false, message: "backup produced no parseable result", raw: r.stdout.slice(-500), stderr: r.stderr.slice(-300) }; }
+}
+
+// The daily-backup scheduler. In-process: it runs while the dashboard (the overseer)
+// is up, checks every 10 min whether a backup is due (enabled + past the set hour +
+// not yet run today), and fires one — respecting the same idle-gate as a manual run,
+// so it silently defers while an agent is working and catches up once idle.
+let SCHED = { lastCheck: null, lastAutoRun: null, running: false };
+async function backupTick() {
+  if (SCHED.running) return;
+  const cfg = readBackupConfig();
+  SCHED.lastCheck = new Date().toISOString();
+  const now = new Date();
+  const today = now.toLocaleDateString("sv-SE");
+  if (!isBackupDue(cfg, now, today)) return;
+  SCHED.running = true;
+  try {
+    const r = await runBackup({ force: false });   // NOT forced — auto-backup waits for idle
+    if (r.ok) {
+      writeBackupConfig({ lastRunDate: today, lastResult: r });
+      SCHED.lastAutoRun = { at: new Date().toISOString(), ok: true, message: r.message };
+    } else if (r.reason === "active") {
+      // an agent is working — leave lastRunDate unset so we retry on the next tick
+      SCHED.lastAutoRun = { at: new Date().toISOString(), ok: false, deferred: true, message: r.message };
+    } else {
+      writeBackupConfig({ lastResult: r });        // a real failure — don't hammer it every 10 min
+      writeBackupConfig({ lastRunDate: today });
+      SCHED.lastAutoRun = { at: new Date().toISOString(), ok: false, message: r.message };
+    }
+  } finally { SCHED.running = false; }
+}
+function scheduleState() {
+  const cfg = readBackupConfig();
+  return {
+    enabled: cfg.enabled, hour: cfg.hour, location: cfg.location,
+    lastRunDate: cfg.lastRunDate, lastAutoRun: SCHED.lastAutoRun, lastCheck: SCHED.lastCheck,
+    nextCheckWithinMs: 10 * 60 * 1000,
+  };
+}
+
 const server = http.createServer((req, res) => {
   handler(req, res).catch((err) => {
     console.error(`dashboard: unhandled error on ${req.method} ${req.url} —`, err);
@@ -388,4 +447,12 @@ server.listen(PORT, HOST, () => {
       ? `  Mode: LIVE — AncientHub login required (${OIDC.issuer}); bound ${HOST}; backup/restore/cascade disabled (local-only actions).\n`
       : `  Mode: LOCAL — no OIDC env, auth disabled, all actions available; bound ${HOST} (loopback only).\n`,
   );
+  // The daily-backup scheduler only makes sense on the local (work-machine) dashboard —
+  // the live deployment has no disk to back up. First check shortly after boot, then every 10 min.
+  if (!OIDC) {
+    setTimeout(() => { backupTick().catch((e) => console.error("backup scheduler:", e)); }, 30_000);
+    setInterval(() => { backupTick().catch((e) => console.error("backup scheduler:", e)); }, 10 * 60 * 1000);
+    const c = readBackupConfig();
+    console.log(`  Daily backup: ${c.enabled ? `ON — ${c.location} at ${String(c.hour).padStart(2, "0")}:00` : "off (enable it on the Ops tab)"}\n`);
+  }
 });
