@@ -88,6 +88,27 @@ main { padding: 18px 22px 60px; max-width: 1400px; margin: 0 auto; }
 .gitbtn:disabled { opacity: .55; cursor: default; }
 .repocard .gitmsg { font-family: ui-monospace, monospace; font-size: 10.5px; white-space: pre-wrap; }
 
+/* ---- themed modal (replaces window.prompt for commit etc.) ---- */
+.modal-overlay { position: fixed; inset: 0; background: rgba(6, 9, 20, .62); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center; z-index: 1000; animation: modalIn .12s ease-out; }
+@keyframes modalIn { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .modal-overlay { animation: none; } }
+.modal { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; width: min(560px, 92vw);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .5); overflow: hidden; }
+.modal-hd { display: flex; align-items: center; gap: 9px; padding: 13px 18px; border-bottom: 1px solid var(--line);
+  font-weight: 700; font-size: 14.5px; }
+.modal-hd .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); flex: none; }
+.modal-bd { padding: 15px 18px; }
+.modal-bd textarea { width: 100%; box-sizing: border-box; min-height: 84px; background: var(--chip);
+  border: 1px solid var(--line); color: var(--ink); border-radius: 9px; padding: 10px 12px;
+  font-family: ui-monospace, monospace; font-size: 13px; line-height: 1.5; resize: vertical; }
+.modal-bd textarea:focus { outline: none; border-color: var(--accent); }
+.modal-sub { font-size: 12px; color: var(--ink-dim); margin-bottom: 9px; }
+.modal-ft { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); }
+.modal-ft .btn-primary { background: var(--accent); color: #0b1020; border: 1px solid var(--accent); font-weight: 700; }
+.modal-ft .btn-primary:hover { filter: brightness(1.08); }
+.modal-hint { font-size: 11px; color: var(--ink-dim); margin-right: auto; align-self: center; }
+
 .repo { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; background: var(--panel2); border: 1px solid transparent; cursor: default; }
 .repo:hover { border-color: var(--line); }
 .repo .glyph { width: 18px; text-align: center; flex: none; }

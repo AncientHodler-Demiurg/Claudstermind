@@ -638,14 +638,106 @@ async function gitPost(pathq, body, btn) {
   } catch (e) { gitActionDone(btn, { ok: false, message: String(e) }); }
   btn.disabled = false; btn.textContent = old;
 }
-function gitPush(g, btn) {
-  if (!confirm(`Push ${g.name} (${g.branch}) to origin?`)) return;
-  gitPost("/api/git/push", { localPath: g.localPath }, btn);
+/* ---------- themed modal — replaces window.prompt/confirm ---------- */
+// A promise-based dialog matching the dashboard theme. `editable` shows a textarea
+// (returns its text on confirm); otherwise it's a confirm dialog (returns true).
+function showModal({ title, sub, value = "", editable = false, confirmLabel = "Confirm", danger = false }) {
+  return new Promise((resolve) => {
+    let ta = null;
+    const finish = (result) => { document.removeEventListener("keydown", onKey); overlay.remove(); resolve(result); };
+    const onKey = (e) => {
+      if (e.key === "Escape") finish(editable ? null : false);
+      else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) finish(editable ? (ta ? ta.value : "") : true);
+    };
+    if (editable) { ta = el("textarea", { spellcheck: "false" }); ta.value = value; }
+    const confirmBtn = el("button", { class: "ghost btn-primary", style: danger ? "background:#f87171;border-color:#f87171" : "" },
+      [confirmLabel]);
+    confirmBtn.addEventListener("click", () => finish(editable ? ta.value : true));
+    const cancelBtn = el("button", { class: "ghost" }, ["Cancel"]);
+    cancelBtn.addEventListener("click", () => finish(editable ? null : false));
+
+    const overlay = el("div", { class: "modal-overlay" }, [
+      el("div", { class: "modal" }, [
+        el("div", { class: "modal-hd" }, [el("span", { class: "dot" }), title]),
+        el("div", { class: "modal-bd" }, [
+          sub ? el("div", { class: "modal-sub" }, [sub]) : "",
+          ...(editable ? [ta] : []),
+        ]),
+        el("div", { class: "modal-ft" }, [
+          editable ? el("span", { class: "modal-hint" }, ["⌘/Ctrl+Enter to confirm · Esc to cancel"]) : "",
+          cancelBtn, confirmBtn,
+        ]),
+      ]),
+    ]);
+    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) finish(editable ? null : false); });
+    document.body.append(overlay);
+    document.addEventListener("keydown", onKey);
+    if (ta) { ta.focus(); ta.select(); } else confirmBtn.focus();
+  });
 }
-function gitCommit(g, btn) {
-  const m = window.prompt(`Commit ALL changes in ${g.name} (${g.branch}).\nThis stages every modified, new and deleted file (git add -A).\n\nCommit message:`);
-  if (m == null || !m.trim()) return;
-  gitPost("/api/git/commit", { localPath: g.localPath, message: m }, btn);
+
+/* ---------- suggest a commit message from the actual changes ----------
+   No AI: a heuristic over the porcelain file list. Picks a conventional-commit type
+   when confident (ci/test/docs/style/deps), an action verb from the change kinds, a
+   scope from the common directory, and names the files — a solid first draft to edit. */
+function suggestCommitMessage(porcelainLines) {
+  const files = (porcelainLines || []).map((l) => {
+    let path = l.slice(3).trim();
+    if (path.includes(" -> ")) path = path.split(" -> ").pop().trim();   // rename → the new name
+    return { x: l[0], y: l[1], path: path.replace(/^"|"$/g, "") };
+  }).filter((f) => f.path);
+  if (!files.length) return "";
+
+  const paths = files.map((f) => f.path);
+  const base = (p) => p.split("/").pop();
+  const added = files.filter((f) => f.x === "A" || (f.x === "?" && f.y === "?"));
+  const deleted = files.filter((f) => f.x === "D" || f.y === "D");
+  const all = (re) => paths.every((p) => re.test(p));
+
+  let type = null;
+  if (all(/^\.github\/workflows\//)) type = "ci";
+  else if (all(/(\.test\.|\.spec\.|(^|\/)(tests?|__tests__)\/)/)) type = "test";
+  else if (all(/((^|\/)docs\/|\.md$)/i)) type = "docs";
+  else if (all(/(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml)$/)) type = "chore(deps)";
+  else if (all(/\.css$/)) type = "style";
+
+  const verb = deleted.length === files.length ? "remove"
+    : added.length === files.length ? "add"
+    : "update";
+
+  // common directory across the changed files → the scope
+  const dirs = paths.map((p) => p.split("/").slice(0, -1));
+  let common = dirs[0] || [];
+  for (const d of dirs) { let i = 0; while (i < common.length && common[i] === d[i]) i++; common = common.slice(0, i); }
+  const scope = common.join("/");
+
+  const names = [...new Set(files.map((f) => base(f.path)))];
+  const shown = names.slice(0, 3).join(", ") + (names.length > 3 ? ` +${names.length - 3} more` : "");
+  const cap = (s) => s[0].toUpperCase() + s.slice(1);
+
+  if (type) return `${type}: ${verb} ${shown}`;
+  return scope ? `${cap(verb)} ${scope}: ${shown}` : `${cap(verb)} ${shown}`;
+}
+
+async function gitPush(g, btn) {
+  const ok = await showModal({
+    title: `Push to origin — ${g.name}`,
+    sub: `Push ${g.branch}${g.summary?.neverPushedBranches?.includes(g.branch) ? " (first push — sets upstream)" : ""} to origin.`,
+    confirmLabel: "↑ Push",
+  });
+  if (ok) gitPost("/api/git/push", { localPath: g.localPath }, btn);
+}
+async function gitCommit(g, btn) {
+  const suggestion = suggestCommitMessage(g.uncommitted && g.uncommitted.files);
+  const msg = await showModal({
+    title: `Commit changes — ${g.name}`,
+    sub: `Stages every change in ${g.name} (${g.branch}) with git add -A and commits. Edit the suggested message or accept it.`,
+    value: suggestion,
+    editable: true,
+    confirmLabel: "✓ Commit",
+  });
+  if (msg == null || !msg.trim()) return;
+  gitPost("/api/git/commit", { localPath: g.localPath, message: msg }, btn);
 }
 let GIT_REFRESH = null;   // set by viewGit so a card action can trigger a rescan
 
