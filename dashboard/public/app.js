@@ -105,6 +105,13 @@ async function boot() {
   // is "everything" and nothing below changes. On the live deployment it decides
   // whether the Ops tab exists at all.
   try { ME = await (await fetch("/api/me")).json(); ME._fetchedAt = Date.now(); } catch { /* keep the local default */ }
+
+  // On the live site, gate the WHOLE app behind login + an admin role. Nothing but the
+  // branded login screen renders until you're signed in; a signed-in non-admin gets the
+  // "admins only" notice; only an ancient/modern admin reaches the dashboard below.
+  if (ME.mode === "live" && !ME.authenticated) return renderLogin();
+  if (ME.mode === "live" && !ME.canRead) return renderDenied();
+
   renderAuthPill();
 
   MAP = await (await fetch("/api/map")).json();
@@ -181,6 +188,42 @@ function renderAuthPill() {
   if (opsTab) opsTab.hidden = !ME.localActionsAvailable;
   renderConnBanner();
   renderLinkPill();
+}
+
+// Strip the dashboard chrome down to just the brand header for the login / denied gates.
+function gateChrome() {
+  const t = $("#tabs"); if (t) t.style.display = "none";
+  const sb = $("#statbar"); if (sb) sb.style.display = "none";
+  const foot = document.querySelector("footer.foot"); if (foot) foot.style.display = "none";
+  for (const id of ["#modelPill", "#genPill", "#authPill"]) { const e = $(id); if (e) e.hidden = true; }
+}
+
+// Unauthenticated on the live site → the branded login screen. Nothing else is shown.
+function renderLogin() {
+  gateChrome();
+  $("#view").replaceChildren(el("div", { class: "gate" }, [
+    el("img", { src: "/brand/claudstermind-mark.png?v=2", width: "112", height: "112", alt: "Claudstermind", class: "gate-mark" }),
+    el("h2", { class: "gate-title" }, ["Claudstermind"]),
+    el("p", { class: "gate-sub" }, ["Overseer of everything under Ancient Holdings."]),
+    el("a", { href: "/auth/login", class: "loginbtn" }, ["Sign in with AncientHub"]),
+    el("p", { class: "gate-note" }, ["Access is limited to Ancient Holdings admins. Sign in to continue."]),
+  ]));
+}
+
+// Signed in, but without an admin role → say so plainly, offer a way to switch accounts.
+function renderDenied() {
+  gateChrome();
+  const roles = (ME.roles || []).length ? ME.roles.join(", ") : "none";
+  $("#view").replaceChildren(el("div", { class: "gate" }, [
+    el("img", { src: "/brand/claudstermind-mark.png?v=2", width: "92", height: "92", alt: "Claudstermind", class: "gate-mark" }),
+    el("h2", { class: "gate-title" }, ["Admins only"]),
+    el("p", { class: "gate-sub" }, [
+      "You're signed in to AncientHub, but Claudstermind is visible only to ",
+      el("b", {}, ["ancient"]), " or ", el("b", {}, ["modern"]), " admins. Use an admin account to view it.",
+    ]),
+    el("p", { class: "gate-note" }, ["Your roles: " + roles]),
+    el("a", { href: "/auth/logout", class: "loginbtn secondary" }, ["Sign out"]),
+  ]));
 }
 
 const agoText = (ms) => {

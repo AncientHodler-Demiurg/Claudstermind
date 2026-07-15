@@ -18,7 +18,7 @@ import { join, extname, resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { WebSocketServer } from "ws";
 import { readOidcConfig } from "../dashboard/auth/oidcConfig.mjs";
-import { handleAuthRoute, guard, denyPage } from "../dashboard/auth/routes.mjs";
+import { handleAuthRoute, guard } from "../dashboard/auth/routes.mjs";
 import { AgentLink, authorizeMutation, routeToCommand } from "./relay-core.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -127,17 +127,15 @@ export function createRelay(opts = {}) {
       });
     }
 
-    // The gate — reused verbatim from the local dashboard's live-mode behavior.
-    if (!who.canRead) {
-      if (path.startsWith("/api/")) {
-        return sendJSON(res, who.authenticated ? 403 : 401, {
-          error: who.authenticated ? "your hub account has neither the ancient nor the modern role" : "authentication required",
-          loginUrl: "/auth/login",
-        });
-      }
-      if (who.authenticated) return denyPage(res, who.session?.roles ?? []);
-      res.writeHead(302, { location: "/auth/login", "cache-control": "no-store" });
-      return res.end();
+    // The gate. DATA (every /api/*) requires an admin session; the app SHELL (index.html,
+    // app.js, css, brand images) is served to everyone so the page can render its own
+    // branded login screen / "admins only" notice from /api/me. No data leaks — all
+    // /api/* below stay behind this gate.
+    if (!who.canRead && path.startsWith("/api/")) {
+      return sendJSON(res, who.authenticated ? 403 : 401, {
+        error: who.authenticated ? "your hub account has neither the ancient nor the modern role" : "authentication required",
+        loginUrl: "/auth/login",
+      });
     }
 
     if (req.method === "POST") {

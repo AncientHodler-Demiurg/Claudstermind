@@ -191,3 +191,17 @@ svg text { font-family: ui-sans-serif, system-ui, sans-serif; }
 }
 @keyframes connPulse { 0% { box-shadow: 0 0 0 0 #f59e0b88; } 70% { box-shadow: 0 0 0 7px #f59e0b00; } 100% { box-shadow: 0 0 0 0 #f59e0b00; } }
 @media (prefers-reduced-motion: reduce) { .conn-banner .conn-dot { animation: none; } }
+
+/* Login / access gate — the branded full-screen state shown before an admin session
+   exists on the live site. The local dashboard never shows this (no auth). */
+.gate { display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; gap: 14px; min-height: 62vh; padding: 48px 20px; }
+.gate-mark { border-radius: 22px; }
+.gate-title { margin: 6px 0 0; font-size: 26px; }
+.gate-sub { color: var(--ink-dim); margin: 0; max-width: 400px; line-height: 1.55; }
+.gate-note { color: var(--ink-dim); font-size: 12px; opacity: .8; margin: 2px 0 0; }
+.loginbtn { display: inline-flex; align-items: center; gap: 8px; margin-top: 10px;
+  padding: 11px 24px; border-radius: 10px; background: var(--accent); color: #fff;
+  font-weight: 600; text-decoration: none; border: 1px solid var(--accent); }
+.loginbtn:hover { filter: brightness(1.08); }
+.loginbtn.secondary { background: var(--chip); color: var(--ink); border-color: var(--line); }
