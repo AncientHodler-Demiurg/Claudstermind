@@ -82,6 +82,11 @@ main { padding: 18px 22px 60px; max-width: 1400px; margin: 0 auto; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
 .repocard .rc-sub { font-size: 11px; color: var(--ink-dim); }
 .repocard.is-muted { opacity: .5; }
+.gitbtn { font-size: 11px; padding: 3px 9px; border-radius: 7px; background: var(--chip); color: var(--ink);
+  border: 1px solid var(--line); cursor: pointer; }
+.gitbtn:hover:not(:disabled) { border-color: var(--accent); }
+.gitbtn:disabled { opacity: .55; cursor: default; }
+.repocard .gitmsg { font-family: ui-monospace, monospace; font-size: 10.5px; white-space: pre-wrap; }
 
 .repo { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; background: var(--panel2); border: 1px solid transparent; cursor: default; }
 .repo:hover { border-color: var(--line); }

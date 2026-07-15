@@ -26,6 +26,7 @@ import { listArchives } from "../orchestrator/archives.mjs";
 import { readBackupConfig, writeBackupConfig, isBackupDue } from "../orchestrator/backupConfig.mjs";
 import { readCascade } from "../lib/cascade.mjs";
 import { allReposGitStatus } from "../lib/gitStatus.mjs";
+import { resolveRepo, pushRepo, commitRepo } from "../lib/gitActions.mjs";
 import { readOidcConfig } from "./auth/oidcConfig.mjs";
 import { handleAuthRoute, guard, denyPage } from "./auth/routes.mjs";
 
@@ -215,6 +216,20 @@ const handler = async (req, res) => {
     } catch (e) {
       return sendJSON(res, 200, { repos: [], totals: {}, error: String(e) });
     }
+  }
+
+  // ---- git actions: commit / push a specific repo (mutations, gated) ----
+  if (req.method === "POST" && (path === "/api/git/push" || path === "/api/git/commit")) {
+    if (!sameOrigin(req)) return sendJSON(res, 403, { ok: false, reason: "cross-origin" });
+    if (!who.localActionsAvailable) return sendJSON(res, 403, { ok: false, reason: "local-only", message: "Git actions run on the work machine — local dashboard only." });
+    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The ancient role is required to commit or push." });
+    let body = ""; for await (const c of req) body += c;
+    let b = {}; try { b = JSON.parse(body || "{}"); } catch {}
+    const abs = resolveRepo(b.localPath, MASTER_ROOT);
+    if (!abs) return sendJSON(res, 400, { ok: false, message: `Not a resolvable git repo: ${b.localPath}` });
+    GIT_CACHE.at = 0;                                    // a mutation invalidates the status cache
+    const r = path === "/api/git/push" ? pushRepo(abs) : commitRepo(abs, b.message);
+    return sendJSON(res, 200, r);
   }
 
   // ---- backups: the dated archives at the configured location ----

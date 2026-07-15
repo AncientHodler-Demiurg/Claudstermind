@@ -586,13 +586,56 @@ function gitRepoCard(mr, g) {
     : s.hasUnpushed ? GIT_COLOR.unpushed
     : s.dirty ? GIT_COLOR.dirty
     : GIT_COLOR.clean;
+
+  // Act, don't just observe: commit the dirty tree / push the branch, in place.
+  const actions = [];
+  if (s.dirty) {
+    actions.push(el("button", { class: "gitbtn", title: "Stage everything and commit", onclick: (e) => gitCommit(g, e.currentTarget) }, ["✎ Commit"]));
+  }
+  if (s.hasUnpushed) {
+    const label = s.neverPushedBranches.length ? "⚠ Push (first push)" : `↑ Push ${s.unpushedCommits || ""}`.trim();
+    actions.push(el("button", { class: "gitbtn", title: "Push the current branch to origin", onclick: (e) => gitPush(g, e.currentTarget) }, [label]));
+  }
+  const msg = el("div", { class: "rc-sub gitmsg", hidden: true });
+
   return repoCard(mr, {
     stripe,
     branch: g.branch,
     muted: !s.attention,
-    extra: [el("div", { style: "display:flex;flex-wrap:wrap;margin-top:2px" }, badges), ...(fileList ? [fileList] : [])],
+    extra: [
+      el("div", { style: "display:flex;flex-wrap:wrap;margin-top:2px" }, badges),
+      ...(actions.length ? [el("div", { style: "display:flex;gap:6px;flex-wrap:wrap;margin-top:2px" }, actions)] : []),
+      msg,
+      ...(fileList ? [fileList] : []),
+    ],
   });
 }
+
+// Report an action's result on the card, then rescan so the badges update.
+function gitActionDone(btn, result) {
+  const card = btn.closest(".repocard");
+  const msg = card && card.querySelector(".gitmsg");
+  if (msg) { msg.hidden = false; msg.textContent = result.message || (result.ok ? "done" : "failed"); msg.style.color = result.ok ? GIT_COLOR.clean : GIT_COLOR.never; }
+  if (result.ok && typeof GIT_REFRESH === "function") setTimeout(() => GIT_REFRESH(true), 400);
+}
+async function gitPost(pathq, body, btn) {
+  const old = btn.textContent; btn.disabled = true; btn.textContent = "…";
+  try {
+    const r = await (await fetch(pathq, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+    gitActionDone(btn, r);
+  } catch (e) { gitActionDone(btn, { ok: false, message: String(e) }); }
+  btn.disabled = false; btn.textContent = old;
+}
+function gitPush(g, btn) {
+  if (!confirm(`Push ${g.name} (${g.branch}) to origin?`)) return;
+  gitPost("/api/git/push", { localPath: g.localPath }, btn);
+}
+function gitCommit(g, btn) {
+  const m = window.prompt(`Commit ALL changes in ${g.name} (${g.branch}).\nThis stages every modified, new and deleted file (git add -A).\n\nCommit message:`);
+  if (m == null || !m.trim()) return;
+  gitPost("/api/git/commit", { localPath: g.localPath, message: m }, btn);
+}
+let GIT_REFRESH = null;   // set by viewGit so a card action can trigger a rescan
 
 function viewGit() {
   if (GIT_TIMER) { clearInterval(GIT_TIMER); GIT_TIMER = null; }
@@ -633,6 +676,7 @@ function viewGit() {
   }
 
   refreshBtn.addEventListener("click", () => refresh(true));
+  GIT_REFRESH = refresh;                 // let a card's commit/push button trigger a rescan
   refresh(false);
   GIT_TIMER = setInterval(() => refresh(false), 25000);
 
