@@ -77,7 +77,13 @@ main { padding: 18px 22px 60px; max-width: 1400px; margin: 0 auto; }
 .repocard { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--stripe, var(--line));
   border-radius: 11px; padding: 9px 11px; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .repocard .rc-hd { display: flex; align-items: center; gap: 7px; }
-.repocard .rc-hd .rc-name { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.repocard .rc-hd .rc-name { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; min-width: 0; flex: 1; }
+.repocard .rc-hd .rc-name-inner { display: inline-block; will-change: transform; }
+/* Hover a long name and it scrolls like a train to reveal the full text (short names
+   have --marq:0, so they don't move). */
+.repocard .rc-hd .rc-name:hover .rc-name-inner { animation: rcTrain 3s ease-in-out infinite alternate; }
+@keyframes rcTrain { 0%, 12% { transform: translateX(0); } 88%, 100% { transform: translateX(var(--marq, 0px)); } }
+@media (prefers-reduced-motion: reduce) { .repocard .rc-hd .rc-name:hover .rc-name-inner { animation: none; } }
 .repocard .rc-hd .rc-branch { margin-left: auto; font-size: 10.5px; color: var(--ink-dim); font-family: ui-monospace, monospace;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
 .repocard .rc-sub { font-size: 11px; color: var(--ink-dim); }

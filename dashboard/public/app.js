@@ -74,10 +74,18 @@ function orgGroup(org, meta, repoCards, tagEl) {
 /** A repo "cardboard" — shared shell; callers fill sub-lines + the left stripe colour. */
 function repoCard(r, { stripe, branch, sublines = [], muted = false, extra = [] }) {
   const role = roleOf(r.role);
+  // The name lives in an inner span so a too-long name can "train" (scroll) on hover to
+  // reveal the full text; the title carries the full name + path as a fallback tooltip.
+  const nameInner = el("span", { class: "rc-name-inner" }, [r.name]);
+  const nameEl = el("span", { class: "rc-name", title: `${r.name}\n${r.localPath || ""}`.trim() }, [nameInner]);
+  nameEl.addEventListener("mouseenter", () => {
+    const over = nameInner.scrollWidth - nameEl.clientWidth;
+    nameEl.style.setProperty("--marq", over > 2 ? `-${over + 10}px` : "0px");   // only long names actually move
+  });
   return el("div", { class: "repocard" + (muted ? " is-muted" : ""), style: `--stripe:${stripe || role.color}` }, [
     el("div", { class: "rc-hd" }, [
       el("span", { class: "glyph", style: `color:${role.color}` }, [role.glyph]),
-      el("span", { class: "rc-name", title: r.localPath }, [r.name]),
+      nameEl,
       branch ? el("span", { class: "rc-branch", title: branch }, [branch]) : "",
     ]),
     ...sublines.map((s) => (typeof s === "string" ? el("div", { class: "rc-sub" }, [s]) : s)),
