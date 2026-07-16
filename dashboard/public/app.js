@@ -202,7 +202,7 @@ function gateChrome() {
 function renderLogin() {
   gateChrome();
   $("#view").replaceChildren(el("div", { class: "gate" }, [
-    el("img", { src: "/brand/claudstermind-mark.png?v=2", width: "112", height: "112", alt: "Claudstermind", class: "gate-mark" }),
+    el("img", { src: "/brand/claudstermind-hero.png", width: "260", alt: "Claudstermind", class: "gate-mark", style: "max-width:80vw;height:auto" }),
     el("h2", { class: "gate-title" }, ["Claudstermind"]),
     el("p", { class: "gate-sub" }, ["Overseer of everything under Ancient Holdings."]),
     el("a", { href: "/auth/login", class: "loginbtn" }, ["Sign in with AncientHub"]),
@@ -319,7 +319,7 @@ function render() {
   // has already torn out of the document, and throws on every tick forever after.
   if (VIEW !== "cascade" && CASCADE_TIMER) { clearInterval(CASCADE_TIMER); CASCADE_TIMER = null; }
   if (VIEW !== "ops" && OPS_TIMER) { clearInterval(OPS_TIMER); OPS_TIMER = null; }
-  if (VIEW !== "ops" && RELAY_TIMER) { clearInterval(RELAY_TIMER); RELAY_TIMER = null; }
+  if (VIEW !== "relay" && RELAY_TIMER) { clearInterval(RELAY_TIMER); RELAY_TIMER = null; }
   if (VIEW !== "git" && GIT_TIMER) { clearInterval(GIT_TIMER); GIT_TIMER = null; }
   if (VIEW === "cascade") v.replaceChildren(viewCascade());
   else if (VIEW === "git") v.replaceChildren(viewGit());
@@ -330,6 +330,7 @@ function render() {
   else if (VIEW === "packages") v.replaceChildren(viewPackages());
   else if (VIEW === "tokens") v.replaceChildren(viewTokens());
   else if (VIEW === "ops") v.replaceChildren(viewOps());
+  else if (VIEW === "relay") v.replaceChildren(viewRelay());
   else if (VIEW === "brain") v.replaceChildren(viewBrain());
   else if (VIEW === "tree") v.replaceChildren(viewTree());
 }
@@ -958,6 +959,94 @@ function viewGit() {
 /* ---------- ops: activity + backup + master-pollinate ---------- */
 let OPS_TIMER = null;
 let RELAY_TIMER = null;
+/* ---------- relay: the tunnel between this LocalHost and the online site ----------
+   Symmetric tab. On the LOCAL dashboard it CONTROLS the bridge (enable/disable, address,
+   device secret) and shows whether the remote is online + receiving. On the ONLINE relay
+   it is READ-ONLY: it shows whether the local host is connected and sending data, or not
+   running at all. */
+function relayStatusCard(tone, title, detail) {
+  const c = tone === "on" ? "#34d399" : tone === "wait" ? "#fbbf24" : "#94a3b8";
+  return el("div", { class: "movecard", style: `border-left:3px solid ${c};padding-left:13px` }, [
+    el("div", { style: "display:flex;align-items:center;gap:9px" }, [
+      el("span", { style: `color:${c};font-size:16px;line-height:1` }, [tone === "off" ? "○" : "●"]),
+      el("div", { style: "font-weight:700;font-size:15px" }, [title]),
+    ]),
+    el("div", { class: "hint", style: "margin-top:5px" }, [detail]),
+  ]);
+}
+
+function viewRelay() {
+  if (RELAY_TIMER) { clearInterval(RELAY_TIMER); RELAY_TIMER = null; }
+  const statusBox = el("div", {}, [el("div", { class: "hint" }, ["Loading relay status…"])]);
+
+  // ---- ONLINE relay: read-only receiving-end view of the local host ----
+  if (ME.mode === "live") {
+    async function loadRemote() {
+      let s; try { s = await (await fetch("/api/me", { cache: "no-store" })).json(); } catch { return; }
+      const connected = s.localConnected;
+      const age = connected && s.snapshotAgeMs != null ? s.snapshotAgeMs + 0 : null;
+      statusBox.replaceChildren(connected
+        ? relayStatusCard("on", "Local host connected", `Receiving data from your work machine${age != null ? " · last update " + agoText(age) : ""}. The dashboard is live.`)
+        : relayStatusCard("off", "Local host not connected", "Your local Claudstermind isn't reaching this server — its dashboard isn't running, or the relay is switched off there. The dashboard stays empty until it connects."));
+    }
+    loadRemote(); RELAY_TIMER = setInterval(loadRemote, 3000);
+    return el("div", {}, [
+      el("div", { class: "hint" }, ["The relay tunnel — this online site receives a live mirror of the work machine's Claudstermind. It can't initiate the link; it only reports what arrives."]),
+      statusBox,
+    ]);
+  }
+
+  // ---- LOCAL dashboard: controls + remote-online status ----
+  const INPUT = "flex:1;min-width:220px;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px 10px;font-family:ui-monospace,monospace;font-size:12px";
+  const ROW = "display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0";
+  const controls = el("div", { class: "movecard", style: "margin-top:10px" }, [el("div", { class: "hint" }, ["Loading relay settings…"])]);
+  async function updateStatus() {
+    let s; try { s = await (await fetch("/api/relay", { cache: "no-store" })).json(); } catch { return; }
+    statusBox.replaceChildren(
+      !s.enabled ? relayStatusCard("off", "Relay is off", "The online site shows “not connected”. Enable it below to stream this dashboard to the web.")
+      : s.connected ? relayStatusCard("on", "Connected — remote online", `Streaming to ${s.url}. The online site is up and receiving your data.`)
+      : relayStatusCard("wait", "Connecting…", `Trying to reach ${s.url || "the relay"} — the remote is unreachable or still starting, retrying automatically.${s.error ? " (" + s.error + ")" : ""}`));
+  }
+  async function buildControls() {
+    let s; try { s = await (await fetch("/api/relay", { cache: "no-store" })).json(); } catch { return; }
+    const urlInput = el("input", { type: "text", value: s.url || "", placeholder: "brain.ancientholdings.eu", style: INPUT });
+    const secretInput = el("input", { type: "password", placeholder: s.hasSecret ? "•••••• saved — leave blank to keep" : "paste the relay's device secret", style: INPUT });
+    const toggle = el("input", { type: "checkbox" }); if (s.enabled) toggle.setAttribute("checked", "checked");
+    const saveBtn = el("button", { class: "ghost" }, ["Save & connect"]);
+    const msg = el("span", { class: "was", style: "font-size:11px" });
+    async function save(patch) {
+      const body = { url: urlInput.value, enabled: toggle.checked, ...patch };
+      if (secretInput.value.trim()) body.deviceSecret = secretInput.value;   // sent once, saved to .secrets, never shown again
+      msg.textContent = "saving…";
+      try {
+        const r = await (await fetch("/api/relay/config", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+        secretInput.value = "";
+        msg.textContent = r.ok ? "✓ saved" : (r.message || r.reason || "failed");
+        msg.style.color = r.ok ? "#34d399" : "#f87171";
+      } catch (e) { msg.textContent = String(e); }
+      updateStatus();
+    }
+    toggle.addEventListener("change", () => save({ enabled: toggle.checked }));
+    saveBtn.addEventListener("click", () => save({}));
+    controls.replaceChildren(
+      el("div", { class: "desc" }, [el("b", {}, ["Connection"])]),
+      el("div", { style: ROW }, [el("span", { class: "was", style: "min-width:92px" }, ["address"]), urlInput]),
+      el("div", { style: ROW }, [el("span", { class: "was", style: "min-width:92px" }, ["device secret"]), secretInput]),
+      el("div", { style: "display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:8px 0 2px" }, [
+        el("label", { style: "display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600" }, [toggle, "Relay enabled"]),
+        saveBtn, msg,
+      ]),
+      el("div", { class: "hint", style: "margin-top:4px" }, ["The address is your online site; the device secret must match the relay's ", el("code", {}, ["AGENT_DEVICE_SECRET"]), ". It's stored locally in .secrets and never shown again."]),
+    );
+  }
+  buildControls(); updateStatus();
+  RELAY_TIMER = setInterval(updateStatus, 3000);
+  return el("div", {}, [
+    el("div", { class: "hint" }, ["The relay tunnel — mirror this dashboard to the web so you can view and drive your workspace from the online site."]),
+    statusBox, controls,
+  ]);
+}
+
 function viewOps() {
   if (OPS_TIMER) { clearInterval(OPS_TIMER); OPS_TIMER = null; }
   if (RELAY_TIMER) { clearInterval(RELAY_TIMER); RELAY_TIMER = null; }
@@ -1009,71 +1098,6 @@ function viewOps() {
     );
   }
   loadSched();
-
-  /* --- relay: point this machine at the online site (brain.ancientholdings.eu) --- */
-  // Only meaningful on the LOCAL dashboard — the bridge runs here, on the work machine.
-  const relayBox = (ME.mode === "local")
-    ? el("div", { class: "movecard", style: "margin-top:10px" }, [el("div", { class: "hint" }, ["Loading relay settings…"])])
-    : null;
-  const relayStatusEl = el("div", { style: "font-size:12px;margin-top:2px" });
-  async function updateRelayStatus() {
-    let s; try { s = await (await fetch("/api/relay", { cache: "no-store" })).json(); } catch { return; }
-    const color = s.connected ? "#34d399" : s.enabled ? "#fbbf24" : "#94a3b8";
-    const label = s.connected ? `● connected to ${s.url}`
-      : s.enabled ? `○ ${s.state}…${s.url ? " — " + s.url : ""}`
-      : "○ off";
-    relayStatusEl.replaceChildren(
-      el("span", { style: `color:${color};font-weight:700` }, [label]),
-      s.error ? el("span", { style: "color:#f87171" }, ["  · " + s.error]) : "",
-    );
-  }
-  async function loadRelay() {
-    if (!relayBox) return;
-    let s; try { s = await (await fetch("/api/relay", { cache: "no-store" })).json(); } catch { return; }
-    const urlInput = el("input", { type: "text", value: s.url || "", placeholder: "brain.ancientholdings.eu",
-      style: "flex:1;min-width:220px;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:5px 9px;font-family:ui-monospace,monospace;font-size:12px" });
-    const secretInput = el("input", { type: "password",
-      placeholder: s.hasSecret ? "•••••• device secret saved — leave blank to keep" : "paste the relay's device secret",
-      style: "flex:1;min-width:220px;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:5px 9px;font-family:ui-monospace,monospace;font-size:12px" });
-    const toggle = el("input", { type: "checkbox" });
-    if (s.enabled) toggle.setAttribute("checked", "checked");
-    const saveBtn = el("button", { class: "ghost" }, ["Save & connect"]);
-    const msg = el("span", { class: "was", style: "font-size:11px" });
-
-    async function save(patch) {
-      const body = { url: urlInput.value, enabled: toggle.checked, ...patch };
-      if (secretInput.value.trim()) body.deviceSecret = secretInput.value;   // sent once, saved to .secrets, never shown again
-      msg.textContent = "saving…";
-      try {
-        const r = await (await fetch("/api/relay/config", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
-        secretInput.value = "";
-        msg.textContent = r.ok ? "✓ saved" : (r.message || r.reason || "failed");
-        msg.style.color = r.ok ? "#34d399" : "#f87171";
-      } catch (e) { msg.textContent = String(e); }
-      loadRelay(); updateRelayStatus();
-    }
-    toggle.addEventListener("change", () => save({ enabled: toggle.checked }));
-    saveBtn.addEventListener("click", () => save({}));
-
-    relayBox.replaceChildren(
-      el("div", { class: "desc" }, [el("b", {}, ["Online relay"]), " — mirror this dashboard to the web"]),
-      el("div", { style: "display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0" }, [
-        el("span", { class: "was" }, ["address"]), urlInput,
-      ]),
-      el("div", { style: "display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0" }, [
-        el("span", { class: "was" }, ["device secret"]), secretInput,
-      ]),
-      el("div", { style: "display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:6px 0" }, [
-        el("label", { style: "display:inline-flex;align-items:center;gap:6px;font-size:13px" }, [toggle, "Connect to relay"]),
-        saveBtn, msg,
-      ]),
-      relayStatusEl,
-      el("div", { class: "hint", style: "margin-top:4px" }, ["When on, this dashboard holds an outbound tunnel to the online site so you can view — and, as the ancient admin, drive — your workspace from ", el("b", {}, ["brain.ancientholdings.eu"]), ". The device secret must match the relay's ", el("code", {}, ["AGENT_DEVICE_SECRET"]), ". It's stored locally in .secrets and never shown again."]),
-    );
-    updateRelayStatus();
-  }
-  loadRelay();
-  if (relayBox) RELAY_TIMER = setInterval(updateRelayStatus, 3000);
 
   async function post(pathq, btn, label) {
     btn.disabled = true; const old = btn.textContent; btn.textContent = "… running";
@@ -1185,7 +1209,6 @@ function viewOps() {
     el("div", { class: "hint" }, ["Orchestration — live agent-activity detection, ", el("b", {}, ["dated archive backups"]), " with restore, and gated ", el("b", {}, ["master-pollinate"]), ". Buttons are enabled only when no agent is working."]),
     controls, out, statusBox,
     schedBox,
-    relayBox || "",
     el("h3", { style: "margin:18px 0 6px" }, ["Archives"]),
     el("div", { class: "hint" }, ["Each backup is an immutable point in time — a corrupted tree can only overwrite the newest archive, never the older ones. Restore rewinds the files the archive contains; anything created since is left alone."]),
     archiveBox,
