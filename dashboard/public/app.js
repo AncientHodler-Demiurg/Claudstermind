@@ -1047,6 +1047,56 @@ function viewRelay() {
   ]);
 }
 
+/* ---------- Ops activity: org-grouped repo cards with a live/idle blinker ----------
+   At a glance: which repo has an agent working in it, and what it's doing. Grouped by
+   the top-level ecosystem folder, same as the other tabs. */
+function actCard(s) {
+  const live = s.live;
+  const name = (s.repo || s.cwd || "").split(/[\\/]/).filter(Boolean).pop() || "workspace";
+  const ageTxt = s.ageSeconds < 60 ? s.ageSeconds + "s" : Math.round(s.ageSeconds / 60) + "m";
+  return el("div", { class: "repocard", style: `--stripe:${live ? "#34d399" : "#64748b"}` }, [
+    el("div", { class: "rc-hd" }, [
+      el("span", { class: "actdot" + (live ? " on" : "") }),
+      el("span", { class: "rc-name", title: s.repo }, [name]),
+      el("span", { class: "was", style: "font-size:11px;margin-left:auto;white-space:nowrap" }, [ageTxt]),
+    ]),
+    el("div", { class: "rc-sub", style: `font-weight:600;color:${live ? "#34d399" : "var(--ink-dim)"}` }, [live ? "working" : s.status]),
+    s.detail ? el("div", { class: "rc-sub", style: "font-family:ui-monospace,monospace;font-size:11px;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis", title: s.detail }, [s.detail]) : "",
+  ]);
+}
+
+function sessionKey(s) { return s.repo || s.cwd || "unknown"; }
+function sessionOrg(s) { return s.repo ? (s.repo.split(/[\\/]/)[0] || "workspace") : "workspace"; }
+
+function activityView(a) {
+  // Keep live sessions + recently-idle ones; drop anything idle older than 15 min
+  // (old session files whose status got stuck at "active" but went stale long ago).
+  const byKey = new Map();
+  for (const s of (a.sessions || [])) {
+    if (!s.live && s.ageSeconds > 900) continue;
+    const k = sessionKey(s);
+    const prev = byKey.get(k);
+    if (!prev || s.ageSeconds < prev.ageSeconds) byKey.set(k, s);
+  }
+  const list = [...byKey.values()].sort((x, y) => (Number(y.live) - Number(x.live)) || (x.ageSeconds - y.ageSeconds));
+  if (!list.length) return el("div", { class: "hint" }, ["No active sessions — no agent is working in a tracked repo right now. (Activity comes from Claude Code hooks; see orchestrator/README.)"]);
+  const groups = {};
+  for (const s of list) { const org = sessionOrg(s); (groups[org] = groups[org] || []).push(s); }
+  const entries = Object.entries(groups).sort((x, y) => (groups[y[0]].some((s) => s.live) ? 1 : 0) - (groups[x[0]].some((s) => s.live) ? 1 : 0) || x[0].localeCompare(y[0]));
+  return el("div", { style: "display:flex;flex-direction:column;gap:10px" }, entries.map(([org, ss]) => {
+    const c = orgColor(org);
+    const liveN = ss.filter((s) => s.live).length;
+    return el("div", { class: "orggroup", style: `--org:${c}` }, [
+      el("div", { class: "orggroup-hd" }, [
+        el("span", { class: "dot", style: `background:${c}` }),
+        el("b", {}, [org]),
+        el("span", { class: "grouptag was", style: "margin-left:auto;font-size:11px" }, [liveN ? liveN + " active" : "idle"]),
+      ]),
+      el("div", { class: "orggroup-body", style: "grid-template-columns:repeat(auto-fill,minmax(215px,1fr))" }, ss.map(actCard)),
+    ]);
+  }));
+}
+
 function viewOps() {
   if (OPS_TIMER) { clearInterval(OPS_TIMER); OPS_TIMER = null; }
   if (RELAY_TIMER) { clearInterval(RELAY_TIMER); RELAY_TIMER = null; }
@@ -1184,12 +1234,6 @@ function viewOps() {
     // gate the buttons on idle unless force
     backupBtn.disabled = !idle && !$("#forceBk").checked;
     mpBtn.disabled = !idle;
-    const rows = (a.sessions || []).map((s) =>
-      el("div", { class: "repo" }, [
-        el("span", { class: "glyph", style: `color:${s.live ? "#fbbf24" : "#64748b"}` }, [s.live ? "●" : "○"]),
-        el("span", { class: "rn" }, [s.repo || s.cwd || "unknown"]),
-        el("span", { class: "ver" }, [` ${s.status} · ${s.ageSeconds}s ago${s.tool ? " · " + s.tool : ""}`]),
-      ]));
     $("#opsStatus").replaceChildren(
       el("div", { class: "statbar" }, [
         el("div", { class: "stat" }, [el("div", { class: "n", style: `color:${color}` }, [idle ? "IDLE" : "ACTIVE"]), el("div", { class: "l" }, ["suite status"])]),
@@ -1199,8 +1243,8 @@ function viewOps() {
       ]),
       el("div", { class: "hint" }, [idle
         ? "Suite is idle — backup and master-pollinate are enabled. Backup writes a dated tar archive to the configured backup location (excludes node_modules/.next/dist; keeps .git, .secrets and uncommitted work)."
-        : "An agent is working — buttons gated until idle (activity detected via Claude Code hooks; see orchestrator/README). Tick 'force' to override backup."]),
-      rows.length ? el("div", { class: "orgcard", style: "padding:8px" }, [el("div", { class: "desc" }, ["Sessions (heartbeats)"]), ...rows]) : el("div", { class: "hint" }, ["No session heartbeats yet — wire the hooks (orchestrator/README) so activity is tracked."]),
+        : "An agent is working — buttons gated until idle. Backup can be forced with the checkbox."]),
+      activityView(a),
     );
   }
   refresh(); OPS_TIMER = setInterval(refresh, 4000);

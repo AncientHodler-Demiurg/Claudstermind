@@ -205,3 +205,9 @@ svg text { font-family: ui-sans-serif, system-ui, sans-serif; }
   font-weight: 600; text-decoration: none; border: 1px solid var(--accent); }
 .loginbtn:hover { filter: brightness(1.08); }
 .loginbtn.secondary { background: var(--chip); color: var(--ink); border-color: var(--line); }
+
+/* Ops activity blinker — a pulsing green dot on the repo card that has a live agent. */
+.actdot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #64748b; flex: 0 0 auto; }
+.actdot.on { background: #34d399; animation: actPulse 1.25s ease-out infinite; }
+@keyframes actPulse { 0% { box-shadow: 0 0 0 0 rgba(52,211,153,.55); } 70% { box-shadow: 0 0 0 6px rgba(52,211,153,0); } 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); } }
+@media (prefers-reduced-motion: reduce) { .actdot.on { animation: none; } }

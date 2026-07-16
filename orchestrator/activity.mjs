@@ -35,7 +35,7 @@ export function readActivity() {
       if (!s.sessionId || typeof s.ts !== "number") continue;
       const ageMs = now - s.ts;
       const live = s.status !== "stopped" && ageMs < STALE_MS;
-      sessions.push({ sessionId: s.sessionId, repo: s.repo || null, cwd: s.cwd || null, tool: s.tool || null, event: s.event || null, ageSeconds: Math.round(ageMs / 1000), status: s.status || "active", live });
+      sessions.push({ sessionId: s.sessionId, repo: s.repo || null, cwd: s.cwd || null, tool: s.tool || null, detail: s.detail || null, event: s.event || null, ageSeconds: Math.round(ageMs / 1000), status: s.status || "active", live });
     } catch {}
   }
   const liveSessions = sessions.filter((s) => s.live);
