@@ -1076,96 +1076,145 @@ function viewRelay() {
   ]);
 }
 
-/* ---------- Activity: daily work from git history — heatmap + per-day cards ----------
-   Two distinct views (toggle). Available to admins, and to the public showcase (which
-   uses the message-stripped /api/public/activity endpoint). */
+/* ---------- Activity: weekly build activity — org heatmap + per-day cards + time charts
+   Paginated one ISO week at a time (shared nav). Heatmap = repos grouped by org × the
+   week's 7 days. Per-day = each day's repos (commits + lines) plus a time-of-day chart
+   showing WHEN the commits landed. Same data admin + public (public strips messages,
+   which these views don't show anyway). */
 let ACT_VIEW = "heatmap";
-const fmtChurn = (n) => (n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n || 0)) + " lines";
-function fmtDay(day) {
-  try { return new Date(day + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); }
-  catch { return day; }
-}
+let ACT_WEEK = null;   // "YYYY-Www" being viewed; null → latest
+const fmtChurn = (n) => (n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n || 0));
+const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-function heatmapView(d) {
-  const days = d.days || [];
-  const repos = d.repos || [];
-  if (!repos.length) return el("div", { class: "hint" }, ["No commit activity in the window yet."]);
-  let maxC = 1;
-  for (const r of repos) for (const day of days) { const c = (r.byDay[day] || {}).commits || 0; if (c > maxC) maxC = c; }
-  const cell = (r, day) => {
-    const v = r.byDay[day]; const c = (v && v.commits) || 0;
-    const intensity = c ? (0.16 + 0.84 * Math.min(1, c / maxC)) : 0;
-    return el("td", { class: "hmcell", title: c ? `${r.name} · ${day}\n${c} commit${c > 1 ? "s" : ""} · ${fmtChurn(v.churn)}` : `${r.name} · ${day} — no commits`,
-      style: c ? `background:rgba(52,211,153,${intensity.toFixed(3)})` : "" });
-  };
-  return el("div", { style: "overflow-x:auto" }, [
-    el("table", { class: "heatmap" }, [
-      el("thead", {}, [el("tr", {}, [el("th", { class: "hmrepo" }, ["repo"]), ...days.map((day) => el("th", { class: "hmday" }, [day.slice(5)]))])]),
-      el("tbody", {}, repos.map((r) => el("tr", {}, [
-        el("td", { class: "hmrepo", title: `${r.org}/${r.name}` }, [
-          el("span", { class: "hmorg", style: `background:${orgColor(r.org)}` }), r.name,
-          el("span", { class: "was", style: "margin-left:6px" }, [String(r.total.commits)]),
-        ]),
-        ...days.map((day) => cell(r, day)),
-      ]))),
-    ]),
+function isoWeek(dateStr) {
+  const dt = new Date(dateStr + "T00:00:00Z");
+  const d = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);            // nearest Thursday
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+function weekDates(key) {                                // "YYYY-Www" → [Mon..Sun]
+  const [y, wn] = key.split("-W").map(Number);
+  const jan4 = new Date(Date.UTC(y, 0, 4));
+  const jan4Day = jan4.getUTCDay() || 7;
+  const mon = new Date(jan4); mon.setUTCDate(jan4.getUTCDate() - jan4Day + 1 + (wn - 1) * 7);
+  const out = [];
+  for (let i = 0; i < 7; i++) { const d = new Date(mon); d.setUTCDate(mon.getUTCDate() + i); out.push(d.toISOString().slice(0, 10)); }
+  return out;
+}
+const shortDay = (dateStr) => { const d = new Date(dateStr + "T00:00:00Z"); return `${DOW[(d.getUTCDay() || 7) - 1]} ${d.getUTCDate()}`; };
+const fullDay = (dateStr) => { try { return new Date(dateStr + "T00:00:00Z").toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric", timeZone: "UTC" }); } catch { return dateStr; } };
+
+// Time-of-day chart: 24 hourly bars, height ∝ commits that hour — the "worked all night" view.
+function dayHoursChart(hours) {
+  const hrs = hours || new Array(24).fill(0);
+  const max = Math.max(1, ...hrs);
+  const bars = hrs.map((c, h) => el("div", { class: "hbar" + (c ? " on" : ""), title: `${String(h).padStart(2, "0")}:00 — ${c} commit${c !== 1 ? "s" : ""}`, style: `height:${c ? Math.round(14 + 86 * c / max) : 3}%` }));
+  return el("div", { class: "hchart-wrap" }, [
+    el("div", { class: "hchart" }, bars),
+    el("div", { class: "hbar-labels" }, ["0h", "6h", "12h", "18h", "24h"].map((t) => el("span", {}, [t]))),
   ]);
 }
 
-function perDayView(d, isPublic) {
-  const days = [...(d.days || [])].sort().reverse();
-  if (!days.length) return el("div", { class: "hint" }, ["No commit activity in the window yet."]);
-  return el("div", { style: "display:flex;flex-direction:column;gap:12px" }, days.map((day) => {
+function weekHeatmap(d, dates) {
+  const active = (d.repos || []).filter((r) => dates.some((day) => r.byDay[day]));
+  if (!active.length) return el("div", { class: "hint" }, ["No commits this week."]);
+  const byOrg = {};
+  for (const r of active) (byOrg[r.org] = byOrg[r.org] || []).push(r);
+  let maxC = 1;
+  for (const r of active) for (const day of dates) { const c = (r.byDay[day] || {}).commits || 0; if (c > maxC) maxC = c; }
+  const head = el("tr", {}, [el("th", { class: "hmrepo" }, ["repo"]), ...dates.map((day) => el("th", { class: "hmday2" }, [shortDay(day)]))]);
+  const rows = [];
+  for (const org of Object.keys(byOrg).sort()) {
+    rows.push(el("tr", {}, [el("td", { class: "hmorg-hd", colspan: "8", style: `border-left:3px solid ${orgColor(org)}` }, [el("span", { class: "hmorg", style: `background:${orgColor(org)}` }), org])]));
+    for (const r of byOrg[org].sort((a, b) => b.total.commits - a.total.commits)) {
+      rows.push(el("tr", {}, [
+        el("td", { class: "hmrepo", title: `${r.org}/${r.name}` }, [r.name]),
+        ...dates.map((day) => {
+          const v = r.byDay[day]; const c = (v && v.commits) || 0;
+          const inten = c ? (0.16 + 0.84 * Math.min(1, c / maxC)) : 0;
+          return el("td", { class: "hmcell2", title: c ? `${r.name} · ${shortDay(day)}\n${c} commit${c !== 1 ? "s" : ""} · ${fmtChurn(v.churn)} lines` : `${shortDay(day)} — none`,
+            style: c ? `background:rgba(52,211,153,${inten.toFixed(3)});color:${inten > 0.5 ? "#04211a" : "#a7f3d0"}` : "" }, [c ? String(c) : ""]);
+        }),
+      ]));
+    }
+  }
+  return el("div", { style: "overflow-x:auto" }, [el("table", { class: "heatmap2" }, [el("thead", {}, [head]), el("tbody", {}, rows)])]);
+}
+
+function weekDaysView(d, dates) {
+  const daysWithActivity = dates.filter((day) => (d.repos || []).some((r) => r.byDay[day]));
+  if (!daysWithActivity.length) return el("div", { class: "hint" }, ["No commits this week."]);
+  return el("div", { style: "display:flex;flex-direction:column;gap:14px" }, daysWithActivity.slice().reverse().map((day) => {
     const t = (d.totals && d.totals.byDay[day]) || { commits: 0, churn: 0, repos: 0 };
     const reposToday = (d.repos || []).filter((r) => r.byDay[day]).sort((a, b) => b.byDay[day].commits - a.byDay[day].commits);
     return el("div", { class: "orggroup", style: "--org:#34d399" }, [
       el("div", { class: "orggroup-hd" }, [
         el("span", { class: "dot", style: "background:#34d399" }),
-        el("b", {}, [fmtDay(day)]),
-        el("span", { class: "was", style: "margin-left:auto" }, [`${t.commits} commits · ${fmtChurn(t.churn)} · ${reposToday.length} repos`]),
+        el("b", {}, [fullDay(day)]),
+        el("span", { class: "was", style: "margin-left:auto" }, [`${t.commits} commits · ${fmtChurn(t.churn)} lines · ${reposToday.length} repos`]),
       ]),
-      el("div", { class: "orggroup-body", style: "grid-template-columns:repeat(auto-fill,minmax(245px,1fr))" }, reposToday.map((r) => {
+      el("div", { style: "padding:10px 12px 2px" }, [dayHoursChart((d.dayHours || {})[day])]),
+      el("div", { class: "orggroup-body", style: "grid-template-columns:repeat(auto-fill,minmax(178px,1fr))" }, reposToday.map((r) => {
         const v = r.byDay[day];
-        const msgs = !isPublic && r.commits ? r.commits.filter((c) => c.date === day) : [];
         return el("div", { class: "repocard", style: `--stripe:${orgColor(r.org)}` }, [
           el("div", { class: "rc-hd" }, [
+            el("span", { class: "hmorg", style: `background:${orgColor(r.org)};width:8px;height:8px;border-radius:2px;flex:0 0 auto` }),
             el("span", { class: "rc-name", title: `${r.org}/${r.name}` }, [r.name]),
-            el("span", { class: "was", style: "margin-left:auto;white-space:nowrap" }, [`${v.commits}c · ${fmtChurn(v.churn)}`]),
           ]),
-          ...msgs.slice(0, 6).map((c) => el("div", { class: "rc-sub", style: "white-space:nowrap;overflow:hidden;text-overflow:ellipsis", title: c.subject }, ["· " + c.subject])),
+          el("div", { class: "rc-sub" }, [el("b", { style: "color:#34d399" }, [String(v.commits)]), " commits · ", el("b", {}, [fmtChurn(v.churn)]), " lines"]),
         ]);
       })),
     ]);
   }));
 }
 
-function activityDashboard(isPublic) {
+function viewActivity() {
+  const isPublic = ME.mode === "live" && !ME.authenticated;
   const box = el("div", { id: "actBox" }, [el("div", { class: "hint" }, ["Loading activity…"])]);
   let DATA = null;
+
   function paint() {
     if (!DATA) return;
-    const btn = (key, label) => { const b = el("button", { class: "ghost" + (ACT_VIEW === key ? " active" : "") }, [label]); b.addEventListener("click", () => { ACT_VIEW = key; paint(); }); return b; };
+    const weeks = [...new Set((DATA.days || []).map(isoWeek))].sort().reverse();
+    if (!weeks.length) { box.replaceChildren(el("div", { class: "hint" }, ["No commit activity in the window yet."])); return; }
+    if (!ACT_WEEK || !weeks.includes(ACT_WEEK)) ACT_WEEK = weeks[0];
+    const idx = weeks.indexOf(ACT_WEEK);
+    const dates = weekDates(ACT_WEEK);
+    let wc = 0, wl = 0;
+    for (const r of DATA.repos) for (const day of dates) { const v = r.byDay[day]; if (v) { wc += v.commits; wl += v.churn; } }
+
+    const prev = el("button", { class: "ghost", onclick: () => { if (idx < weeks.length - 1) { ACT_WEEK = weeks[idx + 1]; paint(); } } }, ["◀"]);
+    const next = el("button", { class: "ghost", onclick: () => { if (idx > 0) { ACT_WEEK = weeks[idx - 1]; paint(); } } }, ["▶"]);
+    prev.disabled = idx >= weeks.length - 1; next.disabled = idx <= 0;
+    const vBtn = (key, label) => { const b = el("button", { class: "ghost" + (ACT_VIEW === key ? " active" : ""), onclick: () => { ACT_VIEW = key; paint(); } }, [label]); return b; };
+
     box.replaceChildren(
-      el("div", { class: "graph-controls" }, [
-        btn("heatmap", "Heatmap"), btn("days", "Per-day"),
-        el("span", { class: "was", style: "margin-left:auto;font-size:12px" }, [`${(DATA.totals && DATA.totals.commits) || 0} commits · ${fmtChurn((DATA.totals && DATA.totals.churn) || 0)} · ${(DATA.repos || []).length} repos · last ${DATA.sinceDays || 30}d`]),
+      el("div", { class: "actnav" }, [
+        prev,
+        el("div", { class: "actweek" }, [el("b", {}, [ACT_WEEK.replace("-W", " · week ")]), el("span", { class: "was" }, [`${shortDay(dates[0])} – ${shortDay(dates[6])}`])]),
+        next,
+        el("div", { class: "actweektot" }, [
+          el("span", { class: "big" }, [String(wc)]), el("span", { class: "lbl" }, ["commits"]),
+          el("span", { class: "big" }, [fmtChurn(wl)]), el("span", { class: "lbl" }, ["lines"]),
+        ]),
       ]),
-      ACT_VIEW === "heatmap" ? heatmapView(DATA) : perDayView(DATA, isPublic),
+      el("div", { class: "graph-controls", style: "margin-top:8px" }, [vBtn("heatmap", "Heatmap"), vBtn("days", "Per-day")]),
+      ACT_VIEW === "heatmap" ? weekHeatmap(DATA, dates) : weekDaysView(DATA, dates),
     );
   }
+
   (async () => {
     const url = isPublic ? "/api/public/activity" : "/api/activity/daily";
     try { DATA = await (await fetch(url, { cache: "no-store" })).json(); } catch { box.replaceChildren(el("div", { class: "hint" }, ["Activity not reachable."])); return; }
     paint();
   })();
-  return box;
-}
 
-function viewActivity() {
-  const isPublic = ME.mode === "live" && !ME.authenticated;
   return el("div", {}, [
-    el("div", { class: "hint" }, ["Daily build activity across the ecosystem — commits and volume per repository, from git history. ", el("b", {}, ["Heatmap"]), " = intensity per repo per day; ", el("b", {}, ["Per-day"]), " = what shipped each day."]),
-    activityDashboard(isPublic),
+    el("div", { class: "hint" }, ["Weekly build activity across the ecosystem. ", el("b", {}, ["Heatmap"]), " = commits per repo per day, grouped by organisation; ", el("b", {}, ["Per-day"]), " = each day's repos + a chart of when the commits landed."]),
+    box,
   ]);
 }
 

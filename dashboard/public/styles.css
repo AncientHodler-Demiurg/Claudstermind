@@ -212,11 +212,25 @@ svg text { font-family: ui-sans-serif, system-ui, sans-serif; }
 @keyframes actPulse { 0% { box-shadow: 0 0 0 0 rgba(52,211,153,.55); } 70% { box-shadow: 0 0 0 6px rgba(52,211,153,0); } 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); } }
 @media (prefers-reduced-motion: reduce) { .actdot.on { animation: none; } }
 
-/* Activity heatmap — repos (rows) × days (cols), cell intensity = commits that day. */
-.heatmap { border-collapse: separate; border-spacing: 2px; font-size: 11px; }
-.heatmap th.hmday { color: var(--ink-dim); font-weight: 500; font-size: 10px; writing-mode: vertical-rl; transform: rotate(180deg); padding: 2px 0; white-space: nowrap; height: 46px; }
-.heatmap th.hmrepo, .heatmap td.hmrepo { position: sticky; left: 0; background: var(--bg); text-align: left; white-space: nowrap;
-  font-weight: 600; font-size: 12px; padding-right: 10px; max-width: 220px; overflow: hidden; }
-.heatmap .hmorg { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
-.heatmap td.hmcell { width: 15px; height: 15px; min-width: 15px; border-radius: 3px; background: var(--chip); }
-.heatmap td.hmcell:hover { outline: 1px solid var(--accent); }
+/* Activity — weekly view: nav, org heatmap (readable day headers), time-of-day chart. */
+.actnav { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.actnav .actweek { display: flex; flex-direction: column; line-height: 1.25; }
+.actnav .actweek b { font-size: 15px; }
+.actnav .actweektot { margin-left: auto; display: flex; align-items: baseline; gap: 5px; }
+.actnav .actweektot .big { font-size: 25px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.actnav .actweektot .lbl { font-size: 11px; color: var(--ink-dim); margin-right: 10px; }
+
+.heatmap2 { border-collapse: separate; border-spacing: 3px; }
+.heatmap2 th.hmday2 { color: var(--ink-dim); font-weight: 600; font-size: 11px; padding: 2px 4px; white-space: nowrap; text-align: center; min-width: 46px; }
+.heatmap2 th.hmrepo, .heatmap2 td.hmrepo { text-align: left; white-space: nowrap; font-weight: 600; font-size: 12.5px; padding-right: 12px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.heatmap2 td.hmorg-hd { font-size: 12px; font-weight: 700; padding: 7px 9px; background: var(--panel); border-radius: 7px; }
+.heatmap2 .hmorg { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 7px; vertical-align: middle; }
+.heatmap2 td.hmcell2 { min-width: 44px; height: 28px; text-align: center; vertical-align: middle; border-radius: 6px; background: var(--chip);
+  font-weight: 700; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.heatmap2 td.hmcell2:hover { outline: 1px solid var(--accent); }
+
+.hchart-wrap { max-width: 520px; }
+.hchart { display: flex; align-items: flex-end; gap: 2px; height: 40px; }
+.hchart .hbar { flex: 1; background: var(--chip); border-radius: 2px 2px 0 0; min-height: 2px; }
+.hchart .hbar.on { background: #34d399; }
+.hbar-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--ink-dim); margin-top: 3px; }
