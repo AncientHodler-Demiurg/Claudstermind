@@ -59,10 +59,34 @@ function sameOrigin(req) {
 }
 const safeOrigin = (r) => { try { return new URL(r).origin; } catch { return null; } };
 
+/** Drop commit subjects for the PUBLIC activity view — private-repo commit text must not leak. */
+function stripActivityMessages(a) {
+  return { ...a, repos: (a.repos || []).map((r) => ({ ...r, commits: undefined })) };
+}
+
+/** Non-sensitive ecosystem counts for the public showcase (no repo names, no messages). */
+function publicStats(snap) {
+  const repos = snap?.map?.repos || [];
+  const orgs = new Set(repos.map((r) => r?.org?.target).filter(Boolean));
+  // null-proto: repo roles include "constructor", which would otherwise collide with
+  // Object.prototype.constructor and produce a garbage count.
+  const roles = Object.create(null);
+  for (const r of repos) if (r.role) roles[r.role] = (roles[r.role] || 0) + 1;
+  const act = snap?.activityDaily || { repos: [], totals: { commits: 0, churn: 0 } };
+  return {
+    repos: repos.length, orgs: orgs.size,
+    publishedPackages: snap?.packages?.totals?.published ?? 0,
+    roles,
+    activity30d: { commits: act.totals?.commits ?? 0, churn: act.totals?.churn ?? 0, activeRepos: (act.repos || []).length },
+    awaitingSnapshot: !snap,
+  };
+}
+
 /** The read views, each answered from a slice of the pushed snapshot (empty shape if none yet). */
 function snapshotView(path, snap) {
   switch (path) {
     case "/api/map": return { found: true, body: snap?.map ?? { repos: [] } };
+    case "/api/activity/daily": return { found: true, body: snap?.activityDaily ?? { sinceDays: 30, days: [], repos: [], totals: { commits: 0, churn: 0, byDay: {} } } };
     case "/api/git": return { found: true, body: snap?.git ?? { repos: [], totals: {}, awaitingSnapshot: !snap } };
     case "/api/brain": return { found: true, body: snap?.brain ?? { repos: [], worklog: [], totals: {} } };
     case "/api/packages": return { found: true, body: snap?.packages ?? { scopes: {}, repos: [], totals: {} } };
@@ -125,6 +149,22 @@ export function createRelay(opts = {}) {
         snapshotAgeMs: link.snapshotAt ? Date.now() - link.snapshotAt : null,
         localActionsAvailable: connected,   // on the relay, actions exist iff the tunnel is up
       });
+    }
+
+    // ---- PUBLIC endpoints: no login required. A curated, message-stripped view of the
+    // daily work so any visitor can see the ecosystem is active. Answered before the gate. ----
+    if (path === "/api/public/activity") {
+      res.setHeader("cache-control", "no-store");
+      const a = link.snapshot?.activityDaily;
+      return sendJSON(res, 200, a ? stripActivityMessages(a) : { sinceDays: 30, days: [], repos: [], totals: { commits: 0, churn: 0, byDay: {} }, awaitingSnapshot: true });
+    }
+    if (path === "/api/public/stats") {
+      res.setHeader("cache-control", "no-store");
+      return sendJSON(res, 200, publicStats(link.snapshot));
+    }
+    if (path === "/api/public/connection") {
+      res.setHeader("cache-control", "no-store");
+      return sendJSON(res, 200, { localConnected: connected, snapshotAgeMs: link.snapshot ? (link.snapshotAt ? Date.now() - link.snapshotAt : null) : null });
     }
 
     // The gate. DATA (every /api/*) requires an admin session; the app SHELL (index.html,

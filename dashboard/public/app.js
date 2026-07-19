@@ -24,7 +24,7 @@ const el = (tag, props = {}, kids = []) => {
   return n;
 };
 
-function orgColor(org) { return (MAP.orgs[org] && MAP.orgs[org].color) || "#64748b"; }
+function orgColor(org) { return (MAP && MAP.orgs && MAP.orgs[org] && MAP.orgs[org].color) || "#64748b"; }
 function roleOf(id) { return MAP.roles[id] || { label: id, color: "#64748b", glyph: "•" }; }
 function repoOrg(r) { return r.org[ORGMODE] || r.org.current || r.org.target; }
 function isMoving(r) { return r.org.current !== r.org.target || (r.movement && r.movement.length); }
@@ -109,7 +109,7 @@ async function boot() {
   // On the live site, gate the WHOLE app behind login + an admin role. Nothing but the
   // branded login screen renders until you're signed in; a signed-in non-admin gets the
   // "admins only" notice; only an ancient/modern admin reaches the dashboard below.
-  if (ME.mode === "live" && !ME.authenticated) return renderLogin();
+  if (ME.mode === "live" && !ME.authenticated) return renderPublic();
   if (ME.mode === "live" && !ME.canRead) return renderDenied();
 
   renderAuthPill();
@@ -208,6 +208,34 @@ function renderLogin() {
     el("a", { href: "/auth/login", class: "loginbtn" }, ["Sign in with AncientHub"]),
     el("p", { class: "gate-note" }, ["Access is limited to Ancient Holdings admins. Sign in to continue."]),
   ]));
+}
+
+// The PUBLIC showcase — shown to any visitor without a login on the live site. Proves
+// the ecosystem is being actively built (daily activity), with a sign-in for admins.
+// Only non-sensitive, message-stripped data is fetched here (/api/public/*).
+async function renderPublic() {
+  gateChrome();
+  MAP = MAP || { orgs: {}, repos: [] };   // safety: orgColor() reads MAP even in public mode
+  const v = $("#view");
+  v.replaceChildren(el("div", { class: "hint" }, ["Loading…"]));
+  let stats = {}; try { stats = await (await fetch("/api/public/stats", { cache: "no-store" })).json(); } catch {}
+  const stat = (label, n) => el("div", { class: "stat" }, [el("div", { class: "n" }, [n == null ? "—" : String(n)]), el("div", { class: "l" }, [label])]);
+  v.replaceChildren(
+    el("div", { class: "gate", style: "min-height:auto;padding:26px 12px 6px;gap:10px" }, [
+      el("img", { src: "/brand/claudstermind-hero.png", width: "116", alt: "Claudstermind", class: "gate-mark" }),
+      el("h2", { class: "gate-title" }, ["Ancient Holdings — live build activity"]),
+      el("p", { class: "gate-sub" }, ["What's being built across the ecosystem, day by day, straight from the work machine."]),
+      el("a", { href: "/auth/login", class: "loginbtn" }, ["Sign in with AncientHub"]),
+    ]),
+    el("div", { class: "statbar", style: "margin-top:14px" }, [
+      stat("Repositories", stats.repos), stat("Organisations", stats.orgs),
+      stat("Published packages", stats.publishedPackages),
+      stat("Commits · 30d", stats.activity30d && stats.activity30d.commits),
+      stat("Active repos · 30d", stats.activity30d && stats.activity30d.activeRepos),
+    ]),
+    el("h3", { style: "margin:18px 0 8px" }, ["Daily activity"]),
+    viewActivity(),
+  );
 }
 
 // Signed in, but without an admin role → say so plainly, offer a way to switch accounts.
@@ -322,6 +350,7 @@ function render() {
   if (VIEW !== "relay" && RELAY_TIMER) { clearInterval(RELAY_TIMER); RELAY_TIMER = null; }
   if (VIEW !== "git" && GIT_TIMER) { clearInterval(GIT_TIMER); GIT_TIMER = null; }
   if (VIEW === "cascade") v.replaceChildren(viewCascade());
+  else if (VIEW === "activity") v.replaceChildren(viewActivity());
   else if (VIEW === "git") v.replaceChildren(viewGit());
   else if (VIEW === "overview") v.replaceChildren(viewOverview());
   else if (VIEW === "matrix") v.replaceChildren(viewMatrix());
@@ -1044,6 +1073,99 @@ function viewRelay() {
   return el("div", {}, [
     el("div", { class: "hint" }, ["The relay tunnel — mirror this dashboard to the web so you can view and drive your workspace from the online site."]),
     statusBox, controls,
+  ]);
+}
+
+/* ---------- Activity: daily work from git history — heatmap + per-day cards ----------
+   Two distinct views (toggle). Available to admins, and to the public showcase (which
+   uses the message-stripped /api/public/activity endpoint). */
+let ACT_VIEW = "heatmap";
+const fmtChurn = (n) => (n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n || 0)) + " lines";
+function fmtDay(day) {
+  try { return new Date(day + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); }
+  catch { return day; }
+}
+
+function heatmapView(d) {
+  const days = d.days || [];
+  const repos = d.repos || [];
+  if (!repos.length) return el("div", { class: "hint" }, ["No commit activity in the window yet."]);
+  let maxC = 1;
+  for (const r of repos) for (const day of days) { const c = (r.byDay[day] || {}).commits || 0; if (c > maxC) maxC = c; }
+  const cell = (r, day) => {
+    const v = r.byDay[day]; const c = (v && v.commits) || 0;
+    const intensity = c ? (0.16 + 0.84 * Math.min(1, c / maxC)) : 0;
+    return el("td", { class: "hmcell", title: c ? `${r.name} · ${day}\n${c} commit${c > 1 ? "s" : ""} · ${fmtChurn(v.churn)}` : `${r.name} · ${day} — no commits`,
+      style: c ? `background:rgba(52,211,153,${intensity.toFixed(3)})` : "" });
+  };
+  return el("div", { style: "overflow-x:auto" }, [
+    el("table", { class: "heatmap" }, [
+      el("thead", {}, [el("tr", {}, [el("th", { class: "hmrepo" }, ["repo"]), ...days.map((day) => el("th", { class: "hmday" }, [day.slice(5)]))])]),
+      el("tbody", {}, repos.map((r) => el("tr", {}, [
+        el("td", { class: "hmrepo", title: `${r.org}/${r.name}` }, [
+          el("span", { class: "hmorg", style: `background:${orgColor(r.org)}` }), r.name,
+          el("span", { class: "was", style: "margin-left:6px" }, [String(r.total.commits)]),
+        ]),
+        ...days.map((day) => cell(r, day)),
+      ]))),
+    ]),
+  ]);
+}
+
+function perDayView(d, isPublic) {
+  const days = [...(d.days || [])].sort().reverse();
+  if (!days.length) return el("div", { class: "hint" }, ["No commit activity in the window yet."]);
+  return el("div", { style: "display:flex;flex-direction:column;gap:12px" }, days.map((day) => {
+    const t = (d.totals && d.totals.byDay[day]) || { commits: 0, churn: 0, repos: 0 };
+    const reposToday = (d.repos || []).filter((r) => r.byDay[day]).sort((a, b) => b.byDay[day].commits - a.byDay[day].commits);
+    return el("div", { class: "orggroup", style: "--org:#34d399" }, [
+      el("div", { class: "orggroup-hd" }, [
+        el("span", { class: "dot", style: "background:#34d399" }),
+        el("b", {}, [fmtDay(day)]),
+        el("span", { class: "was", style: "margin-left:auto" }, [`${t.commits} commits · ${fmtChurn(t.churn)} · ${reposToday.length} repos`]),
+      ]),
+      el("div", { class: "orggroup-body", style: "grid-template-columns:repeat(auto-fill,minmax(245px,1fr))" }, reposToday.map((r) => {
+        const v = r.byDay[day];
+        const msgs = !isPublic && r.commits ? r.commits.filter((c) => c.date === day) : [];
+        return el("div", { class: "repocard", style: `--stripe:${orgColor(r.org)}` }, [
+          el("div", { class: "rc-hd" }, [
+            el("span", { class: "rc-name", title: `${r.org}/${r.name}` }, [r.name]),
+            el("span", { class: "was", style: "margin-left:auto;white-space:nowrap" }, [`${v.commits}c · ${fmtChurn(v.churn)}`]),
+          ]),
+          ...msgs.slice(0, 6).map((c) => el("div", { class: "rc-sub", style: "white-space:nowrap;overflow:hidden;text-overflow:ellipsis", title: c.subject }, ["· " + c.subject])),
+        ]);
+      })),
+    ]);
+  }));
+}
+
+function activityDashboard(isPublic) {
+  const box = el("div", { id: "actBox" }, [el("div", { class: "hint" }, ["Loading activity…"])]);
+  let DATA = null;
+  function paint() {
+    if (!DATA) return;
+    const btn = (key, label) => { const b = el("button", { class: "ghost" + (ACT_VIEW === key ? " active" : "") }, [label]); b.addEventListener("click", () => { ACT_VIEW = key; paint(); }); return b; };
+    box.replaceChildren(
+      el("div", { class: "graph-controls" }, [
+        btn("heatmap", "Heatmap"), btn("days", "Per-day"),
+        el("span", { class: "was", style: "margin-left:auto;font-size:12px" }, [`${(DATA.totals && DATA.totals.commits) || 0} commits · ${fmtChurn((DATA.totals && DATA.totals.churn) || 0)} · ${(DATA.repos || []).length} repos · last ${DATA.sinceDays || 30}d`]),
+      ]),
+      ACT_VIEW === "heatmap" ? heatmapView(DATA) : perDayView(DATA, isPublic),
+    );
+  }
+  (async () => {
+    const url = isPublic ? "/api/public/activity" : "/api/activity/daily";
+    try { DATA = await (await fetch(url, { cache: "no-store" })).json(); } catch { box.replaceChildren(el("div", { class: "hint" }, ["Activity not reachable."])); return; }
+    paint();
+  })();
+  return box;
+}
+
+function viewActivity() {
+  const isPublic = ME.mode === "live" && !ME.authenticated;
+  return el("div", {}, [
+    el("div", { class: "hint" }, ["Daily build activity across the ecosystem — commits and volume per repository, from git history. ", el("b", {}, ["Heatmap"]), " = intensity per repo per day; ", el("b", {}, ["Per-day"]), " = what shipped each day."]),
+    activityDashboard(isPublic),
   ]);
 }
 

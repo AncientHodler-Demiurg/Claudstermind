@@ -30,7 +30,7 @@ import { resolveRepo } from "../lib/gitActions.mjs";
 import { parseOriginUrl, scanSecrets, tokenIdentity } from "../lib/tokenScan.mjs";
 import { readRegistry, enrich, groupTokens, tokenTotals } from "../lib/tokenRegistry.mjs";
 import { buildUsageIndex, secretUsage } from "../lib/secretUsage.mjs";
-import { readBrain, scanPackages } from "../lib/snapshot.mjs";
+import { readBrain, scanPackages, cachedActivity } from "../lib/snapshot.mjs";
 import { executeCommand } from "../lib/commands.mjs";
 import { createBridge } from "../agent/agent.mjs";
 import { readRelayConfig, writeRelayConfig, readDeviceSecret, saveDeviceSecret } from "../lib/relayConfig.mjs";
@@ -242,6 +242,14 @@ const handler = async (req, res) => {
   // ---- orchestrator: activity oracle ----
   if (path === "/api/activity") {
     return sendJSON(res, 200, { activity: readActivity(), lastBackup: readLastBackup() });
+  }
+
+  // ---- daily work activity from git history (commits + churn per repo per day) ----
+  // Cached ~10min (git log across every repo is slow). Drives the Activity tab.
+  if (path === "/api/activity/daily") {
+    res.setHeader("cache-control", "no-store");
+    let map; try { map = JSON.parse(await readFileAsync(join(DATA_DIR, "map.json"), "utf8")); } catch { map = { repos: [] }; }
+    return sendJSON(res, 200, cachedActivity(map.repos || [], MASTER_ROOT));
   }
 
   // ---- cascade: live master-pollinate progress, whoever started it ----
