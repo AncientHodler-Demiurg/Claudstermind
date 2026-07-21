@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.2.2] - 2026-07-21
+
+### Fixed
+- Workspace fills the full viewport width again (a flex-column regression had shrunk it to content width); the repo sidebar fills the height and scrolls internally.
+- Brain cardboards show each repository's collected raw-conversation data (bytes / conversations / turns), sourced from the snapshot so it works on the live site too.
+
+### Added
+- Repository org cardboards in the Workspace sidebar are collapsible (open/close per organisation).
+
+### Changed
+- The redundant Workspace action button is hidden while already on the Workspace.
+
 ## [0.2.1] - 2026-07-21
 
 ### Fixed

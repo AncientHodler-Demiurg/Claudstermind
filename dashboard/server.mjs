@@ -538,7 +538,7 @@ const handler = async (req, res) => {
   // ---- brain: per-repo folders (auto state + curated knowledge) ----
   // Shared with the online bridge's snapshot, so both surfaces render identical data.
   if (path === "/api/brain") {
-    return sendJSON(res, 200, readBrain(resolve(__dir, "..", "brain")));
+    return sendJSON(res, 200, readBrain(resolve(__dir, "..", "brain"), join(MASTER_ROOT, ".claude", "workspace")));
   }
 
   // ---- orchestrator: on-demand backup to the configured location (idle-gated) ----

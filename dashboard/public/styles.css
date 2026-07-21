@@ -24,7 +24,11 @@ body {
   display: flex; flex-direction: column; min-height: 100%;
 }
 .ph { flex: 0 0 auto; }
-#main { flex: 1 0 auto; }
+/* #main is FULL width (no auto-margin — that shrinks a flex item to content width); the content
+   inside (#statbar / #view) is what caps + centres at --maxw. */
+#main { flex: 1 1 auto; width: 100%; min-width: 0; display: flex; flex-direction: column; }
+#statbar { flex: 0 0 auto; width: 100%; max-width: var(--maxw); margin-inline: auto; }
+#view { flex: 1 1 auto; min-height: 0; width: 100%; max-width: var(--maxw); margin-inline: auto; }
 .foot { flex: 0 0 auto; }
 /* ---------- The Pantheonic Header (§3): sticky, full-chrome-width separator, 3 levels ---------- */
 .ph { position: sticky; top: 0; z-index: 30; background: linear-gradient(180deg, var(--panel), var(--bg-2));
@@ -66,7 +70,7 @@ body {
   border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 14px; }
 .ghost:hover { border-color: var(--accent); }
 
-main { padding: 18px 24px 60px; max-width: var(--maxw); margin: 0 auto; }
+main { padding: 18px 24px 60px; }
 
 /* ---------- Admin: sidebar + content pane (§5) ---------- */
 .admin-layout { display: flex; gap: 16px; align-items: flex-start; }
@@ -282,7 +286,9 @@ svg text { font-family: ui-sans-serif, system-ui, sans-serif; }
 /* Workspace = a single-screen fixed page (Pantheonic Form A): no page scroll, the cockpit fills
    the viewport and its sidebar/panes scroll internally. */
 body.ws-full { height: 100vh; overflow: hidden; }
-body.ws-full #main { flex: 1 1 auto; min-height: 0; overflow: hidden; max-width: none; padding: 12px 18px; }
+body.ws-full #main { overflow: hidden; min-height: 0; padding: 10px 18px; }
+body.ws-full #statbar { display: none; }   /* reclaim the stat-cards height for the cockpit */
+body.ws-full #view { max-width: none; margin: 0; }   /* full width — the sanctioned Workspace exception */
 body.ws-full .foot { display: none; }
 body.ws-full .ws-root { height: 100%; }
 body.ws-full .ws-body { flex: 1; min-height: 0; }
@@ -411,3 +417,5 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
   white-space: pre-wrap; word-break: break-word; margin: 0; }
 .ws-databadge { font-size: 9.5px; color: var(--ink-mute); font-family: ui-monospace, monospace; white-space: nowrap; margin-left: auto; }
 .ws-side-item .ws-databadge { margin-left: auto; }
+.ws-orggroup-hd { cursor: pointer; user-select: none; }
+.ws-org-chev { width: 12px; flex: 0 0 auto; font-size: 10px; color: var(--ink-mute); }

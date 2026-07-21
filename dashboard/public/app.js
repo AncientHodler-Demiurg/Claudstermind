@@ -186,7 +186,8 @@ function renderHeader() {
   phBack.onclick = () => { location.hash = LAST_MAIN; };
   // One memorable action — the cockpit when it's available, else the login/overview
   const wsOn = ME.canExecute && (ME.mode === "live" || ME.mode === "local");
-  phAction.hidden = ROUTE.admin || !wsOn;
+  // The memorable action is the cockpit — but it's redundant when you're already in it.
+  phAction.hidden = ROUTE.admin || !wsOn || ROUTE.section === "workspace";
   phAction.textContent = "Workspace ↗"; phAction.setAttribute("href", "#workspace");
   renderIdentity();
   renderConnBanner();
@@ -629,6 +630,7 @@ function viewBrain() {
           sublines: [
             stateLine,
             `${fmtB(b.contextBytes || 0)} · ${b.curatedFiles || 0} docs · ${b.worklogCount || 0} log`,
+            ...(b.raw && b.raw.conversations ? [el("div", { class: "rc-sub", style: "color:#34d399" }, [`⌗ raw chat: ${fmtB(b.raw.bytes)} · ${b.raw.conversations} conv · ${b.raw.turns} turns`])] : []),
           ],
           extra: [el("div", { style: "height:5px;border-radius:4px;background:var(--chip);overflow:hidden;margin-top:2px" },
             [el("div", { style: `height:100%;width:${pct}%;background:${roleOf(r.role).color}` })])],
@@ -1424,6 +1426,7 @@ function viewWorkspace() {
     permQueue: [],                 // pending tool-permission requests — FIFO so two panes never clobber
     pendingOpens: new Map(),       // savedSessionKey -> { paneId, mode } — reopens in flight, correlated
     dataSizes: {},                 // localPath -> { bytes, conversations, turns } — collected raw volume
+    collapsedOrgs: new Set(),      // org names collapsed in the Repositories sidebar
   };
   const fmtBytes = (n) => { n = n || 0; if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(0) + " KB"; return (n / 1048576).toFixed(1) + " MB"; };
   function dataBadge(localPath) {
@@ -1569,9 +1572,14 @@ function viewWorkspace() {
           b.addEventListener("click", () => pickRepoForActive(r.localPath));
           return b;
         });
-        return el("div", { class: "ws-orggroup", style: `--org:${meta.color}` }, [
-          el("div", { class: "ws-orggroup-hd" }, [el("span", { class: "ws-org-dot" }, []), el("b", {}, [org]), el("span", { class: "ws-org-count" }, [String(cards.length)])]),
-          el("div", { class: "ws-orggroup-body" }, cards),
+        const collapsed = st.collapsedOrgs.has(org);
+        const hd = el("div", { class: "ws-orggroup-hd", role: "button" }, [
+          el("span", { class: "ws-org-chev" }, [collapsed ? "▸" : "▾"]),
+          el("span", { class: "ws-org-dot" }, []), el("b", {}, [org]), el("span", { class: "ws-org-count" }, [String(cards.length)]),
+        ]);
+        hd.addEventListener("click", () => { if (collapsed) st.collapsedOrgs.delete(org); else st.collapsedOrgs.add(org); renderSidebar(); });
+        return el("div", { class: "ws-orggroup" + (collapsed ? " collapsed" : ""), style: `--org:${meta.color}` }, [
+          hd, collapsed ? "" : el("div", { class: "ws-orggroup-body" }, cards),
         ]);
       }));
     } else {
