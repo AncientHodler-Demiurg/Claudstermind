@@ -119,6 +119,38 @@ test("authorizeMutation: modern → 403, disconnected → 503, ancient+connected
   assert.equal(authorizeMutation({ canExecute: true }, true).ok, true);
 });
 
+test("WS_OUT from the bridge fans to SSE subscribers; unsubscribe stops it", () => {
+  const link = new AgentLink({ deviceSecret: DEVICE });
+  const sock = fakeSock(); link.hello(sock, { t: FRAME.HELLO, deviceSecret: DEVICE });
+  const got = [];
+  const off = link.addWsSubscriber((p) => got.push(p));
+  link.onFrame(sock, { t: FRAME.WS_OUT, kind: "event", sessionKey: "s1", data: { kind: "assistant", text: "hi" } });
+  assert.equal(got.length, 1);
+  assert.equal(got[0].kind, "event"); assert.equal(got[0].sessionKey, "s1"); assert.equal(got[0].data.text, "hi");
+  off();
+  link.onFrame(sock, { t: FRAME.WS_OUT, kind: "event", sessionKey: "s1", data: {} });
+  assert.equal(got.length, 1, "unsubscribed listener must not receive further frames");
+});
+
+test("sendWsIn forwards a WS_IN frame to the bridge; refuses when disconnected", () => {
+  const link = new AgentLink({ deviceSecret: DEVICE });
+  assert.equal(link.sendWsIn("prompt", "s1", { text: "hi" }).ok, false);   // no bridge
+  const sock = fakeSock(); link.hello(sock, { t: FRAME.HELLO, deviceSecret: DEVICE });
+  const r = link.sendWsIn("prompt", "s1", { repo: "x", text: "hi" });
+  assert.equal(r.ok, true);
+  const f = sock.sent.find((x) => x.t === FRAME.WS_IN);
+  assert.equal(f.kind, "prompt"); assert.equal(f.sessionKey, "s1"); assert.equal(f.data.text, "hi");
+});
+
+test("bridge disconnect notifies workspace streams", () => {
+  const link = new AgentLink({ deviceSecret: DEVICE });
+  const sock = fakeSock(); link.hello(sock, { t: FRAME.HELLO, deviceSecret: DEVICE });
+  const got = [];
+  link.addWsSubscriber((p) => got.push(p));
+  link.detach(sock);
+  assert.ok(got.some((p) => p.data?.bridgeDisconnected === true));
+});
+
 test("routeToCommand maps every mutation route and nothing else", () => {
   const url = new URL("http://x/api/restore?id=abc&confirm=abc");
   assert.equal(routeToCommand("/api/git/push", new URL("http://x/"), { localPath: "r" }).type, "git.push");

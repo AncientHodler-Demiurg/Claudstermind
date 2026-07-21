@@ -2,6 +2,30 @@
 
 > Live status of the org/folder reorg and what is *actually* built vs. named. Read this before assuming a repo matches its target architecture. Updated as the reorg proceeds.
 
+## Status at 2026-07-15 (dashboard + token consolidation complete)
+
+**Claudstermind dashboard: DONE.** All tabs built + tested (101 tests): Map, Org×Role,
+Dependency graph, Movements, Packages, **Cascade** (live master-pollinate), **Git state**
+(per-repo uncommitted/unpushed + Commit/Push buttons), Brain (+ daily log, now consistent
+with the total), **Tokens** (entity×scope, live scan, usage detection, in-UI renew),
+**Ops** (automated daily backup toggle + configurable location + restore). Per-tab URLs
+(#hash routing), blue brain logo (transparent), AncientHub OIDC auth wired (local-mode off).
+
+**Token consolidation: DONE.** Down to TWO tokens — the `ancient-hodler-pollinator`
+classic PAT (repo/workflow/write:packages/admin:org) and the `kjrkentolopon-publisher`
+npm granular token (expires 2026-10-13). npm publish secret standardized to **`NPM_PUBLISHER`**
+across all 6 publish workflows; set as an org secret in StoaChain + AncientPantheon.
+Registry is detection-only now (no hardcoded deployments). Redundant repo secrets
+identified for deletion: CODEX_REPO_TOKEN (Mnemosyne), DEPLOY_* (Mnemosyne), NPMPUSHER
+(DALOS_Crypto, after first NPM_PUBLISHER publish).
+
+**NEXT when the user returns:** (1) they push the pending commits per-repo in separate
+windows [Claudstermind main +10; workflow commits on stoa-js/Codex/Khronoton/Pythia/
+DALOS_Crypto]; (2) **Phase 4** — run `/wasp:master-pollinate --dry-run` FIRST, review with
+the user, then execute the stoa-js split + `@ouronet/*` rename + org moves; (3) then design
++ build the **live presentation website** (OIDC dashboard deploy — needs hub-issued client
+creds). Codex 1.3 (the Phase-4 blocker) is already landed.
+
 ## Pre-Phase-4 landing (2026-07-15)
 
 The codex 1.2→1.3 migration — the stated Phase-4 blocker — is **landed, pushed, green**:

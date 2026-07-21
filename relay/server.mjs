@@ -148,6 +148,7 @@ export function createRelay(opts = {}) {
         // "receiving · updated Xs ago" on the live site's receiving-end indicator.
         snapshotAgeMs: link.snapshotAt ? Date.now() - link.snapshotAt : null,
         localActionsAvailable: connected,   // on the relay, actions exist iff the tunnel is up
+        canWorkspace: who.canExecute && connected,   // drive Claude remotely: ancient + bridge up
       });
     }
 
@@ -178,9 +179,33 @@ export function createRelay(opts = {}) {
       });
     }
 
+    // ---- remote workspace: SSE stream of the bridge's Claude session output (ancient-only) ----
+    if (req.method === "GET" && path === "/api/workspace/stream") {
+      if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The workspace is ancient-only." });
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
+      res.write(`event: hello\ndata: ${JSON.stringify({ localConnected: link.connected })}\n\n`);
+      const unsub = link.addWsSubscriber((payload) => { try { res.write(`data: ${JSON.stringify(payload)}\n\n`); } catch {} });
+      const hb = setInterval(() => { try { res.write(": keep-alive\n\n"); } catch {} }, 25_000);
+      hb.unref?.();
+      req.on("close", () => { clearInterval(hb); unsub(); });
+      return;
+    }
+
     if (req.method === "POST") {
       if (!sameOrigin(req)) return sendJSON(res, 403, { ok: false, reason: "cross-origin", message: "Cross-origin state-changing requests are refused." });
       const body = await readBody(req);
+
+      // ---- remote workspace actions: forward down the tunnel as WS_IN (ancient-only + connected) ----
+      if (path.startsWith("/api/workspace/")) {
+        const action = path.slice("/api/workspace/".length);
+        if (!["prompt", "permission", "stop", "control"].includes(action)) return sendJSON(res, 404, { error: "unknown workspace action" });
+        if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The workspace is ancient-only." });
+        if (!link.connected) return sendJSON(res, 503, { ok: false, reason: "local-not-connected", message: "Local Claudstermind is not connected." });
+        const { sessionKey, ...data } = body;
+        const r = link.sendWsIn(action, sessionKey ?? null, data);
+        return sendJSON(res, r.ok ? 200 : (r.reason === "local-not-connected" ? 503 : 502), r);
+      }
+
       const cmd = routeToCommand(path, url, body);
       if (cmd) {
         const gate = authorizeMutation(who, link.connected);

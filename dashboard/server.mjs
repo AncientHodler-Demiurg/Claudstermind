@@ -33,6 +33,7 @@ import { buildUsageIndex, secretUsage } from "../lib/secretUsage.mjs";
 import { readBrain, scanPackages, cachedActivity } from "../lib/snapshot.mjs";
 import { executeCommand } from "../lib/commands.mjs";
 import { createBridge } from "../agent/agent.mjs";
+import { WorkspaceManager } from "../lib/workspace.mjs";
 import { readRelayConfig, writeRelayConfig, readDeviceSecret, saveDeviceSecret } from "../lib/relayConfig.mjs";
 import { readOidcConfig } from "./auth/oidcConfig.mjs";
 import { handleAuthRoute, guard, denyPage } from "./auth/routes.mjs";
@@ -163,6 +164,28 @@ function relayStatus() {
     connected: rs === 1, state, error: BRIDGE_ERR, available: !OIDC };
 }
 
+// ---- local Workspace: drive Claude Code on THIS machine directly (no relay tunnel) ----
+// The online relay reaches the workspace through the bridge tunnel; the local dashboard is
+// ON the machine, so it runs its OWN WorkspaceManager and streams straight to local SSE
+// clients. It shares the same `.claude/workspace` history store as the bridge, so a repo's
+// conversation history is one unified store across both surfaces. Local mode only — the live
+// relay (OIDC set) never drives a local workspace; it has no local disk to act on.
+let WORKSPACE = null;
+const WS_SUBS = new Set();
+function localListRepos() {
+  try {
+    const map = JSON.parse(readFileSync(join(DATA_DIR, "map.json"), "utf8"));
+    return (map.repos || []).map((r) => ({ name: r.name, localPath: r.localPath, org: r.org?.target || r.org?.current || null })).filter((r) => r.localPath);
+  } catch { return []; }
+}
+if (!OIDC) {
+  WORKSPACE = new WorkspaceManager({
+    root: MASTER_ROOT, secretsDir: SECRETS_DIR, listRepos: localListRepos,
+    model: process.env.CLAUDE_WORKSPACE_MODEL || undefined,
+    send: (kind, sessionKey, data) => { const p = JSON.stringify({ kind, sessionKey, data }); for (const w of WS_SUBS) { try { w(p); } catch {} } },
+  });
+}
+
 /**
  * CSRF: reject a state-changing request that a DIFFERENT origin initiated.
  *
@@ -237,6 +260,30 @@ const handler = async (req, res) => {
     if (!who.canExecute) {
       return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The ancient role is required to execute. Your session is read-only." });
     }
+  }
+
+  // ---- local Workspace: SSE stream of this machine's Claude sessions ----
+  if (path === "/api/workspace/stream" && req.method === "GET") {
+    if (!WORKSPACE) return sendJSON(res, 404, { error: "workspace unavailable in this mode" });
+    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Execute permission required." });
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
+    res.write(`event: hello\ndata: ${JSON.stringify({ localConnected: true })}\n\n`);
+    const w = (payload) => { try { res.write(`data: ${payload}\n\n`); } catch {} };
+    WS_SUBS.add(w);
+    const hb = setInterval(() => { try { res.write(": keep-alive\n\n"); } catch {} }, 25000); hb.unref?.();
+    req.on("close", () => { clearInterval(hb); WS_SUBS.delete(w); });
+    return;
+  }
+  // ---- local Workspace actions (already gated above: sameOrigin + canExecute) ----
+  if (req.method === "POST" && path.startsWith("/api/workspace/")) {
+    const action = path.slice("/api/workspace/".length);
+    if (!["prompt", "permission", "stop", "control"].includes(action)) return sendJSON(res, 404, { error: "unknown workspace action" });
+    if (!WORKSPACE) return sendJSON(res, 404, { ok: false, message: "workspace unavailable in this mode" });
+    let body = ""; for await (const c of req) body += c;
+    let d = {}; try { d = JSON.parse(body || "{}"); } catch {}
+    const { sessionKey = null, ...data } = d;
+    try { WORKSPACE.handleIn(action, sessionKey, data); return sendJSON(res, 200, { ok: true }); }
+    catch (e) { return sendJSON(res, 500, { ok: false, message: String(e && e.message || e) }); }
   }
 
   // ---- orchestrator: activity oracle ----

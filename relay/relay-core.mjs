@@ -28,6 +28,18 @@ export class AgentLink {
     this._snapshot = null;
     this.snapshotAt = null;
     this.pending = new Map();   // id -> { resolve, timer }
+    this.wsSubscribers = new Set();   // SSE listeners for the remote-workspace stream
+  }
+
+  /** Register an SSE listener for WS_OUT frames from the bridge. Returns an unsubscribe fn. */
+  addWsSubscriber(fn) { this.wsSubscribers.add(fn); return () => this.wsSubscribers.delete(fn); }
+  _fanWsOut(payload) { for (const fn of this.wsSubscribers) { try { fn(payload); } catch {} } }
+
+  /** Send a WS_IN (workspace action) down to the bridge. */
+  sendWsIn(kind, sessionKey, data) {
+    if (!this.sock) return { ok: false, reason: "local-not-connected" };
+    try { this.sock.send(JSON.stringify({ t: FRAME.WS_IN, kind, sessionKey: sessionKey ?? null, data: data ?? {} })); return { ok: true }; }
+    catch (e) { return { ok: false, reason: "send-failed", message: String(e) }; }
   }
 
   get connected() { return !!this.sock; }
@@ -52,6 +64,9 @@ export class AgentLink {
     }
     this.sock = sock;
     try { sock.send(JSON.stringify({ t: FRAME.WELCOME })); } catch {}
+    // Tell any open workspace streams the machine is (re)connected, so a stale
+    // "disconnected" note on the still-open SSE clears without a page reload.
+    this._fanWsOut({ kind: "state", sessionKey: null, data: { bridgeReconnected: true } });
   }
 
   /** Settle every in-flight command once, clearing their timers. Shared by detach + replace. */
@@ -73,6 +88,9 @@ export class AgentLink {
     } else if (frame.t === FRAME.RESULT) {
       const p = this.pending.get(frame.id);
       if (p) { this.clearTimer(p.timer); this.pending.delete(frame.id); p.resolve(frame.result); }
+    } else if (frame.t === FRAME.WS_OUT) {
+      // Remote-workspace output from the bridge — fan to the browser SSE listeners.
+      this._fanWsOut({ kind: frame.kind, sessionKey: frame.sessionKey ?? null, data: frame.data ?? {} });
     }
     // PONG: liveness only, handled at the ws layer.
   }
@@ -82,6 +100,8 @@ export class AgentLink {
     if (sock !== this.sock) return;
     this.sock = null; this._snapshot = null; this.snapshotAt = null;
     this._failPending("local-not-connected", "The local machine disconnected mid-command.");
+    // Tell any open workspace streams the machine went away.
+    this._fanWsOut({ kind: "state", sessionKey: null, data: { bridgeDisconnected: true } });
   }
 
   /**

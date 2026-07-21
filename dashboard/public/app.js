@@ -168,6 +168,13 @@ function renderAuthPill() {
   const pill = $("#authPill");
   const opsTab = $("#tabOps");
 
+  // Workspace (drive Claude Code per repo) — available on the local dashboard (this machine)
+  // AND on the online site for an ancient admin. Set BEFORE the local-mode early return below,
+  // so the tab isn't left hidden in local mode. `canExecute` is the lock (true locally,
+  // ancient-only on the live relay); never modern, never public.
+  const wsTab = $("#tabWorkspace");
+  if (wsTab) wsTab.hidden = !(ME.canExecute && (ME.mode === "live" || ME.mode === "local"));
+
   if (ME.mode === "local") {
     // Local dev: exactly as before auth existed. No pill, Ops present.
     pill.hidden = true;
@@ -348,7 +355,9 @@ function render() {
   if (VIEW !== "cascade" && CASCADE_TIMER) { clearInterval(CASCADE_TIMER); CASCADE_TIMER = null; }
   if (VIEW !== "ops" && OPS_TIMER) { clearInterval(OPS_TIMER); OPS_TIMER = null; }
   if (VIEW !== "relay" && RELAY_TIMER) { clearInterval(RELAY_TIMER); RELAY_TIMER = null; }
+  if (VIEW !== "workspace" && WS_ES) { try { WS_ES.close(); } catch {} WS_ES = null; }
   if (VIEW !== "git" && GIT_TIMER) { clearInterval(GIT_TIMER); GIT_TIMER = null; }
+  document.body.classList.toggle("ws-full", VIEW === "workspace");   // Workspace breaks out to full width
   if (VIEW === "cascade") v.replaceChildren(viewCascade());
   else if (VIEW === "activity") v.replaceChildren(viewActivity());
   else if (VIEW === "git") v.replaceChildren(viewGit());
@@ -360,6 +369,7 @@ function render() {
   else if (VIEW === "tokens") v.replaceChildren(viewTokens());
   else if (VIEW === "ops") v.replaceChildren(viewOps());
   else if (VIEW === "relay") v.replaceChildren(viewRelay());
+  else if (VIEW === "workspace") v.replaceChildren(viewWorkspace());
   else if (VIEW === "brain") v.replaceChildren(viewBrain());
   else if (VIEW === "tree") v.replaceChildren(viewTree());
 }
@@ -988,6 +998,7 @@ function viewGit() {
 /* ---------- ops: activity + backup + master-pollinate ---------- */
 let OPS_TIMER = null;
 let RELAY_TIMER = null;
+let WS_ES = null;   // the Workspace EventSource (SSE stream of Claude session output)
 /* ---------- relay: the tunnel between this LocalHost and the online site ----------
    Symmetric tab. On the LOCAL dashboard it CONTROLS the bridge (enable/disable, address,
    device secret) and shows whether the remote is online + receiving. On the ONLINE relay
@@ -1216,6 +1227,344 @@ function viewActivity() {
     el("div", { class: "hint" }, ["Weekly build activity across the ecosystem. ", el("b", {}, ["Heatmap"]), " = commits per repo per day, grouped by organisation; ", el("b", {}, ["Per-day"]), " = each day's repos + a chart of when the commits landed."]),
     box,
   ]);
+}
+
+/* ---------- Workspace: drive Claude Code on the work machine, from the web ----------
+   Online + ancient only. A repo-scoped chat: prompts go down, the session streams back
+   over SSE (assistant text, tool-uses, results). Each risky tool pops approve/deny unless
+   trusted mode is on. Usage + cost shown; new folder/repo creation; session switching. */
+const wsPost = (action, body) => fetch("/api/workspace/" + action, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) }).then((r) => r.json()).catch(() => ({ ok: false }));
+const wsUuid = () => (crypto.randomUUID ? crypto.randomUUID() : "s-" + Date.now() + "-" + Math.random().toString(36).slice(2));
+const fmtUsd = (n) => "$" + (Number(n) || 0).toFixed(2);
+
+function viewWorkspace() {
+  // The workspace runs on the local dashboard (direct, this machine) and on the online relay
+  // (via the bridge tunnel). Only bail for a mode that has neither backend.
+  if (ME.mode !== "live" && ME.mode !== "local") return el("div", { class: "gate", style: "min-height:40vh" }, [
+    el("h2", { class: "gate-title" }, ["Workspace unavailable"]),
+    el("p", { class: "gate-sub" }, ["Drive Claude from the local dashboard on the work machine, or remotely from ", el("b", {}, ["brain.ancientholdings.eu"]), "."]),
+  ]);
+
+  // ---- view state ----------------------------------------------------------------
+  const st = {
+    repos: [], tree: null, trusted: false, hasToken: true,
+    sidebarMode: "repos",          // repos | tree
+    layout: 1,                     // 1..4 visible panes
+    panes: [],                     // [{ id, sessionKey, repo, transcript, usage, status, readonly, resume }]
+    activeId: null,
+    history: [], historyRepo: null,
+    permQueue: [],                 // pending tool-permission requests — FIFO so two panes never clobber
+    pendingOpens: new Map(),       // savedSessionKey -> { paneId, mode } — reopens in flight, correlated
+  };
+  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", transcript: [], usage: {}, status: "idle", readonly: false, resume: null });
+  const paneUI = new Map();        // paneId -> { root, transcriptEl, promptEl, repoSel, usageEl, dot, sendBtn, badge }
+  const paneOf = (key) => st.panes.find((p) => p.sessionKey === key);
+  const activePane = () => st.panes.find((p) => p.id === st.activeId) || st.panes[0];
+
+  const root = el("div", { class: "ws-root" }, []);
+  const bridgeNote = el("div", { class: "hint" }, ["Connecting to the work machine…"]);
+  const grid = el("div", { class: "ws-grid" }, []);
+  const sideList = el("div", { class: "ws-side-list" }, []);
+  const histList = el("div", { class: "ws-hist" }, []);
+  const usageEl = el("span", { class: "ws-usage-total" }, ["—"]);
+  const trustToggle = el("input", { type: "checkbox" });
+  const permHost = el("div", {});
+
+  const shortRepo = (p) => (p || "").split(/[\\/]/).filter(Boolean).pop() || "repo";
+  function note(msg) { bridgeNote.hidden = false; bridgeNote.textContent = msg; }
+
+  // ---- repo <select> options (shared shape across panes) -------------------------
+  function fillRepoSelect(sel, value) {
+    const opts = [el("option", { value: "" }, ["— pick a repository —"]),
+      ...st.repos.map((r) => el("option", { value: r.localPath }, [r.name + (r.org ? "  ·  " + r.org : "")]))];
+    // A repo picked from the Tree may not be a tracked repo — inject an option so the
+    // dropdown can still show it (the bridge resolves any path under the workspace root).
+    if (value && !st.repos.some((r) => r.localPath === value)) opts.push(el("option", { value }, [shortRepo(value) + "  ·  (tree)"]));
+    sel.replaceChildren(...opts);
+    sel.value = value || "";
+  }
+
+  // ---- transcript rendering (handles both live {kind} and saved {role} items) ----
+  function line(cls, kids) { return el("div", { class: "ws-line " + cls }, kids); }
+  function renderItem(m) {
+    if (m.role === "user") return line("ws-user", [el("b", {}, ["you  "]), m.text]);
+    if (m.role === "assistant" || m.kind === "assistant") return line("ws-assistant", [m.text]);
+    if (m.kind === "tool_use") return line("ws-tool", [el("i", { class: "ti ti-tool" }, []), " ", (m.tools || []).map((t) => t.name).join(", ")]);
+    if (m.kind === "tool_result") return line("ws-toolres", ["✓ tool result"]);
+    if (m.kind === "result") return line("ws-result", [`— done · ${(m.usage?.output_tokens || 0)} out tok · ~${fmtUsd(m.costUsd)}`]);
+    if (m.kind === "error") return line("ws-err", ["⚠ " + m.text]);
+    if (m.kind === "created") return line("ws-note", [`created ${m.what}: ${m.path}`]);
+    return null;
+  }
+
+  // ---- one pane ------------------------------------------------------------------
+  function buildPane(p) {
+    const repoSel = el("select", { class: "wsel wsel-sm" }, []); fillRepoSelect(repoSel, p.repo);
+    const dot = el("span", { class: "actdot" });
+    const badge = el("span", { class: "ws-usage" }, ["—"]);
+    const closeBtn = el("button", { class: "ws-x", title: "Clear this pane" }, ["×"]);
+    const histBtn = el("button", { class: "ws-ico", title: "History for this repo" }, ["⏱"]);
+    const transcriptEl = el("div", { class: "ws-transcript" }, []);
+    const promptEl = el("textarea", { class: "ws-prompt", rows: "2", placeholder: "Message Claude… (Ctrl+Enter)" });
+    const sendBtn = el("button", { class: "loginbtn ws-send" }, ["Send"]);
+    const header = el("div", { class: "ws-pane-hd" }, [dot, repoSel, histBtn, el("span", { class: "ws-spacer" }), badge, closeBtn]);
+    const paneRoot = el("div", { class: "ws-pane" }, [header, transcriptEl, el("div", { class: "ws-compose" }, [promptEl, sendBtn])]);
+
+    paneRoot.addEventListener("mousedown", () => setActive(p.id));
+    repoSel.addEventListener("change", () => { p.repo = repoSel.value; p.readonly = false; p.resume = null; paintPane(p); });
+    histBtn.addEventListener("click", (e) => { e.stopPropagation(); loadHistory(p.repo || null); });
+    closeBtn.addEventListener("click", (e) => { e.stopPropagation(); p.transcript = []; p.readonly = false; p.resume = null; paintPane(p); });
+    sendBtn.addEventListener("click", () => send(p));
+    promptEl.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(p); } });
+
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, usageEl: badge, dot, sendBtn });
+    return paneRoot;
+  }
+
+  function paintPane(p) {
+    const ui = paneUI.get(p.id); if (!ui) return;
+    ui.root.classList.toggle("on", p.id === st.activeId);
+    ui.root.classList.toggle("ro", !!p.readonly);
+    // Keep the dropdown showing the pane's repo, injecting an option for a tree-picked
+    // path that isn't a tracked repo.
+    if (!Array.from(ui.repoSel.options).some((o) => o.value === (p.repo || ""))) fillRepoSelect(ui.repoSel, p.repo);
+    else if (ui.repoSel.value !== (p.repo || "")) ui.repoSel.value = p.repo || "";
+    const busy = p.status === "thinking" || p.status === "awaiting-permission";
+    ui.dot.classList.toggle("on", busy);
+    ui.promptEl.disabled = !!p.readonly;
+    ui.sendBtn.disabled = !!p.readonly;
+    ui.promptEl.placeholder = p.readonly ? "Read-only — pick the repo above or Resume from history to continue" : (p.resume ? "Resuming saved session — your next message continues it" : "Message Claude… (Ctrl+Enter)");
+    const u = p.usage || {};
+    ui.usageEl.textContent = (u.inputTokens || u.outputTokens) ? `${((u.inputTokens || 0) + (u.outputTokens || 0)).toLocaleString()} tok · ~${fmtUsd(u.costUsd)}` : "—";
+    if (!p.transcript.length) ui.transcriptEl.replaceChildren(el("div", { class: "hint" }, [p.repo ? "Send a message — Claude runs in " + shortRepo(p.repo) + " on your machine." : "Pick a repository (dropdown, or the sidebar) to start."]));
+    else ui.transcriptEl.replaceChildren(...p.transcript.map(renderItem).filter(Boolean));
+    ui.transcriptEl.scrollTop = ui.transcriptEl.scrollHeight;
+  }
+
+  function setActive(id) {
+    if (st.activeId === id) return;
+    st.activeId = id;
+    for (const p of st.panes) paneUI.get(p.id)?.root.classList.toggle("on", p.id === id);
+    renderSidebar();
+  }
+
+  function rebuildGrid() {
+    grid.dataset.cols = String(st.layout);
+    paneUI.clear();
+    grid.replaceChildren(...st.panes.map(buildPane));
+    for (const p of st.panes) paintPane(p);
+  }
+  function setLayout(n) {
+    st.layout = n;
+    while (st.panes.length < n) st.panes.push(newPane());
+    if (st.panes.length > n) st.panes.length = n;   // trim view; server sessions persist + live in history
+    if (!st.panes.some((p) => p.id === st.activeId)) st.activeId = st.panes[0]?.id;
+    rebuildGrid();
+    renderLayoutPicker();
+  }
+
+  function setUsageTotal() {
+    let cost = 0, tok = 0;
+    for (const p of st.panes) { cost += p.usage?.costUsd || 0; tok += (p.usage?.inputTokens || 0) + (p.usage?.outputTokens || 0); }
+    usageEl.textContent = `${st.panes.length} pane(s) · ${tok.toLocaleString()} tok · ~${fmtUsd(cost)} (covered by subscription)`;
+  }
+
+  // ---- sidebar: Repositories | Tree ----------------------------------------------
+  function repoBadge() { return el("span", { class: "ws-repobadge", title: "git repository" }, ["repo"]); }
+  function renderSidebar() {
+    if (st.sidebarMode === "repos") {
+      sideList.replaceChildren(...st.repos.map((r) => {
+        const b = el("button", { class: "ws-side-item" }, [repoBadge(), el("span", { class: "ws-side-name" }, [r.name]), r.org ? el("span", { class: "ws-side-org" }, [r.org]) : ""]);
+        b.addEventListener("click", () => pickRepoForActive(r.localPath));
+        return b;
+      }));
+      if (!st.repos.length) sideList.replaceChildren(el("div", { class: "hint" }, ["No tracked repositories yet."]));
+    } else {
+      sideList.replaceChildren(st.tree ? treeNode(st.tree, "", 0) : el("div", { class: "hint" }, ["Loading the folder tree…"]));
+    }
+  }
+  function treeNode(node, path, depth) {
+    const here = path ? path + "/" + node.name : node.name;
+    const rel = depth === 0 ? "" : here.split("/").slice(1).join("/");   // path relative to the workspace root
+    const row = el("button", { class: "ws-tree-row" + (node.isRepo ? " is-repo" : ""), style: `padding-left:${8 + depth * 12}px` }, [
+      el("span", { class: "ws-tree-name" }, [depth === 0 ? "▸ workspace" : node.name]),
+      node.isRepo ? repoBadge() : "",
+    ]);
+    if (node.isRepo && depth > 0) row.addEventListener("click", () => pickRepoForActive(rel));
+    else row.addEventListener("click", () => { /* folder — no session, just a container */ });
+    const kids = (node.children || []).map((c) => treeNode(c, here, depth + 1));
+    return el("div", {}, [row, ...kids]);
+  }
+  function pickRepoForActive(localPath) {
+    const p = activePane(); if (!p) return;
+    p.repo = localPath; p.readonly = false; p.resume = null;
+    paintPane(p); note("Active pane → " + shortRepo(localPath));
+  }
+
+  // ---- per-repo history ----------------------------------------------------------
+  function loadHistory(repo) { st.historyRepo = repo || null; wsPost("control", { action: "history", args: { repo: repo || undefined } }); histList.replaceChildren(el("div", { class: "hint" }, ["Loading history…"])); }
+  function renderHistory() {
+    const title = el("div", { class: "ws-hist-hd" }, ["History", el("span", { class: "ws-hist-scope" }, [st.historyRepo ? shortRepo(st.historyRepo) : "all repos"]), (() => { const b = el("button", { class: "ws-ico", title: "Refresh" }, ["⟳"]); b.addEventListener("click", () => loadHistory(st.historyRepo)); return b; })()]);
+    const items = st.history.map((h) => {
+      const when = h.updatedAt ? new Date(h.updatedAt).toLocaleString() : "";
+      const openB = el("button", { class: "ws-ico", title: "Reopen read-only" }, ["👁"]);
+      const resumeB = el("button", { class: "ws-ico", title: "Resume live" }, ["▶"]);
+      openB.addEventListener("click", () => reopen(h.sessionKey, "open"));
+      resumeB.addEventListener("click", () => reopen(h.sessionKey, "resume"));
+      return el("div", { class: "ws-hist-item" }, [
+        el("div", { class: "ws-hist-line1" }, [el("b", {}, [shortRepo(h.repo) || "—"]), el("span", { class: "ws-hist-meta" }, [`${h.turns || 0} turn(s) · ~${fmtUsd(h.usage?.costUsd)}`])]),
+        el("div", { class: "ws-hist-first" }, [h.firstPrompt || "(no prompt)"]),
+        el("div", { class: "ws-hist-actions" }, [el("span", { class: "ws-hist-when" }, [when]), el("span", { class: "ws-spacer" }, []), openB, resumeB]),
+      ]);
+    });
+    histList.replaceChildren(title, ...(items.length ? items : [el("div", { class: "hint" }, ["No saved conversations yet."])]));
+  }
+  function reopen(sessionKey, mode) {
+    const p = activePane(); if (!p) { note("Open a pane first."); return; }
+    st.pendingOpens.set(sessionKey, { paneId: p.id, mode });   // correlated by the saved key echoed back
+    wsPost("control", { action: "open", args: { sessionKey } });
+  }
+
+  // ---- SSE handling --------------------------------------------------------------
+  function onPayload({ kind, sessionKey, data }) {
+    if (kind === "state") {
+      if (Array.isArray(data.repos)) { st.repos = data.repos; for (const p of st.panes) { const ui = paneUI.get(p.id); if (ui) fillRepoSelect(ui.repoSel, p.repo); } renderSidebar(); }
+      if (data.tree) { st.tree = data.tree; if (st.sidebarMode === "tree") renderSidebar(); }
+      if (Array.isArray(data.history)) { st.history = data.history; renderHistory(); }
+      if (Array.isArray(data.sessions)) for (const s of data.sessions) { const p = paneOf(s.sessionKey); if (p) { p.status = s.status || p.status; if (s.usage) p.usage = s.usage; paintPane(p); } }
+      if (data.session) { const p = paneOf(data.session.sessionKey); if (p) { Object.assign(p, { status: data.session.status ?? p.status, usage: data.session.usage ?? p.usage }); paintPane(p); } }
+      if (typeof data.trustedDefault === "boolean") { st.trusted = data.trustedDefault; trustToggle.checked = st.trusted; }
+      if (typeof data.hasToken === "boolean") st.hasToken = data.hasToken;
+      if (data.bridgeDisconnected) note("The work machine disconnected — reconnect it to resume.");
+      if (data.bridgeReconnected) { bridgeNote.hidden = true; bridgeNote.textContent = ""; }
+      setUsageTotal();
+      return;
+    }
+    if (kind === "permission") { st.permQueue.push({ sessionKey, ...data }); if (st.permQueue.length === 1) renderPerm(); return; }
+    if (kind === "transcript") {
+      // A reopen/resume we requested arrived. Correlate by the SAVED session key (echoed in
+      // the frame) so a stray/duplicate frame can never clobber a live pane — drop if unmatched.
+      const req = st.pendingOpens.get(sessionKey); if (!req) return;
+      st.pendingOpens.delete(sessionKey);
+      const p = st.panes.find((x) => x.id === req.paneId); if (!p) return;   // its pane was trimmed away
+      p.transcript = data.transcript || [];
+      p.repo = data.repo || p.repo;
+      p.usage = data.usage || {};
+      if (req.mode === "resume") { p.readonly = false; p.resume = data.sessionId || null; note("Resuming — your next message continues this session."); }
+      else { p.readonly = true; p.resume = null; note("Reopened read-only. Pick the repo or Resume to continue."); }
+      paintPane(p); setUsageTotal();
+      return;
+    }
+    if (kind === "event") {
+      // Workspace-level notices (create/error) carry no sessionKey.
+      if (!sessionKey && (data.kind === "created" || data.kind === "error")) {
+        note(data.kind === "created" ? `Created ${data.what}: ${data.path}` : ("⚠ " + data.message));
+        if (data.kind === "created") { wsPost("control", { action: "list" }); wsPost("control", { action: "tree" }); }
+        return;
+      }
+      // A streamed event ALWAYS carries its session's key. Route strictly by it; drop frames
+      // for a pane that no longer exists (e.g. trimmed by the layout picker) rather than
+      // spilling another session's output into the active pane.
+      const p = sessionKey ? paneOf(sessionKey) : activePane(); if (!p) return;
+      if (data.kind === "status") { p.status = data.status; paintPane(p); return; }
+      p.transcript.push(data);
+      if (data.usageTotal) p.usage = data.usageTotal;
+      paintPane(p); setUsageTotal();
+    }
+  }
+  function primeControls() { wsPost("control", { action: "list" }); wsPost("control", { action: "tree" }); wsPost("control", { action: "history", args: {} }); }
+  function openStream() {
+    try { WS_ES && WS_ES.close(); } catch {}
+    WS_ES = new EventSource("/api/workspace/stream");
+    WS_ES.addEventListener("hello", (e) => {
+      // The stream is now subscribed — only NOW request the initial state, so the bridge's
+      // reply can't race an unsubscribed stream (it would be dropped silently).
+      try { const d = JSON.parse(e.data); if (d.localConnected) { bridgeNote.hidden = true; bridgeNote.textContent = ""; } else note("The work machine isn't connected — start the local dashboard + relay."); } catch {}
+      primeControls();
+    });
+    WS_ES.onmessage = (e) => { try { onPayload(JSON.parse(e.data)); } catch {} };
+    WS_ES.onerror = () => note("Stream interrupted — retrying…");
+  }
+
+  // ---- permission modal (FIFO queue — two panes can await at once) ----------------
+  function renderPerm() {
+    const p = st.permQueue[0];
+    if (!p) { permHost.replaceChildren(); return; }
+    const owner = paneOf(p.sessionKey);
+    const decide = async (decision) => {
+      st.permQueue.shift(); permHost.replaceChildren();
+      await wsPost("permission", { requestId: p.requestId, decision });
+      renderPerm();   // surface the next queued request, if any
+    };
+    const inputStr = typeof p.input === "object" ? JSON.stringify(p.input, null, 1).slice(0, 600) : String(p.input || "");
+    permHost.replaceChildren(el("div", { class: "modal-overlay" }, [
+      el("div", { class: "modal", style: "max-width:520px" }, [
+        el("h3", { style: "margin:0 0 6px" }, ["Claude wants to run a tool", st.permQueue.length > 1 ? el("span", { class: "rc-sub", style: "font-weight:400" }, ["  (+" + (st.permQueue.length - 1) + " more)"]) : ""]),
+        el("div", { class: "rc-sub" }, ["Tool: ", el("b", {}, [p.tool]), owner && owner.repo ? "  ·  " + shortRepo(owner.repo) : ""]),
+        el("pre", { style: "background:var(--chip);border-radius:8px;padding:8px;font-size:11px;max-height:200px;overflow:auto;white-space:pre-wrap" }, [inputStr]),
+        el("div", { style: "display:flex;gap:8px;justify-content:flex-end;margin-top:10px" }, [
+          (() => { const b = el("button", { class: "ghost" }, ["Deny"]); b.addEventListener("click", () => decide("deny")); return b; })(),
+          (() => { const b = el("button", { class: "loginbtn", style: "padding:7px 16px" }, ["Approve"]); b.addEventListener("click", () => decide("allow")); return b; })(),
+        ]),
+      ]),
+    ]));
+  }
+
+  // ---- send --------------------------------------------------------------------
+  async function send(p) {
+    if (p.readonly) return;
+    const ui = paneUI.get(p.id); const text = ui.promptEl.value.trim(); if (!text) return;
+    if (!p.repo) { note("Pick a repository for this pane first."); return; }
+    p.transcript.push({ role: "user", text }); ui.promptEl.value = ""; paintPane(p);
+    const body = { sessionKey: p.sessionKey, repo: p.repo, text, trusted: st.trusted };
+    if (p.resume) { body.resume = p.resume; p.resume = null; }
+    const r = await wsPost("prompt", body);
+    if (!r.ok) { p.transcript.push({ kind: "error", text: r.message || "Could not reach the work machine." }); paintPane(p); }
+  }
+
+  // ---- toolbar controls ----------------------------------------------------------
+  const layoutPicker = el("div", { class: "ws-layout" }, []);
+  function renderLayoutPicker() {
+    layoutPicker.replaceChildren(el("span", { class: "ws-layout-lbl" }, ["Panes"]), ...[1, 2, 3, 4].map((n) => {
+      const b = el("button", { class: "ws-lbtn" + (st.layout === n ? " on" : "") }, [String(n)]);
+      b.addEventListener("click", () => setLayout(n));
+      return b;
+    }));
+  }
+  const modeToggle = el("div", { class: "ws-modes" }, []);
+  function renderModeToggle() {
+    modeToggle.replaceChildren(...[["repos", "Repositories"], ["tree", "Tree"]].map(([m, lbl]) => {
+      const b = el("button", { class: "ws-mode" + (st.sidebarMode === m ? " on" : "") }, [lbl]);
+      b.addEventListener("click", () => { st.sidebarMode = m; renderModeToggle(); renderSidebar(); if (m === "tree" && !st.tree) wsPost("control", { action: "tree" }); });
+      return b;
+    }));
+  }
+  const newFolderBtn = el("button", { class: "ghost", title: "Create a new folder in the workspace" }, ["+ folder"]);
+  const newRepoBtn = el("button", { class: "ghost", title: "Create a new git repo in the workspace" }, ["+ repo"]);
+  trustToggle.addEventListener("change", () => { st.trusted = trustToggle.checked; wsPost("control", { action: "setTrusted", args: { value: st.trusted } }); });
+  newFolderBtn.addEventListener("click", () => { const name = window.prompt("New folder name:"); if (name == null) return; const parent = window.prompt("Parent path (blank = root):") || ""; wsPost("control", { action: "newFolder", args: { parent, name } }); });
+  newRepoBtn.addEventListener("click", () => { const name = window.prompt("New repo name (git init):"); if (name == null) return; const parent = window.prompt("Parent path (blank = root):") || ""; wsPost("control", { action: "newRepo", args: { parent, name } }); });
+
+  // ---- boot ----------------------------------------------------------------------
+  st.panes = [newPane()]; st.activeId = st.panes[0].id;
+  renderLayoutPicker(); renderModeToggle(); rebuildGrid(); renderSidebar(); renderHistory();
+  openStream();   // primeControls() fires from the hello handler once the stream is subscribed
+
+  root.replaceChildren(
+    el("div", { class: "ws-toolbar" }, [
+      layoutPicker,
+      el("label", { class: "ws-trust", title: "When on, Claude runs every tool without asking — like working locally." }, [trustToggle, "Trusted mode"]),
+      el("span", { class: "ws-spacer" }, []),
+      usageEl, newFolderBtn, newRepoBtn,
+    ]),
+    bridgeNote,
+    el("div", { class: "ws-body" }, [
+      el("aside", { class: "ws-side" }, [modeToggle, sideList, el("div", { class: "ws-side-sep" }, []), histList]),
+      grid,
+    ]),
+    permHost,
+  );
+  return root;
 }
 
 /* ---------- Ops activity: org-grouped repo cards with a live/idle blinker ----------

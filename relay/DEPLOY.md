@@ -127,3 +127,76 @@ machine): not-connected → 503, connected, ancient command executes locally, mo
 ```sh
 node --test relay/integration.test.mjs
 ```
+
+---
+
+# The remote Claude workspace
+
+The `Workspace` tab (online, `ancient` only) drives real Claude Code sessions running on
+the work machine, per repository — you prompt, it streams the conversation back, you
+approve tools or flip **Trusted mode** for full-auto. It authenticates with a **subscription
+token**, never an API key.
+
+## One-time setup on the work machine
+
+```sh
+# mint a long-lived subscription token (opens a browser to authorize):
+claude setup-token
+# save the token it prints where the bridge reads it:
+printf '%s\n' '<TOKEN>' > <workspace-root>/.secrets/claude-oauth-token.txt
+```
+
+That's it — the local dashboard's in-process bridge picks it up. Verify:
+`CLAUDE_CODE_OAUTH_TOKEN="$(cat .secrets/claude-oauth-token.txt)" claude -p "Reply: OK"`.
+
+## Deployed reality (as of this build)
+
+- Relay runs as a **container** on StoaNodePrime behind the box's existing **nginx** (not
+  the bundled Caddy — nginx already owns 80/443). `docker-compose.yml` publishes the relay
+  on `127.0.0.1:8088`; the vhost `brain.ancientholdings.eu.conf` terminates TLS (certbot)
+  and reverse-proxies to it, WebSocket-upgrade + `X-Forwarded-Host` included.
+- The **local dashboard** (`node dashboard/server.mjs`) runs the bridge in-process; its
+  **Ops → Relay** panel (or a dedicated **Relay** tab) holds the address + device secret and
+  shows the connection. The **Activity** tab + the public showcase read git history.
+
+---
+
+# Migrating the working base to the Linux mini-PC
+
+The whole system is cross-platform (Node + git + the Agent SDK; no Windows-only paths).
+To move the working base off Windows onto the headless Linux box — where the **web
+dashboard is the only GUI** — do this on the Linux box:
+
+1. **Copy the workspace** (`D:/_Claude` → e.g. `~/_Claude`). Keep `.git`, `.secrets`,
+   `Claudstermind/dashboard/data`, the per-repo folders. Do NOT copy `node_modules`.
+2. **Install prerequisites:** Node 22+ (24 recommended), `git`, and Claude Code (native
+   installer). Then `npm install` in `Claudstermind/` (SDK + ws) and `Claudstermind/relay/`
+   is only needed on the relay host, not here.
+3. **Auth on the box:** `claude setup-token`, save to `~/_Claude/.secrets/claude-oauth-token.txt`.
+4. **Wire the relay link:** create `~/_Claude/.secrets/relay-device-secret.txt` with the
+   same `AGENT_DEVICE_SECRET` as the relay, and `Claudstermind/dashboard/data/relay.json`
+   `{ "enabled": true, "url": "wss://brain.ancientholdings.eu/agent" }` — or set it from the
+   Relay tab once the dashboard is up.
+5. **Run the dashboard headless** (it hosts the bridge). A systemd unit keeps it up + auto-
+   starts on boot:
+
+   ```ini
+   [Unit]
+   Description=Claudstermind dashboard + bridge
+   After=network-online.target
+   [Service]
+   WorkingDirectory=/home/you/_Claude/Claudstermind/dashboard
+   ExecStart=/usr/bin/node server.mjs
+   Restart=always
+   RestartSec=5
+   Environment=PORT=3001
+   [Install]
+   WantedBy=default.target
+   ```
+
+6. From anywhere, open `https://brain.ancientholdings.eu`, sign in, and the **Workspace**
+   tab now drives Claude on the Linux box. Backups default to `~/claude-backup`; tar is
+   native; nothing Windows-specific remains.
+
+The Windows machine is then free — keep using the Claude desktop app there, but Claude
+Code work lives on the Linux box.

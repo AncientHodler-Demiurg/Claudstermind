@@ -13,11 +13,13 @@
 // Cross-platform: Node builtins + the global WebSocket client (Node 22+). No new
 // dependency, runs identically on Windows and Ubuntu.
 import { spawn } from "node:child_process";
-import { resolve, dirname } from "node:path";
+import { readFileSync } from "node:fs";
+import { resolve, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { FRAME, validateFrame } from "../lib/protocol.mjs";
 import { buildSnapshot as realBuildSnapshot } from "../lib/snapshot.mjs";
 import { executeCommand as realExecuteCommand } from "../lib/commands.mjs";
+import { WorkspaceManager } from "../lib/workspace.mjs";
 import { readActivity } from "../orchestrator/activity.mjs";
 import { readBackupConfig } from "../orchestrator/backupConfig.mjs";
 
@@ -73,6 +75,25 @@ export function createBridge(opts = {}) {
   const ctx = { ...paths, runProc, readActivity };
   let sock = null, snapTimer = null, reconnectTimer = null, backoff = 1000, stopped = false;
 
+  // The remote-workspace engine: drives real Claude Code sessions in repos on this machine,
+  // streaming their output up the tunnel as WS_OUT frames. Reuses the local token in .secrets.
+  const wsSend = (kind, sessionKey, data) => {
+    if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.WS_OUT, kind, sessionKey: sessionKey ?? null, data: data ?? {} }));
+  };
+  const workspace = opts.workspace ?? new WorkspaceManager({
+    root: paths.root, secretsDir: paths.secretsDir,
+    model: opts.model ?? process.env.WORKSPACE_MODEL ?? null,
+    send: wsSend,
+    listRepos: () => {
+      try {
+        const map = JSON.parse(readFileSync(join(paths.dataDir, "map.json"), "utf8"));
+        return (map.repos || []).map((r) => ({ name: r.name, localPath: r.localPath, org: r.org?.target || r.org?.current || null })).filter((r) => r.localPath);
+      } catch { return []; }
+    },
+  });
+  // An injected (mock) workspace still needs the tunnel to push WS_OUT frames.
+  if (opts.workspace && typeof opts.workspace === "object") opts.workspace.send = wsSend;
+
   async function pushSnapshot() {
     if (!sock || sock.readyState !== 1) return;
     try {
@@ -104,18 +125,28 @@ export function createBridge(opts = {}) {
       snapTimer = setInterval(pushSnapshot, snapshotIntervalMs);
     } else if (frame.t === FRAME.COMMAND) {
       handleCommand(frame);
+    } else if (frame.t === FRAME.WS_IN) {
+      try { workspace.handleIn(frame.kind, frame.sessionKey, frame.data); } catch (e) { log("workspace error:", e.message); }
     } else if (frame.t === FRAME.PING) {
       if (sock?.readyState === 1) sock.send(JSON.stringify({ t: FRAME.PONG }));
     }
   }
 
+  // Node 22+ has a global WebSocket client; on older Node (stock Ubuntu LTS ships 18/20)
+  // fall back to the `ws` dependency instead of throwing "not a constructor" at startup.
+  let _WsImpl = WebSocketImpl || null;
+  async function resolveWs() { if (_WsImpl) return _WsImpl; _WsImpl = (await import("ws")).WebSocket; return _WsImpl; }
+
   function connect() {
     if (stopped) return;
-    sock = new WebSocketImpl(url);
-    sock.addEventListener("open", () => sock.send(JSON.stringify({ t: FRAME.HELLO, deviceSecret })));
-    sock.addEventListener("message", onMessage);
-    sock.addEventListener("close", () => { scheduleReconnect(); });
-    sock.addEventListener("error", () => { /* close will follow */ });
+    resolveWs().then((Impl) => {
+      if (stopped) return;
+      sock = new Impl(url);
+      sock.addEventListener("open", () => sock.send(JSON.stringify({ t: FRAME.HELLO, deviceSecret })));
+      sock.addEventListener("message", onMessage);
+      sock.addEventListener("close", () => { scheduleReconnect(); });
+      sock.addEventListener("error", () => { /* close will follow */ });
+    }).catch((e) => { log("no WebSocket implementation:", e.message); scheduleReconnect(); });
   }
 
   function scheduleReconnect() {

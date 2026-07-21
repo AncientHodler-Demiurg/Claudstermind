@@ -1,12 +1,28 @@
 {
   "2026-07-14": {
-    "kb": 441749,
-    "changes": 1,
+    "kb": 435857,
+    "changes": 2,
     "repos": [
-      "AncientPantheon/constructors/Pythia"
+      "AncientPantheon/constructors/Pythia",
+      "StoaChain/daimons/StoaWallet"
     ],
     "commits": [
-      "feat(admin): dedicated /admin dashboard + admin-managed verifier registry"
+      "feat(admin): dedicated /admin dashboard + admin-managed verifier registry",
+      "fix(deps): repoint stoa-js file: links after the workspace reorg"
+    ]
+  },
+  "2026-07-15": {
+    "kb": 438239,
+    "changes": 3,
+    "repos": [
+      "StoaChain/_infra/stoa-js",
+      "Tools/wasp-dev",
+      "AncientPantheon/automatons/Mnemosyne"
+    ],
+    "commits": [
+      "ci: standardize npm publish secret to NPM_PUBLISHER",
+      "docs: retainer-01 — nectar sync handoff",
+      "feat(apollo-verify): /apollo-verify signing lane for RP ownership proofs (WIP, Phase 5)"
     ]
   }
 }
