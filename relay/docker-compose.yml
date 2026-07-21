@@ -9,6 +9,10 @@ services:
     build:
       context: ..                       # the Claudstermind root — the image needs lib/ + dashboard/
       dockerfile: relay/Dockerfile
+      args:                             # version stamp — the deploy passes these so /api/version is exact
+        CM_VERSION: ${CM_VERSION:-0.0.0}
+        CM_GIT_SHA: ${CM_GIT_SHA:-unknown}
+        CM_BUILT_AT: ${CM_BUILT_AT:-}
     image: claudstermind-relay:latest
     env_file: .env                      # OIDC_*, SESSION_SECRET, AGENT_DEVICE_SECRET
     environment:

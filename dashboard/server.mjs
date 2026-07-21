@@ -34,6 +34,10 @@ import { readBrain, scanPackages, cachedActivity } from "../lib/snapshot.mjs";
 import { executeCommand } from "../lib/commands.mjs";
 import { createBridge } from "../agent/agent.mjs";
 import { WorkspaceManager } from "../lib/workspace.mjs";
+import { readVersion } from "../lib/version.mjs";
+import { runDeploy } from "../lib/deploy.mjs";
+import { nextVersion, changelogEntry, insertChangelog } from "../lib/release.mjs";
+import { writeFileSync } from "node:fs";
 import { readRelayConfig, writeRelayConfig, readDeviceSecret, saveDeviceSecret } from "../lib/relayConfig.mjs";
 import { readOidcConfig } from "./auth/oidcConfig.mjs";
 import { handleAuthRoute, guard, denyPage } from "./auth/routes.mjs";
@@ -129,7 +133,7 @@ function runProc(cmd, argv, opts = {}) {
 
 // Machine-local actions: they act on THIS disk, so the live deployment refuses them
 // outright — no role can grant them remotely. `ancient` is the second lock, not the only one.
-const LOCAL_ONLY = new Set(["/api/backup", "/api/restore", "/api/master-pollinate"]);
+const LOCAL_ONLY = new Set(["/api/backup", "/api/restore", "/api/master-pollinate", "/api/deploy", "/api/release"]);
 
 // The context handed to executeCommand — the SAME single command path the online
 // bridge uses. Local buttons and relayed commands run through one whitelist + executor,
@@ -191,6 +195,33 @@ if (!OIDC) {
   });
 }
 
+// ---- Deploy pipeline state (ships THIS repo to the live box; see lib/deploy.mjs) ----
+const CM_ROOT = resolve(__dir, "..");                 // the Claudstermind repo root (source of the tar)
+const DEPLOY = { running: false, log: [], subs: new Set(), startedAt: null, result: null };
+function deployLog(line) { DEPLOY.log.push(line); if (DEPLOY.log.length > 2000) DEPLOY.log.shift(); for (const w of DEPLOY.subs) { try { w(line); } catch {} } }
+function startDeploy() {
+  if (DEPLOY.running) return { ok: false, reason: "already-running", message: "A deploy is already in progress." };
+  DEPLOY.running = true; DEPLOY.log = []; DEPLOY.result = null; DEPLOY.startedAt = Date.now();
+  const v = readVersion();
+  runDeploy({ repoRoot: CM_ROOT, host: "stoanodeprime", version: v.version, gitSha: v.gitSha, builtAt: new Date().toISOString(), onLog: deployLog })
+    .then((r) => { DEPLOY.result = r; deployLog(r.ok ? "__DONE_OK__" : "__DONE_FAIL__"); })
+    .catch((e) => { DEPLOY.result = { ok: false, error: String(e && e.message || e) }; deployLog("__DONE_FAIL__"); })
+    .finally(() => { DEPLOY.running = false; });
+  return { ok: true, started: true, version: v.version };
+}
+function doRelease({ bump, summary }) {
+  const pkgPath = join(CM_ROOT, "package.json");
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+  const version = nextVersion(pkg.version, bump);
+  pkg.version = version;
+  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+  const clPath = join(CM_ROOT, "CHANGELOG.md");
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const md = readFileSync(clPath, "utf8");
+  writeFileSync(clPath, insertChangelog(md, changelogEntry(version, dateStr, summary)));
+  return { ok: true, version };   // readVersion re-reads package.json live, so Pending updates at once
+}
+
 /**
  * CSRF: reject a state-changing request that a DIFFERENT origin initiated.
  *
@@ -218,6 +249,9 @@ const handler = async (req, res) => {
   if (await handleAuthRoute(req, res, url, OIDC)) return;
 
   const who = await guard(req, OIDC);
+
+  // ---- version: PUBLIC, before the gate — the header medallion shows it on every surface. ----
+  if (path === "/api/version") { res.setHeader("cache-control", "no-store"); return sendJSON(res, 200, readVersion()); }
 
   // ---- who am I: PUBLIC by design, and answered BEFORE the gate — the UI has to be
   // able to discover that it is logged out in order to render the login button. ----
@@ -288,6 +322,33 @@ const handler = async (req, res) => {
     let d = {}; try { d = JSON.parse(body || "{}"); } catch {}
     const { sessionKey = null, ...data } = d;
     try { WORKSPACE.handleIn(action, sessionKey, data); return sendJSON(res, 200, { ok: true }); }
+    catch (e) { return sendJSON(res, 500, { ok: false, message: String(e && e.message || e) }); }
+  }
+
+  // ---- Deploy & Version: ship this build to the live box (local machine holds source + SSH) ----
+  if (path === "/api/deploy/status") {
+    let live = null;
+    try { live = await (await fetch("https://brain.ancientholdings.eu/api/version", { signal: AbortSignal.timeout(4000) })).json(); } catch { /* live unreachable */ }
+    return sendJSON(res, 200, { running: DEPLOY.running, pending: readVersion(), live, startedAt: DEPLOY.startedAt, result: DEPLOY.result, logTail: DEPLOY.log.slice(-40) });
+  }
+  if (path === "/api/deploy/stream" && req.method === "GET") {
+    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Execute permission required." });
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
+    for (const line of DEPLOY.log) res.write(`data: ${JSON.stringify(line)}\n\n`);   // replay so a late viewer sees the whole run
+    const w = (line) => { try { res.write(`data: ${JSON.stringify(line)}\n\n`); } catch {} };
+    DEPLOY.subs.add(w);
+    const hb = setInterval(() => { try { res.write(": keep-alive\n\n"); } catch {} }, 25000); hb.unref?.();
+    req.on("close", () => { clearInterval(hb); DEPLOY.subs.delete(w); });
+    return;
+  }
+  if (path === "/api/deploy" && req.method === "POST") {   // gated above (sameOrigin + canExecute + local-only)
+    return sendJSON(res, 200, startDeploy());
+  }
+  if (path === "/api/release" && req.method === "POST") {
+    let body = ""; for await (const c of req) body += c;
+    let d = {}; try { d = JSON.parse(body || "{}"); } catch {}
+    if (!["patch", "minor", "major"].includes(d.bump)) return sendJSON(res, 400, { ok: false, message: "bump must be patch|minor|major" });
+    try { return sendJSON(res, 200, doRelease({ bump: d.bump, summary: d.summary })); }
     catch (e) { return sendJSON(res, 500, { ok: false, message: String(e && e.message || e) }); }
   }
 

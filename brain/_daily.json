@@ -24,5 +24,15 @@
       "docs: retainer-01 — nectar sync handoff",
       "feat(apollo-verify): /apollo-verify signing lane for RP ownership proofs (WIP, Phase 5)"
     ]
+  },
+  "2026-07-21": {
+    "kb": 486743,
+    "changes": 1,
+    "repos": [
+      "AncientPantheon/websites/Pantheon"
+    ],
+    "commits": [
+      "docs(arch): automaton codex mount shows one lock control (§6b)"
+    ]
   }
 }

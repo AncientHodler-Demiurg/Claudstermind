@@ -9,40 +9,29 @@
   <link rel="icon" type="image/png" href="/brand/favicon.png?v=2" />
 </head>
 <body data-theme="dark">
-  <header class="top">
-    <div class="brand">
-      <!-- Claudstermind mark: the generated blue circuit-brain logo. -->
-      <img class="brainmark" src="/brand/claudstermind-mark.png?v=2" width="34" height="34" alt="Claudstermind" />
-
-      <div>
-        <h1>Claudstermind</h1>
-        <p class="sub">Master map of everything under <b>Ancient Holdings</b></p>
+  <!-- The Pantheonic Header: sticky, full-chrome-width separator, up to 3 fixed levels. -->
+  <header class="ph" id="ph">
+    <div class="ph-inner">
+      <div class="ph-l1">
+        <a class="ph-name" href="#overview" title="Claudstermind — home">
+          <img class="brainmark" src="/brand/claudstermind-mark.png?v=2" width="28" height="28" alt="" />
+          <span>Claudstermind</span>
+        </a>
+        <a class="ph-ver" id="phVer" href="#admin/deploy" title="version notes">v—</a>
+        <button class="ph-btn --ghost ph-back" id="phBack" hidden>◄ back</button>
+        <span class="ph-spacer"></span>
+        <span class="model-pill" id="modelPill">model: —</span>
+        <span class="model-pill" id="genPill">—</span>
+        <div class="ph-identity" id="phIdentity"></div>
+        <button id="themeBtn" class="ph-btn --ghost" title="Toggle theme">◐</button>
       </div>
-    </div>
-    <div class="top-right">
-      <span class="model-pill" id="modelPill">model: —</span>
-      <span class="model-pill" id="genPill">—</span>
-      <span class="model-pill" id="authPill" hidden>—</span>
-      <button id="themeBtn" class="ghost" title="Toggle theme">◐</button>
+      <div class="ph-l2" id="phL2">
+        <div class="ph-sections" id="phSections"></div>
+        <a class="ph-btn --primary ph-action" id="phAction" href="#workspace">Workspace ↗</a>
+      </div>
+      <div class="ph-l3" id="phSubnav"></div>
     </div>
   </header>
-
-  <nav class="tabs" id="tabs">
-    <button data-view="overview" class="active">Overview</button>
-    <button data-view="activity" id="tabActivity">Activity</button>
-    <button data-view="tree">Map</button>
-    <button data-view="matrix">Org × Role</button>
-    <button data-view="graph">Dependency graph</button>
-    <button data-view="movements">Movements</button>
-    <button data-view="packages">Packages</button>
-    <button data-view="cascade">Cascade</button>
-    <button data-view="git">Git state</button>
-    <button data-view="tokens">Tokens</button>
-    <button data-view="brain">Brain</button>
-    <button data-view="workspace" id="tabWorkspace" hidden>Workspace</button>
-    <button data-view="relay" id="tabRelay">Relay</button>
-    <button data-view="ops" id="tabOps">Ops</button>
-  </nav>
 
   <main id="main">
     <section id="statbar" class="statbar"></section>

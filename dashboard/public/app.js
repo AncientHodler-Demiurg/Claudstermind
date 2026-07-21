@@ -100,6 +100,98 @@ function repoCard(r, { stripe, branch, sublines = [], muted = false, extra = [] 
   ]);
 }
 
+/* ---------- Pantheonic navigation: Tier-1 sections, Tier-2 sub-views, and the admin space ----------
+   The URL hash is the source of truth (§3.7). `#section`, `#section/sub`, and `#admin[/section]`. */
+const SECTIONS = [
+  { id: "overview", label: "Overview", view: "overview" },
+  { id: "map", label: "Map", subs: [
+    { id: "tree", label: "Tree", view: "tree" },
+    { id: "matrix", label: "Org × Role", view: "matrix" },
+    { id: "graph", label: "Dependency graph", view: "graph" },
+    { id: "movements", label: "Movements", view: "movements" },
+    { id: "packages", label: "Packages", view: "packages" },
+  ] },
+  { id: "activity", label: "Activity", view: "activity" },
+  { id: "pipeline", label: "Pipeline", subs: [
+    { id: "cascade", label: "Cascade", view: "cascade" },
+    { id: "git", label: "Git state", view: "git" },
+  ] },
+  { id: "brain", label: "Brain", view: "brain" },
+  { id: "workspace", label: "Workspace", view: "workspace", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local") },
+];
+const ADMIN_SECTIONS = [
+  { id: "deploy", icon: "🚀", label: "Deploy & Version", enabled: true },
+  { id: "ops", icon: "⚙", label: "Ops", enabled: true },
+  { id: "relay", icon: "🔌", label: "Relay", enabled: true },
+  { id: "tokens", icon: "🔑", label: "Tokens", enabled: true },
+];
+const sectionById = (id) => SECTIONS.find((s) => s.id === id);
+const subViewOf = (sec, subId) => { const sub = (sec.subs || []).find((x) => x.id === subId) || (sec.subs || [])[0]; return sub ? sub.view : sec.view; };
+let ROUTE = { admin: false, section: "overview", sub: null };
+let ADMIN_SECTION = null;    // when VIEW==="admin": the selected section id, or null (unselected prompt)
+let LAST_MAIN = "#overview"; // where the admin "back" returns to
+
+function parseHash(h) {
+  const parts = (h || "").replace(/^#/, "").split("/");
+  if (parts[0] === "admin") return { admin: true, section: parts[1] || null, sub: null };
+  const section = sectionById(parts[0]) ? parts[0] : "overview";
+  return { admin: false, section, sub: parts[1] || null };
+}
+function applyRoute() {
+  ROUTE = parseHash(location.hash);
+  if (ROUTE.admin) { VIEW = "admin"; ADMIN_SECTION = ROUTE.section; }
+  else {
+    let sec = sectionById(ROUTE.section) || SECTIONS[0];
+    if (sec.gate && !sec.gate()) {
+      // A gated section (e.g. Workspace for a non-ancient viewer) reached by URL → rewrite the
+      // address to overview so the URL matches the view; the replace re-enters applyRoute.
+      if (location.hash && location.hash !== "#overview") { location.replace("#overview"); return; }
+      sec = SECTIONS[0]; ROUTE = { admin: false, section: "overview", sub: null };
+    }
+    if (sec.subs && sec.subs.length) { const sub = sec.subs.find((x) => x.id === ROUTE.sub) || sec.subs[0]; ROUTE.sub = sub.id; VIEW = sub.view; }  // normalize so L3 highlight matches
+    else VIEW = sec.view;
+    LAST_MAIN = location.hash && location.hash !== "#admin" ? location.hash : "#overview";   // set only for a passing route
+  }
+  renderHeader();
+  render();
+}
+function roleBadge(role) { const b = el("span", { class: "role-badge" + (role === "ancient" ? " is-ancient" : "") }); b.textContent = role; return b; }
+function renderIdentity() {
+  const host = $("#phIdentity"); if (!host) return;
+  const adminLink = (enabled) => enabled
+    ? el("a", { class: "ph-btn --ghost --sm", href: "#admin" }, ["Admin"])
+    : (() => { const s = el("span", { class: "ph-btn --ghost --sm is-disabled", title: "requires the ancient role", "aria-disabled": "true" }, ["Admin"]); return s; })();
+  if (ME.mode === "local") { host.replaceChildren(roleBadge("local"), adminLink(true)); return; }
+  if (!ME.authenticated) { host.replaceChildren(el("a", { class: "ph-btn --primary --sm", href: "/auth/login" }, ["Login with AncientHub"])); return; }
+  const isAncient = (ME.roles || []).includes("ancient");
+  const nameB = el("b", {}); nameB.textContent = ME.name || ME.sub || "signed in";
+  host.replaceChildren(el("span", { class: "ph-id-name" }, ["Signed in as ", nameB]), roleBadge(isAncient ? "ancient" : ((ME.roles || [])[0] || "member")), adminLink(isAncient), el("a", { class: "ph-btn --ghost --sm", href: "/auth/logout" }, ["Log out"]));
+}
+function renderHeader() {
+  const phSections = $("#phSections"), phSubnav = $("#phSubnav"), phL2 = $("#phL2"), phBack = $("#phBack"), phAction = $("#phAction");
+  if (!phSections) return;
+  // L2 — Tier-1 sections (gated ones filtered out)
+  const secs = SECTIONS.filter((s) => !s.gate || s.gate());
+  phSections.replaceChildren(...secs.map((s) => el("a", { class: "ph-btn " + (!ROUTE.admin && ROUTE.section === s.id ? "--active" : "--ghost"), href: "#" + s.id }, [s.label])));
+  // L3 — the active section's Tier-2 sub-views (reserved-height zone, empty when none)
+  const sec = !ROUTE.admin ? sectionById(ROUTE.section) : null;
+  const subs = (sec && sec.subs) ? sec.subs : [];
+  const activeSub = ROUTE.sub || (subs[0] && subs[0].id);
+  phSubnav.replaceChildren(...subs.map((sub) => el("a", { class: "ph-btn --sm " + (activeSub === sub.id ? "--active" : "--ghost"), href: `#${sec.id}/${sub.id}` }, [sub.label])));
+  // Admin variant (§3.6) — only Level 1; the sidebar is the nav
+  phL2.hidden = ROUTE.admin;
+  phSubnav.hidden = ROUTE.admin;
+  phBack.hidden = !ROUTE.admin;
+  phBack.onclick = () => { location.hash = LAST_MAIN; };
+  // One memorable action — the cockpit when it's available, else the login/overview
+  const wsOn = ME.canExecute && (ME.mode === "live" || ME.mode === "local");
+  phAction.hidden = ROUTE.admin || !wsOn;
+  phAction.textContent = "Workspace ↗"; phAction.setAttribute("href", "#workspace");
+  renderIdentity();
+  renderConnBanner();
+  renderLinkPill();
+}
+
 async function boot() {
   // Who am I, and therefore what may this page even offer? In local mode the answer
   // is "everything" and nothing below changes. On the live deployment it decides
@@ -112,7 +204,10 @@ async function boot() {
   if (ME.mode === "live" && !ME.authenticated) return renderPublic();
   if (ME.mode === "live" && !ME.canRead) return renderDenied();
 
-  renderAuthPill();
+  // Version chip in the medallion (§10) — public, so it shows on every surface.
+  try { const v = await (await fetch("/api/version", { cache: "no-store" })).json(); const vc = $("#phVer"); if (vc) { vc.textContent = "v" + v.version; vc.title = `v${v.version}${v.gitSha ? " · " + v.gitSha : ""}${v.builtAt ? " · " + v.builtAt : ""}`; } } catch {}
+
+  renderHeader();
 
   MAP = await (await fetch("/api/map")).json();
   try { TOKENS = await (await fetch("/api/tokens")).json(); } catch { TOKENS = { tokens: [] }; }
@@ -120,22 +215,9 @@ async function boot() {
   $("#genPill").textContent = "generated " + MAP.meta.generated;
   buildLegend();
 
-  // Tab routing: each tab has its own URL via the hash (#tokens, #git, …), so a tab is
-  // linkable/bookmarkable and back/forward works. Clicking a tab updates the hash;
-  // changing the hash (link, bookmark, history) switches the tab.
-  const VIEWS = new Set([...$("#tabs").querySelectorAll("button[data-view]")].map((b) => b.dataset.view));
-  function applyView(view, { push = true } = {}) {
-    if (!VIEWS.has(view)) view = "overview";
-    VIEW = view;
-    [...$("#tabs").children].forEach((x) => x.classList.toggle("active", x.dataset.view === view));
-    if (push && ("#" + view) !== location.hash) location.hash = view;   // fires hashchange → no double render
-    else render();
-  }
-  $("#tabs").addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-view]");
-    if (b) applyView(b.dataset.view);
-  });
-  window.addEventListener("hashchange", () => applyView(location.hash.replace(/^#/, ""), { push: false }));
+  // Navigation is URL-driven (§3.7): header buttons are real <a href="#…"> links, so a click
+  // updates the hash; parse the hash on load + on every hashchange and render from it.
+  window.addEventListener("hashchange", applyRoute);
 
   // On the online relay, the tunnel can come up or drop while the page is open. Poll
   // /api/me so the banner and action buttons track the live connection state; when it
@@ -146,7 +228,7 @@ async function boot() {
       const flipped = next.localConnected !== ME.localConnected || next.localActionsAvailable !== ME.localActionsAvailable;
       next._fetchedAt = Date.now();
       ME = next;
-      renderAuthPill();
+      renderHeader();
       if (flipped) render();
     }, 10_000);
     // A faster tick just for the "updated Xs ago" freshness on the receiving-end pill.
@@ -159,50 +241,17 @@ async function boot() {
     if (VIEW === "graph") render();
   });
   renderStatbar();
-  // Open the tab named in the URL hash (deep link / bookmark), else the default.
-  applyView(location.hash.replace(/^#/, "") || "overview", { push: false });
+  // Render the view named in the URL hash (deep link / bookmark), else the default.
+  applyRoute();
 }
 
-/* ---------- auth: the header pill + hiding what the live site cannot do ---------- */
-function renderAuthPill() {
-  const pill = $("#authPill");
-  const opsTab = $("#tabOps");
-
-  // Workspace (drive Claude Code per repo) — available on the local dashboard (this machine)
-  // AND on the online site for an ancient admin. Set BEFORE the local-mode early return below,
-  // so the tab isn't left hidden in local mode. `canExecute` is the lock (true locally,
-  // ancient-only on the live relay); never modern, never public.
-  const wsTab = $("#tabWorkspace");
-  if (wsTab) wsTab.hidden = !(ME.canExecute && (ME.mode === "live" || ME.mode === "local"));
-
-  if (ME.mode === "local") {
-    // Local dev: exactly as before auth existed. No pill, Ops present.
-    pill.hidden = true;
-    return;
-  }
-  pill.hidden = false;
-
-  if (!ME.authenticated) {
-    pill.innerHTML = '<a href="/auth/login">Sign in with AncientHub</a>';
-  } else {
-    const tier = ME.canExecute ? "ancient" : (ME.roles.includes("modern") ? "modern · read-only" : "no admin role");
-    pill.innerHTML = `${escapeHtml(ME.name || ME.sub || "signed in")} <span style="opacity:.65">· ${tier}</span> · <a href="/auth/logout">sign out</a>`;
-  }
-
-  // Backup / restore / cascade-trigger act on the work machine's disk. When they are
-  // unavailable (a modern viewer, or the bridge is offline) the tab is removed rather
-  // than shown full of dead buttons.
-  if (opsTab) opsTab.hidden = !ME.localActionsAvailable;
-  renderConnBanner();
-  renderLinkPill();
-}
-
-// Strip the dashboard chrome down to just the brand header for the login / denied gates.
+// Strip the dashboard chrome down to just the medallion for the login / denied / public gates.
 function gateChrome() {
-  const t = $("#tabs"); if (t) t.style.display = "none";
-  const sb = $("#statbar"); if (sb) sb.style.display = "none";
+  for (const id of ["#phL2", "#phSubnav", "#statbar"]) { const e = $(id); if (e) e.style.display = "none"; }
   const foot = document.querySelector("footer.foot"); if (foot) foot.style.display = "none";
-  for (const id of ["#modelPill", "#genPill", "#authPill"]) { const e = $(id); if (e) e.hidden = true; }
+  for (const id of ["#modelPill", "#genPill"]) { const e = $(id); if (e) e.hidden = true; }
+  // The identity block still renders the login button on the public/denied gates.
+  renderIdentity();
 }
 
 // Unauthenticated on the live site → the branded login screen. Nothing else is shown.
@@ -282,7 +331,7 @@ function renderLinkPill() {
   let pill = $("#linkPill");
   if (!pill) {
     pill = el("span", { id: "linkPill", class: "model-pill" });
-    $("#authPill")?.insertAdjacentElement("beforebegin", pill);
+    $("#phIdentity")?.insertAdjacentElement("beforebegin", pill);
   }
   pill.hidden = false;
   if (ME.localConnected) {
@@ -356,6 +405,7 @@ function render() {
   if (VIEW !== "ops" && OPS_TIMER) { clearInterval(OPS_TIMER); OPS_TIMER = null; }
   if (VIEW !== "relay" && RELAY_TIMER) { clearInterval(RELAY_TIMER); RELAY_TIMER = null; }
   if (VIEW !== "workspace" && WS_ES) { try { WS_ES.close(); } catch {} WS_ES = null; }
+  if (!(VIEW === "admin" && ADMIN_SECTION === "deploy") && DEPLOY_ES) { try { DEPLOY_ES.close(); } catch {} DEPLOY_ES = null; }
   if (VIEW !== "git" && GIT_TIMER) { clearInterval(GIT_TIMER); GIT_TIMER = null; }
   document.body.classList.toggle("ws-full", VIEW === "workspace");   // Workspace breaks out to full width
   if (VIEW === "cascade") v.replaceChildren(viewCascade());
@@ -372,7 +422,123 @@ function render() {
   else if (VIEW === "workspace") v.replaceChildren(viewWorkspace());
   else if (VIEW === "brain") v.replaceChildren(viewBrain());
   else if (VIEW === "tree") v.replaceChildren(viewTree());
+  else if (VIEW === "admin") v.replaceChildren(viewAdmin(ADMIN_SECTION));
 }
+
+/* ---------- Admin: sidebar + content pane (§5), behind the AdminGate (§5.3) ---------- */
+function adminGateCard(title, sub, href, cta) {
+  return el("div", { class: "gate", style: "min-height:40vh" }, [
+    el("h2", { class: "gate-title" }, [title]), el("p", { class: "gate-sub" }, [sub]),
+    href ? el("a", { href, class: "loginbtn" }, [cta]) : "",
+  ]);
+}
+function viewAdmin(sectionId) {
+  // AdminGate — four states from /api/me. Local mode is implicitly ancient.
+  if (ME.mode === "live") {
+    if (!ME.authenticated) return adminGateCard("Sign in", "The admin surface is for the ancient admin.", "/auth/login", "Login with AncientHub");
+    if (!(ME.roles || []).includes("ancient")) return adminGateCard("Ancient only", "Your account isn't ancient — admin is limited to the ancient role.", "/auth/logout", "Sign out");
+  }
+  const side = el("aside", { class: "admin-side" }, ADMIN_SECTIONS.map((s) => {
+    const a = el("a", { class: "admin-item" + (s.id === sectionId ? " on" : "") + (s.enabled ? "" : " disabled"), href: s.enabled ? "#admin/" + s.id : "#admin" }, [
+      el("span", { class: "admin-ic" }, [s.icon]), el("span", { class: "admin-label" }, [s.label]),
+      s.enabled ? "" : el("span", { class: "admin-soon" }, ["soon"]),
+    ]);
+    if (!s.enabled) a.addEventListener("click", (e) => e.preventDefault());
+    return a;
+  }));
+  const pane = el("div", { class: "admin-pane" }, []);
+  const s = ADMIN_SECTIONS.find((x) => x.id === sectionId);
+  if (!sectionId) pane.replaceChildren(el("div", { class: "admin-empty" }, ["Select a section from the left to begin."]));
+  else if (!s || !s.enabled) pane.replaceChildren(el("div", { class: "admin-empty" }, ["That section is planned — coming later."]));
+  else if (sectionId === "ops") pane.replaceChildren(viewOps());
+  else if (sectionId === "relay") pane.replaceChildren(viewRelay());
+  else if (sectionId === "tokens") pane.replaceChildren(viewTokens());
+  else if (sectionId === "deploy") pane.replaceChildren(viewDeploy());
+  else pane.replaceChildren(el("div", { class: "admin-empty" }, ["Unknown section."]));
+  return el("div", { class: "admin-layout" }, [side, pane]);
+}
+/* ---------- Admin → Deploy & Version (§10 + the §3 deploy button) ---------- */
+let DEPLOY_ES = null;
+function viewDeploy() {
+  const root = el("div", { class: "deploy-wrap" }, []);
+  const verRow = el("div", { class: "deploy-vers" }, [el("div", { class: "hint" }, ["Loading version state…"])]);
+  const releaseBox = el("div", { class: "deploy-release" }, []);
+  const term = el("pre", { class: "deploy-term" }, ["(no deploy run yet)"]);
+  const actions = el("div", { class: "deploy-actions" }, []);
+  const note = el("div", { class: "hint" }, []);
+
+  const verCard = (title, v, tone) => el("div", { class: "deploy-card " + (tone || "") }, [
+    el("div", { class: "deploy-card-t" }, [title]),
+    el("div", { class: "deploy-ver" }, [v ? "v" + v.version : "—"]),
+    el("div", { class: "deploy-sha" }, [v ? (v.gitSha || "") + (v.builtAt ? " · " + new Date(v.builtAt).toLocaleString() : "") : "unreachable"]),
+  ]);
+
+  function openStream() {
+    try { DEPLOY_ES && DEPLOY_ES.close(); } catch {}
+    term.textContent = "";
+    DEPLOY_ES = new EventSource("/api/deploy/stream");
+    DEPLOY_ES.onmessage = (e) => {
+      let line; try { line = JSON.parse(e.data); } catch { return; }
+      if (line === "__DONE_OK__" || line === "__DONE_FAIL__") { note.textContent = line === "__DONE_OK__" ? "✓ Deploy finished — refresh version state." : "✗ Deploy failed — see the log."; refresh(); try { DEPLOY_ES.close(); } catch {} return; }
+      term.textContent += line + "\n"; term.scrollTop = term.scrollHeight;
+    };
+    DEPLOY_ES.onerror = () => { try { DEPLOY_ES.close(); } catch {} };
+  }
+
+  async function refresh() {
+    let st = {}; try { st = await (await fetch("/api/deploy/status", { cache: "no-store" })).json(); } catch {}
+    const pending = st.pending, live = st.live && st.live.version ? st.live : null;
+    const same = pending && live && pending.version === live.version && pending.gitSha === live.gitSha;
+    verRow.replaceChildren(
+      verCard("Live · brain.ancientholdings.eu", live, same ? "ok" : "stale"),
+      el("div", { class: "deploy-arrow" }, [same ? "＝" : "⇒"]),
+      verCard("Pending · this machine", pending, "pending"),
+    );
+    // Deploy button — lit when pending ≠ live
+    const deployBtn = el("button", { class: "loginbtn" + (same ? " secondary" : "") }, [st.running ? "Deploying…" : (same ? "Redeploy" : "Deploy to live ↗")]);
+    if (st.running) deployBtn.disabled = true;
+    deployBtn.addEventListener("click", async () => {
+      if (!confirm("Deploy the current build to brain.ancientholdings.eu? The relay rebuilds (~1 min).")) return;
+      note.textContent = "Starting deploy…"; openStream();
+      const r = await wsPost2("/api/deploy", {});
+      if (!r.ok) { try { DEPLOY_ES.close(); } catch {} DEPLOY_ES = null; note.textContent = "⚠ " + (r.message || "could not start"); }
+    });
+    const logBtn = el("button", { class: "ghost" }, ["Show live log"]);
+    logBtn.addEventListener("click", openStream);
+    // The deploy/release endpoints are local-only (the local dashboard holds the source + SSH).
+    // From the live site this panel is a read-only version monitor.
+    if (ME.mode === "local") { actions.replaceChildren(deployBtn, logBtn); if (st.running && !DEPLOY_ES) openStream(); }
+    else actions.replaceChildren(el("div", { class: "hint" }, ["Deploy & release run from the local dashboard on the work machine (it holds the source + SSH). Remote-trigger over the tunnel is a planned follow-up."]));
+    if (st.logTail && st.logTail.length && term.textContent === "(no deploy run yet)") term.textContent = st.logTail.join("\n");
+  }
+
+  // Release controls
+  const bumpSel = el("select", { class: "wsel" }, [el("option", { value: "patch" }, ["patch"]), el("option", { value: "minor" }, ["minor"]), el("option", { value: "major" }, ["major"])]);
+  const summary = el("textarea", { class: "ws-prompt", rows: "2", placeholder: "Changelog summary for this release…" });
+  const releaseBtn = el("button", { class: "ghost" }, ["Cut release"]);
+  releaseBtn.addEventListener("click", async () => {
+    if (!summary.value.trim()) { note.textContent = "Write a changelog summary first."; return; }
+    const r = await wsPost2("/api/release", { bump: bumpSel.value, summary: summary.value.trim() });
+    if (r.ok) { note.textContent = `Cut v${r.version}. Now Deploy to ship it.`; summary.value = ""; refresh(); const vc = $("#phVer"); if (vc) vc.textContent = "v" + r.version; }
+    else note.textContent = "⚠ " + (r.message || "release failed");
+  });
+  releaseBox.replaceChildren(
+    el("h3", { style: "margin:0 0 4px" }, ["Cut a release"]),
+    el("div", { class: "hint" }, ["Bumps package.json + writes a CHANGELOG entry, then Deploy ships it. (Local dashboard only.)"]),
+    el("div", { class: "deploy-release-row" }, [bumpSel, summary, releaseBtn]),
+  );
+
+  root.replaceChildren(
+    el("h2", { class: "deploy-h" }, ["Deploy & Version"]),
+    verRow,
+    el("div", { class: "deploy-actions-row" }, [actions, note]),
+    ...(ME.mode === "local" ? [releaseBox, el("h3", { style: "margin:14px 0 4px" }, ["Deploy log"]), term] : []),
+  );
+  refresh();
+  return root;
+}
+// A tiny POST helper for the admin (deploy/release) endpoints.
+const wsPost2 = (url, body) => fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) }).then((r) => r.json()).catch(() => ({ ok: false }));
 
 /* ---------- tree: the folder map of everything Claudstermind tracks ---------- */
 function viewTree() {
@@ -1256,7 +1422,13 @@ function viewWorkspace() {
     history: [], historyRepo: null,
     permQueue: [],                 // pending tool-permission requests — FIFO so two panes never clobber
     pendingOpens: new Map(),       // savedSessionKey -> { paneId, mode } — reopens in flight, correlated
+    dataSizes: {},                 // localPath -> { bytes, conversations, turns } — collected raw volume
   };
+  const fmtBytes = (n) => { n = n || 0; if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(0) + " KB"; return (n / 1048576).toFixed(1) + " MB"; };
+  function dataBadge(localPath) {
+    const d = st.dataSizes[localPath]; if (!d || !d.conversations) return "";
+    return el("span", { class: "ws-databadge", title: `${d.conversations} conversation(s) · ${d.turns} turn(s) · ${fmtBytes(d.bytes)} of raw history` }, [`${fmtBytes(d.bytes)} · ${d.conversations}`]);
+  }
   // org for a workspace-relative path — the curated map value when known, else the top folder.
   const ORG_BY_PATH = new Map((MAP?.repos || []).map((r) => [normPath(r.localPath), repoOrg(r)]));
   const orgOfPath = (rel) => ORG_BY_PATH.get(normPath(rel)) || (rel.split("/")[0] || "Other");
@@ -1392,7 +1564,7 @@ function viewWorkspace() {
       sideList.replaceChildren(...[...known, ...rest].map((org) => {
         const meta = (MAP?.orgs || {})[org] || { color: "#64748b" };
         const cards = groups.get(org).sort((a, b) => a.name.localeCompare(b.name)).map((r) => {
-          const b = el("button", { class: "ws-side-item", title: r.localPath }, [el("span", { class: "ws-side-name" }, [r.name])]);
+          const b = el("button", { class: "ws-side-item", title: r.localPath }, [el("span", { class: "ws-side-name" }, [r.name]), dataBadge(r.localPath)]);
           b.addEventListener("click", () => pickRepoForActive(r.localPath));
           return b;
         });
@@ -1417,6 +1589,7 @@ function viewWorkspace() {
       el("span", { class: "ws-tree-ic" }, [node.isRepo ? "📦" : (hasKids ? (expanded ? "📂" : "📁") : "·")]),
       el("span", { class: "ws-tree-name" }, [depth === 0 ? "workspace" : node.name]),
       node.isRepo ? repoBadge() : "",
+      node.isRepo ? dataBadge(rel) : "",
     ]);
     chev.addEventListener("click", (e) => { e.stopPropagation(); if (hasKids) toggleExpand(here); });
     row.addEventListener("click", () => { if (node.isRepo && depth > 0) pickRepoForActive(rel); else if (hasKids) toggleExpand(here); });
@@ -1468,6 +1641,7 @@ function viewWorkspace() {
         renderSidebar();
       }
       if (Array.isArray(data.history)) { st.history = data.history; renderHistory(); }
+      if (Array.isArray(data.dataSizes)) { st.dataSizes = Object.fromEntries(data.dataSizes.map((d) => [d.repo, d])); renderSidebar(); }
       if (Array.isArray(data.sessions)) for (const s of data.sessions) { const p = paneOf(s.sessionKey); if (p) { p.status = s.status || p.status; if (s.usage) p.usage = s.usage; paintPane(p); } }
       if (data.session) { const p = paneOf(data.session.sessionKey); if (p) { Object.assign(p, { status: data.session.status ?? p.status, usage: data.session.usage ?? p.usage }); paintPane(p); } }
       if (typeof data.trustedDefault === "boolean") { st.trusted = data.trustedDefault; trustToggle.checked = st.trusted; }
@@ -1509,7 +1683,7 @@ function viewWorkspace() {
       paintPane(p); setUsageTotal();
     }
   }
-  function primeControls() { wsPost("control", { action: "list" }); wsPost("control", { action: "tree" }); wsPost("control", { action: "history", args: {} }); }
+  function primeControls() { wsPost("control", { action: "list" }); wsPost("control", { action: "tree" }); wsPost("control", { action: "history", args: {} }); wsPost("control", { action: "dataSizes" }); }
   function openStream() {
     try { WS_ES && WS_ES.close(); } catch {}
     WS_ES = new EventSource("/api/workspace/stream");

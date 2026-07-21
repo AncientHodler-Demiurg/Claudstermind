@@ -20,6 +20,7 @@ import { WebSocketServer } from "ws";
 import { readOidcConfig } from "../dashboard/auth/oidcConfig.mjs";
 import { handleAuthRoute, guard } from "../dashboard/auth/routes.mjs";
 import { AgentLink, authorizeMutation, routeToCommand } from "./relay-core.mjs";
+import { readVersion } from "../lib/version.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PUBLIC = resolve(__dir, "..", "dashboard", "public");
@@ -141,6 +142,8 @@ export function createRelay(opts = {}) {
     if (await handleAuthRoute(req, res, url, oidc)) return;
     const who = await guard(req, oidc);
     const connected = link.connected;
+
+    if (path === "/api/version") { res.setHeader("cache-control", "no-store"); return sendJSON(res, 200, readVersion()); }
 
     if (path === "/api/me") {
       res.setHeader("cache-control", "no-store");
