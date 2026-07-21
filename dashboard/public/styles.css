@@ -257,23 +257,34 @@ body.ws-full main { max-width: none; padding: 14px 18px 40px; }
 
 /* body: sidebar + pane grid */
 .ws-body { display: flex; gap: 12px; align-items: stretch; }
-.ws-side { width: 244px; flex: 0 0 244px; display: flex; flex-direction: column; gap: 8px;
+.ws-side { width: 366px; flex: 0 0 366px; display: flex; flex-direction: column; gap: 8px;
   background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 10px; max-height: 78vh; overflow-y: auto; }
-.ws-side-list { display: flex; flex-direction: column; gap: 3px; }
+.ws-side-list { display: flex; flex-direction: column; gap: 8px; }
+/* org "cardboard" — the Brain-page grouping, compact for the sidebar */
+.ws-orggroup { border: 1px solid color-mix(in srgb, var(--org, #64748b) 40%, var(--line)); border-radius: 10px; overflow: hidden;
+  background: color-mix(in srgb, var(--org, #64748b) 6%, transparent); }
+.ws-orggroup-hd { display: flex; align-items: center; gap: 7px; padding: 5px 9px; font-size: 12.5px; color: var(--ink);
+  background: color-mix(in srgb, var(--org, #64748b) 13%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--org, #64748b) 30%, var(--line)); }
+.ws-org-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--org, #64748b); flex: 0 0 auto; }
+.ws-org-count { margin-left: auto; font-size: 10.5px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+.ws-orggroup-body { display: flex; flex-direction: column; gap: 2px; padding: 5px; }
 .ws-side-item { display: flex; align-items: center; gap: 7px; width: 100%; text-align: left; background: transparent;
-  border: 1px solid transparent; color: var(--ink); border-radius: 8px; padding: 6px 8px; font-size: 13px; cursor: pointer; }
-.ws-side-item:hover { border-color: var(--line); background: var(--chip); }
+  border: 1px solid transparent; color: var(--ink); border-radius: 7px; padding: 5px 8px; font-size: 13px; cursor: pointer; }
+.ws-side-item:hover { border-color: color-mix(in srgb, var(--org, #64748b) 55%, transparent); background: var(--chip); }
 .ws-side-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ws-side-org { font-size: 10.5px; color: var(--ink-dim); }
-.ws-repobadge { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #34d399;
-  border: 1px solid color-mix(in srgb, #34d399 45%, transparent); border-radius: 5px; padding: 1px 5px; }
+.ws-repobadge { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #34d399;
+  border: 1px solid color-mix(in srgb, #34d399 45%, transparent); border-radius: 5px; padding: 0 4px; flex: 0 0 auto; }
 .ws-side-sep { border-top: 1px solid var(--line); margin: 4px 0; }
 
-/* tree */
-.ws-tree-row { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; background: transparent; border: 0;
-  color: var(--ink-dim); padding: 3px 8px; font-size: 12.5px; cursor: default; border-radius: 6px; }
-.ws-tree-row.is-repo { color: var(--ink); cursor: pointer; }
-.ws-tree-row.is-repo:hover { background: var(--chip); }
+/* tree — Windows-style collapsible */
+.ws-tree-node { display: flex; flex-direction: column; }
+.ws-tree-row { display: flex; align-items: center; gap: 4px; width: 100%; text-align: left; background: transparent; border: 0;
+  color: var(--ink-dim); padding: 3px 6px; font-size: 12.5px; cursor: pointer; border-radius: 6px; user-select: none; }
+.ws-tree-row:hover { background: var(--chip); }
+.ws-tree-row.is-repo { color: var(--ink); font-weight: 600; }
+.ws-chev { width: 14px; flex: 0 0 14px; text-align: center; font-size: 10px; color: var(--ink-dim); cursor: pointer; }
+.ws-chev.ghost { cursor: default; }
+.ws-tree-ic { flex: 0 0 auto; font-size: 12px; line-height: 1; }
 .ws-tree-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* history */

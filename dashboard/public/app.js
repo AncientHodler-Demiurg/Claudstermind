@@ -1248,7 +1248,8 @@ function viewWorkspace() {
   // ---- view state ----------------------------------------------------------------
   const st = {
     repos: [], tree: null, trusted: false, hasToken: true,
-    sidebarMode: "repos",          // repos | tree
+    sidebarMode: "tree",           // tree | repos — tree is the default (Windows-style, collapsible)
+    treeExpanded: new Set(),       // folder paths currently expanded
     layout: 1,                     // 1..4 visible panes
     panes: [],                     // [{ id, sessionKey, repo, transcript, usage, status, readonly, resume }]
     activeId: null,
@@ -1256,6 +1257,15 @@ function viewWorkspace() {
     permQueue: [],                 // pending tool-permission requests — FIFO so two panes never clobber
     pendingOpens: new Map(),       // savedSessionKey -> { paneId, mode } — reopens in flight, correlated
   };
+  // org for a workspace-relative path — the curated map value when known, else the top folder.
+  const ORG_BY_PATH = new Map((MAP?.repos || []).map((r) => [normPath(r.localPath), repoOrg(r)]));
+  const orgOfPath = (rel) => ORG_BY_PATH.get(normPath(rel)) || (rel.split("/")[0] || "Other");
+  // Flatten the bridge tree into the repo list (a folder is a repo iff it carries `.iz.md`).
+  function flattenRepos(node, rel, out) {
+    if (node.isRepo && rel) out.push({ name: node.name, localPath: rel, org: orgOfPath(rel) });
+    for (const c of node.children || []) flattenRepos(c, rel ? rel + "/" + c.name : c.name, out);
+    return out;
+  }
   const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", transcript: [], usage: {}, status: "idle", readonly: false, resume: null });
   const paneUI = new Map();        // paneId -> { root, transcriptEl, promptEl, repoSel, usageEl, dot, sendBtn, badge }
   const paneOf = (key) => st.panes.find((p) => p.sessionKey === key);
@@ -1370,30 +1380,49 @@ function viewWorkspace() {
   }
 
   // ---- sidebar: Repositories | Tree ----------------------------------------------
-  function repoBadge() { return el("span", { class: "ws-repobadge", title: "git repository" }, ["repo"]); }
+  function repoBadge() { return el("span", { class: "ws-repobadge", title: "repository (.iz.md)" }, ["repo"]); }
   function renderSidebar() {
     if (st.sidebarMode === "repos") {
-      sideList.replaceChildren(...st.repos.map((r) => {
-        const b = el("button", { class: "ws-side-item" }, [repoBadge(), el("span", { class: "ws-side-name" }, [r.name]), r.org ? el("span", { class: "ws-side-org" }, [r.org]) : ""]);
-        b.addEventListener("click", () => pickRepoForActive(r.localPath));
-        return b;
+      if (!st.repos.length) { sideList.replaceChildren(el("div", { class: "hint" }, ["No repositories found (a folder is a repo when it has a .iz.md marker)."])); return; }
+      // Group into org "cardboards", in the Map's org order (unknown orgs after), like the Brain page.
+      const groups = new Map();
+      for (const r of st.repos) { if (!groups.has(r.org)) groups.set(r.org, []); groups.get(r.org).push(r); }
+      const known = Object.keys(MAP?.orgs || {}).filter((o) => groups.has(o));
+      const rest = [...groups.keys()].filter((o) => !known.includes(o)).sort();
+      sideList.replaceChildren(...[...known, ...rest].map((org) => {
+        const meta = (MAP?.orgs || {})[org] || { color: "#64748b" };
+        const cards = groups.get(org).sort((a, b) => a.name.localeCompare(b.name)).map((r) => {
+          const b = el("button", { class: "ws-side-item", title: r.localPath }, [el("span", { class: "ws-side-name" }, [r.name])]);
+          b.addEventListener("click", () => pickRepoForActive(r.localPath));
+          return b;
+        });
+        return el("div", { class: "ws-orggroup", style: `--org:${meta.color}` }, [
+          el("div", { class: "ws-orggroup-hd" }, [el("span", { class: "ws-org-dot" }, []), el("b", {}, [org]), el("span", { class: "ws-org-count" }, [String(cards.length)])]),
+          el("div", { class: "ws-orggroup-body" }, cards),
+        ]);
       }));
-      if (!st.repos.length) sideList.replaceChildren(el("div", { class: "hint" }, ["No tracked repositories yet."]));
     } else {
       sideList.replaceChildren(st.tree ? treeNode(st.tree, "", 0) : el("div", { class: "hint" }, ["Loading the folder tree…"]));
     }
   }
+  function toggleExpand(key) { if (st.treeExpanded.has(key)) st.treeExpanded.delete(key); else st.treeExpanded.add(key); renderSidebar(); }
   function treeNode(node, path, depth) {
     const here = path ? path + "/" + node.name : node.name;
     const rel = depth === 0 ? "" : here.split("/").slice(1).join("/");   // path relative to the workspace root
-    const row = el("button", { class: "ws-tree-row" + (node.isRepo ? " is-repo" : ""), style: `padding-left:${8 + depth * 12}px` }, [
-      el("span", { class: "ws-tree-name" }, [depth === 0 ? "▸ workspace" : node.name]),
+    const hasKids = (node.children || []).length > 0;
+    const expanded = st.treeExpanded.has(here);
+    const chev = el("span", { class: "ws-chev" + (hasKids ? "" : " ghost") }, [hasKids ? (expanded ? "▾" : "▸") : ""]);
+    const row = el("div", { class: "ws-tree-row" + (node.isRepo ? " is-repo" : "") + (hasKids ? " has-kids" : ""), style: `padding-left:${6 + depth * 13}px`, title: node.isRepo ? rel : "" }, [
+      chev,
+      el("span", { class: "ws-tree-ic" }, [node.isRepo ? "📦" : (hasKids ? (expanded ? "📂" : "📁") : "·")]),
+      el("span", { class: "ws-tree-name" }, [depth === 0 ? "workspace" : node.name]),
       node.isRepo ? repoBadge() : "",
     ]);
-    if (node.isRepo && depth > 0) row.addEventListener("click", () => pickRepoForActive(rel));
-    else row.addEventListener("click", () => { /* folder — no session, just a container */ });
-    const kids = (node.children || []).map((c) => treeNode(c, here, depth + 1));
-    return el("div", {}, [row, ...kids]);
+    chev.addEventListener("click", (e) => { e.stopPropagation(); if (hasKids) toggleExpand(here); });
+    row.addEventListener("click", () => { if (node.isRepo && depth > 0) pickRepoForActive(rel); else if (hasKids) toggleExpand(here); });
+    const container = el("div", { class: "ws-tree-node" }, [row]);
+    if (expanded) for (const c of node.children) container.append(treeNode(c, here, depth + 1));
+    return container;
   }
   function pickRepoForActive(localPath) {
     const p = activePane(); if (!p) return;
@@ -1428,8 +1457,16 @@ function viewWorkspace() {
   // ---- SSE handling --------------------------------------------------------------
   function onPayload({ kind, sessionKey, data }) {
     if (kind === "state") {
-      if (Array.isArray(data.repos)) { st.repos = data.repos; for (const p of st.panes) { const ui = paneUI.get(p.id); if (ui) fillRepoSelect(ui.repoSel, p.repo); } renderSidebar(); }
-      if (data.tree) { st.tree = data.tree; if (st.sidebarMode === "tree") renderSidebar(); }
+      // The repo list is derived from the TREE (the `.iz.md` markers), not the map.json list —
+      // that's the single source of truth and fixes over-counting. `list` still carries
+      // trusted/hasToken below.
+      if (data.tree) {
+        st.tree = data.tree;
+        st.repos = flattenRepos(data.tree, "", []);
+        if (!st.treeExpanded.size) st.treeExpanded.add(data.tree.name);   // start with the root expanded
+        for (const p of st.panes) { const ui = paneUI.get(p.id); if (ui) fillRepoSelect(ui.repoSel, p.repo); }
+        renderSidebar();
+      }
       if (Array.isArray(data.history)) { st.history = data.history; renderHistory(); }
       if (Array.isArray(data.sessions)) for (const s of data.sessions) { const p = paneOf(s.sessionKey); if (p) { p.status = s.status || p.status; if (s.usage) p.usage = s.usage; paintPane(p); } }
       if (data.session) { const p = paneOf(data.session.sessionKey); if (p) { Object.assign(p, { status: data.session.status ?? p.status, usage: data.session.usage ?? p.usage }); paintPane(p); } }

@@ -97,7 +97,12 @@ function sendFile(res, filePath, root) {
       res.writeHead(404, { "content-type": "text/plain" }).end("Not found");
       return;
     }
-    res.writeHead(200, { "content-type": MIME[extname(abs)] || "application/octet-stream" });
+    const ext = extname(abs);
+    const headers = { "content-type": MIME[ext] || "application/octet-stream" };
+    // App-shell assets must never be served stale — a deploy has to be visible on reload
+    // without a hard-refresh. no-cache = the browser may store but must revalidate first.
+    if (ext === ".html" || ext === ".js" || ext === ".css") headers["cache-control"] = "no-cache";
+    res.writeHead(200, headers);
     res.end(data);
   });
 }
