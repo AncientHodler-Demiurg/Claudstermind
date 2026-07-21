@@ -464,7 +464,6 @@ let DEPLOY_ES = null;
 function viewDeploy() {
   const root = el("div", { class: "deploy-wrap" }, []);
   const verRow = el("div", { class: "deploy-vers" }, [el("div", { class: "hint" }, ["Loading version state…"])]);
-  const releaseBox = el("div", { class: "deploy-release" }, []);
   const term = el("pre", { class: "deploy-term" }, ["(no deploy run yet)"]);
   const actions = el("div", { class: "deploy-actions" }, []);
   const note = el("div", { class: "hint" }, []);
@@ -513,28 +512,12 @@ function viewDeploy() {
     else actions.replaceChildren(el("div", { class: "hint" }, ["Deploy & release run from the local dashboard on the work machine (it holds the source + SSH). Remote-trigger over the tunnel is a planned follow-up."]));
     if (st.logTail && st.logTail.length && term.textContent === "(no deploy run yet)") term.textContent = st.logTail.join("\n");
   }
-
-  // Release controls
-  const bumpSel = el("select", { class: "wsel" }, [el("option", { value: "patch" }, ["patch"]), el("option", { value: "minor" }, ["minor"]), el("option", { value: "major" }, ["major"])]);
-  const summary = el("textarea", { class: "ws-prompt", rows: "2", placeholder: "Changelog summary for this release…" });
-  const releaseBtn = el("button", { class: "ghost" }, ["Cut release"]);
-  releaseBtn.addEventListener("click", async () => {
-    if (!summary.value.trim()) { note.textContent = "Write a changelog summary first."; return; }
-    const r = await wsPost2("/api/release", { bump: bumpSel.value, summary: summary.value.trim() });
-    if (r.ok) { note.textContent = `Cut v${r.version}. Now Deploy to ship it.`; summary.value = ""; refresh(); const vc = $("#phVer"); if (vc) vc.textContent = "v" + r.version; }
-    else note.textContent = "⚠ " + (r.message || "release failed");
-  });
-  releaseBox.replaceChildren(
-    el("h3", { style: "margin:0 0 4px" }, ["Cut a release"]),
-    el("div", { class: "hint" }, ["Bumps package.json + writes a CHANGELOG entry, then Deploy ships it. (Local dashboard only.)"]),
-    el("div", { class: "deploy-release-row" }, [bumpSel, summary, releaseBtn]),
-  );
-
   root.replaceChildren(
     el("h2", { class: "deploy-h" }, ["Deploy & Version"]),
+    el("div", { class: "hint" }, ["The version + changelog are cut by the agent when a change is built (Pantheonic §10). This panel just ships the built version to the live site."]),
     verRow,
     el("div", { class: "deploy-actions-row" }, [actions, note]),
-    ...(ME.mode === "local" ? [releaseBox, el("h3", { style: "margin:14px 0 4px" }, ["Deploy log"]), term] : []),
+    ...(ME.mode === "local" ? [el("h3", { style: "margin:14px 0 4px" }, ["Deploy log"]), term] : []),
   );
   refresh();
   return root;

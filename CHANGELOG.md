@@ -4,6 +4,13 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.2.4] - 2026-07-22
+
+### Changed
+- Removed the manual "Cut a release" form from Admin → Deploy & Version. Per the Pantheonic §10
+  discipline, the version bump + CHANGELOG entry are written by the agent when a change is built
+  (as with Mnemosyne/Pythia); the panel now only ships the built version to the live site.
+
 ## [0.2.3] - 2026-07-21
 
 ### Fixed
