@@ -101,7 +101,9 @@ main { padding: 18px 24px 60px; }
 .stat .l { font-size: 11px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: .5px; }
 
 .grid-orgs { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
-.orgcard { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: var(--shadow); }
+/* Narrower screens reflow to as-many-as-fit; the inline per-org-count columns apply above this. */
+@media (max-width: 1180px) { .grid-orgs { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)) !important; } }
+.orgcard { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: var(--shadow); min-width: 0; }
 .orgcard .hd { padding: 12px 14px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
 .orgcard .dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
 .orgcard .hd b { font-size: 14px; }
@@ -162,10 +164,10 @@ main { padding: 18px 24px 60px; }
 .modal-ft .btn-primary:hover { filter: brightness(1.08); }
 .modal-hint { font-size: 11px; color: var(--ink-dim); margin-right: auto; align-self: center; }
 
-.repo { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; background: var(--panel2); border: 1px solid transparent; cursor: default; }
+.repo { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; background: var(--panel2); border: 1px solid transparent; cursor: default; min-width: 0; }
 .repo:hover { border-color: var(--line); }
 .repo .glyph { width: 18px; text-align: center; flex: none; }
-.repo .rn { font-weight: 600; font-size: 12.5px; }
+.repo .rn { font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .repo .rolechip { font-size: 10px; padding: 1px 7px; border-radius: 999px; margin-left: auto; color: #0b1020; font-weight: 700; }
 .repo .move { color: #f59e0b; font-size: 11px; margin-left: 6px; }
 .repo .ver { font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--ink-dim); }

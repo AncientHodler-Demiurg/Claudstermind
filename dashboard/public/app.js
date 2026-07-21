@@ -2223,7 +2223,10 @@ function scopeSecrets(entity, scope, tokens, scan) {
 /* ---------- overview: org cards ---------- */
 function viewOverview() {
   const wrap = el("div", {}, [orgModeToggle(), el("div", { class: "hint" }, ["Repos grouped by their GitHub organisation. Orange ⇄ = a proposed movement. Hover a repo for detail."])]);
-  const grid = el("div", { class: "grid-orgs" });
+  const orgCount = Object.entries(MAP.orgs).filter(([org]) => MAP.repos.some((r) => repoOrg(r) === org)).length;
+  // One equal column per org, so all cardboards sit side by side on a wide screen (a media query
+  // in the CSS reflows to fewer columns on narrower ones).
+  const grid = el("div", { class: "grid-orgs", style: `grid-template-columns: repeat(${orgCount}, minmax(0, 1fr))` });
   for (const [org, meta] of Object.entries(MAP.orgs)) {
     const repos = MAP.repos.filter((r) => repoOrg(r) === org);
     if (!repos.length) continue;
