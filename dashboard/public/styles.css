@@ -15,10 +15,17 @@
   --shadow: 0 6px 20px rgba(20,30,60,.10);
 }
 * { box-sizing: border-box; }
+html, body { height: 100%; }
+/* Flex column so the page always fills the viewport (background + footer sink to the bottom on
+   short views) and grows past it on long ones. */
 body {
   margin: 0; background: var(--bg); color: var(--ink);
   font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  display: flex; flex-direction: column; min-height: 100%;
 }
+.ph { flex: 0 0 auto; }
+#main { flex: 1 0 auto; }
+.foot { flex: 0 0 auto; }
 /* ---------- The Pantheonic Header (§3): sticky, full-chrome-width separator, 3 levels ---------- */
 .ph { position: sticky; top: 0; z-index: 30; background: linear-gradient(180deg, var(--panel), var(--bg-2));
   border-bottom: 1px solid var(--line); }
@@ -272,7 +279,17 @@ svg text { font-family: ui-sans-serif, system-ui, sans-serif; }
 .hbar-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--ink-dim); margin-top: 3px; }
 
 /* Workspace — the remote Claude cockpit (online + ancient only). Full-width, multi-pane. */
-body.ws-full main { max-width: none; padding: 14px 18px 40px; }
+/* Workspace = a single-screen fixed page (Pantheonic Form A): no page scroll, the cockpit fills
+   the viewport and its sidebar/panes scroll internally. */
+body.ws-full { height: 100vh; overflow: hidden; }
+body.ws-full #main { flex: 1 1 auto; min-height: 0; overflow: hidden; max-width: none; padding: 12px 18px; }
+body.ws-full .foot { display: none; }
+body.ws-full .ws-root { height: 100%; }
+body.ws-full .ws-body { flex: 1; min-height: 0; }
+body.ws-full .ws-side { max-height: none; height: 100%; }
+body.ws-full .ws-grid { height: 100%; min-height: 0; }
+body.ws-full .ws-pane { height: 100%; min-height: 0; }
+body.ws-full .ws-transcript { max-height: none; flex: 1; }
 
 .ws-root { display: flex; flex-direction: column; gap: 10px; }
 .ws-toolbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
@@ -293,9 +310,12 @@ body.ws-full main { max-width: none; padding: 14px 18px 40px; }
 
 /* body: sidebar + pane grid */
 .ws-body { display: flex; gap: 12px; align-items: stretch; }
-.ws-side { width: 366px; flex: 0 0 366px; display: flex; flex-direction: column; gap: 8px;
+.ws-side { width: 293px; flex: 0 0 293px; display: flex; flex-direction: column; gap: 8px;
   background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 10px; max-height: 78vh; overflow-y: auto; }
 .ws-side-list { display: flex; flex-direction: column; gap: 8px; }
+/* Repositories | Tree toggle stays pinned atop the scrolling side menu (bleeds over the
+   sidebar's 10px padding so items scroll cleanly beneath it). */
+.ws-modes { position: sticky; top: 0; z-index: 3; background: var(--panel2); margin: -10px -10px 4px; padding: 10px 10px 6px; }
 /* org "cardboard" — the Brain-page grouping, compact for the sidebar */
 .ws-orggroup { border: 1px solid color-mix(in srgb, var(--org, #64748b) 40%, var(--line)); border-radius: 10px; overflow: hidden;
   background: color-mix(in srgb, var(--org, #64748b) 6%, transparent); }

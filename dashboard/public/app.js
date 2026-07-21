@@ -51,9 +51,10 @@ function repoIndex(items, pathOf, nameOf) {
   };
 }
 
-/** The tracked repos of one org, in Map order. */
+/** The tracked repos of one org, in Map order. Excludes non-repo placeholders ("no repo yet")
+ *  and embedded pseudo-entries, but NOT annotated real repos like "stoa-js (pre-split)". */
 function orgRepos(org) {
-  return MAP.repos.filter((r) => repoOrg(r) === org && r.localPath && !/no repo|embedded|\(/i.test(r.localPath));
+  return MAP.repos.filter((r) => repoOrg(r) === org && r.localPath && !/no repo|embedded/i.test(r.localPath));
 }
 
 /** Walk orgs in Map order; call cb(org, meta, repos) for each non-empty org. */
