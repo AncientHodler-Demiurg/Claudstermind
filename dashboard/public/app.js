@@ -1456,6 +1456,22 @@ const wsPost = (action, body) => fetch("/api/workspace/" + action, { method: "PO
 const wsUuid = () => (crypto.randomUUID ? crypto.randomUUID() : "s-" + Date.now() + "-" + Math.random().toString(36).slice(2));
 const fmtUsd = (n) => "$" + (Number(n) || 0).toFixed(2);
 
+// Pane grid limits. 8 across is sized for an ultrawide (5120px ⇒ ~600px a pane); narrower
+// screens keep the panes readable and scroll the grid sideways instead of crushing them.
+const WS_MAX_COLS = 8, WS_MAX_ROWS = 2;
+const WS_STORE_KEY = "cm.workspace.v1";
+// Mirrors PERMISSION_MODES in lib/claudeSession.mjs — the browser can't import it, so the
+// ids must stay in step with that list (the server ignores any it doesn't recognise).
+const WS_MODES = [
+  { id: "default", label: "Manual", short: "Manual" },
+  { id: "acceptEdits", label: "Accept edits", short: "Edits" },
+  { id: "plan", label: "Plan", short: "Plan" },
+  { id: "auto", label: "Auto", short: "Auto" },
+  { id: "bypassPermissions", label: "Bypass permissions", short: "Bypass" },
+];
+const WS_MODE_IDS = new Set(WS_MODES.map((m) => m.id));
+const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(v) || lo)));
+
 function viewWorkspace() {
   // The workspace runs on the local dashboard (direct, this machine) and on the online relay
   // (via the bridge tunnel). Only bail for a mode that has neither backend.
@@ -1466,11 +1482,11 @@ function viewWorkspace() {
 
   // ---- view state ----------------------------------------------------------------
   const st = {
-    repos: [], tree: null, trusted: false, hasToken: true,
+    repos: [], tree: null, defaultMode: "default", hasToken: true,
     sidebarMode: "tree",           // tree | repos — tree is the default (Windows-style, collapsible)
     treeExpanded: new Set(),       // folder paths currently expanded
-    layout: 1,                     // 1..4 visible panes
-    panes: [],                     // [{ id, sessionKey, repo, transcript, usage, status, readonly, resume }]
+    cols: 1, rows: 1,              // pane grid — up to WS_MAX_COLS × WS_MAX_ROWS
+    panes: [],                     // [{ id, sessionKey, repo, mode, transcript, usage, status, readonly, resume }]
     activeId: null,
     history: [], historyRepo: null,
     permQueue: [],                 // pending tool-permission requests — FIFO so two panes never clobber
@@ -1494,7 +1510,51 @@ function viewWorkspace() {
     for (const c of node.children || []) flattenRepos(c, rel ? rel + "/" + c.name : c.name, out);
     return out;
   }
-  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", transcript: [], usage: {}, status: "idle", readonly: false, resume: null });
+  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", mode: st.defaultMode, transcript: [], usage: {}, status: "idle", readonly: false, resume: null });
+
+  // ---- layout + pane persistence -------------------------------------------------
+  // Panes are views; conversations are files on the work machine. Without this, a refresh
+  // minted fresh session keys and silently detached every pane from its thread — the thread
+  // survived on disk but you had to go dig it out of History. We remember the arrangement
+  // (grid, repo, mode, session key) and re-attach on boot.
+  let bootRestorePending = true;
+  function saveLayout() {
+    try {
+      localStorage.setItem(WS_STORE_KEY, JSON.stringify({
+        v: 1, cols: st.cols, rows: st.rows, sidebarMode: st.sidebarMode, defaultMode: st.defaultMode, activeId: st.activeId,
+        panes: st.panes.map((p) => ({ id: p.id, sessionKey: p.sessionKey, repo: p.repo, mode: p.mode })),
+      }));
+    } catch { /* private mode / quota — the workspace still works, it just forgets */ }
+  }
+  function loadLayout() {
+    let s = null;
+    try { s = JSON.parse(localStorage.getItem(WS_STORE_KEY) || "null"); } catch { s = null; }
+    if (!s || s.v !== 1 || !Array.isArray(s.panes) || !s.panes.length) return false;
+    st.cols = clampInt(s.cols, 1, WS_MAX_COLS); st.rows = clampInt(s.rows, 1, WS_MAX_ROWS);
+    if (s.sidebarMode === "repos" || s.sidebarMode === "tree") st.sidebarMode = s.sidebarMode;
+    if (WS_MODE_IDS.has(s.defaultMode)) st.defaultMode = s.defaultMode;
+    st.panes = s.panes.slice(0, st.cols * st.rows).map((p) => ({
+      ...newPane(),
+      id: p.id || wsUuid(), sessionKey: p.sessionKey || wsUuid(), repo: p.repo || "",
+      mode: WS_MODE_IDS.has(p.mode) ? p.mode : st.defaultMode,
+    }));
+    while (st.panes.length < st.cols * st.rows) st.panes.push(newPane());
+    st.activeId = st.panes.some((p) => p.id === s.activeId) ? s.activeId : st.panes[0].id;
+    return true;
+  }
+  /** Re-attach restored panes to their saved threads — but only for keys history actually
+   *  knows, so a pane that never got a prompt doesn't trigger a "could not be opened" error. */
+  function restorePanes() {
+    const known = new Set(st.history.map((h) => h.sessionKey));
+    let n = 0;
+    for (const p of st.panes) {
+      if (!known.has(p.sessionKey) || p.transcript.length) continue;
+      st.pendingOpens.set(p.sessionKey, { paneId: p.id, mode: "restore" });
+      wsPost("control", { action: "open", args: { sessionKey: p.sessionKey } });
+      n++;
+    }
+    if (n) note(`Reattached ${n} pane(s) to their conversations — your next message continues where you left off.`);
+  }
   const paneUI = new Map();        // paneId -> { root, transcriptEl, promptEl, repoSel, usageEl, dot, sendBtn, badge }
   const paneOf = (key) => st.panes.find((p) => p.sessionKey === key);
   const activePane = () => st.panes.find((p) => p.id === st.activeId) || st.panes[0];
@@ -1505,7 +1565,7 @@ function viewWorkspace() {
   const sideList = el("div", { class: "ws-side-list" }, []);
   const histList = el("div", { class: "ws-hist" }, []);
   const usageEl = el("span", { class: "ws-usage-total" }, ["—"]);
-  const trustToggle = el("input", { type: "checkbox" });
+  const defaultModeSel = el("select", { class: "wsel wsel-sm ws-defmode" }, []);
   const permHost = el("div", {});
 
   const shortRepo = (p) => (p || "").split(/[\\/]/).filter(Boolean).pop() || "repo";
@@ -1538,24 +1598,30 @@ function viewWorkspace() {
   // ---- one pane ------------------------------------------------------------------
   function buildPane(p) {
     const repoSel = el("select", { class: "wsel wsel-sm" }, []); fillRepoSelect(repoSel, p.repo);
+    const modeSel = el("select", { class: "wsel wsel-mode", title: "Permission mode for this pane" },
+      WS_MODES.map((m) => el("option", { value: m.id }, [m.short])));
+    modeSel.value = p.mode;
     const dot = el("span", { class: "actdot" });
     const badge = el("span", { class: "ws-usage" }, ["—"]);
-    const closeBtn = el("button", { class: "ws-x", title: "Clear this pane" }, ["×"]);
+    const closeBtn = el("button", { class: "ws-x", title: "Clear this pane (ends its session)" }, ["×"]);
     const histBtn = el("button", { class: "ws-ico", title: "History for this repo" }, ["⏱"]);
     const transcriptEl = el("div", { class: "ws-transcript" }, []);
     const promptEl = el("textarea", { class: "ws-prompt", rows: "2", placeholder: "Message Claude… (Ctrl+Enter)" });
     const sendBtn = el("button", { class: "loginbtn ws-send" }, ["Send"]);
-    const header = el("div", { class: "ws-pane-hd" }, [dot, repoSel, histBtn, el("span", { class: "ws-spacer" }), badge, closeBtn]);
+    const header = el("div", { class: "ws-pane-hd" }, [dot, repoSel, modeSel, histBtn, el("span", { class: "ws-spacer" }), badge, closeBtn]);
     const paneRoot = el("div", { class: "ws-pane" }, [header, transcriptEl, el("div", { class: "ws-compose" }, [promptEl, sendBtn])]);
 
     paneRoot.addEventListener("mousedown", () => setActive(p.id));
-    repoSel.addEventListener("change", () => { p.repo = repoSel.value; p.readonly = false; p.resume = null; paintPane(p); });
+    repoSel.addEventListener("change", () => { p.repo = repoSel.value; p.readonly = false; p.resume = null; paintPane(p); saveLayout(); });
+    // Applies live: the server calls the SDK's setPermissionMode on a running session, so
+    // switching mid-conversation behaves the same as switching it in the Claude Code UI.
+    modeSel.addEventListener("change", () => { p.mode = modeSel.value; wsPost("control", { action: "setMode", args: { sessionKey: p.sessionKey, mode: p.mode } }); paintPane(p); saveLayout(); });
     histBtn.addEventListener("click", (e) => { e.stopPropagation(); loadHistory(p.repo || null); });
-    closeBtn.addEventListener("click", (e) => { e.stopPropagation(); p.transcript = []; p.readonly = false; p.resume = null; paintPane(p); });
+    closeBtn.addEventListener("click", (e) => { e.stopPropagation(); clearPane(p); });
     sendBtn.addEventListener("click", () => send(p));
     promptEl.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(p); } });
 
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, usageEl: badge, dot, sendBtn });
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, modeSel, usageEl: badge, dot, sendBtn });
     return paneRoot;
   }
 
@@ -1567,6 +1633,9 @@ function viewWorkspace() {
     // path that isn't a tracked repo.
     if (!Array.from(ui.repoSel.options).some((o) => o.value === (p.repo || ""))) fillRepoSelect(ui.repoSel, p.repo);
     else if (ui.repoSel.value !== (p.repo || "")) ui.repoSel.value = p.repo || "";
+    if (ui.modeSel.value !== p.mode) ui.modeSel.value = p.mode;
+    ui.modeSel.classList.toggle("danger", p.mode === "bypassPermissions");
+    ui.modeSel.classList.toggle("plan", p.mode === "plan");
     const busy = p.status === "thinking" || p.status === "awaiting-permission";
     ui.dot.classList.toggle("on", busy);
     ui.promptEl.disabled = !!p.readonly;
@@ -1584,27 +1653,59 @@ function viewWorkspace() {
     st.activeId = id;
     for (const p of st.panes) paneUI.get(p.id)?.root.classList.toggle("on", p.id === id);
     renderSidebar();
+    saveLayout();
   }
 
   function rebuildGrid() {
-    grid.dataset.cols = String(st.layout);
+    grid.dataset.cols = String(st.cols);
+    grid.dataset.rows = String(st.rows);
+    grid.style.setProperty("--ws-cols", st.cols);
+    grid.style.setProperty("--ws-rows", st.rows);
     paneUI.clear();
     grid.replaceChildren(...st.panes.map(buildPane));
     for (const p of st.panes) paintPane(p);
   }
-  function setLayout(n) {
-    st.layout = n;
-    while (st.panes.length < n) st.panes.push(newPane());
-    if (st.panes.length > n) st.panes.length = n;   // trim view; server sessions persist + live in history
+
+  /** Tell the work machine a session is finished with. Without this a pane that goes away
+   *  (trimmed by the grid, or cleared) left its SDK session running there forever, streaming
+   *  into a pane that no longer exists. */
+  function endSessions(keys) {
+    const live = keys.filter(Boolean);
+    if (live.length) wsPost("control", { action: "delete", args: { sessionKeys: live } });
+  }
+  const paneBusy = (p) => p.status === "thinking" || p.status === "awaiting-permission";
+
+  /** × on a pane: end its session and give the pane a clean key, so the next message starts a
+   *  genuinely new conversation rather than appending to the one you just cleared. */
+  function clearPane(p) {
+    if (paneBusy(p) && !window.confirm("This pane is still working. Clear it and end that session?")) return;
+    endSessions([p.sessionKey]);
+    p.sessionKey = wsUuid(); p.transcript = []; p.usage = {}; p.status = "idle"; p.readonly = false; p.resume = null;
+    paintPane(p); setUsageTotal(); saveLayout();
+  }
+
+  function setLayout(cols, rows) {
+    const c = clampInt(cols, 1, WS_MAX_COLS), r = clampInt(rows, 1, WS_MAX_ROWS);
+    const want = c * r;
+    if (st.panes.length > want) {
+      const dropped = st.panes.slice(want);
+      if (dropped.some(paneBusy) && !window.confirm(`${dropped.filter(paneBusy).length} pane(s) being dropped are still working. End those sessions?`)) return;
+      endSessions(dropped.map((p) => p.sessionKey));
+      st.panes.length = want;
+    }
+    st.cols = c; st.rows = r;
+    while (st.panes.length < want) st.panes.push(newPane());
     if (!st.panes.some((p) => p.id === st.activeId)) st.activeId = st.panes[0]?.id;
     rebuildGrid();
     renderLayoutPicker();
+    setUsageTotal();
+    saveLayout();
   }
 
   function setUsageTotal() {
     let cost = 0, tok = 0;
     for (const p of st.panes) { cost += p.usage?.costUsd || 0; tok += (p.usage?.inputTokens || 0) + (p.usage?.outputTokens || 0); }
-    usageEl.textContent = `${st.panes.length} pane(s) · ${tok.toLocaleString()} tok · ~${fmtUsd(cost)} (covered by subscription)`;
+    usageEl.textContent = `${st.cols}×${st.rows} = ${st.panes.length} pane(s) · ${tok.toLocaleString()} tok · ~${fmtUsd(cost)} (covered by subscription)`;
   }
 
   // ---- sidebar: Repositories | Tree ----------------------------------------------
@@ -1661,7 +1762,7 @@ function viewWorkspace() {
   function pickRepoForActive(localPath) {
     const p = activePane(); if (!p) return;
     p.repo = localPath; p.readonly = false; p.resume = null;
-    paintPane(p); note("Active pane → " + shortRepo(localPath));
+    paintPane(p); saveLayout(); note("Active pane → " + shortRepo(localPath));
   }
 
   // ---- per-repo history ----------------------------------------------------------
@@ -1715,12 +1816,19 @@ function viewWorkspace() {
         for (const p of st.panes) { const ui = paneUI.get(p.id); if (ui) fillRepoSelect(ui.repoSel, p.repo); }
         renderSidebar();
       }
-      if (Array.isArray(data.history)) { st.history = data.history; renderHistory(); }
+      if (Array.isArray(data.history)) {
+        st.history = data.history; renderHistory();
+        // First history payload after boot — now we know which saved keys exist, so restored
+        // panes can re-attach without guessing.
+        if (bootRestorePending) { bootRestorePending = false; restorePanes(); }
+      }
       if (Array.isArray(data.search)) { st.searchResults = data.search; renderHistory(); }
       if (Array.isArray(data.dataSizes)) { st.dataSizes = Object.fromEntries(data.dataSizes.map((d) => [d.repo, d])); renderSidebar(); }
-      if (Array.isArray(data.sessions)) for (const s of data.sessions) { const p = paneOf(s.sessionKey); if (p) { p.status = s.status || p.status; if (s.usage) p.usage = s.usage; paintPane(p); } }
-      if (data.session) { const p = paneOf(data.session.sessionKey); if (p) { Object.assign(p, { status: data.session.status ?? p.status, usage: data.session.usage ?? p.usage }); paintPane(p); } }
-      if (typeof data.trustedDefault === "boolean") { st.trusted = data.trustedDefault; trustToggle.checked = st.trusted; }
+      if (Array.isArray(data.sessions)) for (const s of data.sessions) { const p = paneOf(s.sessionKey); if (p) { p.status = s.status || p.status; if (s.mode) p.mode = s.mode; if (s.usage) p.usage = s.usage; paintPane(p); } }
+      if (data.session) { const p = paneOf(data.session.sessionKey); if (p) { Object.assign(p, { status: data.session.status ?? p.status, mode: data.session.mode ?? p.mode, usage: data.session.usage ?? p.usage }); paintPane(p); } }
+      // NOTE: the server's own defaultMode is deliberately NOT mirrored here. Every pane sends
+      // its mode with each prompt, so the toolbar picker is a local "mode for new panes"
+      // preference — echoing the server's would clobber it on every list refresh.
       if (typeof data.hasToken === "boolean") st.hasToken = data.hasToken;
       if (data.bridgeDisconnected) note("The work machine disconnected — reconnect it to resume.");
       if (data.bridgeReconnected) { bridgeNote.hidden = true; bridgeNote.textContent = ""; }
@@ -1737,9 +1845,18 @@ function viewWorkspace() {
       p.transcript = data.transcript || [];
       p.repo = data.repo || p.repo;
       p.usage = data.usage || {};
-      if (req.mode === "resume") { p.readonly = false; p.resume = data.sessionId || null; note("Resuming — your next message continues this session."); }
-      else { p.readonly = true; p.resume = null; note("Reopened read-only. Pick the repo or Resume to continue."); }
-      paintPane(p); setUsageTotal();
+      if (req.mode === "resume" || req.mode === "restore") {
+        // Adopt the saved conversation's key. The pane's own key would make the work machine
+        // persist the continuation to a SECOND file holding only the new turns — Claude would
+        // remember everything while the stored history silently forked in two.
+        const clash = st.panes.find((x) => x !== p && x.sessionKey === sessionKey);
+        if (clash) { p.readonly = true; p.resume = null; note("That conversation is already open in another pane — reopened read-only here."); }
+        else {
+          p.sessionKey = sessionKey; p.readonly = false; p.resume = data.sessionId || null;
+          if (req.mode === "resume") note("Resuming — your next message continues this session.");
+        }
+      } else { p.readonly = true; p.resume = null; note("Reopened read-only. Pick the repo or Resume to continue."); }
+      paintPane(p); setUsageTotal(); saveLayout();
       return;
     }
     if (kind === "event") {
@@ -1803,21 +1920,35 @@ function viewWorkspace() {
     const ui = paneUI.get(p.id); const text = ui.promptEl.value.trim(); if (!text) return;
     if (!p.repo) { note("Pick a repository for this pane first."); return; }
     p.transcript.push({ role: "user", text }); ui.promptEl.value = ""; paintPane(p);
-    const body = { sessionKey: p.sessionKey, repo: p.repo, text, trusted: st.trusted };
+    const body = { sessionKey: p.sessionKey, repo: p.repo, text, mode: p.mode };
     if (p.resume) { body.resume = p.resume; p.resume = null; }
     const r = await wsPost("prompt", body);
     if (!r.ok) { p.transcript.push({ kind: "error", text: r.message || "Could not reach the work machine." }); paintPane(p); }
   }
 
   // ---- toolbar controls ----------------------------------------------------------
+  // A spreadsheet-style size picker: hover to preview the grid, click to apply. 16 buttons
+  // beats 16 numbered ones, and it reads as "columns × rows" at a glance.
   const layoutPicker = el("div", { class: "ws-layout" }, []);
-  function renderLayoutPicker() {
-    layoutPicker.replaceChildren(el("span", { class: "ws-layout-lbl" }, ["Panes"]), ...[1, 2, 3, 4].map((n) => {
-      const b = el("button", { class: "ws-lbtn" + (st.layout === n ? " on" : "") }, [String(n)]);
-      b.addEventListener("click", () => setLayout(n));
-      return b;
-    }));
+  function renderLayoutPicker(hoverC, hoverR) {
+    const cells = [];
+    for (let r = 1; r <= WS_MAX_ROWS; r++) for (let c = 1; c <= WS_MAX_COLS; c++) {
+      const inHover = hoverC ? (c <= hoverC && r <= hoverR) : false;
+      const inCur = c <= st.cols && r <= st.rows;
+      const b = el("button", { class: "ws-cell" + (inCur ? " on" : "") + (inHover ? " hov" : ""), title: `${c} × ${r}`,
+        style: `grid-column:${c};grid-row:${r}` }, []);
+      b.addEventListener("mouseenter", () => renderLayoutPicker(c, r));
+      b.addEventListener("click", () => setLayout(c, r));
+      cells.push(b);
+    }
+    const shown = hoverC ? `${hoverC} × ${hoverR}` : `${st.cols} × ${st.rows}`;
+    layoutPicker.replaceChildren(
+      el("span", { class: "ws-layout-lbl" }, ["Panes"]),
+      el("div", { class: "ws-cellgrid" }, cells),
+      el("span", { class: "ws-layout-n" }, [shown]),
+    );
   }
+  layoutPicker.addEventListener("mouseleave", () => renderLayoutPicker());
   const modeToggle = el("div", { class: "ws-modes" }, []);
   function renderModeToggle() {
     modeToggle.replaceChildren(...[["repos", "Repositories"], ["tree", "Tree"]].map(([m, lbl]) => {
@@ -1828,19 +1959,30 @@ function viewWorkspace() {
   }
   const newFolderBtn = el("button", { class: "ghost", title: "Create a new folder in the workspace" }, ["+ folder"]);
   const newRepoBtn = el("button", { class: "ghost", title: "Create a new git repo in the workspace" }, ["+ repo"]);
-  trustToggle.addEventListener("change", () => { st.trusted = trustToggle.checked; wsPost("control", { action: "setTrusted", args: { value: st.trusted } }); });
+  // The default only seeds NEW panes — existing panes keep whatever they're set to, so
+  // changing it can never silently widen permissions on a conversation already running.
+  defaultModeSel.replaceChildren(...WS_MODES.map((m) => el("option", { value: m.id }, [m.label])));
+  defaultModeSel.value = st.defaultMode;
+  defaultModeSel.addEventListener("change", () => { st.defaultMode = defaultModeSel.value; saveLayout(); });
+  const applyAllBtn = el("button", { class: "ghost", title: "Set every pane to the default mode" }, ["apply to all"]);
+  applyAllBtn.addEventListener("click", () => {
+    for (const p of st.panes) { p.mode = st.defaultMode; wsPost("control", { action: "setMode", args: { sessionKey: p.sessionKey, mode: p.mode } }); paintPane(p); }
+    saveLayout();
+  });
   newFolderBtn.addEventListener("click", () => { const name = window.prompt("New folder name:"); if (name == null) return; const parent = window.prompt("Parent path (blank = root):") || ""; wsPost("control", { action: "newFolder", args: { parent, name } }); });
   newRepoBtn.addEventListener("click", () => { const name = window.prompt("New repo name (git init):"); if (name == null) return; const parent = window.prompt("Parent path (blank = root):") || ""; wsPost("control", { action: "newRepo", args: { parent, name } }); });
 
   // ---- boot ----------------------------------------------------------------------
-  st.panes = [newPane()]; st.activeId = st.panes[0].id;
-  renderLayoutPicker(); renderModeToggle(); rebuildGrid(); renderSidebar(); renderHistory();
+  if (!loadLayout()) { st.panes = [newPane()]; st.activeId = st.panes[0].id; }
+  defaultModeSel.value = st.defaultMode;   // the picker was built before the saved layout loaded
+  renderLayoutPicker(); renderModeToggle(); rebuildGrid(); renderSidebar(); renderHistory(); setUsageTotal();
   openStream();   // primeControls() fires from the hello handler once the stream is subscribed
 
   root.replaceChildren(
     el("div", { class: "ws-toolbar" }, [
       layoutPicker,
-      el("label", { class: "ws-trust", title: "When on, Claude runs every tool without asking — like working locally." }, [trustToggle, "Trusted mode"]),
+      el("label", { class: "ws-trust", title: "The permission mode new panes start in. Each pane can then be switched on its own." }, ["New panes:", defaultModeSel]),
+      applyAllBtn,
       el("span", { class: "ws-spacer" }, []),
       usageEl, newFolderBtn, newRepoBtn,
     ]),

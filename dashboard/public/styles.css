@@ -313,6 +313,19 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 .ws-lbtn, .ws-mode { background: var(--chip); border: 1px solid var(--line); color: var(--ink-dim); border-radius: 8px;
   padding: 4px 11px; font-size: 12.5px; cursor: pointer; }
 .ws-lbtn.on, .ws-mode.on { color: var(--ink); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* the 8×2 grid-size picker — hover previews, click applies */
+.ws-cellgrid { display: grid; grid-template-columns: repeat(8, 13px); grid-template-rows: repeat(2, 13px); gap: 2px; }
+.ws-cell { padding: 0; border-radius: 2px; cursor: pointer; background: var(--chip); border: 1px solid var(--line); }
+.ws-cell.on { background: color-mix(in srgb, var(--accent) 45%, transparent); border-color: var(--accent); }
+.ws-cell.hov { background: var(--accent); border-color: var(--accent); }
+.ws-layout-n { font-size: 12px; color: var(--ink-dim); margin-left: 6px; min-width: 34px; }
+
+/* permission-mode selects — the two modes that change what runs unattended are tinted */
+.ws-defmode { min-width: 148px; flex: none; }
+.wsel-mode { min-width: 0; flex: 0 0 auto; width: 74px; padding: 3px 4px; font-size: 11.5px; }
+.wsel-mode.danger { border-color: #f87171; color: #fca5a5; background: color-mix(in srgb, #f87171 14%, transparent); }
+.wsel-mode.plan { border-color: #60a5fa; color: #93c5fd; background: color-mix(in srgb, #60a5fa 14%, transparent); }
 .ws-modes { width: 100%; }
 .ws-mode { flex: 1; }
 
@@ -362,21 +375,21 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 .ws-hist-actions { display: flex; align-items: center; gap: 4px; }
 .ws-hist-when { font-size: 10px; color: var(--ink-dim); }
 
-/* pane grid */
-.ws-grid { flex: 1; display: grid; gap: 12px; min-width: 0; }
-.ws-grid[data-cols="1"] { grid-template-columns: 1fr; }
-.ws-grid[data-cols="2"] { grid-template-columns: repeat(2, 1fr); }
-.ws-grid[data-cols="3"] { grid-template-columns: repeat(3, 1fr); }
-.ws-grid[data-cols="4"] { grid-template-columns: repeat(4, 1fr); }
-@media (max-width: 1100px) { .ws-grid[data-cols="3"], .ws-grid[data-cols="4"] { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 720px) { .ws-body { flex-direction: column; } .ws-side { width: auto; flex: none; max-height: 240px; } .ws-grid { grid-template-columns: 1fr !important; } }
+/* pane grid — up to 8 across × 2 down. Columns never shrink below WS_PANE_MIN, so on a
+   narrower screen the grid scrolls sideways instead of crushing every pane to a sliver;
+   on an ultrawide (5120px) eight columns land at ~600px each and 1fr wins. */
+.ws-grid { flex: 1; display: grid; gap: 12px; min-width: 0; overflow-x: auto; overflow-y: hidden;
+  grid-template-columns: repeat(var(--ws-cols, 1), minmax(340px, 1fr));
+  grid-template-rows: repeat(var(--ws-rows, 1), minmax(0, 1fr)); }
+@media (max-width: 720px) { .ws-body { flex-direction: column; } .ws-side { width: auto; flex: none; max-height: 240px; }
+  .ws-grid { grid-template-columns: 1fr; grid-template-rows: repeat(auto-fill, minmax(340px, 1fr)); } }
 
 .ws-pane { display: flex; flex-direction: column; min-width: 0; background: var(--panel2); border: 1px solid var(--line);
-  border-radius: 12px; overflow: hidden; min-height: 340px; }
+  border-radius: 12px; overflow: hidden; min-height: 300px; }
 .ws-pane.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .ws-pane.ro { opacity: .96; }
 .ws-pane-hd { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-bottom: 1px solid var(--line); background: var(--panel); }
-.ws-usage { font-size: 10.5px; color: var(--ink-dim); white-space: nowrap; }
+.ws-usage { font-size: 10.5px; color: var(--ink-dim); white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ws-x, .ws-ico { background: transparent; border: 1px solid transparent; color: var(--ink-dim); border-radius: 6px; cursor: pointer; font-size: 13px; padding: 2px 6px; }
 .ws-x:hover, .ws-ico:hover { border-color: var(--line); color: var(--ink); }
 
