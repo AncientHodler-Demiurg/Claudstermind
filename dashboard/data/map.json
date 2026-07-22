@@ -541,7 +541,7 @@
       "layer": 0,
       "ecosystem": "StoaChain",
       "org": {
-        "current": "kadena-io (fork)",
+        "current": "StoaChain",
         "target": "StoaChain"
       },
       "localPath": "StoaChain/_infra/chainweb-mining-client",
@@ -549,7 +549,7 @@
       "branch": "pool-event-emit",
       "packages": [],
       "movement": [
-        "origin still kadena-io upstream; push to 'stoachain' remote only"
+        "✅ StoaChain/ChainwebMiningClient remote exists (master + pool-event-emit); forked from kadena-io upstream"
       ],
       "status": "active",
       "notes": "Upstream Kadena mining binary, forked. Publishes ghcr.io/stoachain/chainweb-mining-client. Reference / local use."
@@ -679,7 +679,7 @@
       "layer": 0,
       "ecosystem": "Ouronet",
       "org": {
-        "current": "StoaChain",
+        "current": "OuroborosNetwork",
         "target": "OuroborosNetwork"
       },
       "localPath": "OuroborosNetwork/_onchain/Ouronet",
@@ -687,9 +687,7 @@
       "branch": "main",
       "packages": [],
       "movement": [
-        "rename repo: Ouronet → ouronet-pact",
-        "org: StoaChain → OuroborosNetwork",
-        "move out of _Archive"
+        "✅ remote OuroborosNetwork/ouronet-pact exists (renamed from Ouronet, moved out of _Archive); local folder still named 'Ouronet' (cosmetic)"
       ],
       "status": "active",
       "notes": "On-chain DeFi primitives (Pact): SOVEREIGN/SLAVE modules, batch-mint-into-aqp, redeem, warmup-attest. The DeFi layer's on-chain half."
