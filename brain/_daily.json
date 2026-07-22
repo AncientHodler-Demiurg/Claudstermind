@@ -34,5 +34,15 @@
     "commits": [
       "docs(arch): automaton codex mount shows one lock control (§6b)"
     ]
+  },
+  "2026-07-22": {
+    "kb": 488675,
+    "changes": 1,
+    "repos": [
+      "OuroborosNetwork/_libs/DALOS_Crypto"
+    ],
+    "commits": [
+      "release: @ouronet/dalos-crypto@4.0.4 (scope rename)"
+    ]
   }
 }
