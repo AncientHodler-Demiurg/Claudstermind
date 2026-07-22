@@ -379,11 +379,11 @@
         "codex"
       ],
       "movement": [
-        "⚠️ NOT yet migrated to Pantheonic architecture — still on OLD arch"
+        "✅ dev migrated to @ouronet/* (2026-07-22); main follows via release/pollinate"
       ],
       "status": "active",
       "architectureStatus": "old — consumes @stoachain/* libs directly; Constructor (Pythia/Codex) edges are PLANNED, not active",
-      "notes": "Ouronet DEX / wallet / Codex UI (React 19 SPA). Leaf consumer. Currently pins @stoachain/{kadena-stoic-legacy,stoa-core,ouronet-core,ouronet-codex,dalos-crypto} directly (old architecture). Already correct org."
+      "notes": "Ouronet DEX / wallet / Codex UI (React 19 SPA). Leaf consumer. Pins @ouronet/{ouronet-core,ouronet-codex,dalos-crypto} + @stoachain/{stoa-core,kadena-stoic-legacy} from npm (dev branch; main follows via release)."
     },
     {
       "id": "stoawallet",
@@ -409,7 +409,7 @@
         "codex"
       ],
       "movement": [
-        "review: currently pins @ouronet/* libs via file: — confirm it only needs chain-libs + Codex"
+        "✅ Phase-4 done (2026-07-22): consumes @ouronet/* + chain libs from npm"
       ],
       "status": "active",
       "notes": "MetaMask-style chrome extension (→ mobile). NATIVE StoaChain only (Stoa + UrStoa). Imports Codex only to bring in StoaChain seeds/accounts. NOT Ouronet."
@@ -608,7 +608,7 @@
         }
       ],
       "movement": [
-        "SPLIT from stoa-js: the chain-level half stays @stoachain/*"
+        "✅ Phase-4 done (2026-07-22): chain-level half stays @stoachain (stoa-js), now publishes stoa-core+kadena-stoic-legacy only"
       ],
       "status": "active",
       "notes": "The chain-level libraries. stoa-core deps dalos-crypto + kadena-stoic-legacy. Consumed by everything."
@@ -620,7 +620,7 @@
       "layer": 1,
       "ecosystem": "Ouronet",
       "org": {
-        "current": "StoaChain",
+        "current": "OuroborosNetwork",
         "target": "OuroborosNetwork"
       },
       "localPath": "StoaChain/_infra/stoa-js (pre-split)",
@@ -640,10 +640,7 @@
         }
       ],
       "movement": [
-        "SPLIT from stoa-js → new repo",
-        "org: StoaChain → OuroborosNetwork",
-        "scope: @stoachain/* → @ouronet/*",
-        "re-pin every consumer (drive via master-pollinate)"
+        "✅ Phase-4 done (2026-07-22): split from stoa-js, @ouronet scope, all consumers re-pinned"
       ],
       "status": "active",
       "notes": "The Ouronet-level libraries. ouronet-core peer-deps stoa-core + kadena-stoic-legacy. Highest re-pin blast radius of the reorg."
@@ -655,7 +652,7 @@
       "layer": 1,
       "ecosystem": "Ouronet",
       "org": {
-        "current": "StoaChain",
+        "current": "OuroborosNetwork",
         "target": "OuroborosNetwork"
       },
       "localPath": "OuroborosNetwork/_libs/DALOS_Crypto",
@@ -670,9 +667,7 @@
         }
       ],
       "movement": [
-        "rename repo: DALOS_Crypto → dalos-crypto",
-        "org: StoaChain → OuroborosNetwork",
-        "scope: @stoachain → @ouronet"
+        "✅ Phase-4 done (2026-07-22): @ouronet/dalos-crypto@4.0.4 published; old @stoachain name deprecated"
       ],
       "status": "active",
       "notes": "Ouronet custom 1606-bit Twisted Edwards curve + Schnorr. Go Genesis frozen at v1.0.0; TS port is @ouronet/dalos-crypto. Independent v4.x line."
