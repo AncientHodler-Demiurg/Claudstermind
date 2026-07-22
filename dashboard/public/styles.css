@@ -421,3 +421,5 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 .ws-side-item .ws-databadge { margin-left: auto; }
 .ws-orggroup-hd { cursor: pointer; user-select: none; }
 .ws-org-chev { width: 12px; flex: 0 0 auto; font-size: 10px; color: var(--ink-mute); }
+.ws-search { width: 100%; background: var(--chip); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 12.5px; }
+.ws-search:focus { outline: none; border-color: var(--accent); }

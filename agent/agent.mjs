@@ -94,6 +94,19 @@ export function createBridge(opts = {}) {
   // An injected (mock) workspace still needs the tunnel to push WS_OUT frames.
   if (opts.workspace && typeof opts.workspace === "object") opts.workspace.send = wsSend;
 
+  // Run the local deploy (opts.deploy.start) and forward its log lines up the tunnel as WS_OUT,
+  // so the live site's Deploy panel tails a deploy triggered remotely.
+  function runRemoteDeploy() {
+    const dep = opts.deploy;
+    const unsub = dep.subscribe((line) => {
+      if (line === "__DONE_OK__" || line === "__DONE_FAIL__") { wsSend("deploy-done", null, { ok: line === "__DONE_OK__" }); unsub(); return; }
+      wsSend("deploy-log", null, { line });
+    });
+    let r; try { r = dep.start(); } catch (e) { r = { ok: false, message: String(e && e.message || e) }; }
+    wsSend("deploy-log", null, { line: r.ok ? `▶ deploy started (v${r.version})` : `⚠ ${r.message || r.reason}` });
+    if (!r.ok && r.reason !== "already-running") { wsSend("deploy-done", null, { ok: false }); unsub(); }
+  }
+
   async function pushSnapshot() {
     if (!sock || sock.readyState !== 1) return;
     try {
@@ -126,6 +139,9 @@ export function createBridge(opts = {}) {
     } else if (frame.t === FRAME.COMMAND) {
       handleCommand(frame);
     } else if (frame.t === FRAME.WS_IN) {
+      // A remote Deploy trigger (from the live site) runs the local deploy pipeline and streams
+      // its log back up the tunnel; everything else is a workspace action.
+      if (frame.kind === "deploy" && opts.deploy) { runRemoteDeploy(); return; }
       try { workspace.handleIn(frame.kind, frame.sessionKey, frame.data); } catch (e) { log("workspace error:", e.message); }
     } else if (frame.t === FRAME.PING) {
       if (sock?.readyState === 1) sock.send(JSON.stringify({ t: FRAME.PONG }));

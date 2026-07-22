@@ -161,6 +161,8 @@ function startBridgeFromConfig() {
       url: cfg.url, deviceSecret: secret, allowInsecure: loopback,
       paths: { root: MASTER_ROOT, dataDir: DATA_DIR, brainDir: resolve(__dir, "..", "brain"), secretsDir: SECRETS_DIR, orchDir: ORCH },
       log: (...a) => console.log("[bridge]", ...a),
+      // Lets the live site trigger a deploy over the tunnel: run the local pipeline, tail its log.
+      deploy: { start: () => startDeploy(), subscribe: (fn) => { DEPLOY.subs.add(fn); return () => DEPLOY.subs.delete(fn); } },
     }).start();
   } catch (e) { BRIDGE_ERR = e.message; }
 }

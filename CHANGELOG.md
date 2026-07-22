@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.3.0] - 2026-07-22
+
+### Added
+- **Searchable history** — a search box in the Workspace History does full-text search across a
+  repo's saved conversations (bridge `search` control), with match counts + snippets; each result
+  reopens/resumes.
+- **Remote deploy** — the Deploy button now works from the **live site**: the trigger forwards down
+  the tunnel, the work machine runs the pipeline, and the log streams back to the panel.
+
 ## [0.2.4] - 2026-07-22
 
 ### Changed

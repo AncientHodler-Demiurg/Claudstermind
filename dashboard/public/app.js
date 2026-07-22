@@ -488,16 +488,18 @@ function viewDeploy() {
 
   async function refresh() {
     let st = {}; try { st = await (await fetch("/api/deploy/status", { cache: "no-store" })).json(); } catch {}
+    const remote = !!st.remote;   // live site: the deploy runs on the work machine over the tunnel
     const pending = st.pending, live = st.live && st.live.version ? st.live : null;
     const same = pending && live && pending.version === live.version && pending.gitSha === live.gitSha;
     verRow.replaceChildren(
       verCard("Live · brain.ancientholdings.eu", live, same ? "ok" : "stale"),
       el("div", { class: "deploy-arrow" }, [same ? "＝" : "⇒"]),
-      verCard("Pending · this machine", pending, "pending"),
+      remote ? verCard("Pending · the work machine", null, "pending") : verCard("Pending · this machine", pending, "pending"),
     );
-    // Deploy button — lit when pending ≠ live
+    // Deploy is available locally (direct) or on the live site when the work machine is connected.
+    const canDeploy = !remote || st.localConnected;
     const deployBtn = el("button", { class: "loginbtn" + (same ? " secondary" : "") }, [st.running ? "Deploying…" : (same ? "Redeploy" : "Deploy to live ↗")]);
-    if (st.running) deployBtn.disabled = true;
+    if (st.running || !canDeploy) deployBtn.disabled = true;
     deployBtn.addEventListener("click", async () => {
       if (!confirm("Deploy the current build to brain.ancientholdings.eu? The relay rebuilds (~1 min).")) return;
       note.textContent = "Starting deploy…"; openStream();
@@ -506,10 +508,9 @@ function viewDeploy() {
     });
     const logBtn = el("button", { class: "ghost" }, ["Show live log"]);
     logBtn.addEventListener("click", openStream);
-    // The deploy/release endpoints are local-only (the local dashboard holds the source + SSH).
-    // From the live site this panel is a read-only version monitor.
-    if (ME.mode === "local") { actions.replaceChildren(deployBtn, logBtn); if (st.running && !DEPLOY_ES) openStream(); }
-    else actions.replaceChildren(el("div", { class: "hint" }, ["Deploy & release run from the local dashboard on the work machine (it holds the source + SSH). Remote-trigger over the tunnel is a planned follow-up."]));
+    actions.replaceChildren(deployBtn, logBtn);
+    if (remote && !st.localConnected) actions.append(el("span", { class: "hint" }, ["  (the work machine is offline)"]));
+    if (st.running && !DEPLOY_ES) openStream();
     if (st.logTail && st.logTail.length && term.textContent === "(no deploy run yet)") term.textContent = st.logTail.join("\n");
   }
   root.replaceChildren(
@@ -517,7 +518,7 @@ function viewDeploy() {
     el("div", { class: "hint" }, ["The version + changelog are cut by the agent when a change is built (Pantheonic §10). This panel just ships the built version to the live site."]),
     verRow,
     el("div", { class: "deploy-actions-row" }, [actions, note]),
-    ...(ME.mode === "local" ? [el("h3", { style: "margin:14px 0 4px" }, ["Deploy log"]), term] : []),
+    el("h3", { style: "margin:14px 0 4px" }, ["Deploy log"]), term,
   );
   refresh();
   return root;
@@ -1410,7 +1411,9 @@ function viewWorkspace() {
     pendingOpens: new Map(),       // savedSessionKey -> { paneId, mode } — reopens in flight, correlated
     dataSizes: {},                 // localPath -> { bytes, conversations, turns } — collected raw volume
     collapsedOrgs: new Set(),      // org names collapsed in the Repositories sidebar
+    searchQuery: "", searchResults: null,   // full-text search over saved conversations
   };
+  let searchTimer = null;
   const fmtBytes = (n) => { n = n || 0; if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(0) + " KB"; return (n / 1048576).toFixed(1) + " MB"; };
   function dataBadge(localPath) {
     const d = st.dataSizes[localPath]; if (!d || !d.conversations) return "";
@@ -1597,21 +1600,35 @@ function viewWorkspace() {
 
   // ---- per-repo history ----------------------------------------------------------
   function loadHistory(repo) { st.historyRepo = repo || null; wsPost("control", { action: "history", args: { repo: repo || undefined } }); histList.replaceChildren(el("div", { class: "hint" }, ["Loading history…"])); }
+  function histItem(h, snippet) {
+    const when = h.updatedAt ? new Date(h.updatedAt).toLocaleString() : "";
+    const openB = el("button", { class: "ws-ico", title: "Reopen read-only" }, ["👁"]);
+    const resumeB = el("button", { class: "ws-ico", title: "Resume live" }, ["▶"]);
+    openB.addEventListener("click", () => reopen(h.sessionKey, "open"));
+    resumeB.addEventListener("click", () => reopen(h.sessionKey, "resume"));
+    return el("div", { class: "ws-hist-item" }, [
+      el("div", { class: "ws-hist-line1" }, [el("b", {}, [shortRepo(h.repo) || "—"]), el("span", { class: "ws-hist-meta" }, [snippet != null ? `${h.matchCount} match(es)` : `${h.turns || 0} turn(s) · ~${fmtUsd(h.usage?.costUsd)}`])]),
+      el("div", { class: "ws-hist-first" }, [snippet != null ? "…" + snippet + "…" : (h.firstPrompt || "(no prompt)")]),
+      el("div", { class: "ws-hist-actions" }, [el("span", { class: "ws-hist-when" }, [when]), el("span", { class: "ws-spacer" }, []), openB, resumeB]),
+    ]);
+  }
   function renderHistory() {
-    const title = el("div", { class: "ws-hist-hd" }, ["History", el("span", { class: "ws-hist-scope" }, [st.historyRepo ? shortRepo(st.historyRepo) : "all repos"]), (() => { const b = el("button", { class: "ws-ico", title: "Refresh" }, ["⟳"]); b.addEventListener("click", () => loadHistory(st.historyRepo)); return b; })()]);
-    const items = st.history.map((h) => {
-      const when = h.updatedAt ? new Date(h.updatedAt).toLocaleString() : "";
-      const openB = el("button", { class: "ws-ico", title: "Reopen read-only" }, ["👁"]);
-      const resumeB = el("button", { class: "ws-ico", title: "Resume live" }, ["▶"]);
-      openB.addEventListener("click", () => reopen(h.sessionKey, "open"));
-      resumeB.addEventListener("click", () => reopen(h.sessionKey, "resume"));
-      return el("div", { class: "ws-hist-item" }, [
-        el("div", { class: "ws-hist-line1" }, [el("b", {}, [shortRepo(h.repo) || "—"]), el("span", { class: "ws-hist-meta" }, [`${h.turns || 0} turn(s) · ~${fmtUsd(h.usage?.costUsd)}`])]),
-        el("div", { class: "ws-hist-first" }, [h.firstPrompt || "(no prompt)"]),
-        el("div", { class: "ws-hist-actions" }, [el("span", { class: "ws-hist-when" }, [when]), el("span", { class: "ws-spacer" }, []), openB, resumeB]),
-      ]);
+    const searchBox = el("input", { class: "ws-search", type: "search", placeholder: "Search conversations…", value: st.searchQuery });
+    searchBox.addEventListener("input", () => {
+      st.searchQuery = searchBox.value;
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        if (st.searchQuery.trim()) wsPost("control", { action: "search", args: { query: st.searchQuery.trim(), repo: st.historyRepo || undefined } });
+        else { st.searchResults = null; renderHistory(); }
+      }, 280);
     });
-    histList.replaceChildren(title, ...(items.length ? items : [el("div", { class: "hint" }, ["No saved conversations yet."])]));
+    const title = el("div", { class: "ws-hist-hd" }, ["History", el("span", { class: "ws-hist-scope" }, [st.historyRepo ? shortRepo(st.historyRepo) : "all repos"]), (() => { const b = el("button", { class: "ws-ico", title: "Refresh" }, ["⟳"]); b.addEventListener("click", () => { st.searchQuery = ""; st.searchResults = null; loadHistory(st.historyRepo); }); return b; })()]);
+    const searching = st.searchResults !== null && st.searchQuery.trim();
+    const rows = searching
+      ? (st.searchResults.length ? st.searchResults.map((h) => histItem(h, h.snippet)) : [el("div", { class: "hint" }, [`No conversation matches “${st.searchQuery.trim()}”.`])])
+      : (st.history.length ? st.history.map((h) => histItem(h)) : [el("div", { class: "hint" }, ["No saved conversations yet."])]);
+    histList.replaceChildren(title, searchBox, ...rows);
+    if (searchBox.value) { searchBox.focus(); searchBox.setSelectionRange(searchBox.value.length, searchBox.value.length); }
   }
   function reopen(sessionKey, mode) {
     const p = activePane(); if (!p) { note("Open a pane first."); return; }
@@ -1633,6 +1650,7 @@ function viewWorkspace() {
         renderSidebar();
       }
       if (Array.isArray(data.history)) { st.history = data.history; renderHistory(); }
+      if (Array.isArray(data.search)) { st.searchResults = data.search; renderHistory(); }
       if (Array.isArray(data.dataSizes)) { st.dataSizes = Object.fromEntries(data.dataSizes.map((d) => [d.repo, d])); renderSidebar(); }
       if (Array.isArray(data.sessions)) for (const s of data.sessions) { const p = paneOf(s.sessionKey); if (p) { p.status = s.status || p.status; if (s.usage) p.usage = s.usage; paintPane(p); } }
       if (data.session) { const p = paneOf(data.session.sessionKey); if (p) { Object.assign(p, { status: data.session.status ?? p.status, usage: data.session.usage ?? p.usage }); paintPane(p); } }

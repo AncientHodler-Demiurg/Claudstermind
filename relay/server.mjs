@@ -187,6 +187,27 @@ export function createRelay(opts = {}) {
       });
     }
 
+    // ---- remote deploy: version state, log stream, and the trigger (ancient-only) ----
+    if (req.method === "GET" && path === "/api/deploy/status") {
+      // Live = this relay's build; pending is unknown here (it lives on the work machine) — the
+      // deploy log shows the exact version when it runs.
+      return sendJSON(res, 200, { running: false, live: readVersion(), pending: null, remote: true, localConnected: link.connected });
+    }
+    if (req.method === "GET" && path === "/api/deploy/stream") {
+      if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Deploy is ancient-only." });
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
+      // Fan only the deploy frames the bridge pushes up the tunnel, as bare log lines.
+      const unsub = link.addWsSubscriber((p) => {
+        try {
+          if (p.kind === "deploy-log") res.write(`data: ${JSON.stringify(p.data?.line || "")}\n\n`);
+          else if (p.kind === "deploy-done") res.write(`data: ${JSON.stringify(p.data?.ok ? "__DONE_OK__" : "__DONE_FAIL__")}\n\n`);
+        } catch {}
+      });
+      const hb = setInterval(() => { try { res.write(": keep-alive\n\n"); } catch {} }, 25_000); hb.unref?.();
+      req.on("close", () => { clearInterval(hb); unsub(); });
+      return;
+    }
+
     // ---- remote workspace: SSE stream of the bridge's Claude session output (ancient-only) ----
     if (req.method === "GET" && path === "/api/workspace/stream") {
       if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The workspace is ancient-only." });
@@ -212,6 +233,14 @@ export function createRelay(opts = {}) {
         const { sessionKey, ...data } = body;
         const r = link.sendWsIn(action, sessionKey ?? null, data);
         return sendJSON(res, r.ok ? 200 : (r.reason === "local-not-connected" ? 503 : 502), r);
+      }
+
+      // ---- remote deploy trigger: forward down the tunnel; the bridge runs it + streams the log ----
+      if (path === "/api/deploy") {
+        if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Deploy is ancient-only." });
+        if (!link.connected) return sendJSON(res, 503, { ok: false, reason: "local-not-connected", message: "The work machine isn't connected." });
+        const r = link.sendWsIn("deploy", null, {});
+        return sendJSON(res, r.ok ? 200 : (r.reason === "local-not-connected" ? 503 : 502), { ok: r.ok, started: r.ok, remote: true });
       }
 
       const cmd = routeToCommand(path, url, body);
