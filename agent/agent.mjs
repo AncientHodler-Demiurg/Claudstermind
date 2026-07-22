@@ -22,6 +22,8 @@ import { executeCommand as realExecuteCommand } from "../lib/commands.mjs";
 import { WorkspaceManager } from "../lib/workspace.mjs";
 import { readActivity } from "../orchestrator/activity.mjs";
 import { readBackupConfig } from "../orchestrator/backupConfig.mjs";
+import { createAggregator, registryProjects } from "../lib/localhost.mjs";
+import { forwardRequestHeaders } from "../lib/mirror.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 
@@ -65,6 +67,10 @@ export function createBridge(opts = {}) {
   const executeCommand = opts.executeCommand ?? realExecuteCommand;
   const WebSocketImpl = opts.WebSocketImpl ?? globalThis.WebSocket;
   const log = opts.log ?? ((...a) => console.log("[bridge]", ...a));
+  // The dashboard hands us ITS aggregator supervisor so process ownership lives in one
+  // place — otherwise a remote "restart" would refuse, not recognising the dashboard's
+  // child as ours. Standalone (`node agent/agent.mjs`) we make our own.
+  const aggregator = opts.aggregator ?? createAggregator({ root: paths.root });
 
   if (!url) throw new Error("RELAY_URL is required (wss://<domain>/agent).");
   if (!deviceSecret || deviceSecret.length < 32) throw new Error("AGENT_DEVICE_SECRET must be set and at least 32 characters.");
@@ -119,10 +125,16 @@ export function createBridge(opts = {}) {
     // LocalHost mirror: proxy an HTTP request to a dev server on THIS machine and return the
     // response, so the remote browser can view a local site through the tunnel.
     if (frame.cmd.type === "mirror") {
-      const { port, path: p = "/", method = "GET", headers = {} } = frame.cmd.args || {};
+      const { port, path: p = "/", method = "GET", headers = {}, bodyB64 = null } = frame.cmd.args || {};
       let result;
       try {
-        const r = await fetch(`http://127.0.0.1:${Number(port)}${p}`, { method, headers, redirect: "manual" });
+        const r = await fetch(`http://127.0.0.1:${Number(port)}${p}`, {
+          method,
+          headers: forwardRequestHeaders(headers),
+          // Non-GET bodies travel base64 so form posts and JSON APIs work through the tunnel.
+          body: ["GET", "HEAD"].includes(method) || !bodyB64 ? undefined : Buffer.from(bodyB64, "base64"),
+          redirect: "manual",
+        });
         const buf = Buffer.from(await r.arrayBuffer());
         result = { ok: true, status: r.status, headers: Object.fromEntries(r.headers), bodyB64: buf.toString("base64") };
       } catch (e) { result = { ok: false, status: 502, message: `mirror fetch failed: ${e.message}` }; }
@@ -130,12 +142,31 @@ export function createBridge(opts = {}) {
       return;
     }
     if (frame.cmd.type === "mirrorList") {
-      let projects = [];
-      try {
-        const reg = JSON.parse(readFileSync(join(paths.root, "LocalHost", "registry.json"), "utf8"));
-        projects = (reg.projects || []).filter((x) => x && x.port).map((x) => ({ key: x.key, name: x.name || x.key, port: x.port }));
-      } catch {}
+      const projects = registryProjects(paths.root);
       if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result: { ok: true, projects } }));
+      return;
+    }
+    // LocalHost aggregator: the remote panel can't frame the work machine's :3000 origin,
+    // so it drives the aggregator over JSON instead — status here, actions below.
+    if (frame.cmd.type === "lhStatus") {
+      const s = await aggregator.status();
+      let live = null;
+      if (s.running) { const r = await aggregator.api("/api/status"); if (r.ok) live = r.data; }
+      const result = { ok: true, ...s, projects: registryProjects(paths.root), live };
+      if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
+      return;
+    }
+    if (frame.cmd.type === "lhAction") {
+      const { action, key } = frame.cmd.args || {};
+      const ACTIONS = new Set(["start", "stop", "restart", "start-all", "stop-all"]);
+      let result;
+      if (action === "aggregator-restart") result = await aggregator.restart();
+      else if (!ACTIONS.has(action)) result = { ok: false, message: "unknown action" };
+      else {
+        const r = await aggregator.api("/api/" + action, { method: "POST", body: { key } });
+        result = r.ok ? { ok: true, ...(r.data || {}) } : { ok: false, message: r.error || "aggregator unreachable" };
+      }
+      if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
       return;
     }
     const args = { ...(frame.cmd.args || {}) };

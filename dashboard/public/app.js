@@ -120,6 +120,7 @@ const SECTIONS = [
   { id: "brain", label: "Brain", view: "brain" },
   { id: "workspace", label: "Workspace", view: "workspace", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local") },
   { id: "mirror", label: "Mirror", view: "mirror", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local") },
+  { id: "localhost", label: "LocalHost", view: "localhost", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local") },
 ];
 const ADMIN_SECTIONS = [
   { id: "deploy", icon: "🚀", label: "Deploy & Version", enabled: true },
@@ -410,6 +411,7 @@ function render() {
   if (VIEW !== "workspace" && WS_ES) { try { WS_ES.close(); } catch {} WS_ES = null; }
   if (!(VIEW === "admin" && ADMIN_SECTION === "deploy") && DEPLOY_ES) { try { DEPLOY_ES.close(); } catch {} DEPLOY_ES = null; }
   if (VIEW !== "git" && GIT_TIMER) { clearInterval(GIT_TIMER); GIT_TIMER = null; }
+  if (VIEW !== "localhost" && LH_TIMER) { clearInterval(LH_TIMER); LH_TIMER = null; }
   document.body.classList.toggle("ws-full", VIEW === "workspace");   // Workspace breaks out to full width
   if (VIEW === "cascade") v.replaceChildren(viewCascade());
   else if (VIEW === "activity") v.replaceChildren(viewActivity());
@@ -427,6 +429,144 @@ function render() {
   else if (VIEW === "tree") v.replaceChildren(viewTree());
   else if (VIEW === "admin") v.replaceChildren(viewAdmin(ADMIN_SECTION));
   else if (VIEW === "mirror") v.replaceChildren(viewMirror());
+  else if (VIEW === "localhost") v.replaceChildren(viewLocalHost());
+}
+
+/* ---------- LocalHost: the aggregator, embedded ----------
+   LocalHost stays its own repository beside Claudstermind and is never vendored here —
+   the dashboard holds a path and supervises the process, so edits in that repo show up
+   on a refresh with no sync step.
+
+   Two render paths, because the browser's location decides what's reachable:
+     • LOCAL  — frame the aggregator's real origin (http://localhost:<port>). Same HTML,
+                CSS and JS the standalone panel serves, so it is the panel AS IS.
+     • LIVE   — the remote browser cannot reach the work machine's port, so the same data
+                is drawn here from JSON relayed through the tunnel. Proxying its HTML
+                instead would break: the aggregator fetches root-absolute /api/status,
+                which would resolve against THIS server, not against itself. */
+function viewLocalHost() {
+  const root = el("div", { class: "lh" }, []);
+  const strip = el("div", { class: "lh-strip" }, [el("span", { class: "hint" }, ["Checking the aggregator…"])]);
+  const body = el("div", { class: "lh-body" }, []);
+  const isLocal = ME.mode === "local";
+
+  const act = async (action, key) => {
+    try {
+      await fetch("/api/localhost/action", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action, key }),
+      });
+    } catch {}
+    setTimeout(refresh, 600);
+  };
+
+  // LOCAL: one iframe, pointed at the aggregator's own origin. Nothing is re-implemented.
+  function renderLocalFrame(s) {
+    if (body.dataset.src === s.url) return;          // don't reload the frame on every poll tick
+    body.dataset.src = s.url;
+    const frame = el("iframe", { class: "lh-frame", src: s.url, title: "LocalHost Aggregator" });
+    body.replaceChildren(frame);
+  }
+
+  // LIVE: the aggregator's data, drawn in Claudstermind's chrome.
+  function renderRemoteList(s) {
+    const live = new Map((s.live?.projects || []).map((p) => [p.key, p]));
+    const rows = (s.projects || []).map((p) => {
+      const st = live.get(p.key) || {};
+      const up = !!st.up;
+      const buttons = p.managed
+        ? [
+            (() => { const b = el("button", { class: "ghost" }, ["▶ start"]); b.addEventListener("click", () => act("start", p.key)); return b; })(),
+            (() => { const b = el("button", { class: "ghost" }, ["■ stop"]); b.addEventListener("click", () => act("stop", p.key)); return b; })(),
+            (() => { const b = el("button", { class: "ghost" }, ["⟳"]); b.addEventListener("click", () => act("restart", p.key)); return b; })(),
+          ]
+        : [el("span", { class: "hint" }, ["live-only"])];
+      return el("tr", {}, [
+        el("td", {}, [el("span", { class: "lh-dot " + (up ? "--up" : "--down") }, []), p.name]),
+        el("td", {}, [el("code", {}, [":" + p.port])]),
+        el("td", {}, [p.group || "—"]),
+        el("td", {}, [up ? "running" : (st.procStatus || "stopped")]),
+        el("td", { class: "lh-actions" }, buttons),
+      ]);
+    });
+    const startAll = el("button", { class: "ghost" }, ["▶ Start all"]); startAll.addEventListener("click", () => act("start-all"));
+    const stopAll = el("button", { class: "ghost" }, ["■ Stop all"]); stopAll.addEventListener("click", () => act("stop-all"));
+    body.replaceChildren(
+      el("div", { class: "lh-bulk" }, [startAll, stopAll]),
+      el("div", { style: "overflow-x:auto" }, [
+        el("table", { class: "pkgtable" }, [
+          el("thead", {}, [el("tr", {}, ["Project", "Port", "Group", "State", ""].map((h) => el("th", {}, [h])))]),
+          el("tbody", {}, rows),
+        ]),
+      ]),
+      el("div", { class: "hint" }, [
+        "Drawn from the work machine's registry over the tunnel. The aggregator's own look-and-feel is only available on the local dashboard, where the browser can reach its port directly.",
+      ]),
+    );
+  }
+
+  function renderAbsent(s) {
+    body.replaceChildren(el("div", { class: "lh-empty" }, [
+      el("h3", {}, ["LocalHost isn't where Claudstermind expected"]),
+      el("p", {}, ["It should sit beside Claudstermind in the workspace root, as its own repository:"]),
+      el("pre", {}, ["<root>/\n├── Claudstermind/\n└── LocalHost/registry.json"]),
+      el("p", {}, ["If it lives elsewhere, set ", el("code", {}, ["CLAUDSTERMIND_LOCALHOST_DIR"]), " to its path and restart the dashboard."]),
+      s.error ? el("p", { class: "hint" }, [s.error]) : "",
+    ]));
+  }
+
+  async function refresh() {
+    let s = {};
+    try { s = await (await fetch("/api/localhost/status", { cache: "no-store" })).json(); } catch { s = { error: "dashboard unreachable" }; }
+
+    if (s.reason === "local-not-connected") {
+      strip.replaceChildren(el("span", { class: "lh-dot --down" }, []), el("b", {}, ["Work machine offline"]),
+        el("span", { class: "hint" }, ["  the tunnel isn't connected, so there's nothing to control"]));
+      body.replaceChildren(el("div", { class: "lh-empty" }, [el("h3", {}, ["Not connected"]),
+        el("p", {}, ["The LocalHost aggregator runs on the work machine. Bring its dashboard up and this reconnects."])]));
+      return;
+    }
+
+    const restart = el("button", { class: "ghost" }, ["⟳ restart aggregator"]);
+    restart.addEventListener("click", async () => {
+      restart.disabled = true;
+      try {
+        if (isLocal) await fetch("/api/localhost/restart", { method: "POST" });
+        else await act("aggregator-restart");
+        delete body.dataset.src;                    // force the frame to reload against the fresh process
+      } catch {}
+      setTimeout(refresh, 1200);
+    });
+
+    strip.replaceChildren(
+      el("span", { class: "lh-dot " + (s.running ? "--up" : "--down") }, []),
+      el("b", {}, ["LocalHost Aggregator"]),
+      el("span", { class: "hint" }, [s.running ? `  running on :${s.port}${s.owned ? " · started by Claudstermind" : " · started outside Claudstermind"}` : "  not running"]),
+      el("span", { class: "ws-spacer" }, []),
+      s.present ? restart : "",
+      s.running && isLocal ? el("a", { class: "ghost", href: s.url, target: "_blank", rel: "noreferrer" }, ["Open standalone ↗"]) : "",
+    );
+
+    if (!s.present) return renderAbsent(s);
+    if (!s.running) {
+      body.replaceChildren(el("div", { class: "lh-empty" }, [
+        el("h3", {}, ["The aggregator isn't running"]),
+        el("p", {}, ["Claudstermind starts it automatically on boot. Use ⟳ to try again."]),
+        s.error ? el("pre", {}, [s.error]) : "",
+      ]));
+      delete body.dataset.src;
+      return;
+    }
+    if (isLocal) renderLocalFrame(s); else renderRemoteList(s);
+  }
+
+  refresh();
+  clearInterval(LH_TIMER);
+  // Slow poll: this only drives the status strip (and the remote table). The framed
+  // aggregator does its own refreshing, exactly as it does standalone.
+  LH_TIMER = setInterval(refresh, isLocal ? 10000 : 5000);
+  root.replaceChildren(strip, body);
+  return root;
 }
 
 /* ---------- LocalHost mirror: view a dev server on the work machine through the tunnel ---------- */
@@ -452,7 +592,7 @@ function viewMirror() {
     openMirror(projects[0].port, projects[0].name);
   })();
   root.replaceChildren(
-    el("div", { class: "hint" }, ["View a dev server running on the work machine, here in your remote browser (proxied through the tunnel). Best for server-rendered / relative-path sites; live-reload (WebSocket) and absolute-path SPA assets may not fully work."]),
+    el("div", { class: "hint" }, ["View a dev server running on the work machine, here in your browser (proxied through the tunnel). Root-absolute assets, API calls and form posts are routed by provenance, so SPAs work. Live-reload (HMR) still won't — that needs a WebSocket, which the proxy doesn't carry."]),
     list, bar, frame,
   );
   return root;
@@ -941,6 +1081,7 @@ function viewCascade() {
    A full sweep spawns a git process per repo (~3-4s), so this does NOT poll fast:
    it loads on open, offers a manual refresh, and re-checks every 25s. */
 let GIT_TIMER = null;
+let LH_TIMER = null;
 const GIT_COLOR = { never: "#f87171", unpushed: "#60a5fa", dirty: "#fbbf24", clean: "#34d399" };
 
 function badge(text, color, title) {

@@ -21,6 +21,7 @@ import { readOidcConfig } from "../dashboard/auth/oidcConfig.mjs";
 import { handleAuthRoute, guard } from "../dashboard/auth/routes.mjs";
 import { AgentLink, authorizeMutation, routeToCommand } from "./relay-core.mjs";
 import { readVersion } from "../lib/version.mjs";
+import { parseMirrorPath, mirrorFromReferer, mirrorFromCookie, forwardRequestHeaders, buildMirrorResponse } from "../lib/mirror.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PUBLIC = resolve(__dir, "..", "dashboard", "public");
@@ -37,11 +38,16 @@ function sendJSON(res, code, obj) {
   res.end(JSON.stringify(obj));
 }
 
-function serveStatic(res, path, publicDir) {
+// `onMissing` lets the mirror's sticky-cookie fallback claim ONLY paths we don't serve.
+function serveStatic(res, path, publicDir, onMissing = null) {
   const abs = resolve(publicDir, "." + (path === "/" ? "/index.html" : path));
   if (!abs.startsWith(publicDir)) { res.writeHead(403).end("forbidden"); return; }
   readFile(abs, (err, data) => {
-    if (err) { res.writeHead(404, { "content-type": "text/plain" }).end("Not found"); return; }
+    if (err) {
+      if (onMissing) return onMissing();
+      res.writeHead(404, { "content-type": "text/plain" }).end("Not found");
+      return;
+    }
     const ext = extname(abs);
     const headers = { "content-type": MIME[ext] || "application/octet-stream" };
     // App-shell assets must never be served stale — a deploy has to be visible on reload
@@ -50,6 +56,46 @@ function serveStatic(res, path, publicDir) {
     res.writeHead(200, headers);
     res.end(data);
   });
+}
+
+// Ports the mirror is allowed to reach. The relay has no registry of its own — it learns
+// them from the work machine's `mirrorList` and from mirrors actually opened — so a stale
+// cookie can't aim the proxy at an arbitrary port on that machine.
+const MIRROR_PORTS = new Set();
+const mirrorPorts = () => [...MIRROR_PORTS];
+const rememberMirrorPorts = (projects) => { for (const p of projects || []) if (p?.port) MIRROR_PORTS.add(Number(p.port)); };
+
+/**
+ * Proxy one mirrored request down the tunnel. Identical shaping to the local dashboard's
+ * direct path — both go through lib/mirror.mjs — so a site behaves the same either way.
+ */
+async function relayToMirror(req, res, link, port, target) {
+  if (!link.connected) { res.writeHead(503, { "content-type": "text/plain" }); return res.end("The work machine isn't connected."); }
+  // This route sits ahead of the generic POST guard, so it carries its own CSRF check.
+  if (!["GET", "HEAD"].includes(req.method) && !sameOrigin(req)) {
+    res.writeHead(403, { "content-type": "text/plain" });
+    return res.end("Cross-origin state-changing requests are refused.");
+  }
+  MIRROR_PORTS.add(Number(port));
+  let bodyB64 = null;
+  if (!["GET", "HEAD"].includes(req.method)) {
+    const chunks = [];
+    await new Promise((done) => { req.on("data", (c) => chunks.push(c)); req.on("end", done); });
+    bodyB64 = Buffer.concat(chunks).toString("base64");
+  }
+  const r = await link.relay("mirror", {
+    port, path: target, method: req.method, headers: forwardRequestHeaders(req.headers), bodyB64,
+  }, 20_000);
+  if (!r || !r.ok) {
+    res.writeHead(r?.status || 502, { "content-type": "text/plain" });
+    return res.end(r?.message || "mirror failed");
+  }
+  const out = buildMirrorResponse(
+    { status: r.status, headers: r.headers || {}, body: Buffer.from(r.bodyB64 || "", "base64") },
+    port,
+  );
+  res.writeHead(out.status, out.headers);
+  return res.end(out.body);
 }
 
 /**
@@ -187,28 +233,35 @@ export function createRelay(opts = {}) {
       });
     }
 
+    // ---- LocalHost aggregator, driven over the tunnel (ancient) ----
+    // The remote browser cannot reach the work machine's :3000 origin, so the panel is
+    // rendered here from JSON rather than proxied as HTML. That also sidesteps the
+    // aggregator's root-absolute /api/* paths colliding with this server's own.
+    if (req.method === "GET" && path === "/api/localhost/status") {
+      if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only" });
+      if (!link.connected) return sendJSON(res, 503, { ok: false, reason: "local-not-connected", present: false, running: false, projects: [] });
+      const r = await link.relay("lhStatus", {}, 10000);
+      rememberMirrorPorts(r?.projects);
+      if (r?.port) MIRROR_PORTS.add(Number(r.port));   // the aggregator's own port isn't in `projects`
+      return sendJSON(res, 200, r || { ok: false, reason: "no response from the work machine" });
+    }
     // ---- LocalHost mirror: view a dev server on the work machine through the tunnel (ancient) ----
     if (req.method === "GET" && path === "/api/mirror/list") {
       if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only" });
       if (!link.connected) return sendJSON(res, 503, { ok: false, reason: "local-not-connected", projects: [] });
       const r = await link.relay("mirrorList", {}, 8000);
+      rememberMirrorPorts(r?.projects);
       return sendJSON(res, 200, { ok: !!r?.ok, projects: r?.projects || [] });
     }
-    if (req.method === "GET" && path.startsWith("/mirror/")) {
+    const mirrorHit = parseMirrorPath(path);
+    if (mirrorHit) {
       if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Mirror is ancient-only." });
-      if (!link.connected) { res.writeHead(503, { "content-type": "text/plain" }); return res.end("The work machine isn't connected."); }
-      const m = path.match(/^\/mirror\/(\d+)(\/.*)?$/);
-      if (!m) { res.writeHead(404).end("bad mirror path"); return; }
-      const port = Number(m[1]); const sub = (m[2] || "/") + (url.search || "");
-      const r = await link.relay("mirror", { port, path: sub, method: "GET" }, 20000);
-      if (!r || !r.ok) { res.writeHead(r?.status || 502, { "content-type": "text/plain" }); return res.end(r?.message || "mirror failed"); }
-      let body = Buffer.from(r.bodyB64 || "", "base64");
-      const ct = (r.headers && (r.headers["content-type"] || r.headers["Content-Type"])) || "application/octet-stream";
-      if (/text\/html/i.test(ct)) {   // inject <base> so relative asset paths resolve under /mirror/<port>/
-        body = Buffer.from(String(body).replace(/<head([^>]*)>/i, `<head$1><base href="/mirror/${port}/">`), "utf8");
-      }
-      res.writeHead(r.status || 200, { "content-type": ct, "cache-control": "no-store" });
-      return res.end(body);
+      return relayToMirror(req, res, link, mirrorHit.port, mirrorHit.sub + (url.search || ""));
+    }
+    // Made BY a mirrored page — provenance beats path, so this goes ahead of our own routes.
+    if (who.canExecute && link.connected) {
+      const fromPage = mirrorFromReferer(req.headers, { allowedPorts: mirrorPorts() });
+      if (fromPage) return relayToMirror(req, res, link, fromPage, path + (url.search || ""));
     }
 
     // ---- remote deploy: version state, log stream, and the trigger (ancient-only) ----
@@ -259,6 +312,14 @@ export function createRelay(opts = {}) {
         return sendJSON(res, r.ok ? 200 : (r.reason === "local-not-connected" ? 503 : 502), r);
       }
 
+      // ---- LocalHost control: start/stop a dev server on the work machine (ancient-only) ----
+      if (path === "/api/localhost/action") {
+        if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "LocalHost control is ancient-only." });
+        if (!link.connected) return sendJSON(res, 503, { ok: false, reason: "local-not-connected", message: "The work machine isn't connected." });
+        const r = await link.relay("lhAction", { action: body.action, key: body.key }, 20_000);
+        return sendJSON(res, r?.reason === "timeout" ? 504 : 200, r || { ok: false, message: "no response from the work machine" });
+      }
+
       // ---- remote deploy trigger: forward down the tunnel; the bridge runs it + streams the log ----
       if (path === "/api/deploy") {
         if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Deploy is ancient-only." });
@@ -296,6 +357,16 @@ export function createRelay(opts = {}) {
 
     const view = snapshotView(path, link.snapshot);
     if (view.found) { res.setHeader("cache-control", "no-store"); return sendJSON(res, 200, view.body); }
+
+    // Last resort — a nested resource of a mirrored page, whose Referer is a sub-resource
+    // rather than the page. Only for paths WE don't serve: the relay's own static assets
+    // must never be shadowed by a stale cookie.
+    const stickyMirror = (who.canExecute && link.connected)
+      ? mirrorFromCookie(req.headers, { allowedPorts: mirrorPorts() })
+      : null;
+    if (stickyMirror) {
+      return serveStatic(res, path, publicDir, () => relayToMirror(req, res, link, stickyMirror, path + (url.search || "")));
+    }
 
     serveStatic(res, path, publicDir);
   }

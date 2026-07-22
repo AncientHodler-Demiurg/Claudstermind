@@ -17,6 +17,7 @@ RUN npm install --omit=dev && npm cache clean --force
 # the auth modules + jose, the version helper, and the static UI). Nothing else of the workspace ships.
 COPY lib/protocol.mjs ./lib/protocol.mjs
 COPY lib/version.mjs ./lib/version.mjs
+COPY lib/mirror.mjs ./lib/mirror.mjs
 COPY dashboard/auth/ ./dashboard/auth/
 COPY dashboard/public/ ./dashboard/public/
 COPY relay/ ./relay/

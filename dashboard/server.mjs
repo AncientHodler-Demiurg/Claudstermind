@@ -42,6 +42,8 @@ import { cleanClaudeEnv } from "../lib/claudeSession.mjs";
 import { nextVersion, changelogEntry, insertChangelog } from "../lib/release.mjs";
 import { writeFileSync } from "node:fs";
 import { readRelayConfig, writeRelayConfig, readDeviceSecret, saveDeviceSecret } from "../lib/relayConfig.mjs";
+import { createAggregator, registryProjects, mirrorablePorts } from "../lib/localhost.mjs";
+import { parseMirrorPath, mirrorFromReferer, mirrorFromCookie, forwardRequestHeaders, buildMirrorResponse } from "../lib/mirror.mjs";
 import { readOidcConfig } from "./auth/oidcConfig.mjs";
 import { handleAuthRoute, guard, denyPage } from "./auth/routes.mjs";
 
@@ -93,7 +95,9 @@ const MIME = {
   ".webp": "image/webp",
 };
 
-function sendFile(res, filePath, root) {
+// `onMissing` lets a caller take over when the dashboard has no such file — used by the
+// mirror's sticky-cookie fallback, which must only claim paths the dashboard doesn't own.
+function sendFile(res, filePath, root, onMissing = null) {
   const abs = resolve(root, "." + (filePath === "/" ? "/index.html" : filePath));
   if (!abs.startsWith(root)) {
     res.writeHead(403).end("forbidden");
@@ -101,6 +105,7 @@ function sendFile(res, filePath, root) {
   }
   readFile(abs, (err, data) => {
     if (err) {
+      if (onMissing) return onMissing();
       res.writeHead(404, { "content-type": "text/plain" }).end("Not found");
       return;
     }
@@ -143,6 +148,40 @@ const LOCAL_ONLY = new Set(["/api/backup", "/api/restore", "/api/master-pollinat
 // so a command can't exist on one path and not the other.
 const cmdCtx = { root: MASTER_ROOT, secretsDir: SECRETS_DIR, dataDir: DATA_DIR, orchDir: ORCH, runProc, readActivity };
 
+// Proxy one request to a dev server on THIS machine and shape the reply for the browser.
+// Local mode only ever talks to loopback; the live path does the same thing through the
+// bridge (relay/server.mjs), sharing lib/mirror.mjs so both behave identically.
+async function proxyToMirror(req, res, port, target) {
+  try {
+    const body = ["GET", "HEAD"].includes(req.method)
+      ? undefined
+      : await new Promise((resolve_) => { const c = []; req.on("data", (d) => c.push(d)); req.on("end", () => resolve_(Buffer.concat(c))); });
+    const r = await fetch(`http://127.0.0.1:${port}${target}`, {
+      method: req.method,
+      headers: forwardRequestHeaders(req.headers),
+      body,
+      redirect: "manual",
+    });
+    const out = buildMirrorResponse(
+      { status: r.status, headers: Object.fromEntries(r.headers), body: Buffer.from(await r.arrayBuffer()) },
+      port,
+    );
+    res.writeHead(out.status, out.headers);
+    return res.end(out.body);
+  } catch (e) {
+    res.writeHead(502, { "content-type": "text/plain" });
+    return res.end(`mirror failed: ${e.message}`);
+  }
+}
+
+// ---- the LocalHost aggregator, supervised in-process ----
+// LocalHost stays its OWN repo beside Claudstermind ($ROOT/LocalHost) and remains
+// fully usable standalone. Claudstermind just starts it and frames it, so there is
+// one thing to launch instead of two. Nothing is vendored: the aggregator serves its
+// own files off disk, which is why edits in that repo show up here on a refresh.
+// Local mode only — a live deployment has no work-machine ports to manage.
+const AGG = createAggregator({ root: MASTER_ROOT, log: (...a) => console.log("  " + a.join(" ")) });
+
 // ---- the relay bridge, supervised in-process ----
 // This is what makes the LocalHost dashboard the single control point for the online
 // site: configure the relay address + device secret on the Ops tab, flip it on, and the
@@ -164,6 +203,9 @@ function startBridgeFromConfig() {
       url: cfg.url, deviceSecret: secret, allowInsecure: loopback,
       paths: { root: MASTER_ROOT, dataDir: DATA_DIR, brainDir: resolve(__dir, "..", "brain"), secretsDir: SECRETS_DIR, orchDir: ORCH },
       log: (...a) => console.log("[bridge]", ...a),
+      // Share the ONE aggregator supervisor, so a remote restart acts on the same child
+      // the local dashboard spawned rather than refusing it as someone else's process.
+      aggregator: AGG,
       // Lets the live site trigger a deploy over the tunnel: run the local pipeline, tail its log.
       deploy: { start: () => startDeploy(), subscribe: (fn) => { DEPLOY.subs.add(fn); return () => DEPLOY.subs.delete(fn); } },
     }).start();
@@ -306,25 +348,54 @@ const handler = async (req, res) => {
     }
   }
 
+  // ---- LocalHost aggregator: status, control, and its own API by proxy ----
+  // On THIS machine the tab frames the aggregator's real origin (http://localhost:<port>),
+  // so it is the panel as-is. These endpoints exist for the status strip, the restart
+  // button, and — when the same UI is served remotely — to drive it over JSON.
+  if (path === "/api/localhost/status" && req.method === "GET") {
+    res.setHeader("cache-control", "no-store");
+    const s = await AGG.status();
+    let live = null;
+    if (s.running) { const r = await AGG.api("/api/status"); if (r.ok) live = r.data; }
+    return sendJSON(res, 200, { ...s, projects: registryProjects(MASTER_ROOT), live });
+  }
+  if (path === "/api/localhost/logs" && req.method === "GET") {
+    res.setHeader("cache-control", "no-store");
+    return sendJSON(res, 200, { ok: true, logs: AGG.logs() });
+  }
+  if (path === "/api/localhost/restart" && req.method === "POST") {
+    return sendJSON(res, 200, await AGG.restart());
+  }
+  // Forward a control action to the aggregator's own API. The whitelist keeps this from
+  // becoming a general-purpose proxy into whatever else happens to listen on that port.
+  if (path === "/api/localhost/action" && req.method === "POST") {
+    let raw = ""; for await (const c of req) raw += c;
+    let d = {}; try { d = JSON.parse(raw || "{}"); } catch {}
+    const ACTIONS = new Set(["start", "stop", "restart", "start-all", "stop-all"]);
+    if (!ACTIONS.has(d.action)) return sendJSON(res, 400, { ok: false, error: "unknown action" });
+    const r = await AGG.api("/api/" + d.action, { method: "POST", body: { key: d.key } });
+    return sendJSON(res, r.ok ? 200 : 502, r.ok ? (r.data ?? { ok: true }) : { ok: false, error: r.error || "aggregator unreachable" });
+  }
+
   // ---- LocalHost mirror (direct, on this machine) ----
   if (path === "/api/mirror/list" && req.method === "GET") {
-    let projects = [];
-    try { const reg = JSON.parse(readFileSync(resolve(__dir, "..", "..", "LocalHost", "registry.json"), "utf8")); projects = (reg.projects || []).filter((x) => x && x.port).map((x) => ({ key: x.key, name: x.name || x.key, port: x.port })); } catch {}
-    return sendJSON(res, 200, { ok: true, projects });
+    // Straight from the central registry — resolved by relative path, no drive letters,
+    // and absent LocalHost simply yields an empty list rather than a 500.
+    return sendJSON(res, 200, { ok: true, projects: registryProjects(MASTER_ROOT) });
   }
-  if (path.startsWith("/mirror/") && req.method === "GET") {
+  // Explicit `/mirror/<port>/…`, plus the provenance fallback below for the
+  // root-absolute URLs a mirrored site emits. Any method, so forms work.
+  const mirrorHit = parseMirrorPath(path);
+  if (mirrorHit) {
     if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only" });
-    const m = path.match(/^\/mirror\/(\d+)(\/.*)?$/);
-    if (!m) { res.writeHead(404).end("bad mirror path"); return; }
-    const port = Number(m[1]); const sub = (m[2] || "/") + (url.search || "");
-    try {
-      const r = await fetch(`http://127.0.0.1:${port}${sub}`, { redirect: "manual" });
-      let body = Buffer.from(await r.arrayBuffer());
-      const ct = r.headers.get("content-type") || "application/octet-stream";
-      if (/text\/html/i.test(ct)) body = Buffer.from(String(body).replace(/<head([^>]*)>/i, `<head$1><base href="/mirror/${port}/">`), "utf8");
-      res.writeHead(r.status, { "content-type": ct, "cache-control": "no-store" });
-      return res.end(body);
-    } catch (e) { res.writeHead(502, { "content-type": "text/plain" }); return res.end("mirror failed: " + e.message); }
+    return proxyToMirror(req, res, mirrorHit.port, mirrorHit.sub + (url.search || ""));
+  }
+  // A request the mirrored page itself made (root-absolute asset, fetch, form post).
+  // Ahead of the dashboard's own routes on purpose: provenance beats path, so a mirrored
+  // site asking for /styles.css gets ITS stylesheet, not the dashboard's.
+  if (who.canExecute) {
+    const fromPage = mirrorFromReferer(req.headers, { allowedPorts: mirrorablePorts(MASTER_ROOT) });
+    if (fromPage) return proxyToMirror(req, res, fromPage, path + (url.search || ""));
   }
 
   // ---- local Workspace: SSE stream of this machine's Claude sessions ----
@@ -644,6 +715,19 @@ const handler = async (req, res) => {
     }
     return;
   }
+
+  // Last resort, and only for paths the dashboard has nothing for: a nested resource of a
+  // mirrored page, whose Referer is a sub-resource rather than the page itself. The
+  // dashboard's own files are served first (below) — a stale cookie must never be able to
+  // shadow them, or viewing a mirror once would leave the dashboard serving that site's
+  // app.js in place of its own.
+  const stickyMirror = who.canExecute
+    ? mirrorFromCookie(req.headers, { allowedPorts: mirrorablePorts(MASTER_ROOT) })
+    : null;
+  if (stickyMirror) {
+    return sendFile(res, path, PUBLIC_DIR, () => proxyToMirror(req, res, stickyMirror, path + (url.search || "")));
+  }
+
   sendFile(res, path, PUBLIC_DIR);
 };
 
@@ -705,6 +789,20 @@ const server = http.createServer((req, res) => {
 
 process.on("unhandledRejection", (err) => console.error("dashboard: unhandled rejection —", err));
 
+// Don't outlive our children. An orphaned aggregator would keep holding its port, and the
+// next boot would "adopt" that stale process — so an edit to LocalHost/server.mjs would
+// silently not take effect. Only the instance we spawned is stopped; an externally started
+// one is left alone (AGG.stop refuses what it doesn't own).
+let shuttingDown = false;
+function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try { AGG.stop(); } catch {}
+  process.exit(0);
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
 // LOCAL mode binds LOOPBACK ONLY. Local mode grants full execute rights to whoever
 // asks — no session, no login — which is safe for the machine's own user and wide
 // open to anyone else on the LAN. Binding 0.0.0.0 here would hand every host on the
@@ -729,6 +827,13 @@ server.listen(PORT, HOST, () => {
     // Bring up the relay bridge if it's configured + enabled — the dashboard supervises it.
     startBridgeFromConfig();
     const rc = readRelayConfig(DATA_DIR);
-    console.log(`  Relay bridge: ${rc.enabled && rc.url ? `ON — ${rc.url}` : "off (configure it on the Ops tab)"}\n`);
+    console.log(`  Relay bridge: ${rc.enabled && rc.url ? `ON — ${rc.url}` : "off (configure it on the Ops tab)"}`);
+    // Bring up the LocalHost aggregator too, so one launch gives you both. Adopts an
+    // instance that's already listening; says so plainly when the repo isn't there.
+    AGG.ensure().then((s) => {
+      if (!s.present) console.log("  LocalHost aggregator: not found (expected at <root>/LocalHost) — the tab will explain how to point at it)\n");
+      else if (s.running && !s.owned) console.log(`  LocalHost aggregator: adopted an already-running instance — ${s.url}\n`);
+      else console.log("");
+    }).catch((e) => console.error("  LocalHost aggregator:", e.message));
   }
 });

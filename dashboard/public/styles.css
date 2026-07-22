@@ -443,3 +443,22 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 .mirror-list { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
 .mirror-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px 10px 0 0; border-bottom: 0; }
 .mirror-frame { width: 100%; height: 68vh; border: 1px solid var(--line); border-radius: 0 0 10px 10px; background: #fff; }
+
+/* ---- LocalHost tab: the embedded aggregator ----
+   Locally the body is a single iframe of the aggregator's own origin, so it needs room
+   and a white backdrop (the aggregator paints its own background). Remotely the body is
+   a plain table, so the same shell has to work for both. */
+.lh { display: flex; flex-direction: column; gap: 10px; }
+.lh-strip { display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.lh-frame { width: 100%; height: 74vh; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.lh-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 7px; flex: none; }
+.lh-dot.--up { background: #34d399; }
+.lh-dot.--down { background: var(--danger); }
+.lh-bulk { display: flex; gap: 8px; margin-bottom: 10px; }
+.lh-actions { white-space: nowrap; }
+.lh-actions button { margin-right: 4px; }
+.lh-empty { padding: 22px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.lh-empty h3 { margin: 0 0 8px; }
+.lh-empty p { margin: 6px 0; color: var(--ink-soft); }
+.lh-empty pre { background: var(--panel-2); padding: 10px 12px; border-radius: 8px; overflow-x: auto; }
