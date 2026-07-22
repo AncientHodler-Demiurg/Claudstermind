@@ -306,6 +306,27 @@ const handler = async (req, res) => {
     }
   }
 
+  // ---- LocalHost mirror (direct, on this machine) ----
+  if (path === "/api/mirror/list" && req.method === "GET") {
+    let projects = [];
+    try { const reg = JSON.parse(readFileSync(resolve(__dir, "..", "..", "LocalHost", "registry.json"), "utf8")); projects = (reg.projects || []).filter((x) => x && x.port).map((x) => ({ key: x.key, name: x.name || x.key, port: x.port })); } catch {}
+    return sendJSON(res, 200, { ok: true, projects });
+  }
+  if (path.startsWith("/mirror/") && req.method === "GET") {
+    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only" });
+    const m = path.match(/^\/mirror\/(\d+)(\/.*)?$/);
+    if (!m) { res.writeHead(404).end("bad mirror path"); return; }
+    const port = Number(m[1]); const sub = (m[2] || "/") + (url.search || "");
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}${sub}`, { redirect: "manual" });
+      let body = Buffer.from(await r.arrayBuffer());
+      const ct = r.headers.get("content-type") || "application/octet-stream";
+      if (/text\/html/i.test(ct)) body = Buffer.from(String(body).replace(/<head([^>]*)>/i, `<head$1><base href="/mirror/${port}/">`), "utf8");
+      res.writeHead(r.status, { "content-type": ct, "cache-control": "no-store" });
+      return res.end(body);
+    } catch (e) { res.writeHead(502, { "content-type": "text/plain" }); return res.end("mirror failed: " + e.message); }
+  }
+
   // ---- local Workspace: SSE stream of this machine's Claude sessions ----
   if (path === "/api/workspace/stream" && req.method === "GET") {
     if (!WORKSPACE) return sendJSON(res, 404, { error: "workspace unavailable in this mode" });

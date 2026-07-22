@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.5.0] - 2026-07-22
+
+### Added
+- **LocalHost mirror** — a new **Mirror** section: view a dev server running on the work machine
+  in your remote browser, proxied through the tunnel (`/mirror/<port>/`), with a `<base>` injected
+  so relative asset paths resolve. Server list from `LocalHost/registry.json`. Ancient-only.
+  (Best-effort: absolute-path SPA assets + live-reload WebSockets may not fully work.)
+
 ## [0.4.0] - 2026-07-22
 
 ### Added

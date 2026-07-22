@@ -116,6 +116,28 @@ export function createBridge(opts = {}) {
   }
 
   async function handleCommand(frame) {
+    // LocalHost mirror: proxy an HTTP request to a dev server on THIS machine and return the
+    // response, so the remote browser can view a local site through the tunnel.
+    if (frame.cmd.type === "mirror") {
+      const { port, path: p = "/", method = "GET", headers = {} } = frame.cmd.args || {};
+      let result;
+      try {
+        const r = await fetch(`http://127.0.0.1:${Number(port)}${p}`, { method, headers, redirect: "manual" });
+        const buf = Buffer.from(await r.arrayBuffer());
+        result = { ok: true, status: r.status, headers: Object.fromEntries(r.headers), bodyB64: buf.toString("base64") };
+      } catch (e) { result = { ok: false, status: 502, message: `mirror fetch failed: ${e.message}` }; }
+      if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
+      return;
+    }
+    if (frame.cmd.type === "mirrorList") {
+      let projects = [];
+      try {
+        const reg = JSON.parse(readFileSync(join(paths.root, "LocalHost", "registry.json"), "utf8"));
+        projects = (reg.projects || []).filter((x) => x && x.port).map((x) => ({ key: x.key, name: x.name || x.key, port: x.port }));
+      } catch {}
+      if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result: { ok: true, projects } }));
+      return;
+    }
     const args = { ...(frame.cmd.args || {}) };
     // The relay can't know the local backup location — fill it from local config.
     if (frame.cmd.type === "backup" && !args.dest) {

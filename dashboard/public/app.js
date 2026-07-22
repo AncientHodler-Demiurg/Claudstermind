@@ -119,6 +119,7 @@ const SECTIONS = [
   ] },
   { id: "brain", label: "Brain", view: "brain" },
   { id: "workspace", label: "Workspace", view: "workspace", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local") },
+  { id: "mirror", label: "Mirror", view: "mirror", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local") },
 ];
 const ADMIN_SECTIONS = [
   { id: "deploy", icon: "🚀", label: "Deploy & Version", enabled: true },
@@ -425,6 +426,36 @@ function render() {
   else if (VIEW === "brain") v.replaceChildren(viewBrain());
   else if (VIEW === "tree") v.replaceChildren(viewTree());
   else if (VIEW === "admin") v.replaceChildren(viewAdmin(ADMIN_SECTION));
+  else if (VIEW === "mirror") v.replaceChildren(viewMirror());
+}
+
+/* ---------- LocalHost mirror: view a dev server on the work machine through the tunnel ---------- */
+function viewMirror() {
+  const root = el("div", {}, []);
+  const list = el("div", { class: "mirror-list" }, [el("div", { class: "hint" }, ["Loading local servers…"])]);
+  const frame = el("iframe", { class: "mirror-frame", title: "mirror" });
+  const bar = el("div", { class: "mirror-bar" }, []);
+  const openMirror = (port, name) => {
+    bar.replaceChildren(el("b", {}, [name || ("port " + port)]), el("span", { class: "hint" }, ["  /mirror/" + port + "/"]), el("span", { class: "ws-spacer" }, []),
+      (() => { const a = el("a", { class: "ghost", href: "/mirror/" + port + "/", target: "_blank" }, ["Open in new tab ↗"]); return a; })());
+    frame.setAttribute("src", "/mirror/" + port + "/");
+  };
+  (async () => {
+    let d = {}; try { d = await (await fetch("/api/mirror/list", { cache: "no-store" })).json(); } catch {}
+    const projects = d.projects || [];
+    if (!projects.length) { list.replaceChildren(el("div", { class: "hint" }, [d.reason === "local-not-connected" ? "The work machine isn't connected." : "No local servers registered (LocalHost/registry.json)."])); return; }
+    list.replaceChildren(...projects.map((p) => {
+      const b = el("button", { class: "ghost" }, [`${p.name} · :${p.port}`]);
+      b.addEventListener("click", () => openMirror(p.port, p.name));
+      return b;
+    }));
+    openMirror(projects[0].port, projects[0].name);
+  })();
+  root.replaceChildren(
+    el("div", { class: "hint" }, ["View a dev server running on the work machine, here in your remote browser (proxied through the tunnel). Best for server-rendered / relative-path sites; live-reload (WebSocket) and absolute-path SPA assets may not fully work."]),
+    list, bar, frame,
+  );
+  return root;
 }
 
 /* ---------- Admin: sidebar + content pane (§5), behind the AdminGate (§5.3) ---------- */

@@ -187,6 +187,30 @@ export function createRelay(opts = {}) {
       });
     }
 
+    // ---- LocalHost mirror: view a dev server on the work machine through the tunnel (ancient) ----
+    if (req.method === "GET" && path === "/api/mirror/list") {
+      if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only" });
+      if (!link.connected) return sendJSON(res, 503, { ok: false, reason: "local-not-connected", projects: [] });
+      const r = await link.relay("mirrorList", {}, 8000);
+      return sendJSON(res, 200, { ok: !!r?.ok, projects: r?.projects || [] });
+    }
+    if (req.method === "GET" && path.startsWith("/mirror/")) {
+      if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Mirror is ancient-only." });
+      if (!link.connected) { res.writeHead(503, { "content-type": "text/plain" }); return res.end("The work machine isn't connected."); }
+      const m = path.match(/^\/mirror\/(\d+)(\/.*)?$/);
+      if (!m) { res.writeHead(404).end("bad mirror path"); return; }
+      const port = Number(m[1]); const sub = (m[2] || "/") + (url.search || "");
+      const r = await link.relay("mirror", { port, path: sub, method: "GET" }, 20000);
+      if (!r || !r.ok) { res.writeHead(r?.status || 502, { "content-type": "text/plain" }); return res.end(r?.message || "mirror failed"); }
+      let body = Buffer.from(r.bodyB64 || "", "base64");
+      const ct = (r.headers && (r.headers["content-type"] || r.headers["Content-Type"])) || "application/octet-stream";
+      if (/text\/html/i.test(ct)) {   // inject <base> so relative asset paths resolve under /mirror/<port>/
+        body = Buffer.from(String(body).replace(/<head([^>]*)>/i, `<head$1><base href="/mirror/${port}/">`), "utf8");
+      }
+      res.writeHead(r.status || 200, { "content-type": ct, "cache-control": "no-store" });
+      return res.end(body);
+    }
+
     // ---- remote deploy: version state, log stream, and the trigger (ancient-only) ----
     if (req.method === "GET" && path === "/api/deploy/status") {
       // Live = this relay's build; pending is unknown here (it lives on the work machine) — the
