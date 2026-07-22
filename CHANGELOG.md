@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.6.0] - 2026-07-22
+
+### Changed
+- **Zero-downtime deploys (blue-green).** The deployer now builds the image, starts the new
+  container on the inactive port (8088↔8089), health-checks it, then flips the nginx `cm_relay`
+  upstream (gated by `nginx -t`, verified, auto-reverting on any failure) before retiring the old
+  container. nginx is only touched once the new container is healthy, so a deploy never drops a
+  request and a bad build can't take the live site down. (One-time box setup: an nginx upstream
+  include; documented in `relay/DEPLOY.md`.)
+
 ## [0.5.0] - 2026-07-22
 
 ### Added
