@@ -2071,23 +2071,32 @@ function viewWorkspace() {
   // A spreadsheet-style size picker: hover to preview the grid, click to apply. 16 buttons
   // beats 16 numbered ones, and it reads as "columns × rows" at a glance.
   const layoutPicker = el("div", { class: "ws-layout" }, []);
+  // The cells are built ONCE and then only re-styled. Rebuilding them on hover destroyed the
+  // very button the cursor was over, so mousedown and mouseup landed on different nodes and
+  // the browser never fired `click` at all — the picker previewed on hover but selecting did
+  // nothing. Hover state is presentation: toggle classes, never replace nodes.
+  const layoutCells = [];
+  const layoutN = el("span", { class: "ws-layout-n" }, []);
+  for (let r = 1; r <= WS_MAX_ROWS; r++) for (let c = 1; c <= WS_MAX_COLS; c++) {
+    const b = el("button", { class: "ws-cell", title: `${c} × ${r}`, style: `grid-column:${c};grid-row:${r}` }, []);
+    b.dataset.c = String(c); b.dataset.r = String(r);
+    b.addEventListener("mouseenter", () => renderLayoutPicker(c, r));
+    b.addEventListener("click", () => setLayout(c, r));
+    layoutCells.push(b);
+  }
+  layoutPicker.replaceChildren(
+    el("span", { class: "ws-layout-lbl" }, ["Panes"]),
+    el("div", { class: "ws-cellgrid" }, layoutCells),
+    layoutN,
+  );
+  /** Repaint selection + hover preview. No DOM replacement, so clicks survive. */
   function renderLayoutPicker(hoverC, hoverR) {
-    const cells = [];
-    for (let r = 1; r <= WS_MAX_ROWS; r++) for (let c = 1; c <= WS_MAX_COLS; c++) {
-      const inHover = hoverC ? (c <= hoverC && r <= hoverR) : false;
-      const inCur = c <= st.cols && r <= st.rows;
-      const b = el("button", { class: "ws-cell" + (inCur ? " on" : "") + (inHover ? " hov" : ""), title: `${c} × ${r}`,
-        style: `grid-column:${c};grid-row:${r}` }, []);
-      b.addEventListener("mouseenter", () => renderLayoutPicker(c, r));
-      b.addEventListener("click", () => setLayout(c, r));
-      cells.push(b);
+    for (const b of layoutCells) {
+      const c = Number(b.dataset.c), r = Number(b.dataset.r);
+      b.classList.toggle("on", c <= st.cols && r <= st.rows);
+      b.classList.toggle("hov", hoverC ? (c <= hoverC && r <= hoverR) : false);
     }
-    const shown = hoverC ? `${hoverC} × ${hoverR}` : `${st.cols} × ${st.rows}`;
-    layoutPicker.replaceChildren(
-      el("span", { class: "ws-layout-lbl" }, ["Panes"]),
-      el("div", { class: "ws-cellgrid" }, cells),
-      el("span", { class: "ws-layout-n" }, [shown]),
-    );
+    layoutN.textContent = hoverC ? `${hoverC} × ${hoverR}` : `${st.cols} × ${st.rows}`;
   }
   layoutPicker.addEventListener("mouseleave", () => renderLayoutPicker());
   const modeToggle = el("div", { class: "ws-modes" }, []);

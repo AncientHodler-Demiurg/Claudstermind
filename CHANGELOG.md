@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.7.1] - 2026-07-22
+
+### Fixed
+- **Workspace pane-size picker did nothing when clicked.** Hovering a cell re-rendered the
+  whole picker, which destroyed the very button the cursor was over — so `mousedown` and
+  `mouseup` landed on different nodes and the browser never fired a `click` at all. The hover
+  preview updated, which made it look responsive while the layout never changed. The cells are
+  now built once and only re-styled; hover toggles classes instead of replacing nodes.
+
 ## [0.7.0] - 2026-07-22
 
 ### Added
