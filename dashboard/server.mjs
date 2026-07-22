@@ -36,6 +36,9 @@ import { createBridge } from "../agent/agent.mjs";
 import { WorkspaceManager } from "../lib/workspace.mjs";
 import { readVersion } from "../lib/version.mjs";
 import { runDeploy } from "../lib/deploy.mjs";
+import { runHeuristicDistill, runClaudeDistill, readDistillConfig, writeDistillConfig, readDistillUsage } from "../lib/distill.mjs";
+import { readClaudeToken } from "../lib/workspace.mjs";
+import { cleanClaudeEnv } from "../lib/claudeSession.mjs";
 import { nextVersion, changelogEntry, insertChangelog } from "../lib/release.mjs";
 import { writeFileSync } from "node:fs";
 import { readRelayConfig, writeRelayConfig, readDeviceSecret, saveDeviceSecret } from "../lib/relayConfig.mjs";
@@ -133,7 +136,7 @@ function runProc(cmd, argv, opts = {}) {
 
 // Machine-local actions: they act on THIS disk, so the live deployment refuses them
 // outright — no role can grant them remotely. `ancient` is the second lock, not the only one.
-const LOCAL_ONLY = new Set(["/api/backup", "/api/restore", "/api/master-pollinate", "/api/deploy", "/api/release"]);
+const LOCAL_ONLY = new Set(["/api/backup", "/api/restore", "/api/master-pollinate", "/api/deploy", "/api/release", "/api/distill", "/api/distill/toggle"]);
 
 // The context handed to executeCommand — the SAME single command path the online
 // bridge uses. Local buttons and relayed commands run through one whitelist + executor,
@@ -352,6 +355,37 @@ const handler = async (req, res) => {
     if (!["patch", "minor", "major"].includes(d.bump)) return sendJSON(res, 400, { ok: false, message: "bump must be patch|minor|major" });
     try { return sendJSON(res, 200, doRelease({ bump: d.bump, summary: d.summary })); }
     catch (e) { return sendJSON(res, 500, { ok: false, message: String(e && e.message || e) }); }
+  }
+
+  // ---- Learning loop: distil raw per-repo conversations into brain knowledge (local only) ----
+  if (path === "/api/distill/status") {
+    const claudeDir = join(MASTER_ROOT, ".claude");
+    return sendJSON(res, 200, { config: readDistillConfig(claudeDir), usage: readDistillUsage(claudeDir), hasToken: !!readClaudeToken(SECRETS_DIR) });
+  }
+  if (path === "/api/distill/toggle" && req.method === "POST") {
+    let body = ""; for await (const c of req) body += c;
+    let d = {}; try { d = JSON.parse(body || "{}"); } catch {}
+    const claudeDir = join(MASTER_ROOT, ".claude");
+    writeDistillConfig(claudeDir, { ...readDistillConfig(claudeDir), claudeEnabled: !!d.enabled });
+    return sendJSON(res, 200, { ok: true, config: readDistillConfig(claudeDir) });
+  }
+  if (path === "/api/distill" && req.method === "POST") {
+    let body = ""; for await (const c of req) body += c;
+    let d = {}; try { d = JSON.parse(body || "{}"); } catch {}
+    const transcriptDir = join(MASTER_ROOT, ".claude", "workspace");
+    const brainDir = resolve(__dir, "..", "brain");
+    const claudeDir = join(MASTER_ROOT, ".claude");
+    const mode = d.mode === "claude" ? "claude" : "heuristic";
+    try {
+      if (mode === "claude") {
+        if (!readDistillConfig(claudeDir).claudeEnabled) return sendJSON(res, 403, { ok: false, message: "Claude distillation is toggled off." });
+        const token = readClaudeToken(SECRETS_DIR);
+        if (!token) return sendJSON(res, 400, { ok: false, message: "No Claude token in .secrets." });
+        const r = await runClaudeDistill({ transcriptDir, brainDir, claudeDir, root: MASTER_ROOT, repo: d.repo, token, cleanEnv: cleanClaudeEnv });
+        return sendJSON(res, 200, { ok: true, ...r });
+      }
+      return sendJSON(res, 200, { ok: true, ...runHeuristicDistill({ transcriptDir, brainDir, repo: d.repo }) });
+    } catch (e) { return sendJSON(res, 500, { ok: false, message: String(e && e.message || e) }); }
   }
 
   // ---- orchestrator: activity oracle ----

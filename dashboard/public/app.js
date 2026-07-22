@@ -583,8 +583,43 @@ function viewTree() {
 }
 
 /* ---------- brain: auto-captured cross-repo work state ---------- */
+/* ---------- Learning loop: distil raw conversations → brain knowledge ---------- */
+function learningPanel() {
+  const box = el("div", { class: "learn-panel" }, [el("div", { class: "hint" }, ["Loading learning state…"])]);
+  const local = ME.mode === "local";
+  async function refresh() {
+    let st = {}; try { st = await (await fetch("/api/distill/status", { cache: "no-store" })).json(); } catch { box.replaceChildren(el("div", { class: "hint" }, ["Distillation status unavailable."])); return; }
+    const u = st.usage || {}, cfg = st.config || {};
+    const usageText = `Claude distill usage: ${u.runs || 0} run(s) · ${((u.inputTokens || 0) + (u.outputTokens || 0)).toLocaleString()} tok · ~${fmtUsd(u.costUsd)}`;
+    const note = el("span", { class: "hint", style: "margin-left:8px" }, []);
+    const run = async (mode) => {
+      note.textContent = mode === "claude" ? "Distilling with Claude…" : "Distilling…";
+      const r = await fetch("/api/distill", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode }) }).then((x) => x.json()).catch(() => ({ ok: false }));
+      note.textContent = r.ok ? `✓ ${mode} distilled ${r.repos?.length || 0} repo(s) into the brain.` : "⚠ " + (r.message || "failed");
+      refresh();
+    };
+    const heurBtn = el("button", { class: "ghost" }, ["Distil now (heuristic)"]);
+    heurBtn.addEventListener("click", () => run("heuristic"));
+    const toggle = el("input", { type: "checkbox" }); toggle.checked = !!cfg.claudeEnabled;
+    toggle.addEventListener("change", async () => { await fetch("/api/distill/toggle", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: toggle.checked }) }); refresh(); });
+    const claudeBtn = el("button", { class: "ghost" }, ["Distil with Claude"]);
+    claudeBtn.disabled = !cfg.claudeEnabled || !st.hasToken;
+    claudeBtn.addEventListener("click", () => run("claude"));
+    box.replaceChildren(
+      el("div", { class: "learn-hd" }, [el("b", {}, ["Learning loop"]), el("span", { class: "hint" }, ["— distil raw conversations into per-repo knowledge (", el("code", {}, ["_distilled.md"]), ")"])]),
+      local
+        ? el("div", { class: "learn-row" }, [heurBtn, el("label", { class: "ws-trust" }, [toggle, "Claude distillation"]), claudeBtn, note])
+        : el("div", { class: "hint" }, ["Distillation runs on the work machine (local dashboard). Toggle + trigger it there."]),
+      el("div", { class: "learn-usage" }, [usageText]),
+    );
+  }
+  refresh();
+  return box;
+}
+
 function viewBrain() {
   const wrap = el("div", {}, [el("div", { class: "hint" }, ["Auto-captured by ", el("b", {}, ["brain-sync"]), " on every prompt (Stop hook) — the always-on cross-repo memory. Fresh sessions get this injected via the SessionStart hook, so any repo's session already knows what's been worked on everywhere."])]);
+  wrap.append(learningPanel());
   const body = el("div", { id: "brainBody" }, [el("div", { class: "hint" }, ["Loading brain…"])]);
   wrap.append(body);
   (async () => {

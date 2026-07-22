@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.4.0] - 2026-07-22
+
+### Added
+- **Learning loop** — distil raw per-repo conversations into a brain knowledge base
+  (`brain/<repo>/_distilled.md`). Two modes: **heuristic** (deterministic, free) and **Claude**
+  (opt-in via a toggle, a one-shot summary into Facts/Decisions/Gotchas/Skills). Claude usage is
+  tracked (runs / tokens / cost) and shown in a Learning panel on the Brain page. Raw transcripts
+  are never pruned — this only adds a distilled layer.
+
 ## [0.3.0] - 2026-07-22
 
 ### Added
