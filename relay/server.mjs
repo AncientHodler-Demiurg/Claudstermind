@@ -266,9 +266,13 @@ export function createRelay(opts = {}) {
 
     // ---- remote deploy: version state, log stream, and the trigger (ancient-only) ----
     if (req.method === "GET" && path === "/api/deploy/status") {
-      // Live = this relay's build; pending is unknown here (it lives on the work machine) — the
-      // deploy log shows the exact version when it runs.
-      return sendJSON(res, 200, { running: false, live: readVersion(), pending: null, remote: true, localConnected: link.connected });
+      // Live = this relay's own build. Pending lives on the work machine and rides up in the
+      // snapshot, so the panel shows the same "what would ship" here as it does locally —
+      // it used to be hardcoded null, which the UI rendered as "unreachable".
+      return sendJSON(res, 200, {
+        running: false, live: readVersion(), pending: link.snapshot?.version ?? null,
+        remote: true, localConnected: link.connected,
+      });
     }
     if (req.method === "GET" && path === "/api/deploy/stream") {
       if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Deploy is ancient-only." });

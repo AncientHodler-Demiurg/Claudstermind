@@ -665,7 +665,7 @@ function viewDeploy() {
     verRow.replaceChildren(
       verCard("Live · brain.ancientholdings.eu", live, same ? "ok" : "stale"),
       el("div", { class: "deploy-arrow" }, [same ? "＝" : "⇒"]),
-      remote ? verCard("Pending · the work machine", null, "pending") : verCard("Pending · this machine", pending, "pending"),
+      verCard(remote ? "Pending · the work machine" : "Pending · this machine", pending, "pending"),
     );
     // Deploy is available locally (direct) or on the live site when the work machine is connected.
     const canDeploy = !remote || st.localConnected;
@@ -677,9 +677,9 @@ function viewDeploy() {
       const r = await wsPost2("/api/deploy", {});
       if (!r.ok) { try { DEPLOY_ES.close(); } catch {} DEPLOY_ES = null; note.textContent = "⚠ " + (r.message || "could not start"); }
     });
-    const logBtn = el("button", { class: "ghost" }, ["Show live log"]);
-    logBtn.addEventListener("click", openStream);
-    actions.replaceChildren(deployBtn, logBtn);
+    // No "show log" button: the log opens itself while a deploy is running (below) and the
+    // tail is replayed after one finishes. There is nothing to show at any other time.
+    actions.replaceChildren(deployBtn);
     if (remote && !st.localConnected) actions.append(el("span", { class: "hint" }, ["  (the work machine is offline)"]));
     if (st.running && !DEPLOY_ES) openStream();
     if (st.logTail && st.logTail.length && term.textContent === "(no deploy run yet)") term.textContent = st.logTail.join("\n");

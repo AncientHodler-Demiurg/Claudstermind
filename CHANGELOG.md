@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.7.2] - 2026-07-22
+
+### Fixed
+- **The live site's Deploy panel showed the pending version as "unreachable".** The relay
+  hardcoded `pending: null` and the client discarded it a second time, so the work machine's
+  build was never displayed remotely. The snapshot now carries that machine's version up the
+  tunnel, and the panel renders the same "what would ship" locally and live.
+
+### Removed
+- The Deploy panel's **Show live log** button. The log opens itself while a deploy runs and
+  replays its tail afterwards; there was nothing for the button to reveal at any other time.
+
 ## [0.7.1] - 2026-07-22
 
 ### Fixed
