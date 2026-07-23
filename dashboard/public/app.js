@@ -2467,9 +2467,19 @@ function viewOps() {
     }
   }
 
+  // Signature of the last render, so the 4s poll only touches the DOM when the folder
+  // actually changed. Re-rendering unconditionally would flicker the table and yank
+  // focus out of it mid-click.
+  let ARCH_SIG = null;
+
   async function refreshArchives() {
     let d;
     try { d = await (await fetch("/api/backups")).json(); } catch { return; }
+    const sig = d.available
+      ? `ok:${d.archives.map((a) => `${a.id}:${a.bytes}:${a.unverified ? "u" : "v"}`).join("|")}`
+      : `down:${d.message || ""}`;
+    if (sig === ARCH_SIG) return;       // nothing changed — leave the DOM alone
+    ARCH_SIG = sig;
     if (!d.available) {
       archiveBox.replaceChildren(el("div", { class: "hint" }, [d.message || "Backup drive unavailable."]));
       return;
@@ -2517,13 +2527,18 @@ function viewOps() {
         el("div", { class: "stat" }, [el("div", { class: "n", style: "font-size:13px" }, [lb ? (lb.ok ? "✅ " : "❌ ") + (lb.finishedAt || "").slice(0, 16).replace("T", " ") : "never"]), el("div", { class: "l" }, ["last backup"])]),
       ]),
       el("div", { class: "hint" }, [idle
-        ? "Suite is idle — backup and master-pollinate are enabled. Backup writes a dated tar archive to the configured backup location (excludes node_modules/.next/dist; keeps .git, .secrets and uncommitted work)."
-        : "An agent is working — buttons gated until idle. Backup can be forced with the checkbox."]),
+        ? "Suite is idle. “Back up now” writes a dated tar archive to the configured location (excludes node_modules/.next/dist; keeps .git, .secrets and uncommitted work) and verifies it is readable and complete before publishing it."
+        : "An agent is working — master-pollinate is gated until idle. “Back up now” still runs: an on-demand backup deliberately ignores the activity gate."]),
       activityView(a),
     );
+    // Keep the archive list honest on the same tick. The list is derived from the
+    // BACKUP FOLDER, so anything deleted outside the dashboard (in a file manager, or
+    // by hand) has to disappear here too — previously it only re-read on view entry,
+    // after a backup, or after a restore, so a deleted archive lingered on screen and
+    // could still be picked for a restore that would then fail.
+    refreshArchives();
   }
   refresh(); OPS_TIMER = setInterval(refresh, 4000);
-  refreshArchives();
   return el("div", {}, [
     el("div", { class: "hint" }, ["Orchestration — live agent-activity detection, ", el("b", {}, ["dated archive backups"]), " with restore, and gated ", el("b", {}, ["master-pollinate"]), ". Buttons are enabled only when no agent is working."]),
     controls, out, statusBox,
