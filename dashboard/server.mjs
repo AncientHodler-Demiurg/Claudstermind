@@ -343,6 +343,7 @@ export async function runSelfRestart({
   repoRoot = CM_ROOT,
   scratchPort = randomScratchPort(PORT),
   timeoutMs = 15000,
+  restartExitWindowMs = 3000,
   onLog = () => {},
   preflightStepsFn = preflightSteps,
   runPreflightFn = runPreflight,
@@ -358,12 +359,37 @@ export async function runSelfRestart({
   }
   onLog("✓ candidate answered healthy — triggering the real restart.");
   const cmd = restartCommandFn();
+  let child;
   try {
-    spawnFn(cmd.cmd, cmd.args, { windowsHide: true, detached: true, stdio: "ignore" }).unref?.();
+    child = spawnFn(cmd.cmd, cmd.args, { windowsHide: true, detached: true, stdio: ["ignore", "ignore", "pipe"] });
   } catch (e) {
     onLog(`✗ restart command failed to spawn: ${e.message}`);
     return { ok: false, reason: "spawn-failed", detail: e.message };
   }
+  // A restart that actually WORKS kills THIS process partway through `systemctl restart`'s own
+  // run — there's no reliable way to await that exit code, we won't be alive to see it. But a
+  // restart that FAILS immediately (wrong permissions, wrong unit name, sudo misconfigured, …)
+  // exits fast with a real error on stderr, and this process survives to see that. Confirmed in
+  // production: a bare `systemctl restart` without sudo fails instantly with "Access denied —
+  // interactive authentication required" — and the previous code (spawn + detached + unref +
+  // assume success) swallowed that completely, always logging "✓ triggered" regardless. Give the
+  // child a short window to fail loudly first; only report success if it DIDN'T exit non-zero in
+  // that window. `child.on` is absent on the minimal mocks existing unit tests inject (they aren't
+  // testing this path) — skip straight to the unref'd-success behavior for those, unchanged.
+  if (typeof child.on === "function") {
+    let stderr = "";
+    child.stderr?.on?.("data", (d) => { stderr += d.toString(); });
+    const exitCode = await new Promise((resolve) => {
+      const t = setTimeout(() => resolve(null), restartExitWindowMs);
+      child.on("exit", (code) => { clearTimeout(t); resolve(code); });
+      child.on("error", (e) => { clearTimeout(t); stderr += e.message; resolve(-1); });
+    });
+    if (exitCode !== null && exitCode !== 0) {
+      onLog(`✗ restart command failed (exit ${exitCode}): ${stderr.trim() || "no error output"}`);
+      return { ok: false, reason: "restart-command-failed", detail: stderr.trim() || `exit ${exitCode}` };
+    }
+  }
+  child.unref?.();
   onLog(`▶ restart triggered (${cmd.cmd} ${cmd.args.join(" ")}) — the dashboard will drop and come back momentarily.`);
   return { ok: true, triggered: true };
 }

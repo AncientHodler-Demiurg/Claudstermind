@@ -4,6 +4,33 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.7] - 2026-07-23
+
+### Fixed
+- **Every prompt to a workspace could fail outright** with `Error: --resume requires a valid
+  session ID or session title ... is not a UUID`. `listWorkspaces()`'s fallback for "no real Claude
+  session id ever recorded" used the session file's own lookup key as a stand-in — but for the
+  current per-workspace layout, that key IS the workspace id itself (`repo@worktree`), never a
+  real Claude session id, so the SDK rejected it every time. Now falls back to "no known id"
+  (starts a fresh session) instead of a value guaranteed to be rejected — the fallback still makes
+  sense for old legacy flat-file conversations, where it could be a real key; only the new
+  per-workspace layout gets the corrected behavior.
+- **The "Reload" button always silently failed.** It ran a bare `systemctl restart claudstermind`
+  with no `sudo` and never checked the command's exit code — confirmed in production: that command
+  fails immediately ("Access denied — interactive authentication required") every time for a
+  non-root process, yet the dashboard confidently logged "✓ restart triggered" and reported
+  success regardless. The local process had in fact not restarted even once across this entire
+  session despite being clicked repeatedly. Now uses `sudo -n` (fails fast and loud instead of
+  hanging on a password prompt that can never arrive) and actually watches for a fast non-zero
+  exit, reporting the real failure instead of assuming success — the same "never silence"
+  principle as everywhere else this session. Requires the sudoers grant already documented in
+  `docs/MIGRATION-LINUX-HANDOFF.md` (or equivalent).
+
+### Note
+- This fix needs the local host to actually restart to take effect — but the very thing it fixes
+  is the Reload button not restarting anything. A one-time manual restart is needed to bootstrap
+  it in; after that, Reload works as designed.
+
 ## [0.9.6] - 2026-07-23
 
 ### Added

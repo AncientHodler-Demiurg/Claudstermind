@@ -12,6 +12,7 @@
 // incremental-cap coverage without any of that risk.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { WebSocketServer } from "ws";
 import { readBody, PayloadTooLargeError, bridgeEnabled, runSelfRestart, startSelfRestart, subscribeRestartLog, LOCAL_ONLY, bootLocalSubsystems, randomScratchPort, PORT } from "./server.mjs";
 import { createBridge } from "../agent/agent.mjs";
@@ -131,8 +132,65 @@ test("runSelfRestart triggers the real restart command only after the pre-flight
   });
   assert.equal(result.ok, true);
   assert.ok(spawned, "spawnFn should have been called");
-  assert.equal(spawned.cmd, "systemctl");
-  assert.deepEqual(spawned.args, ["restart", "claudstermind"]);
+  assert.equal(spawned.cmd, "sudo");
+  assert.deepEqual(spawned.args, ["-n", "systemctl", "restart", "claudstermind"]);
+});
+
+/** A minimal fake child_process.ChildProcess: real EventEmitter (so `.on("exit"/"error")` works
+ *  exactly like production code expects), a fake `.stderr` stream, and `.unref()`. Lets a test
+ *  simulate the restart command actually running and failing fast — the exact production
+ *  scenario (`systemctl restart` without sudo: instant "Access denied", exit 1) this fix targets. */
+function fakeChild() {
+  const child = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.unref = () => {};
+  return child;
+}
+
+test("REGRESSION: runSelfRestart reports a fast restart-command failure instead of silently claiming success", async () => {
+  let spawned = null;
+  const child = fakeChild();
+  const resultPromise = runSelfRestart({
+    repoRoot: "/fake/repo",
+    scratchPort: 34570,
+    runPreflightFn: async () => ({ ok: true }),
+    spawnFn: (cmd, args, opts) => { spawned = { cmd, args, opts }; return child; },
+  });
+  // Simulate the real production failure: sudo/systemctl writes to stderr and exits non-zero,
+  // fast — before this fix, nothing looked at either, and "✓ triggered" was reported regardless.
+  await new Promise((r) => setImmediate(r));
+  child.stderr.emit("data", Buffer.from("Failed to restart claudstermind.service: Access denied"));
+  child.emit("exit", 1);
+  const result = await resultPromise;
+  assert.equal(result.ok, false, "a fast non-zero exit must be reported as failure, not silent success");
+  assert.equal(result.reason, "restart-command-failed");
+  assert.match(result.detail, /Access denied/);
+});
+
+test("runSelfRestart still reports success when the restart command exits 0 quickly (e.g. --no-block)", async () => {
+  const child = fakeChild();
+  const resultPromise = runSelfRestart({
+    repoRoot: "/fake/repo",
+    scratchPort: 34571,
+    runPreflightFn: async () => ({ ok: true }),
+    spawnFn: () => child,
+  });
+  await new Promise((r) => setImmediate(r));
+  child.emit("exit", 0);
+  const result = await resultPromise;
+  assert.equal(result.ok, true);
+});
+
+test("runSelfRestart reports success (unchanged) when the restart command never exits within the fast-fail window — the normal successful-restart case, where THIS process dies mid-command", async () => {
+  const child = fakeChild();
+  const result = await runSelfRestart({
+    repoRoot: "/fake/repo",
+    scratchPort: 34572,
+    restartExitWindowMs: 20,   // real default is 3000ms; shortened here only so the test is fast
+    runPreflightFn: async () => ({ ok: true }),
+    spawnFn: () => child,   // never emits "exit" — exactly the real "it worked, we're about to die" case
+  });
+  assert.equal(result.ok, true);
 });
 
 test("the restart route is gated exactly like the existing deploy route — both are local-only mutations (same sameOrigin + LOCAL_ONLY + canExecute gate)", () => {
