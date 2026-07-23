@@ -3,8 +3,9 @@
 // Held in .claude/activity/backup-config.json so the scheduler (in the dashboard
 // server) and the Ops UI read/write the same source of truth. Everything is a plain
 // setting the user controls from the dashboard — nothing here is hardcoded to a drive.
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
+import { join, dirname, resolve } from "node:path";
+import { homedir } from "node:os";
 import { ACTIVITY_DIR, ensureDir } from "./activity.mjs";
 import { defaultBackupRoot } from "./archives.mjs";
 
@@ -46,6 +47,31 @@ export function isBackupDue(config, now, todayStr) {
   if (!config.enabled) return false;
   if (config.lastRunDate === todayStr) return false;   // already ran today
   return now.getHours() >= config.hour;
+}
+
+/**
+ * List immediate subdirectories of a path — backs the Ops tab's "Browse…" folder
+ * picker for the backup location. Directories only (a backup destination is always a
+ * folder); dotdirs are hidden to keep the picker from filling up with .git/.cache/etc.
+ * Falls back to the home directory when `reqPath` is missing, unreadable, or not a
+ * directory, so the picker always has somewhere sane to land instead of erroring out.
+ */
+export function browseDir(reqPath) {
+  const fallback = homedir();
+  let target = resolve(reqPath && String(reqPath).trim() ? String(reqPath).trim() : fallback);
+  let dirs;
+  try {
+    dirs = readdirSync(target, { withFileTypes: true });
+  } catch (e) {
+    if (target !== fallback) return browseDir(fallback); // bad/typo'd path — land on $HOME instead
+    return { ok: false, path: target, parent: null, dirs: [], message: `Cannot read ${target}: ${e.message}` };
+  }
+  const entries = dirs
+    .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+    .map((e) => ({ name: e.name, path: join(target, e.name) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const parent = dirname(target);
+  return { ok: true, path: target, parent: parent === target ? null : parent, dirs: entries };
 }
 
 export { DEFAULTS as BACKUP_DEFAULTS };

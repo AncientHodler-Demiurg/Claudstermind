@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Claudstermind bridge-disconnect watchdog every 2 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+Unit=claudstermind-watchdog.service
+
+[Install]
+WantedBy=timers.target

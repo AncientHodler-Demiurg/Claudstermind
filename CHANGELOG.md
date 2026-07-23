@@ -4,6 +4,59 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.1] - 2026-07-23
+
+### Fixed
+- The workspace transcript showed `⚠ undefined` for real backend errors instead of the actual
+  message — the renderer read the wrong field name (`text` instead of `message`) for error events
+  streamed from the server. Errors now show their real text.
+
+### Added
+- **A louder busy signal.** The pane's Send button now turns orange and reads "Working…" while
+  Claude is mid-turn, reverting the instant the turn ends — a bigger, harder-to-miss companion to
+  the existing small header spinner dot.
+
+### Note for the live site
+- Both changes are pure `dashboard/public/` assets — the work machine (and anyone attached to it
+  through the relay tunnel) sees them on next refresh, no restart needed. The standalone live
+  container has its own baked-in copy of these files from its last image build, so it needs a
+  redeploy to pick them up.
+
+## [0.9.0] - 2026-07-23
+
+### Added
+- **Continuing conversations.** Starting a chat again on a workspace you've already talked to
+  picks up the whole prior conversation as real context, not just a transcript that looks
+  continuous while the model actually starts fresh. History shows one thread per repository +
+  worktree instead of a new entry piling up every time you start a chat there.
+- **A calmer chat view.** Tool activity collapses into one line per turn instead of spelling out
+  every call; a status icon on each pane spins while Claude is working and stops the moment it's
+  done.
+- **Local and the live site, truly shared.** Chatting from the live site on a workspace, with the
+  local dashboard open at the same time, now shows the exact same live conversation on both — not
+  a copy — because they're the same session underneath. Purely local sessions stay local unless a
+  remote party actually touches them.
+- **Attach an image.** Paste, drag-drop, or pick a file to send Claude a picture along with your
+  message, the same way Claude Desktop works.
+- **A safe restart button**, on the local dashboard and the live site alike. It never touches the
+  running dashboard directly — it boots a sandboxed copy of the current code on the side first,
+  proves it actually starts up healthy, and only then restarts for real. If that check fails,
+  nothing happens to the live process and you're told exactly why, not left staring at "Restarting…"
+  forever.
+- **The dashboard watches its own connection to the live site**, on top of the existing crash-only
+  auto-restart — an optional watchdog timer (see the migration handoff doc) can now catch and heal
+  the case where the process is alive but has silently lost its link to the tunnel.
+
+### Fixed
+- The "Resume" button in workspace history could fail with no error and no way to tell what
+  happened; every outcome now ends in a clear result.
+- Two panes sharing one live conversation could get stuck permanently read-only after a page
+  reload.
+
+### Note for the live site
+- The shared-session view, image attach, and the restart button reach the live site only after
+  the relay is redeployed; the work machine works immediately.
+
 ## [0.8.0] - 2026-07-23
 
 ### Added

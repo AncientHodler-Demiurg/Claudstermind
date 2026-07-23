@@ -86,10 +86,37 @@ export function createBridge(opts = {}) {
   const wsSend = (kind, sessionKey, data) => {
     if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.WS_OUT, kind, sessionKey: sessionKey ?? null, data: data ?? {} }));
   };
+  // A shared/injected WorkspaceManager (the local dashboard's own instance, so both surfaces drive
+  // the SAME sessions) also carries sessions NO remote party has ever touched — a chat started
+  // purely on this machine, with the live site never in the loop. Those must never cross the wire.
+  // Only forward a sessionKey's LIVE-TURN traffic ("event" — the user/assistant/busy/result
+  // stream, "state" — a session's status, "permission" — a tool-approval prompt, which can itself
+  // carry sensitive tool input) once that sessionKey has had at least one prompt arrive over a
+  // genuine inbound WS_IN frame — unambiguous proof some remote party is actually driving it.
+  // Workspace-wide reads (list/tree/history/search/…, sent with sessionKey === null, and
+  // "transcript" replies to an explicit remote "open" request) are untouched by this gate: they
+  // are metadata/read responses the live site needs to browse, not turn content, and the remote
+  // party already had to name the sessionKey/workspaceId to ask for them. Re-evaluated on every
+  // send (not just at session creation), so a session that starts local-only and later gets a
+  // genuine remote prompt starts flowing from that point on — never retroactively for turns
+  // already sent while it was local-only.
+  //
+  // A relay-side presence "attach" (lib/presence.mjs / the relay's own browser registry) was
+  // considered as the gating signal instead, since it already tracks per-connection workspaceId —
+  // but it lives in dashboard/server.mjs, a different module, and wiring it through here would
+  // still leave a startup race for a workspace's FIRST-EVER remote touch (the attach report has to
+  // complete its own trip up the tunnel before the resulting prompt does). "Has this sessionKey
+  // had a prompt genuinely arrive over WS_IN" needs no cross-module plumbing and has no such race.
+  const remoteTouched = new Set();
+  const GATED_KINDS = new Set(["event", "state", "permission"]);
+  const tunnelSink = (kind, sessionKey, data) => {
+    if (sessionKey && GATED_KINDS.has(kind) && !remoteTouched.has(sessionKey)) return;
+    wsSend(kind, sessionKey, data);
+  };
   const workspace = opts.workspace ?? new WorkspaceManager({
     root: paths.root, secretsDir: paths.secretsDir,
     model: opts.model ?? process.env.WORKSPACE_MODEL ?? null,
-    send: wsSend,
+    send: tunnelSink,
     listRepos: () => {
       try {
         const map = JSON.parse(readFileSync(join(paths.dataDir, "map.json"), "utf8"));
@@ -97,8 +124,21 @@ export function createBridge(opts = {}) {
       } catch { return []; }
     },
   });
-  // An injected (mock) workspace still needs the tunnel to push WS_OUT frames.
-  if (opts.workspace && typeof opts.workspace === "object") opts.workspace.send = wsSend;
+  // An injected workspace is SHARED with another owner (e.g. the local dashboard's own
+  // WorkspaceManager) — register the tunnel's (gated) sender as an ADDITIONAL output sink
+  // (lib/workspace.mjs's addSink) rather than overwriting `.send` outright, so whichever sink(s)
+  // the owner already wired in (e.g. local SSE broadcast) keep receiving every event too, unaffected
+  // by the gate above. A plain mock workspace with no `addSink` (as used by some integration tests)
+  // falls back to the historical direct assignment, so it still gets wired. `sharedSink` records
+  // whether we actually became an ADDITIONAL sink on someone else's manager, so `stop()` below can
+  // symmetrically `removeSink` the exact same function reference — otherwise every relay-config-
+  // triggered bridge restart against the SAME long-lived WorkspaceManager (dashboard/server.mjs's
+  // WORKSPACE) leaks one more permanently-dead sink closure into `_sinks` forever.
+  let sharedSink = false;
+  if (opts.workspace && typeof opts.workspace === "object") {
+    if (typeof opts.workspace.addSink === "function") { opts.workspace.addSink(tunnelSink); sharedSink = true; }
+    else opts.workspace.send = tunnelSink;
+  }
 
   // Run the local deploy (opts.deploy.start) and forward its log lines up the tunnel as WS_OUT,
   // so the live site's Deploy panel tails a deploy triggered remotely.
@@ -111,6 +151,23 @@ export function createBridge(opts = {}) {
     let r; try { r = dep.start(); } catch (e) { r = { ok: false, message: String(e && e.message || e) }; }
     wsSend("deploy-log", null, { line: r.ok ? `▶ deploy started (v${r.version})` : `⚠ ${r.message || r.reason}` });
     if (!r.ok && r.reason !== "already-running") { wsSend("deploy-done", null, { ok: false }); unsub(); }
+  }
+
+  // Run the local self-restart pre-flight+restart pipeline (opts.restart.start) and forward its
+  // log lines up the tunnel as WS_OUT, so the live site's restart control tails a restart
+  // triggered remotely — the exact same shape as runRemoteDeploy above (dashboard/server.mjs's
+  // startSelfRestart/RESTART.subs mirror its startDeploy/DEPLOY.subs one for one; see
+  // docs/work/dashboard-self-restart-safety/design.md's Wave 2 note for why this reuses the
+  // deploy mechanism rather than a second auth/forwarding path).
+  function runRemoteRestart() {
+    const rst = opts.restart;
+    const unsub = rst.subscribe((line) => {
+      if (line === "__DONE_OK__" || line === "__DONE_FAIL__") { wsSend("restart-done", null, { ok: line === "__DONE_OK__" }); unsub(); return; }
+      wsSend("restart-log", null, { line });
+    });
+    let r; try { r = rst.start(); } catch (e) { r = { ok: false, message: String(e && e.message || e) }; }
+    wsSend("restart-log", null, { line: r.ok ? "▶ self-restart pre-flight started" : `⚠ ${r.message || r.reason}` });
+    if (!r.ok && r.reason !== "already-running") { wsSend("restart-done", null, { ok: false }); unsub(); }
   }
 
   async function pushSnapshot() {
@@ -195,9 +252,15 @@ export function createBridge(opts = {}) {
       // A remote Deploy trigger (from the live site) runs the local deploy pipeline and streams
       // its log back up the tunnel; everything else is a workspace action.
       if (frame.kind === "deploy" && opts.deploy) { runRemoteDeploy(); return; }
+      // A remote self-restart trigger (from the live site) runs the local sandboxed pre-flight +
+      // real restart pipeline and streams its log back up the tunnel — same mechanism as deploy.
+      if (frame.kind === "restart" && opts.restart) { runRemoteRestart(); return; }
       // The relay reporting ITS browsers (it is a sensor). Hand them to the work machine, which
       // merges them with its own localhost terminals into the one authoritative presence list.
       if (frame.kind === "presence") { try { opts.onRemotePresence?.(frame.data?.connections || []); } catch (e) { log("presence error:", e.message); } return; }
+      // A prompt genuinely arriving over the tunnel is the remote-interest signal `tunnelSink`
+      // gates on above — mark it BEFORE handleIn so this very turn's own resulting sends qualify.
+      if (frame.kind === "prompt" && frame.sessionKey) remoteTouched.add(frame.sessionKey);
       try { workspace.handleIn(frame.kind, frame.sessionKey, frame.data); } catch (e) { log("workspace error:", e.message); }
     } else if (frame.t === FRAME.PING) {
       if (sock?.readyState === 1) sock.send(JSON.stringify({ t: FRAME.PONG }));
@@ -237,9 +300,14 @@ export function createBridge(opts = {}) {
       stopped = true;
       clearInterval(snapTimer); clearTimeout(reconnectTimer);
       try { sock?.close(); } catch {}
+      // Symmetric with the addSink() above — without this, restarting the bridge against the same
+      // shared WorkspaceManager (dashboard/server.mjs's startBridgeFromConfig, on every relay-
+      // config save) leaks one more permanently-dead sink closure into `_sinks` every time.
+      if (sharedSink && typeof opts.workspace.removeSink === "function") opts.workspace.removeSink(tunnelSink);
     },
     pushSnapshot,
     get socket() { return sock; },
+    get workspace() { return workspace; },
   };
 }
 

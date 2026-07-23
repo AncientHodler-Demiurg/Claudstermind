@@ -389,6 +389,14 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 .ws-pane.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .ws-pane.ro { opacity: .96; }
 .ws-pane-hd { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-bottom: 1px solid var(--line); background: var(--panel); }
+/* Pane turn-lock status icon — plain CSS spinner (no glyph, no dependency): a muted ring
+   at rest, spinning while the pane's session is mid-turn (busy), still again the moment
+   that turn concludes (success or error). Toggled by paintPane() from p.status. */
+.ws-status { display: inline-block; width: 11px; height: 11px; flex: 0 0 auto; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--ink-dim); }
+.ws-status.spinning { border-top-color: #34d399; animation: wsSpin .7s linear infinite; }
+@keyframes wsSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ws-status.spinning { animation: none; border-color: #34d399; } }
 .ws-usage { font-size: 10.5px; color: var(--ink-dim); white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ws-x, .ws-ico { background: transparent; border: 1px solid transparent; color: var(--ink-dim); border-radius: 6px; cursor: pointer; font-size: 13px; padding: 2px 6px; }
 .ws-x:hover, .ws-ico:hover { border-color: var(--line); color: var(--ink); }
@@ -403,11 +411,37 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 .ws-line.ws-result { color: #34d399; font-size: 11.5px; }
 .ws-line.ws-note { color: #34d399; font-size: 12px; }
 .ws-line.ws-err { color: #f87171; font-size: 12.5px; }
+.ws-toolgroup { color: #7c9cff; font-size: 12px; }
+.ws-toolgroup-summary { cursor: pointer; list-style: none; }
+.ws-toolgroup-summary::-webkit-details-marker { display: none; }
+.ws-toolgroup-summary::before { content: "▸"; display: inline-block; margin-right: 4px; transition: transform .1s ease; }
+.ws-toolgroup[open] > .ws-toolgroup-summary::before { transform: rotate(90deg); }
+.ws-toolgroup > .ws-line { margin: 4px 0 0 14px; }
 .ws-compose { display: flex; gap: 7px; align-items: flex-end; padding: 8px 9px; border-top: 1px solid var(--line); }
+.ws-compose.ws-drag { background: var(--chip); box-shadow: inset 0 0 0 1px var(--accent); }
 .ws-prompt { flex: 1; background: var(--chip); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 8px 11px;
   font-family: inherit; font-size: 13px; resize: vertical; min-height: 40px; }
 .ws-prompt:disabled { opacity: .5; }
 .ws-send { padding: 8px 16px; }
+/* Busy = Claude is mid-turn in this pane. The button itself becomes the loud indicator
+   (orange), reverting to the normal accent color the instant the turn ends — a bigger,
+   harder-to-miss signal than the small header spinner dot alone. */
+.ws-send.busy { background: #f59e0b; border-color: #f59e0b; color: #1a1400; }
+.ws-send.busy:hover { filter: brightness(1.05); }
+/* Image attach: hidden native file input (triggered by the 📎 button), a small thumbnail
+   preview with a remove (×) control, and an inline error line for the "still too large after
+   compression" case — sits above the compose row so it doesn't reflow the textarea/send button. */
+.ws-img-input { display: none; }
+.ws-attach { font-size: 15px; align-self: flex-end; }
+.ws-attach:disabled { opacity: .4; cursor: default; }
+.ws-compose-extras:empty { display: none; }
+.ws-img-preview { display: flex; align-items: center; gap: 6px; padding: 0 9px; margin-top: 6px; }
+.ws-img-thumb { max-width: 64px; max-height: 64px; border-radius: 6px; border: 1px solid var(--line); object-fit: cover; }
+.ws-img-x { background: transparent; border: 1px solid var(--line); color: var(--ink-dim); border-radius: 50%; cursor: pointer;
+  width: 18px; height: 18px; line-height: 1; font-size: 12px; padding: 0; }
+.ws-img-x:hover { color: var(--ink); border-color: var(--ink-dim); }
+.ws-img-err { color: #f87171; font-size: 12px; padding: 0 9px; margin-top: 4px; }
+.ws-img-err:empty { display: none; }
 
 /* ---------- Admin → Deploy & Version ---------- */
 .deploy-wrap { display: flex; flex-direction: column; gap: 12px; max-width: 900px; }

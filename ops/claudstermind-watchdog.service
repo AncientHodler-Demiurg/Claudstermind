@@ -1,0 +1,9 @@
+[Unit]
+Description=Claudstermind bridge-disconnect watchdog (oneshot, triggered by claudstermind-watchdog.timer)
+After=claudstermind.service
+
+[Service]
+Type=oneshot
+User=ancientbox
+WorkingDirectory=/home/ancientbox/ClaudeWS/Claudstermind
+ExecStart=/usr/bin/node ops/claudstermind-watchdog.mjs

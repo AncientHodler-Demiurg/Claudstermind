@@ -364,7 +364,56 @@ stoa-website `:5174`.
 
 ---
 
-## 13. What this box now owns
+## 13. Optional: bridge-disconnect watchdog (systemd timer)
+
+Section 8's `claudstermind.service` gives crash-only supervision (`Restart=on-failure`) — if the
+process dies, systemd restarts it. That unit is blind to a different failure: the process stays
+alive, but its tunnel to the live relay (`brain.ancientholdings.eu`) has been down for a while
+(flapping credentials, a stuck reconnect loop, etc.). The watchdog below is a companion oneshot
+service + timer that checks for exactly that and, only once the disconnect has genuinely outlasted
+a grace period, triggers the same safe, pre-flight-gated restart route the "Restart local
+dashboard" admin button uses (`POST /api/dashboard/restart` — never a raw `systemctl restart`
+directly, so a flapping watchdog can't bypass the pre-flight guarantee the rest of this project is
+built around). See `lib/watchdog.mjs` for the pure decision function and
+`ops/claudstermind-watchdog.mjs` for the script itself.
+
+This is entirely optional and, like the rest of this handoff's privileged systemd steps, is shipped
+here as an artifact only — nothing in the repo's own tooling installs or enables it. Do this once
+`claudstermind.service` (section 8) is confirmed running:
+
+```bash
+sudo cp "$ROOT/Claudstermind/ops/claudstermind-watchdog.service" /etc/systemd/system/
+sudo cp "$ROOT/Claudstermind/ops/claudstermind-watchdog.timer" /etc/systemd/system/
+```
+
+Both unit files hard-code `/home/ancientbox/ClaudeWS/Claudstermind` as the working directory and
+`ancientbox` as the user, matching section 8's `claudstermind.service` — edit them first if this
+box's path/user differ.
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now claudstermind-watchdog.timer
+systemctl list-timers claudstermind-watchdog.timer   # confirm it's scheduled
+journalctl -u claudstermind-watchdog.service -f      # watch it run (every 2 minutes by default)
+```
+
+**A known gap, not a bug:** neither `GET /api/relay` (current connection state only) nor
+`GET /api/version` (build info only) reports "seconds since the last successful heartbeat" or "how
+long has this process been up" directly — extending `dashboard/server.mjs` to add either was out of
+scope for the task that shipped this watchdog. The script instead derives both: process uptime from
+`systemctl show claudstermind ActiveEnterTimestamp` (systemd already tracks this precisely), and
+disconnect duration from its own small state file recorded each time it observes `connected:true`.
+If a later change adds real heartbeat/uptime fields to the dashboard's own API, prefer switching
+this script to read them directly instead of the systemctl/state-file derivation.
+
+Tunables (env vars on the `.service` unit, or exported before running it manually):
+`CM_WATCHDOG_URL` (default `http://127.0.0.1:3001`), `CM_WATCHDOG_GRACE_SECONDS` (default `180`),
+`CM_WATCHDOG_STATE_FILE` (default `/var/lib/claudstermind/watchdog-state.json`),
+`CM_WATCHDOG_SERVICE` (default `claudstermind`).
+
+---
+
+## 14. What this box now owns
 
 - The **source of truth** for the dashboard/relay code (deploys originate here).
 - The **workspace history** (`$ROOT/.claude/workspace/`) — the raw per-repo conversation substrate.

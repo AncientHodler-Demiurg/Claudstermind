@@ -36,13 +36,31 @@
     ]
   },
   "2026-07-22": {
-    "kb": 488675,
-    "changes": 1,
+    "kb": 489592,
+    "changes": 2,
     "repos": [
-      "OuroborosNetwork/_libs/DALOS_Crypto"
+      "OuroborosNetwork/_libs/DALOS_Crypto",
+      "OuroborosNetwork/_libs/ouronet-libs"
     ],
     "commits": [
-      "release: @ouronet/dalos-crypto@4.0.4 (scope rename)"
+      "release: @ouronet/dalos-crypto@4.0.4 (scope rename)",
+      "release: 4.4.0 — hold the codex writer at 1.2, keep the reader widened"
+    ]
+  },
+  "2026-07-23": {
+    "kb": 492189,
+    "changes": 4,
+    "repos": [
+      "OuroborosNetwork/daimons/OuronetUI",
+      "StoaChain/daimons/StoaWallet",
+      "AncientPantheon/constructors/Pythia",
+      "AncientPantheon/constructors/Codex"
+    ],
+    "commits": [
+      "ci: drop the obsolete stoa-js sibling clone from both deploys [skip changelog]",
+      "test(storage): cover FORWARD_SEARCH_KEY in the storage-key registry assertions",
+      "deps: adopt @ancientpantheon/codex@0.6.1 + khronoton-core@0.4.2",
+      "release: 0.6.1 — re-pin onto the @ouronet packages"
     ]
   }
 }

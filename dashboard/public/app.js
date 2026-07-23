@@ -410,6 +410,7 @@ function render() {
   if (VIEW !== "relay" && RELAY_TIMER) { clearInterval(RELAY_TIMER); RELAY_TIMER = null; }
   if (VIEW !== "workspace" && WS_ES) { try { WS_ES.close(); } catch {} WS_ES = null; }
   if (!(VIEW === "admin" && ADMIN_SECTION === "deploy") && DEPLOY_ES) { try { DEPLOY_ES.close(); } catch {} DEPLOY_ES = null; }
+  if (!(VIEW === "admin" && ADMIN_SECTION === "deploy") && RESTART_ES) { try { RESTART_ES.close(); } catch {} RESTART_ES = null; }
   if (VIEW !== "git" && GIT_TIMER) { clearInterval(GIT_TIMER); GIT_TIMER = null; }
   if (VIEW !== "localhost" && LH_TIMER) { clearInterval(LH_TIMER); LH_TIMER = null; }
   document.body.classList.toggle("ws-full", VIEW === "workspace");   // Workspace breaks out to full width
@@ -632,12 +633,87 @@ function viewAdmin(sectionId) {
 }
 /* ---------- Admin → Deploy & Version (§10 + the §3 deploy button) ---------- */
 let DEPLOY_ES = null;
+let RESTART_ES = null;   // the self-restart pre-flight+restart log stream (dashboard-self-restart-safety)
+
+/** Shared by Deploy's and Restart's log streams: both emit bare JSON-string lines over SSE,
+ *  terminated by a "__DONE_OK__"/"__DONE_FAIL__" sentinel (see dashboard/server.mjs's
+ *  deployLog/restartLog, and relay/server.mjs's matching deploy-done/restart-done translation
+ *  for the tunnel-forwarded path) — one parser for both so a stream only differs by its URL
+ *  and what happens on the terminal sentinel.
+ *
+ *  `opts.timeoutMs` + `opts.onFallback` are optional and only used by the restart stream
+ *  (see openRestartStream below): a real remote restart severs the work-machine↔relay tunnel
+ *  as a side effect, so the terminal sentinel — written from the dying process over that same
+ *  socket — can simply never arrive, and critically the browser↔relay SSE connection itself
+ *  stays healthy (only the relay↔work-machine hop broke), so `onerror` never fires either.
+ *  A timeout is the only fallback that reliably closes that gap; `onerror` still fires (and
+ *  resolves faster) for the local case where the TCP connection genuinely drops. Both paths
+ *  are guarded so at most one of onDone/onFallback ever runs, and a normal sentinel always
+ *  cancels the pending timeout. */
+function openLogStream(url, term, onDone, opts) {
+  term.textContent = "";
+  const es = new EventSource(url);
+  let settled = false;
+  let timer = null;
+  const clearFallbackTimer = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  es.onmessage = (e) => {
+    let line; try { line = JSON.parse(e.data); } catch { return; }
+    if (line === "__DONE_OK__" || line === "__DONE_FAIL__") {
+      settled = true; clearFallbackTimer();
+      try { es.close(); } catch {}
+      onDone(line === "__DONE_OK__");
+      return;
+    }
+    term.textContent += line + "\n"; term.scrollTop = term.scrollHeight;
+  };
+  es.onerror = () => {
+    try { es.close(); } catch {}
+    if (settled) return;
+    if (opts && opts.onFallback) { settled = true; clearFallbackTimer(); opts.onFallback("error"); }
+  };
+  if (opts && opts.timeoutMs && opts.onFallback) {
+    timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { es.close(); } catch {}
+      opts.onFallback("timeout");
+    }, opts.timeoutMs);
+  }
+  return es;
+}
+
+/** After a real restart is triggered (restart-done ok:true), the dashboard process drops and
+ *  comes back — the SSE stream itself dies with it, so there is nothing left to listen to.
+ *  Poll the cheap, unauthenticated /api/version endpoint (the same one lib/deploy.mjs's
+ *  blue-green verification trusts) until it answers again, and report success or a clear
+ *  "still unreachable" failure — never silence (design's Wave-close acceptance §5). */
+async function pollBackUp(noteEl, { attempts = 40, delayMs = 1500 } = {}) {
+  for (let i = 0; i < attempts; i++) {
+    await new Promise((r) => setTimeout(r, delayMs));
+    try {
+      const v = await (await fetch("/api/version", { cache: "no-store", signal: AbortSignal.timeout(2000) })).json();
+      if (v && v.version) { noteEl.textContent = "✓ Back up — v" + v.version + " reconnected."; return; }
+    } catch { /* still down or unreachable through the tunnel — keep polling */ }
+  }
+  noteEl.textContent = "⚠ Restart triggered, but the dashboard hasn't answered again after a minute — check it manually.";
+}
+
 function viewDeploy() {
   const root = el("div", { class: "deploy-wrap" }, []);
   const verRow = el("div", { class: "deploy-vers" }, [el("div", { class: "hint" }, ["Loading version state…"])]);
   const term = el("pre", { class: "deploy-term" }, ["(no deploy run yet)"]);
   const actions = el("div", { class: "deploy-actions" }, []);
   const note = el("div", { class: "hint" }, []);
+
+  // Self-restart safety: a sandboxed pre-flight, then (only on ok:true) the real restart —
+  // gated identically to Deploy above (same canDeploy/canRestart condition) rather than a
+  // new auth path, and reusing this same log-terminal rendering (openLogStream) rather than
+  // building a second terminal widget.
+  const rterm = el("pre", { class: "deploy-term" }, ["(no restart run yet)"]);
+  const rActions = el("div", { class: "deploy-actions" }, []);
+  const rNote = el("div", { class: "hint" }, []);
+  let restarting = !!RESTART_ES;   // a stream from a previous mount of this section is still live
+  let canRestart = true;           // updated by refresh() every poll; read by refreshRestartBtn()
 
   const verCard = (title, v, tone) => el("div", { class: "deploy-card " + (tone || "") }, [
     el("div", { class: "deploy-card-t" }, [title]),
@@ -647,14 +723,46 @@ function viewDeploy() {
 
   function openStream() {
     try { DEPLOY_ES && DEPLOY_ES.close(); } catch {}
-    term.textContent = "";
-    DEPLOY_ES = new EventSource("/api/deploy/stream");
-    DEPLOY_ES.onmessage = (e) => {
-      let line; try { line = JSON.parse(e.data); } catch { return; }
-      if (line === "__DONE_OK__" || line === "__DONE_FAIL__") { note.textContent = line === "__DONE_OK__" ? "✓ Deploy finished — refresh version state." : "✗ Deploy failed — see the log."; refresh(); try { DEPLOY_ES.close(); } catch {} return; }
-      term.textContent += line + "\n"; term.scrollTop = term.scrollHeight;
-    };
-    DEPLOY_ES.onerror = () => { try { DEPLOY_ES.close(); } catch {} };
+    DEPLOY_ES = openLogStream("/api/deploy/stream", term, (ok) => {
+      note.textContent = ok ? "✓ Deploy finished — refresh version state." : "✗ Deploy failed — see the log.";
+      refresh();
+    });
+  }
+
+  function openRestartStream() {
+    try { RESTART_ES && RESTART_ES.close(); } catch {}
+    RESTART_ES = openLogStream("/api/dashboard/restart/stream", rterm, (ok) => {
+      restarting = false;
+      RESTART_ES = null;
+      if (ok) {
+        rNote.textContent = "Restarting… reconnecting";
+        pollBackUp(rNote);
+      } else {
+        // The refusal reason (timeout / crashed / port bind failure / spawn-failed / …) is
+        // written into the log itself by runSelfRestart's onLog (already prefixed "✗ "), not
+        // carried as structured data over the stream — so the specific reason is the log's
+        // last line verbatim, not a generic "restart failed".
+        const lines = rterm.textContent.trim().split("\n");
+        rNote.textContent = lines[lines.length - 1] || "✗ Restart refused — see the log.";
+      }
+      refreshRestartBtn();
+    }, {
+      // 40s: pre-flight's own runSelfRestart budget is up to 15s (dashboard/server.mjs's
+      // timeoutMs default), plus the real `systemctl restart` round-trip (process teardown +
+      // the unit coming back up) — 40s leaves comfortable headroom over that combined path
+      // without leaving the button stuck on "Restarting…" for anywhere near a minute when the
+      // sentinel is genuinely never coming (the remote/live-site restart case, where the
+      // tunnel drop kills the sentinel's only carrier without ever erroring the browser's SSE
+      // connection to the relay).
+      timeoutMs: 40000,
+      onFallback: () => {
+        restarting = false;
+        RESTART_ES = null;
+        rNote.textContent = "No confirmation received — checking if it's back up…";
+        refreshRestartBtn();
+        pollBackUp(rNote);
+      },
+    });
   }
 
   async function refresh() {
@@ -683,13 +791,38 @@ function viewDeploy() {
     if (remote && !st.localConnected) actions.append(el("span", { class: "hint" }, ["  (the work machine is offline)"]));
     if (st.running && !DEPLOY_ES) openStream();
     if (st.logTail && st.logTail.length && term.textContent === "(no deploy run yet)") term.textContent = st.logTail.join("\n");
+
+    // Restart local dashboard: no dedicated status endpoint exists (unlike Deploy's
+    // /api/deploy/status), so it is gated by the exact same remote/localConnected condition
+    // Deploy just computed above rather than inventing a second one.
+    canRestart = !remote || st.localConnected;
+    refreshRestartBtn();
   }
+
+  function refreshRestartBtn() {
+    const restartBtn = el("button", { class: "loginbtn secondary" }, [restarting ? "Restarting…" : "⟳ Restart local dashboard"]);
+    if (restarting || !canRestart) restartBtn.disabled = true;
+    restartBtn.addEventListener("click", async () => {
+      if (!confirm("Run a sandboxed pre-flight and, only if it passes, restart the local dashboard now?")) return;
+      restarting = true; rNote.textContent = "Starting restart pre-flight…"; openRestartStream();
+      refreshRestartBtn();
+      const r = await wsPost2("/api/dashboard/restart", {});
+      if (!r.ok) { try { RESTART_ES.close(); } catch {} RESTART_ES = null; restarting = false; rNote.textContent = "⚠ " + (r.message || "could not start"); refreshRestartBtn(); }
+    });
+    rActions.replaceChildren(restartBtn);
+    if (!canRestart) rActions.append(el("span", { class: "hint" }, ["  (the work machine is offline)"]));
+  }
+
   root.replaceChildren(
     el("h2", { class: "deploy-h" }, ["Deploy & Version"]),
     el("div", { class: "hint" }, ["The version + changelog are cut by the agent when a change is built (Pantheonic §10). This panel just ships the built version to the live site."]),
     verRow,
     el("div", { class: "deploy-actions-row" }, [actions, note]),
     el("h3", { style: "margin:14px 0 4px" }, ["Deploy log"]), term,
+    el("h3", { style: "margin:14px 0 4px" }, ["Restart local dashboard"]),
+    el("div", { class: "hint" }, ["Boots a sandboxed candidate on a scratch port and health-checks it before touching the live process — refuses (with the specific reason) if it wouldn't come back up."]),
+    el("div", { class: "deploy-actions-row" }, [rActions, rNote]),
+    el("h3", { style: "margin:14px 0 4px" }, ["Restart log"]), rterm,
   );
   refresh();
   return root;
@@ -1226,6 +1359,77 @@ function showModal({ title, sub, value = "", editable = false, confirmLabel = "C
   });
 }
 
+/* ---------- folder browser — picks an absolute server-side path (e.g. backup location)
+   without the user ever typing/pasting one. Server-driven (GET /api/fs/browse), local-only:
+   it lists directories the work machine can actually see, so there's no risk of a mistyped
+   or badly-quoted path (spaces and all) landing in a config field. ---------- */
+function showFolderBrowser(startPath) {
+  return new Promise((resolve) => {
+    const finish = (result) => { document.removeEventListener("keydown", onKey); overlay.remove(); resolve(result); };
+    const onKey = (e) => { if (e.key === "Escape") finish(null); };
+
+    const pathInput = el("input", { type: "text", spellcheck: "false",
+      style: "flex:1;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:5px 9px;font-family:ui-monospace,monospace;font-size:12px" });
+    const goBtn = el("button", { class: "ghost" }, ["Go"]);
+    const list = el("div", { style: "max-height:320px;overflow:auto;margin-top:10px;display:flex;flex-direction:column;gap:2px" });
+    const errBox = el("div", { class: "modal-sub" }, []);
+    const selectBtn = el("button", { class: "ghost btn-primary" }, ["Select this folder"]);
+    const cancelBtn = el("button", { class: "ghost" }, ["Cancel"]);
+
+    const rowStyle = "display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:13px";
+    let current = startPath || "";
+
+    async function load(p) {
+      let d;
+      try { d = await (await fetch("/api/fs/browse?path=" + encodeURIComponent(p || ""))).json(); }
+      catch (e) { errBox.textContent = "Could not reach the dashboard: " + e; return; }
+      if (!d.ok) { errBox.textContent = d.message || "Cannot read that folder."; return; }
+      errBox.textContent = "";
+      current = d.path;
+      pathInput.value = d.path;
+      const rows = [];
+      if (d.parent) {
+        const up = el("div", { style: rowStyle }, ["⬆  .. (up)"]);
+        up.addEventListener("click", () => load(d.parent));
+        rows.push(up);
+      }
+      for (const dir of d.dirs) {
+        const row = el("div", { style: rowStyle }, ["📁  " + dir.name]);
+        row.addEventListener("mouseenter", () => row.style.background = "var(--chip)");
+        row.addEventListener("mouseleave", () => row.style.background = "");
+        row.addEventListener("click", () => load(dir.path));
+        rows.push(row);
+      }
+      if (!rows.length) rows.push(el("div", { class: "hint" }, ["No subfolders here — “Select this folder” still works."]));
+      list.replaceChildren(...rows);
+    }
+
+    goBtn.addEventListener("click", () => load(pathInput.value));
+    pathInput.addEventListener("keydown", (e) => { if (e.key === "Enter") load(pathInput.value); });
+    selectBtn.addEventListener("click", () => finish(current));
+    cancelBtn.addEventListener("click", () => finish(null));
+
+    const overlay = el("div", { class: "modal-overlay" }, [
+      el("div", { class: "modal", style: "max-width:560px" }, [
+        el("div", { class: "modal-hd" }, [el("span", { class: "dot" }), "Choose backup folder"]),
+        el("div", { class: "modal-bd" }, [
+          el("div", { style: "display:flex;gap:6px" }, [pathInput, goBtn]),
+          errBox,
+          list,
+        ]),
+        el("div", { class: "modal-ft" }, [
+          el("span", { class: "modal-hint" }, ["Click a folder to open it · Esc to cancel"]),
+          cancelBtn, selectBtn,
+        ]),
+      ]),
+    ]);
+    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) finish(null); });
+    document.body.append(overlay);
+    document.addEventListener("keydown", onKey);
+    load(startPath);
+  });
+}
+
 /* ---------- suggest a commit message from the actual changes ----------
    No AI: a heuristic over the porcelain file list. Picks a conventional-commit type
    when confident (ci/test/docs/style/deps), an action verb from the change kinds, a
@@ -1615,6 +1819,14 @@ const fmtUsd = (n) => "$" + (Number(n) || 0).toFixed(2);
 // Pane grid limits. 8 across is sized for an ultrawide (5120px ⇒ ~600px a pane); narrower
 // screens keep the panes readable and scroll the grid sideways instead of crushing them.
 const WS_MAX_COLS = 8, WS_MAX_ROWS = 2;
+// How long a reopen/resume ("control open") waits for a "transcript" or error reply before giving
+// up and surfacing an explicit note — covers a disconnected bridge, which otherwise never answers
+// at all and would leave the UI (and the pendingOpens entry) waiting forever.
+const WS_OPEN_TIMEOUT_MS = 8000;
+// A pane repaints on every streamed event; only re-snap the transcript scroll to the bottom when
+// it was already within this many px of it — otherwise someone scrolled up to read history keeps
+// their spot instead of being yanked back down mid-turn.
+const WS_SCROLL_NEAR_BOTTOM_PX = 48;
 const WS_STORE_KEY = "cm.workspace.v1";
 // Mirrors PERMISSION_MODES in lib/claudeSession.mjs — the browser can't import it, so the
 // ids must stay in step with that list (the server ignores any it doesn't recognise).
@@ -1646,7 +1858,10 @@ function viewWorkspace() {
     activeId: null,
     history: [], historyRepo: null,
     permQueue: [],                 // pending tool-permission requests — FIFO so two panes never clobber
-    pendingOpens: new Map(),       // savedSessionKey -> { paneId, mode } — reopens in flight, correlated
+    pendingOpens: new Map(),       // savedSessionKey -> Map<paneId, { paneId, mode, gen, timer }> — reopens
+                                    // in flight, correlated; a Map-of-Map so N panes legitimately waiting on
+                                    // the SAME shared sessionKey each get their own entry (and timeout)
+                                    // instead of clobbering one another (see beginPendingOpen).
     dataSizes: {},                 // localPath -> { bytes, conversations, turns } — collected raw volume
     collapsedOrgs: new Set(),      // org names collapsed in the Repositories sidebar
     searchQuery: "", searchResults: null,   // full-text search over saved conversations
@@ -1669,7 +1884,11 @@ function viewWorkspace() {
     for (const c of node.children || []) flattenRepos(c, rel ? rel + "/" + c.name : c.name, out);
     return out;
   }
-  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", worktree: "main", mode: st.defaultMode, transcript: [], usage: {}, status: "idle", readonly: false, resume: null });
+  // `_gen` is a per-pane monotonic counter, bumped every time the pane's identity is
+  // deliberately abandoned (cleared, or repointed to a different repo/worktree) — a
+  // pendingOpens entry captures the pane's gen at request time, so a reply that arrives
+  // after the pane moved on can tell it no longer applies (see beginPendingOpen).
+  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", worktree: "main", mode: st.defaultMode, transcript: [], usage: {}, status: "idle", readonly: false, resume: null, _gen: 0, _expandedGroups: new Set() });
   // Every pane with a repo runs under a shared, deterministic key (repo@worktree). Panes still
   // waiting for a repo keep their random placeholder so they never collide before use.
   function keyForPane(p) { return p.repo ? wsWorkspaceId(p.repo, p.worktree) : p.sessionKey; }
@@ -1708,15 +1927,60 @@ function viewWorkspace() {
   /** Re-attach restored panes to their saved threads — but only for keys history actually
    *  knows, so a pane that never got a prompt doesn't trigger a "could not be opened" error. */
   function restorePanes() {
-    const known = new Set(st.history.map((h) => h.sessionKey));
+    // `st.history` now holds one row per WORKSPACE (`workspaceId`), not one per past session —
+    // a restored pane's own `sessionKey` is that same workspace id once a repo is assigned
+    // (see `assignKey`), so this still finds it.
+    const known = new Set(st.history.map((h) => h.workspaceId));
     let n = 0;
     for (const p of st.panes) {
       if (!known.has(p.sessionKey) || p.transcript.length) continue;
-      st.pendingOpens.set(p.sessionKey, { paneId: p.id, mode: "restore" });
+      // Two panes sharing one sessionKey (a real, designed-for state — see assignKey/
+      // wsWorkspaceId) both need to be reattached; beginPendingOpen tracks each pane's own
+      // request independently under the shared key instead of one clobbering the other's.
+      beginPendingOpen(p.sessionKey, p, "restore");
       wsPost("control", { action: "open", args: { sessionKey: p.sessionKey } });
       n++;
     }
     if (n) note(`Reattached ${n} pane(s) to their conversations — your next message continues where you left off.`);
+  }
+  /** Track one in-flight "control open" reply for one PANE, correlated by the saved
+   *  session/workspace key the server echoes back — success (transcript) and failure (error)
+   *  both resolve it, and a bounded client-side timer resolves it too if neither ever arrives
+   *  (e.g. the local bridge is disconnected and the request never reaches anything that could
+   *  answer). Whichever fires first wins; the others become no-ops because the entry is already
+   *  gone/replaced.
+   *
+   *  Keyed sessionKey -> Map<paneId, entry> (not sessionKey -> entry) so N panes legitimately
+   *  waiting on the SAME shared sessionKey (two terminals on one repo@worktree) are each tracked
+   *  and resolved/timed-out independently — a reply resolves every pane waiting on that key (fan
+   *  out, mirroring how live state/event frames already fan out via panesOf(sessionKey)), while a
+   *  pane whose own reply never comes still gets its own timeout note.
+   *
+   *  `gen` snapshots the pane's `_gen` at request time — if the pane's identity has since moved on
+   *  (cleared, or repointed to a different repo/worktree bumps `_gen`; see clearPane and the
+   *  repoSel/wtSel change handlers) a late reply is discarded rather than applied to the pane's
+   *  new state.
+   *
+   *  `priorKey` snapshots the pane's `sessionKey` at request time — it's how the transcript
+   *  handler tells a genuine key ADOPTION (the pane is switching to a different past conversation's
+   *  key, e.g. clicking Resume on another history row) from a pane simply reattaching to a key it
+   *  already held (restorePanes re-opening two panes that legitimately share one key — see
+   *  assignKey/wsWorkspaceId). Only the former can silently fork another pane's live conversation
+   *  and needs the clash check; the latter is just reconnecting and must never be flagged merely
+   *  because a legitimate twin also holds that same key. */
+  function beginPendingOpen(sessionKey, p, mode) {
+    let bucket = st.pendingOpens.get(sessionKey);
+    if (!bucket) { bucket = new Map(); st.pendingOpens.set(sessionKey, bucket); }
+    const prior = bucket.get(p.id); if (prior) clearTimeout(prior.timer);
+    const entry = { paneId: p.id, mode, gen: p._gen || 0, priorKey: p.sessionKey, timer: null };
+    entry.timer = setTimeout(() => {
+      const b = st.pendingOpens.get(sessionKey);
+      if (!b || b.get(p.id) !== entry) return;   // already resolved or superseded
+      b.delete(p.id);
+      if (!b.size) st.pendingOpens.delete(sessionKey);
+      note("Could not open — local bridge may be disconnected.");
+    }, WS_OPEN_TIMEOUT_MS);
+    bucket.set(p.id, entry);
   }
   const paneUI = new Map();        // paneId -> { root, transcriptEl, promptEl, repoSel, usageEl, dot, sendBtn, badge }
   const paneOf = (key) => st.panes.find((p) => p.sessionKey === key);
@@ -1801,9 +2065,161 @@ function viewWorkspace() {
     if (m.kind === "tool_use") return line("ws-tool", [el("i", { class: "ti ti-tool" }, []), " ", (m.tools || []).map((t) => t.name).join(", ")]);
     if (m.kind === "tool_result") return line("ws-toolres", ["✓ tool result"]);
     if (m.kind === "result") return line("ws-result", [`— done · ${(m.usage?.output_tokens || 0)} out tok · ~${fmtUsd(m.costUsd)}`]);
-    if (m.kind === "error") return line("ws-err", ["⚠ " + m.text]);
+    if (m.kind === "error") return line("ws-err", ["⚠ " + (m.text || m.message || "Unknown error")]);
     if (m.kind === "created") return line("ws-note", [`created ${m.what}: ${m.path}`]);
     return null;
+  }
+  const isToolEvent = (m) => m.kind === "tool_use" || m.kind === "tool_result";
+  const isTurnBoundary = (m) => m.role === "user" || m.kind === "user";
+  // A turn with several tool calls otherwise renders one "✓ tool result" line per event, burying
+  // the assistant's actual answer in noise. Collapse every tool_use/tool_result event within ONE
+  // turn into one expandable summary line — even when interim assistant commentary interrupts the
+  // tool rounds — expanding reveals the same per-event detail renderItem always produced, just
+  // hidden by default.
+  //
+  // `key` is a stable id for this group across repaints (the index, within the full transcript,
+  // of the group's first event — transcript items are only ever appended, never reordered/removed,
+  // so the index stays valid) and `expandedGroups` is the pane's own `Set` of currently-open group
+  // keys (see `p._expandedGroups`); this is how an expanded group survives the frequent
+  // paintPane() full re-renders that happen while a turn streams in, instead of re-collapsing on
+  // every event.
+  function renderToolGroup(group, key, expandedGroups) {
+    const calls = group.reduce((n, m) => n + (m.kind === "tool_use" ? Math.max((m.tools || []).length, 1) : 0), 0);
+    const isOpen = !!(expandedGroups && expandedGroups.has(key));
+    const props = {
+      class: "ws-line ws-toolgroup",
+      ontoggle: (e) => { if (!expandedGroups) return; if (e.target.open) expandedGroups.add(key); else expandedGroups.delete(key); },
+    };
+    if (isOpen) props.open = true;
+    return el("details", props, [
+      el("summary", { class: "ws-toolgroup-summary" }, [el("i", { class: "ti ti-tool" }, []), ` ${calls} tool call${calls === 1 ? "" : "s"}`]),
+      ...group.map(renderItem).filter(Boolean),
+    ]);
+  }
+  // Renders a full transcript, grouping every tool_use/tool_result event within one TURN into a
+  // single collapsed summary — a turn boundary is the next `user` item, not mere array adjacency,
+  // so interim assistant commentary between two tool-call rounds of the same turn doesn't split
+  // them into two summaries. Everything else still renders exactly as renderItem produces, inline,
+  // in its natural chronological position (the tool-group's own position is reserved at its first
+  // event and filled in once the group closes, so later-arriving tool events in the same turn still
+  // land in the one group even though other items were emitted in between).
+  function renderTranscript(items, expandedGroups) {
+    const out = [];
+    let group = null, groupSlot = null, groupKey = null;
+    const closeGroup = () => {
+      if (!group) return;
+      out[groupSlot] = renderToolGroup(group, groupKey, expandedGroups);
+      group = null; groupSlot = null; groupKey = null;
+    };
+    items.forEach((m, i) => {
+      if (isTurnBoundary(m)) closeGroup();   // a new turn starts here — flush the prior turn's group first
+      if (isToolEvent(m)) {
+        if (!group) { group = []; groupKey = i; groupSlot = out.length; out.push(null); }
+        group.push(m);
+      } else {
+        const node = renderItem(m); if (node) out.push(node);
+      }
+    });
+    closeGroup();
+    return out.filter(Boolean);
+  }
+
+  // ---- image attach ---------------------------------------------------------------
+  // One image per pane, riding the existing `prompt` payload (no new upload route/control
+  // action) as `{ mediaType, base64Data }` — see lib/workspace.mjs `_prompt`/`_saveImage` and
+  // lib/workspaceStore.mjs `saveImage`'s IMAGE_EXT for the closed list this must match.
+  const WS_IMG_ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp"];
+  // "roughly 3 MB" per design — measured on the ENCODED (base64) string, since that's what
+  // actually rides the WS control frame; base64 chars ≈ bytes (ASCII), so string length is a
+  // fine proxy without decoding back to bytes just to check.
+  const WS_IMG_MAX_ENCODED_BYTES = 3 * 1024 * 1024;
+  // Recompression ladder: try full-size-but-lower-quality first (cheapest to look at), only
+  // downscaling resolution once quality alone can't get under the cap.
+  const WS_IMG_COMPRESS_STEPS = [[1, 0.92], [1, 0.7], [0.75, 0.6], [0.5, 0.5], [0.35, 0.4]];
+
+  function wsReadFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(r.error || new Error("could not read file"));
+      r.readAsDataURL(file);
+    });
+  }
+  /** Length of the base64 payload after the `data:...;base64,` prefix — the part that actually
+   *  travels in the prompt payload. */
+  function wsDataUrlEncodedSize(dataUrl) { const i = dataUrl.indexOf(","); return i < 0 ? 0 : dataUrl.length - i - 1; }
+  function wsDataUrlToAttachment(dataUrl) {
+    const m = /^data:([^;,]+)(?:;[^,]*)?,([\s\S]*)$/.exec(dataUrl || "");
+    if (!m || !m[2]) return null;
+    return { mediaType: m[1], base64Data: m[2], dataUrl };
+  }
+  /** Decode a File into something <canvas> can draw — `createImageBitmap` where available
+   *  (works off-thread, no DOM node needed), falling back to a plain `Image` for browsers
+   *  without it. */
+  async function wsLoadDrawable(file) {
+    if (window.createImageBitmap) { try { return await createImageBitmap(file); } catch { /* fall through to Image */ } }
+    const url = URL.createObjectURL(file);
+    try {
+      return await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("could not decode image"));
+        img.src = url;
+      });
+    } finally { URL.revokeObjectURL(url); }
+  }
+  /** Downscale/recompress via <canvas>, always re-encoding as JPEG (in WS_IMG_ALLOWED_TYPES
+   *  regardless of the source format) — walks WS_IMG_COMPRESS_STEPS until the encoded result
+   *  fits under the cap, or returns null if it still doesn't after the whole ladder. */
+  async function wsCompressImage(file) {
+    let drawable;
+    try { drawable = await wsLoadDrawable(file); } catch { return null; }
+    const srcW = drawable.width || drawable.naturalWidth || 0, srcH = drawable.height || drawable.naturalHeight || 0;
+    if (!srcW || !srcH) return null;
+    for (const [scale, quality] of WS_IMG_COMPRESS_STEPS) {
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(srcW * scale));
+      canvas.height = Math.max(1, Math.round(srcH * scale));
+      canvas.getContext("2d").drawImage(drawable, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL("image/jpeg", quality);
+      if (wsDataUrlEncodedSize(dataUrl) <= WS_IMG_MAX_ENCODED_BYTES) { if (drawable.close) drawable.close(); return wsDataUrlToAttachment(dataUrl); }
+    }
+    if (drawable.close) drawable.close();
+    return null;
+  }
+  /** Entry point for all three attach paths (file-picker, paste, drag-drop) — same file-in,
+   *  same attached-state-out, so they're functionally equivalent per the design. Skips
+   *  recompression for an already-under-cap PNG/JPEG/WebP (keeps a small screenshot crisp);
+   *  anything else (oversized, or an unsupported clipboard/drop type) goes through
+   *  wsCompressImage, which always emits an allowed mediaType. */
+  async function wsAttachImageFile(p, file) {
+    wsShowImgErr(p, "");
+    if (!file || !/^image\//.test(file.type || "")) { wsShowImgErr(p, "That isn't an image file."); return; }
+    let attachment = null;
+    try {
+      if (WS_IMG_ALLOWED_TYPES.includes(file.type)) {
+        const dataUrl = await wsReadFileAsDataUrl(file);
+        attachment = wsDataUrlEncodedSize(dataUrl) <= WS_IMG_MAX_ENCODED_BYTES ? wsDataUrlToAttachment(dataUrl) : await wsCompressImage(file);
+      } else {
+        attachment = await wsCompressImage(file);
+      }
+    } catch { attachment = null; }
+    if (!attachment) { wsShowImgErr(p, "That image is too large to attach, even after compression — try a smaller one."); return; }
+    p.attachedImage = attachment;
+    wsPaintAttachment(p);
+  }
+  function wsShowImgErr(p, msg) {
+    const ui = paneUI.get(p.id); if (!ui) return;
+    ui.imgErr.textContent = msg || ""; ui.imgErr.hidden = !msg;
+  }
+  /** Sync the preview thumbnail + remove control to p.attachedImage — called after every
+   *  attach, remove, and a successful/failed send (see wsAttachImageFile, the remove button,
+   *  and send()). */
+  function wsPaintAttachment(p) {
+    const ui = paneUI.get(p.id); if (!ui) return;
+    const img = p.attachedImage;
+    ui.imgPreviewWrap.hidden = !img;
+    if (img) ui.imgThumb.src = img.dataUrl; else ui.imgThumb.removeAttribute("src");
   }
 
   // ---- one pane ------------------------------------------------------------------
@@ -1814,18 +2230,42 @@ function viewWorkspace() {
     const modeSel = el("select", { class: "wsel wsel-mode", title: "Permission mode for this pane" },
       WS_MODES.map((m) => el("option", { value: m.id }, [m.short])));
     modeSel.value = p.mode;
-    const dot = el("span", { class: "actdot" });
+    // The pane's turn-lock status icon — a plain CSS spinner (no glyph, no dependency):
+    // a bordered ring that rotates while the pane's session is busy, and sits still
+    // (idle/done) otherwise. Driven by paintPane() from p.status, which onPayload keeps
+    // in sync with the existing busy/status/result/error event stream (see onPayload).
+    const dot = el("span", { class: "ws-status" });
     const badge = el("span", { class: "ws-usage" }, ["—"]);
     const closeBtn = el("button", { class: "ws-x", title: "Clear this pane (ends its session)" }, ["×"]);
     const histBtn = el("button", { class: "ws-ico", title: "History for this repo" }, ["⏱"]);
     const transcriptEl = el("div", { class: "ws-transcript" }, []);
     const promptEl = el("textarea", { class: "ws-prompt", rows: "2", placeholder: "Message Claude… (Ctrl+Enter)" });
     const sendBtn = el("button", { class: "loginbtn ws-send" }, ["Send"]);
+    // Attach affordance: a file-picker button (hidden native <input type=file>) plus paste and
+    // drag-drop straight onto the compose row — all three funnel into wsAttachImageFile, so they
+    // end up in the exact same attached/preview state (see design's "functionally equivalent
+    // entry points").
+    const imgFileInput = el("input", { type: "file", accept: WS_IMG_ALLOWED_TYPES.join(","), class: "ws-img-input" });
+    const attachBtn = el("button", { class: "ws-ico ws-attach", type: "button", title: "Attach an image — click, paste, or drag onto the box" }, ["📎"]);
+    const imgThumb = el("img", { class: "ws-img-thumb", alt: "attached image" });
+    const imgRemoveBtn = el("button", { class: "ws-img-x", type: "button", title: "Remove attached image" }, ["×"]);
+    const imgPreviewWrap = el("div", { class: "ws-img-preview" }, [imgThumb, imgRemoveBtn]);
+    imgPreviewWrap.hidden = true;
+    const imgErr = el("div", { class: "ws-img-err" }, []);
+    imgErr.hidden = true;
+    const composeRow = el("div", { class: "ws-compose" }, [attachBtn, imgFileInput, promptEl, sendBtn]);
+    const composeExtras = el("div", { class: "ws-compose-extras" }, [imgPreviewWrap, imgErr]);
     const header = el("div", { class: "ws-pane-hd" }, [dot, repoSel, wtSel, modeSel, histBtn, el("span", { class: "ws-spacer" }), badge, closeBtn]);
-    const paneRoot = el("div", { class: "ws-pane" }, [header, transcriptEl, el("div", { class: "ws-compose" }, [promptEl, sendBtn])]);
+    const paneRoot = el("div", { class: "ws-pane" }, [header, transcriptEl, composeExtras, composeRow]);
 
     paneRoot.addEventListener("mousedown", () => setActive(p.id));
-    repoSel.addEventListener("change", () => { p.repo = repoSel.value; p.worktree = "main"; p.readonly = false; p.resume = null; assignKey(p); paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p); if (p.repo) wsPost("control", { action: "worktrees", args: { repo: p.repo } }); });
+    // Repointing a pane to a different repo/worktree abandons its OLD identity — bump `_gen` so
+    // an open/resume reply still in flight for that old identity is discarded, not applied, when
+    // it eventually arrives (see beginPendingOpen), and reset `status` to idle: the new workspace
+    // never started a turn, so a stale "thinking" carried over from the old identity would spin
+    // the busy indicator forever (no event for the OLD session can ever arrive to correct it once
+    // sessionKey has moved on).
+    repoSel.addEventListener("change", () => { p.repo = repoSel.value; p.worktree = "main"; p.readonly = false; p.resume = null; p.status = "idle"; p._gen = (p._gen || 0) + 1; assignKey(p); paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p); if (p.repo) wsPost("control", { action: "worktrees", args: { repo: p.repo } }); });
     wtSel.addEventListener("change", () => {
       const v = wtSel.value;
       if (v === "__new__") {   // "+ new worktree…" — create one, then switch this pane to it
@@ -1836,7 +2276,7 @@ function viewWorkspace() {
         wsPost("control", { action: "worktreeAdd", args: { repo: p.repo, name: name.trim() } });
         return;
       }
-      p.worktree = v || "main"; p.readonly = false; p.resume = null; assignKey(p);
+      p.worktree = v || "main"; p.readonly = false; p.resume = null; p.status = "idle"; p._gen = (p._gen || 0) + 1; assignKey(p);
       paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p);
     });
     // Applies live: the server calls the SDK's setPermissionMode on a running session, so
@@ -1846,8 +2286,39 @@ function viewWorkspace() {
     closeBtn.addEventListener("click", (e) => { e.stopPropagation(); clearPane(p); });
     sendBtn.addEventListener("click", () => send(p));
     promptEl.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(p); } });
+    // Attach path 1: file-picker button opens the hidden native input; its change event is the
+    // one place ALL browsers report the chosen file.
+    attachBtn.addEventListener("click", (e) => { e.stopPropagation(); imgFileInput.click(); });
+    imgFileInput.addEventListener("change", () => {
+      const f = imgFileInput.files && imgFileInput.files[0];
+      imgFileInput.value = "";   // reset so re-picking the SAME file still fires change next time
+      if (f) wsAttachImageFile(p, f);
+    });
+    // Attach path 2: paste an image straight into the textarea — mirrors Claude Desktop.
+    // Only intercepted when the clipboard actually carries an image; a text paste (the common
+    // case) is left completely alone.
+    promptEl.addEventListener("paste", (e) => {
+      const items = e.clipboardData && e.clipboardData.items; if (!items) return;
+      for (const item of items) {
+        if (item.kind === "file" && /^image\//.test(item.type)) {
+          e.preventDefault();
+          const f = item.getAsFile();
+          if (f) wsAttachImageFile(p, f);
+          return;
+        }
+      }
+    });
+    // Attach path 3: drag-and-drop an image file onto the compose row.
+    composeRow.addEventListener("dragover", (e) => { e.preventDefault(); composeRow.classList.add("ws-drag"); });
+    composeRow.addEventListener("dragleave", () => composeRow.classList.remove("ws-drag"));
+    composeRow.addEventListener("drop", (e) => {
+      e.preventDefault(); composeRow.classList.remove("ws-drag");
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) wsAttachImageFile(p, f);
+    });
+    imgRemoveBtn.addEventListener("click", (e) => { e.stopPropagation(); p.attachedImage = null; wsShowImgErr(p, ""); wsPaintAttachment(p); });
 
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, usageEl: badge, dot, sendBtn });
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, usageEl: badge, dot, sendBtn, attachBtn, imgThumb, imgPreviewWrap, imgErr });
     return paneRoot;
   }
 
@@ -1863,16 +2334,32 @@ function viewWorkspace() {
     if (ui.modeSel.value !== p.mode) ui.modeSel.value = p.mode;
     ui.modeSel.classList.toggle("danger", p.mode === "bypassPermissions");
     ui.modeSel.classList.toggle("plan", p.mode === "plan");
-    const busy = p.status === "thinking" || p.status === "awaiting-permission";
-    ui.dot.classList.toggle("on", busy);
+    const busy = paneBusy(p);
+    ui.dot.classList.toggle("spinning", busy);
+    ui.dot.title = busy ? "Claude is working this turn…" : "Idle";
+    // Busy is a visual-only signal on the Send button (color + label), distinct from `disabled`:
+    // the button stays clickable while busy so a prompt typed mid-turn still round-trips to the
+    // server's `busy` refusal (see send()), which is what restores the typed text today. Turning
+    // it fully unclickable is a bigger behavior change (queuing) that hasn't landed yet.
+    ui.sendBtn.classList.toggle("busy", busy);
+    ui.sendBtn.textContent = busy ? "Working…" : "Send";
+    ui.sendBtn.title = busy ? "Claude is still working this turn — sending now will be held until it finishes." : "";
     ui.promptEl.disabled = !!p.readonly;
     ui.sendBtn.disabled = !!p.readonly;
+    ui.attachBtn.disabled = !!p.readonly;
     ui.promptEl.placeholder = p.readonly ? "Read-only — pick the repo above or Resume from history to continue" : (p.resume ? "Resuming saved session — your next message continues it" : "Message Claude… (Ctrl+Enter)");
     const u = p.usage || {};
     ui.usageEl.textContent = (u.inputTokens || u.outputTokens) ? `${((u.inputTokens || 0) + (u.outputTokens || 0)).toLocaleString()} tok · ~${fmtUsd(u.costUsd)}` : "—";
+    // paintPane fires on every streamed event during a turn — a full replaceChildren() would
+    // otherwise (a) blow away any tool-group a user just expanded (fixed by handing the pane's
+    // persisted `_expandedGroups` into renderTranscript) and (b) yank the scroll position back to
+    // the bottom even for someone who deliberately scrolled up to read earlier history. Snap to
+    // the bottom only when the pane was already there (or is short enough to be there already) —
+    // someone actively watching a live response keeps following it either way.
+    const wasNearBottom = ui.transcriptEl.scrollHeight - ui.transcriptEl.scrollTop - ui.transcriptEl.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX;
     if (!p.transcript.length) ui.transcriptEl.replaceChildren(el("div", { class: "hint" }, [p.repo ? "Send a message — Claude runs in " + shortRepo(p.repo) + " on your machine." : "Pick a repository (dropdown, or the sidebar) to start."]));
-    else ui.transcriptEl.replaceChildren(...p.transcript.map(renderItem).filter(Boolean));
-    ui.transcriptEl.scrollTop = ui.transcriptEl.scrollHeight;
+    else ui.transcriptEl.replaceChildren(...renderTranscript(p.transcript, p._expandedGroups));
+    if (wasNearBottom) ui.transcriptEl.scrollTop = ui.transcriptEl.scrollHeight;
   }
 
   function setActive(id) {
@@ -1909,6 +2396,8 @@ function viewWorkspace() {
     if (paneBusy(p) && !window.confirm("This pane is still working. Clear it and end that session?")) return;
     endSessions([p.sessionKey]);
     p.sessionKey = wsUuid(); p.transcript = []; p.usage = {}; p.status = "idle"; p.readonly = false; p.resume = null;
+    p._expandedGroups = new Set();   // a cleared pane starts a fresh transcript — stale group keys don't apply
+    p._gen = (p._gen || 0) + 1;   // invalidate any in-flight open still targeting the OLD identity
     paintPane(p); setUsageTotal(); saveLayout();
   }
 
@@ -1997,12 +2486,21 @@ function viewWorkspace() {
   function loadHistory(repo) { st.historyRepo = repo || null; wsPost("control", { action: "history", args: { repo: repo || undefined } }); histList.replaceChildren(el("div", { class: "hint" }, ["Loading history…"])); }
   function histItem(h, snippet) {
     const when = h.updatedAt ? new Date(h.updatedAt).toLocaleString() : "";
+    // Search results (`snippet != null`) are still one row per saved SESSION (`h.sessionKey`,
+    // from `searchSessions`). The plain history list is now one row per WORKSPACE — every past
+    // session file for a repo+worktree merged into a single row (`h.workspaceId`) — so opening it
+    // must key off that instead.
+    const key = snippet != null ? h.sessionKey : h.workspaceId;
+    const label = shortRepo(h.repo) || "—";
     const openB = el("button", { class: "ws-ico", title: "Reopen read-only" }, ["👁"]);
     const resumeB = el("button", { class: "ws-ico", title: "Resume live" }, ["▶"]);
-    openB.addEventListener("click", () => reopen(h.sessionKey, "open"));
-    resumeB.addEventListener("click", () => reopen(h.sessionKey, "resume"));
+    openB.addEventListener("click", () => reopen(key, "open"));
+    resumeB.addEventListener("click", () => reopen(key, "resume"));
     return el("div", { class: "ws-hist-item" }, [
-      el("div", { class: "ws-hist-line1" }, [el("b", {}, [shortRepo(h.repo) || "—"]), el("span", { class: "ws-hist-meta" }, [snippet != null ? `${h.matchCount} match(es)` : `${h.turns || 0} turn(s) · ~${fmtUsd(h.usage?.costUsd)}`])]),
+      el("div", { class: "ws-hist-line1" }, [
+        el("b", {}, [label + (h.worktree && h.worktree !== "main" ? "@" + h.worktree : "")]),
+        el("span", { class: "ws-hist-meta" }, [snippet != null ? `${h.matchCount} match(es)` : `${h.turns || 0} turn(s)`]),
+      ]),
       el("div", { class: "ws-hist-first" }, [snippet != null ? "…" + snippet + "…" : (h.firstPrompt || "(no prompt)")]),
       el("div", { class: "ws-hist-actions" }, [el("span", { class: "ws-hist-when" }, [when]), el("span", { class: "ws-spacer" }, []), openB, resumeB]),
     ]);
@@ -2027,7 +2525,7 @@ function viewWorkspace() {
   }
   function reopen(sessionKey, mode) {
     const p = activePane(); if (!p) { note("Open a pane first."); return; }
-    st.pendingOpens.set(sessionKey, { paneId: p.id, mode });   // correlated by the saved key echoed back
+    beginPendingOpen(sessionKey, p, mode);
     wsPost("control", { action: "open", args: { sessionKey } });
   }
 
@@ -2040,7 +2538,10 @@ function viewWorkspace() {
         // A worktree we just asked to create arrived — switch the requesting pane onto it.
         for (const p of st.panes) {
           if (p.repo === data.worktreesRepo && p._pendingWorktree && data.worktrees.some((w) => w.name === p._pendingWorktree)) {
-            p.worktree = p._pendingWorktree; p._pendingWorktree = null; assignKey(p); reportAttach();
+            // Same identity-change rule as the repoSel/wtSel handlers: this pane just abandoned
+            // its prior worktree's key, so any open/resume reply still in flight for that old
+            // key must be discarded, not applied, when it eventually arrives.
+            p.worktree = p._pendingWorktree; p._pendingWorktree = null; p._gen = (p._gen || 0) + 1; assignKey(p); reportAttach();
           }
           if (p.repo === data.worktreesRepo) paintPane(p);
         }
@@ -2094,27 +2595,53 @@ function viewWorkspace() {
     if (kind === "transcript") {
       // A reopen/resume we requested arrived. Correlate by the SAVED session key (echoed in
       // the frame) so a stray/duplicate frame can never clobber a live pane — drop if unmatched.
-      const req = st.pendingOpens.get(sessionKey); if (!req) return;
+      // One reply resolves EVERY pane still waiting on this key (fan out — two panes can share
+      // a sessionKey and both be waiting; see beginPendingOpen), each independently discarding
+      // the reply if its own pane has since moved on (cleared or repointed — stale `gen`).
+      const bucket = st.pendingOpens.get(sessionKey); if (!bucket || !bucket.size) return;
       st.pendingOpens.delete(sessionKey);
-      const p = st.panes.find((x) => x.id === req.paneId); if (!p) return;   // its pane was trimmed away
-      p.transcript = data.transcript || [];
-      p.repo = data.repo || p.repo;
-      p.usage = data.usage || {};
-      if (req.mode === "resume" || req.mode === "restore") {
-        // Adopt the saved conversation's key. The pane's own key would make the work machine
-        // persist the continuation to a SECOND file holding only the new turns — Claude would
-        // remember everything while the stored history silently forked in two.
-        const clash = st.panes.find((x) => x !== p && x.sessionKey === sessionKey);
-        if (clash) { p.readonly = true; p.resume = null; note("That conversation is already open in another pane — reopened read-only here."); }
-        else {
-          p.sessionKey = sessionKey; p.readonly = false; p.resume = data.sessionId || null;
-          if (req.mode === "resume") note("Resuming — your next message continues this session.");
-        }
-      } else { p.readonly = true; p.resume = null; note("Reopened read-only. Pick the repo or Resume to continue."); }
-      paintPane(p); setUsageTotal(); saveLayout();
+      for (const req of bucket.values()) {
+        clearTimeout(req.timer);
+        const p = st.panes.find((x) => x.id === req.paneId); if (!p) continue;   // its pane was trimmed away
+        if ((p._gen || 0) !== req.gen) continue;   // this pane has moved on since the request — discard, don't apply
+        p.transcript = data.transcript || [];
+        p._expandedGroups = new Set();   // a freshly-(re)opened transcript has no expand state yet
+        p.repo = data.repo || p.repo;
+        p.usage = data.usage || {};
+        if (req.mode === "resume" || req.mode === "restore") {
+          // Adopt the saved conversation's key. The pane's own key would make the work machine
+          // persist the continuation to a SECOND file holding only the new turns — Claude would
+          // remember everything while the stored history silently forked in two.
+          // The clash check only applies when this pane is genuinely ADOPTING a key it didn't
+          // hold coming in (req.priorKey !== sessionKey) — a pane reattaching to a key it already
+          // held (restorePanes re-opening two panes that legitimately share one key) is just
+          // reconnecting, not adopting, and must not be flagged just because its legitimate twin
+          // holds the same key too (see beginPendingOpen).
+          const clash = req.priorKey !== sessionKey && st.panes.find((x) => x !== p && x.sessionKey === sessionKey);
+          if (clash) { p.readonly = true; p.resume = null; note("That conversation is already open in another pane — reopened read-only here."); }
+          else {
+            p.sessionKey = sessionKey; p.readonly = false; p.resume = data.sessionId || null;
+            if (req.mode === "resume") note("Resuming — your next message continues this session.");
+          }
+        } else { p.readonly = true; p.resume = null; note("Reopened read-only. Pick the repo or Resume to continue."); }
+        paintPane(p); setUsageTotal(); saveLayout();
+      }
       return;
     }
     if (kind === "event") {
+      // A reopen/resume's failure (e.g. "not found") must resolve its pendingOpens entry too —
+      // independent of whether any pane currently holds this key. Without this, a stale/never-
+      // attached history row's error reply matches no pane below (`targets.length` stays 0, the
+      // routing exits early) and the pending entry leaks forever, even though the server DID
+      // answer and even though the sessionKey is no longer null (it's echoed back — see
+      // `_openTranscript`) — this is a distinct leak from the "no reply at all" case the client
+      // timeout in `beginPendingOpen` covers.
+      if (data.kind === "error" && sessionKey && st.pendingOpens.has(sessionKey)) {
+        const bucket = st.pendingOpens.get(sessionKey);
+        st.pendingOpens.delete(sessionKey);
+        for (const req of bucket.values()) clearTimeout(req.timer);   // resolves every pane waiting on this key
+        note("Could not open — " + (data.message || "that conversation could not be opened."));
+      }
       // Workspace-level notices (create/remove/note/error) carry no sessionKey.
       if (!sessionKey && (data.kind === "created" || data.kind === "removed" || data.kind === "note" || data.kind === "error")) {
         if (data.kind === "note") note(data.message);
@@ -2144,6 +2671,12 @@ function viewWorkspace() {
         // The server refused the prompt (bad path, no token, …). The turn was never accepted, so
         // restore the typed text — exactly as the busy path does — rather than losing it.
         if (data.kind === "error" && p._pendingText) { const ui = paneUI.get(p.id); if (ui && !ui.promptEl.value) ui.promptEl.value = p._pendingText; p._pendingText = null; }
+        // The turn concludes here, success or failure — stop the spinner even though the
+        // server doesn't always follow a result/error with its own "status" event (it stays
+        // "thinking" internally between turns). Without this the spinner would only clear on
+        // the NEXT status push (e.g. the following turn), which is exactly the stuck-spinner
+        // gap this pane icon exists to avoid.
+        if ((data.kind === "result" || data.kind === "error") && paneBusy(p)) p.status = "idle";
         p.transcript.push(data);
         if (data.usageTotal) p.usage = data.usageTotal;
         paintPane(p);
@@ -2202,11 +2735,18 @@ function viewWorkspace() {
     // (so a SHARED session shows the prompt in both windows), and refuses it with `busy` if a
     // turn is already running — appending here would show a prompt that was never actually sent.
     ui.promptEl.value = ""; p._pendingText = text;
+    // Same "clear optimistically, restore on failure" treatment as the text above — the
+    // attached image (if any) is a one-shot per send, never left over for the next message.
+    const attachedImage = p.attachedImage;
+    p.attachedImage = null; wsPaintAttachment(p);
     const body = { sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree, text, mode: p.mode, by: CONN.id };
+    if (attachedImage) body.image = { mediaType: attachedImage.mediaType, base64Data: attachedImage.base64Data };
     if (p.resume) { body.resume = p.resume; p.resume = null; }
     const r = await wsPost("prompt", body);
     if (!r.ok) {
-      // Couldn't even reach the work machine — restore the text so nothing is lost.
+      // Couldn't even reach the work machine — restore the text (and any attached image) so
+      // nothing is lost.
+      if (attachedImage && !p.attachedImage) { p.attachedImage = attachedImage; wsPaintAttachment(p); }
       if (ui.promptEl.value === "") ui.promptEl.value = p._pendingText || "";
       p._pendingText = null;
       p.transcript.push({ kind: "error", text: r.message || "Could not reach the work machine." }); paintPane(p);
@@ -2366,6 +2906,7 @@ function viewOps() {
     if (c.enabled) toggle.setAttribute("checked", "checked");
     const loc = el("input", { type: "text", id: "bkLoc", value: c.location || "",
       style: "flex:1;min-width:200px;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:5px 9px;font-family:ui-monospace,monospace;font-size:12px" });
+    const browseBtn = el("button", { class: "ghost", title: "Pick the folder on the work machine's disk — avoids typing/pasting a path by hand" }, ["📁 Browse…"]);
     const hour = el("input", { type: "number", id: "bkHour", min: "0", max: "23", value: String(c.hour ?? 3),
       style: "width:56px;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:5px 7px" });
     const saveBtn = el("button", { class: "ghost" }, ["Save settings"]);
@@ -2378,6 +2919,12 @@ function viewOps() {
     }
     toggle.addEventListener("change", () => save({ enabled: toggle.checked }));
     saveBtn.addEventListener("click", () => save({}));
+    browseBtn.addEventListener("click", async () => {
+      const picked = await showFolderBrowser(loc.value || "");
+      if (picked == null) return;               // cancelled
+      loc.value = picked;
+      save({});                                  // persist immediately — no separate "Save" step needed
+    });
 
     const stateBits = [];
     stateBits.push(el("span", { style: `font-weight:700;color:${c.enabled ? "#34d399" : "#94a3b8"}` }, [c.enabled ? "● ON" : "○ OFF"]));
@@ -2389,7 +2936,7 @@ function viewOps() {
       el("div", { class: "desc" }, [el("b", {}, ["Automated daily backup"])]),
       el("div", { style: "display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:6px 0" }, [
         el("label", { style: "display:inline-flex;align-items:center;gap:6px;font-size:13px" }, [toggle, "Enabled"]),
-        el("div", { style: "display:flex;align-items:center;gap:6px;flex:1;min-width:220px" }, [el("span", { class: "was" }, ["location"]), loc]),
+        el("div", { style: "display:flex;align-items:center;gap:6px;flex:1;min-width:220px" }, [el("span", { class: "was" }, ["location"]), loc, browseBtn]),
         el("div", { style: "display:flex;align-items:center;gap:6px" }, [el("span", { class: "was" }, ["hour"]), hour, el("span", { class: "was" }, [":00"])]),
         saveBtn,
       ]),

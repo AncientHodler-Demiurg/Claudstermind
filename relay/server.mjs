@@ -158,9 +158,28 @@ function snapshotView(path, snap) {
 // A dead agent is still caught promptly by the heartbeat → detach, not by these.
 const LONG_COMMAND_MS = { backup: 900_000, restore: 3_600_000 };
 
-async function readBody(req) {
-  let body = ""; for await (const c of req) body += c;
-  try { return JSON.parse(body || "{}"); } catch { return {}; }
+// A hard cap on how much of a request body the relay will ever hold in memory. The vision-input
+// client caps an attached image's ENCODED size at ~3MB before base64 (see wsCompressImage in
+// dashboard/public/app.js); base64 inflates that by ~4/3 (~4MB) and the rest of the JSON envelope
+// (prompt text, sessionKey, repo, …) adds a little more — 8MB leaves generous headroom without
+// leaving this internet-facing, low-auth-bar process open to an unbounded read. Enforced
+// INCREMENTALLY as bytes actually arrive below, never from a `Content-Length` pre-check alone —
+// a chunked-encoding client can omit or lie about that header entirely.
+const MAX_BODY_BYTES = 8 * 1024 * 1024;
+
+class PayloadTooLargeError extends Error {}
+
+async function readBody(req, maxBytes = MAX_BODY_BYTES) {
+  let total = 0;
+  const chunks = [];
+  for await (const chunk of req) {
+    total += chunk.length;
+    // Checked as each chunk lands, BEFORE it's kept — a client that never stops sending is cut
+    // off here rather than accumulated first and rejected only after the fact.
+    if (total > maxBytes) throw new PayloadTooLargeError(`request body exceeded the ${maxBytes}-byte cap`);
+    chunks.push(chunk);
+  }
+  try { return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"); } catch { return {}; }
 }
 
 export function createRelay(opts = {}) {
@@ -175,6 +194,25 @@ export function createRelay(opts = {}) {
 
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
+      // An oversized body is an expected, client-caused rejection, not a server fault — answer
+      // it plainly with 413 rather than folding it into the generic 500 path. `readBody` stopped
+      // reading mid-body, so the socket still has the REST of the oversized upload sitting
+      // unread on it; if this connection were left alive (keep-alive), that leftover raw body
+      // would be mistaken for the start of the NEXT request on a reused socket and hang or
+      // corrupt it (confirmed: a subsequent request on the same kept-alive connection stalled for
+      // the keep-alive timeout, then reset). So the socket is destroyed too — but only once the
+      // 413 has actually been flushed (`res`'s `finish` event), so the client still gets the
+      // clean 413 instead of an ECONNRESET before it ever reads a response.
+      if (err instanceof PayloadTooLargeError) {
+        if (!res.headersSent) {
+          res.setHeader("connection", "close");
+          sendJSON(res, 413, { ok: false, reason: "payload-too-large", message: err.message });
+        } else {
+          res.end();
+        }
+        res.on("finish", () => { try { req.destroy(); } catch {} });
+        return;
+      }
       console.error(`relay: unhandled error on ${req.method} ${req.url} —`, err);
       if (!res.headersSent) sendJSON(res, 500, { error: "internal error" });
       else res.end();
@@ -289,6 +327,25 @@ export function createRelay(opts = {}) {
       return;
     }
 
+    // ---- remote self-restart safety: pre-flight + gated restart trigger, mirroring
+    // /api/deploy's stream+trigger pair exactly (see dashboard-self-restart-safety's design and
+    // dashboard/server.mjs's runSelfRestart/RESTART, which the bridge's "restart" WS_IN
+    // special-case below runs). ----
+    if (req.method === "GET" && path === "/api/dashboard/restart/stream") {
+      if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Restart is ancient-only." });
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
+      // Fan only the restart frames the bridge pushes up the tunnel, as bare log lines.
+      const unsub = link.addWsSubscriber((p) => {
+        try {
+          if (p.kind === "restart-log") res.write(`data: ${JSON.stringify(p.data?.line || "")}\n\n`);
+          else if (p.kind === "restart-done") res.write(`data: ${JSON.stringify(p.data?.ok ? "__DONE_OK__" : "__DONE_FAIL__")}\n\n`);
+        } catch {}
+      });
+      const hb = setInterval(() => { try { res.write(": keep-alive\n\n"); } catch {} }, 25_000); hb.unref?.();
+      req.on("close", () => { clearInterval(hb); unsub(); });
+      return;
+    }
+
     // ---- remote workspace: SSE stream of the bridge's Claude session output (ancient-only) ----
     if (req.method === "GET" && path === "/api/workspace/stream") {
       if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The workspace is ancient-only." });
@@ -340,6 +397,15 @@ export function createRelay(opts = {}) {
         if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Deploy is ancient-only." });
         if (!link.connected) return sendJSON(res, 503, { ok: false, reason: "local-not-connected", message: "The work machine isn't connected." });
         const r = link.sendWsIn("deploy", null, {});
+        return sendJSON(res, r.ok ? 200 : (r.reason === "local-not-connected" ? 503 : 502), { ok: r.ok, started: r.ok, remote: true });
+      }
+
+      // ---- remote self-restart trigger: forward down the tunnel; the bridge runs the sandboxed
+      // pre-flight + real restart and streams the log — gated identically to /api/deploy above. ----
+      if (path === "/api/dashboard/restart") {
+        if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Restart is ancient-only." });
+        if (!link.connected) return sendJSON(res, 503, { ok: false, reason: "local-not-connected", message: "The work machine isn't connected." });
+        const r = link.sendWsIn("restart", null, {});
         return sendJSON(res, r.ok ? 200 : (r.reason === "local-not-connected" ? 503 : 502), { ok: r.ok, started: r.ok, remote: true });
       }
 
