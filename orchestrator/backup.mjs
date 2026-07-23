@@ -63,6 +63,35 @@ export function buildTarArgs(archivePath, sourceParent, sourceName, extraExclude
  * not stop the stat (verified — only an ancestor exclusion prevents the descent).
  * Everything skipped for this reason is reported loudly; nothing is dropped silently.
  */
+/**
+ * The top-level names actually present INSIDE the archive, from a `tar -tf` listing.
+ *
+ * Entries look like `_Claude/StoaChain/...`; we want the set {StoaChain, ...} directly
+ * under the archive's root folder. Split out from the spawn so it can be unit-tested
+ * without building a multi-gigabyte tar.
+ */
+export function topLevelsInListing(listing, sourceName) {
+  const out = new Set();
+  for (const line of String(listing).split(/\r?\n/)) {
+    const e = line.trim();
+    if (!e) continue;
+    const parts = e.split("/");
+    if (parts[0] === sourceName && parts[1]) out.add(parts[1]);
+  }
+  return out;
+}
+
+/**
+ * What the archive MUST contain: every top-level entry of the source that we did not
+ * deliberately exclude. Compared against the listing above, this is what turns "tar
+ * exited 0" into "the backup is actually usable".
+ */
+export function expectedTopLevels(sourceDir, excludes = EXCLUDE_DIRS) {
+  return readdirSync(sourceDir, { withFileTypes: true })
+    .map((e) => e.name)
+    .filter((n) => !excludes.includes(n));
+}
+
 export function findDanglingLinks(root, rootLabel) {
   const dangling = [];
   const skip = new Set([...EXCLUDE_DIRS, ".git"]);   // .git holds no junctions; skipping it is a big win
@@ -194,6 +223,45 @@ function run() {
     });
   }
 
+  // 5. READ-BACK VERIFICATION — the load-bearing check.
+  //
+  // Everything above only proves tar *thought* it succeeded. It does not prove the
+  // bytes on disk are a readable archive containing the workspace. A backup is the one
+  // artefact whose failure you discover at the worst possible moment, so before it is
+  // published under its real name it has to survive being read back:
+  //
+  //   a) `tar -tf` must parse it end to end   → catches corruption/truncation
+  //   b) every non-excluded top-level folder of the source must be inside it
+  //                                            → catches the "plausible stump" case
+  //
+  // (b) is what a byte-count cannot catch: a partial archive can be gigabytes and still
+  // be missing whole repositories.
+  const listProc = spawnSync(tarBin(), ["-tf", partialPath], {
+    encoding: "utf8", windowsHide: true, maxBuffer: 256 * 1024 * 1024,
+  });
+  if (listProc.status !== 0 || listProc.error) {
+    try { unlinkSync(partialPath); } catch {}
+    return result({
+      ok: false, reason: "verify-unreadable", id, path: archivePath, bytes,
+      danglingLinks: dangling, skippedDirs,
+      message: `The ${human(bytes)} archive could not be read back (tar -tf failed${listProc.error ? `: ${listProc.error.message}` : ` with exit ${listProc.status}`}). It is corrupt — deleted, no backup written.`,
+      stderr: (listProc.stderr || "").slice(-1000),
+    });
+  }
+
+  const present = topLevelsInListing(listProc.stdout, sourceName);
+  const expected = expectedTopLevels(join(sourceParent, sourceName));
+  const missingTop = expected.filter((n) => !present.has(n));
+  if (missingTop.length > 0) {
+    try { unlinkSync(partialPath); } catch {}
+    return result({
+      ok: false, reason: "verify-incomplete", id, path: archivePath, bytes,
+      missing: missingTop, danglingLinks: dangling, skippedDirs,
+      message: `The ${human(bytes)} archive is INCOMPLETE — ${missingTop.length} top-level item(s) never made it in: ${missingTop.join(", ")}. Deleted, no backup written.`,
+    });
+  }
+  const verifiedEntries = listProc.stdout.split(/\r?\n/).filter((l) => l.trim()).length;
+
   // Verified — publish it under its real name.
   try { renameSync(partialPath, archivePath); }
   catch (e) {
@@ -210,8 +278,10 @@ function run() {
     excluded: EXCLUDE_DIRS,
     danglingLinks: dangling, skippedDirs,
     warnings: errLines.slice(-5),
+    verified: { entries: verifiedEntries, topLevels: expected.length },
     message: `Archived ${human(bytes)} to ${file} in ${Math.round(durationMs / 1000)}s` +
-      `${errLines.length ? ` (${errLines.length} benign warning(s) — files changed while reading)` : ""}.` + skipNote,
+      `${errLines.length ? ` (${errLines.length} benign warning(s) — files changed while reading)` : ""}.` +
+      ` Verified readable: ${verifiedEntries.toLocaleString("en-US")} entries, all ${expected.length} top-level items present.` + skipNote,
   };
   try { recordArchive(record); } catch { /* the .tar on disk is the truth; the registry is a convenience */ }
   return result(record);

@@ -312,9 +312,19 @@ Two behaviours worth knowing:
   `tar-failed`, read `hardErrors` in the result: it names the exact offending path. Stop whatever
   holds it, or add its directory to `EXCLUDE_DIRS` in `orchestrator/backup.mjs`.
 
-Check the result, don't assume it: a good run reports `ok:true` with a message like
-*"Archived 1.97 GB to claude-2026-07-23-d94bfc.tar in 53s."* and the archive should list clean
-(`tar tf <file> | head`).
+**Every backup verifies itself before it is published.** After tar finishes, the archive is read
+back (`tar -tf`) and its top-level contents are compared against the source; only then is it renamed
+from `.partial` to its real name. A run that cannot be read, or that is missing any non-excluded
+top-level folder, is **deleted and reported as a failure** rather than left looking like a backup.
+
+So a good result says `ok:true` and states what was verified:
+
+> *Archived 1.97 GB to claude-2026-07-23-0b7bdc.tar in 55s. Verified readable: 51,568 entries, all
+> 14 top-level items present.*
+
+Failure reasons you might see, all of which mean **no archive was written**: `tar-failed` (hit an
+unreadable path — `hardErrors` names it), `killed` (truncated), `verify-unreadable` (corrupt), and
+`verify-incomplete` (whole folders absent — the `missing` field lists them).
 
 ---
 

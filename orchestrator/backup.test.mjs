@@ -11,7 +11,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { buildTarArgs, EXCLUDE_DIRS, findDanglingLinks } from "./backup.mjs";
+import { buildTarArgs, EXCLUDE_DIRS, findDanglingLinks, topLevelsInListing, expectedTopLevels } from "./backup.mjs";
 import { listArchives, tarBin } from "./archives.mjs";
 import { symlinkSync } from "node:fs";
 
@@ -166,4 +166,87 @@ test("only well-formed claude-<date>-<id>.tar files are listed as archives", () 
   assert.deepEqual(list.archives.map((a) => a.id).sort(), ["a1b2c3", "ffeedd"]);
   assert.deepEqual(list.archives.map((a) => a.date).sort(), ["2026-07-13", "2026-07-14"]);
   rmSync(box, { recursive: true, force: true });
+});
+
+/* ---------------------------------------------------------------------------
+ * Read-back verification. These guard the case a byte-count cannot see: tar
+ * exits 0, the file is large and plausible, but whole folders never made it in.
+ * ------------------------------------------------------------------------ */
+
+test("topLevelsInListing extracts the folders directly under the archive root", () => {
+  const listing = [
+    "_Claude/",
+    "_Claude/StoaChain/",
+    "_Claude/StoaChain/_infra/stoa-js/package.json",
+    "_Claude/AncientPantheon/constructors/Codex/README.md",
+    "_Claude/.secrets/relay-device-secret.txt",
+    "",                                   // blank lines must not become entries
+    "OtherRoot/Nope/file.txt",            // a different root must be ignored
+  ].join("\n");
+  const got = topLevelsInListing(listing, "_Claude");
+  assert.deepEqual([...got].sort(), [".secrets", "AncientPantheon", "StoaChain"]);
+});
+
+test("topLevelsInListing handles CRLF listings (Windows tar)", () => {
+  const got = topLevelsInListing("_Claude/A/x\r\n_Claude/B/y\r\n", "_Claude");
+  assert.deepEqual([...got].sort(), ["A", "B"]);
+});
+
+test("expectedTopLevels lists the source's folders minus the deliberate exclusions", () => {
+  const dir = mkdtempSync(join(tmpdir(), "exp-"));
+  try {
+    for (const d of ["Repos", "node_modules", "dist", "Keep"]) mkdirSync(join(dir, d));
+    writeFileSync(join(dir, "loose.txt"), "x");
+    const got = expectedTopLevels(dir, ["node_modules", "dist"]).sort();
+    assert.deepEqual(got, ["Keep", "Repos", "loose.txt"]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("verification CATCHES an archive that is missing a top-level folder", () => {
+  // The regression that matters: a tar built from a subset still lists fine and has a
+  // believable size, but a whole repo is absent. Comparing the listing against the
+  // source is what turns that into a failure instead of a green backup.
+  const root = mkdtempSync(join(tmpdir(), "vsrc-"));
+  try {
+    const src = join(root, "_Claude");
+    mkdirSync(join(src, "KeptRepo"), { recursive: true });
+    mkdirSync(join(src, "LostRepo"), { recursive: true });
+    writeFileSync(join(src, "KeptRepo", "a.txt"), "a");
+    writeFileSync(join(src, "LostRepo", "b.txt"), "b");
+
+    // archive ONLY KeptRepo — simulating the stump
+    const arch = join(root, "partial.tar");
+    const r = spawnSync(tarBin(), ["-c", "-f", arch, "-C", src, "KeptRepo"], { encoding: "utf8" });
+    assert.equal(r.status, 0, "fixture tar should build");
+
+    // the listing is rooted at KeptRepo (no _Claude prefix), so nothing is seen under it
+    const listing = spawnSync(tarBin(), ["-tf", arch], { encoding: "utf8" }).stdout;
+    const present = topLevelsInListing(listing, "_Claude");
+    const expected = expectedTopLevels(src, []);
+    const missing = expected.filter((n) => !present.has(n));
+
+    assert.ok(missing.includes("LostRepo"), "the absent repo must be reported missing");
+    assert.ok(missing.length > 0, "an incomplete archive must not verify clean");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("verification PASSES a complete archive", () => {
+  const root = mkdtempSync(join(tmpdir(), "vok-"));
+  try {
+    const src = join(root, "_Claude");
+    mkdirSync(join(src, "RepoA"), { recursive: true });
+    mkdirSync(join(src, "RepoB"), { recursive: true });
+    writeFileSync(join(src, "RepoA", "a.txt"), "a");
+    writeFileSync(join(src, "RepoB", "b.txt"), "b");
+
+    const arch = join(root, "full.tar");
+    // -C the PARENT and archive the whole `_Claude` name, exactly as the real backup does
+    const r = spawnSync(tarBin(), ["-c", "-f", arch, "-C", root, "_Claude"], { encoding: "utf8" });
+    assert.equal(r.status, 0);
+
+    const listing = spawnSync(tarBin(), ["-tf", arch], { encoding: "utf8" }).stdout;
+    const present = topLevelsInListing(listing, "_Claude");
+    const missing = expectedTopLevels(src, []).filter((n) => !present.has(n));
+    assert.deepEqual(missing, [], "a complete archive must verify with nothing missing");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
