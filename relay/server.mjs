@@ -293,11 +293,16 @@ export function createRelay(opts = {}) {
     if (req.method === "GET" && path === "/api/workspace/stream") {
       if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The workspace is ancient-only." });
       res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
-      res.write(`event: hello\ndata: ${JSON.stringify({ localConnected: link.connected })}\n\n`);
+      // Identify this browser so the work machine's merged presence list can include it. The label
+      // falls back to the signed-in hub identity, so a remote terminal shows as who it is.
+      const connId = url.searchParams.get("conn") || `relay-${Math.random().toString(36).slice(2)}`;
+      const label = url.searchParams.get("label") || who.session?.name || who.session?.sub || "live site";
+      res.write(`event: hello\ndata: ${JSON.stringify({ localConnected: link.connected, connId })}\n\n`);
       const unsub = link.addWsSubscriber((payload) => { try { res.write(`data: ${JSON.stringify(payload)}\n\n`); } catch {} });
+      link.addBrowser({ id: connId, label, origin: "relay" });
       const hb = setInterval(() => { try { res.write(": keep-alive\n\n"); } catch {} }, 25_000);
       hb.unref?.();
-      req.on("close", () => { clearInterval(hb); unsub(); });
+      req.on("close", () => { clearInterval(hb); unsub(); link.removeBrowser(connId); });
       return;
     }
 
@@ -308,8 +313,14 @@ export function createRelay(opts = {}) {
       // ---- remote workspace actions: forward down the tunnel as WS_IN (ancient-only + connected) ----
       if (path.startsWith("/api/workspace/")) {
         const action = path.slice("/api/workspace/".length);
-        if (!["prompt", "permission", "stop", "control"].includes(action)) return sendJSON(res, 404, { error: "unknown workspace action" });
+        if (!["prompt", "permission", "stop", "control", "attach"].includes(action)) return sendJSON(res, 404, { error: "unknown workspace action" });
         if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The workspace is ancient-only." });
+        // A browser telling us which workspace it is viewing updates OUR presence record for it,
+        // which then rides up to the work machine — no need to reach the bridge if it's down.
+        if (action === "attach") {
+          if (body.conn) link.attachBrowser(body.conn, body.workspaceId || null);
+          return sendJSON(res, 200, { ok: true });
+        }
         if (!link.connected) return sendJSON(res, 503, { ok: false, reason: "local-not-connected", message: "Local Claudstermind is not connected." });
         const { sessionKey, ...data } = body;
         const r = link.sendWsIn(action, sessionKey ?? null, data);

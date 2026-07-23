@@ -158,3 +158,41 @@ test("routeToCommand maps every mutation route and nothing else", () => {
   assert.equal(routeToCommand("/api/tokens/save", new URL("http://x/"), { secretFile: "p.txt", value: "v" }).args.secretFile, "p.txt");
   assert.equal(routeToCommand("/api/map", new URL("http://x/"), {}), null);
 });
+
+test("presence: the relay reports its browsers up the tunnel as a WS_IN frame", () => {
+  const link = new AgentLink({ deviceSecret: DEVICE });
+  const sock = fakeSock();
+  link.hello(sock, { t: FRAME.HELLO, deviceSecret: DEVICE });
+  sock.sent.length = 0;                                    // ignore the WELCOME + initial report
+  link.addBrowser({ id: "b1", label: "phone" });
+  const frame = sock.sent.at(-1);
+  assert.equal(frame.t, FRAME.WS_IN);
+  assert.equal(frame.kind, "presence");
+  assert.equal(frame.data.connections.length, 1);
+  assert.equal(frame.data.connections[0].id, "b1");
+  assert.equal(frame.data.connections[0].origin, "relay");
+});
+
+test("presence: attach and remove re-report the current browser set", () => {
+  const link = new AgentLink({ deviceSecret: DEVICE });
+  const sock = fakeSock();
+  link.hello(sock, { t: FRAME.HELLO, deviceSecret: DEVICE });
+  link.addBrowser({ id: "b1", label: "laptop" });
+  link.attachBrowser("b1", "Repo@main");
+  assert.equal(sock.sent.at(-1).data.connections[0].workspaceId, "Repo@main");
+  link.removeBrowser("b1");
+  assert.equal(sock.sent.at(-1).data.connections.length, 0);
+});
+
+test("presence: a fresh bridge connection re-announces the existing browsers", () => {
+  const link = new AgentLink({ deviceSecret: DEVICE });
+  const first = fakeSock();
+  link.hello(first, { t: FRAME.HELLO, deviceSecret: DEVICE });
+  link.addBrowser({ id: "b1", label: "desktop" });
+  // The tunnel drops and a new bridge dials in — it must learn about b1 without b1 reconnecting.
+  const second = fakeSock();
+  link.hello(second, { t: FRAME.HELLO, deviceSecret: DEVICE });
+  const report = second.sent.find((f) => f.t === FRAME.WS_IN && f.kind === "presence");
+  assert.ok(report, "the new socket receives a presence report on attach");
+  assert.equal(report.data.connections[0].id, "b1");
+});

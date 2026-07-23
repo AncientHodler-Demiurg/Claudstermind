@@ -44,6 +44,7 @@ import { writeFileSync } from "node:fs";
 import { readRelayConfig, writeRelayConfig, readDeviceSecret, saveDeviceSecret } from "../lib/relayConfig.mjs";
 import { createAggregator, registryProjects, mirrorablePorts } from "../lib/localhost.mjs";
 import { parseMirrorPath, mirrorFromReferer, mirrorFromCookie, forwardRequestHeaders, buildMirrorResponse } from "../lib/mirror.mjs";
+import { createPresence } from "../lib/presence.mjs";
 import { readOidcConfig } from "./auth/oidcConfig.mjs";
 import { handleAuthRoute, guard, denyPage } from "./auth/routes.mjs";
 
@@ -208,6 +209,8 @@ function startBridgeFromConfig() {
       aggregator: AGG,
       // Lets the live site trigger a deploy over the tunnel: run the local pipeline, tail its log.
       deploy: { start: () => startDeploy(), subscribe: (fn) => { DEPLOY.subs.add(fn); return () => DEPLOY.subs.delete(fn); } },
+      // The relay reports its browsers up the tunnel; merge them into the authoritative list here.
+      onRemotePresence: (connections) => applyRemotePresence(connections),
     }).start();
   } catch (e) { BRIDGE_ERR = e.message; }
 }
@@ -227,7 +230,19 @@ function relayStatus() {
 // conversation history is one unified store across both surfaces. Local mode only — the live
 // relay (OIDC set) never drives a local workspace; it has no local disk to act on.
 let WORKSPACE = null;
-const WS_SUBS = new Set();
+// connId → { write, label, origin }. Was a bare Set of writer fns; it now carries per-connection
+// metadata so the server is the authoritative "which terminals are connected" list. The work
+// machine is the ONLY place that sees both localhost terminals and (via the bridge) the relay's.
+const WS_SUBS = new Map();
+const PRESENCE = createPresence();
+const PRESENCE_STALE_MS = 70_000;   // a hair over two 25s heartbeats — a silent terminal expires
+
+function wsBroadcast(payload) { for (const s of WS_SUBS.values()) { try { s.write(payload); } catch {} } }
+function presenceList() { PRESENCE.prune(Date.now() - PRESENCE_STALE_MS); return PRESENCE.list(Date.now()); }
+function broadcastPresence() { wsBroadcast(JSON.stringify({ kind: "presence", data: { connections: presenceList() } })); }
+// The bridge hands the relay's reported terminals here; the work machine merges + rebroadcasts.
+function applyRemotePresence(remoteConnections) { PRESENCE.merge(remoteConnections || [], Date.now()); broadcastPresence(); }
+
 function localListRepos() {
   try {
     const map = JSON.parse(readFileSync(join(DATA_DIR, "map.json"), "utf8"));
@@ -238,7 +253,7 @@ if (!OIDC) {
   WORKSPACE = new WorkspaceManager({
     root: MASTER_ROOT, secretsDir: SECRETS_DIR, listRepos: localListRepos,
     model: process.env.CLAUDE_WORKSPACE_MODEL || undefined,
-    send: (kind, sessionKey, data) => { const p = JSON.stringify({ kind, sessionKey, data }); for (const w of WS_SUBS) { try { w(p); } catch {} } },
+    send: (kind, sessionKey, data) => wsBroadcast(JSON.stringify({ kind, sessionKey, data })),
   });
 }
 
@@ -403,20 +418,32 @@ const handler = async (req, res) => {
     if (!WORKSPACE) return sendJSON(res, 404, { error: "workspace unavailable in this mode" });
     if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Execute permission required." });
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
-    res.write(`event: hello\ndata: ${JSON.stringify({ localConnected: true })}\n\n`);
-    const w = (payload) => { try { res.write(`data: ${payload}\n\n`); } catch {} };
-    WS_SUBS.add(w);
-    const hb = setInterval(() => { try { res.write(": keep-alive\n\n"); } catch {} }, 25000); hb.unref?.();
-    req.on("close", () => { clearInterval(hb); WS_SUBS.delete(w); });
+    // The terminal identifies itself: a stable id it keeps across reconnects, and a human label.
+    // origin "local" = attached straight to this box (localhost or the work machine's own browser).
+    const connId = url.searchParams.get("conn") || `local-${Math.random().toString(36).slice(2)}`;
+    const label = url.searchParams.get("label") || "this machine";
+    const write = (payload) => { try { res.write(`data: ${payload}\n\n`); } catch {} };
+    WS_SUBS.set(connId, { write, label, origin: "local" });
+    PRESENCE.add({ id: connId, label, origin: "local" }, Date.now());
+    res.write(`event: hello\ndata: ${JSON.stringify({ localConnected: true, connId })}\n\n`);
+    write(JSON.stringify({ kind: "presence", data: { connections: presenceList() } }));
+    broadcastPresence();
+    const hb = setInterval(() => { try { res.write(": keep-alive\n\n"); } catch {} PRESENCE.touch(connId, Date.now()); }, 25000); hb.unref?.();
+    req.on("close", () => { clearInterval(hb); WS_SUBS.delete(connId); PRESENCE.remove(connId); broadcastPresence(); });
     return;
   }
   // ---- local Workspace actions (already gated above: sameOrigin + canExecute) ----
   if (req.method === "POST" && path.startsWith("/api/workspace/")) {
     const action = path.slice("/api/workspace/".length);
-    if (!["prompt", "permission", "stop", "control"].includes(action)) return sendJSON(res, 404, { error: "unknown workspace action" });
+    if (!["prompt", "permission", "stop", "control", "attach"].includes(action)) return sendJSON(res, 404, { error: "unknown workspace action" });
     if (!WORKSPACE) return sendJSON(res, 404, { ok: false, message: "workspace unavailable in this mode" });
     let body = ""; for await (const c of req) body += c;
     let d = {}; try { d = JSON.parse(body || "{}"); } catch {}
+    // A terminal telling us which workspace it is now looking at, so presence reflects it.
+    if (action === "attach") {
+      if (d.conn) { PRESENCE.attach(d.conn, d.workspaceId || null, Date.now()); broadcastPresence(); }
+      return sendJSON(res, 200, { ok: true });
+    }
     const { sessionKey = null, ...data } = d;
     try { WORKSPACE.handleIn(action, sessionKey, data); return sendJSON(res, 200, { ok: true }); }
     catch (e) { return sendJSON(res, 500, { ok: false, message: String(e && e.message || e) }); }

@@ -4,6 +4,34 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.8.0] - 2026-07-23
+
+### Added
+- **Multi-terminal workspace.** Move between terminals — laptop, phone, the local dashboard, the
+  live site — on one shared conversation. The work machine's server now owns every session; each
+  terminal is a live view onto it.
+  - **Same chat, live, in two places.** Two terminals that open the same repository (and worktree)
+    share one conversation: a prompt typed on the laptop appears in the phone's pane, and Claude's
+    reply streams to both. Session identity is the repository + worktree, minted by the server —
+    it used to be a random id invented in each browser, which is why a second terminal could never
+    see the first.
+  - **Presence.** A strip shows which terminals are connected and what each is viewing, whether
+    they arrived through the live site or straight through the local dashboard.
+  - **Turn lock.** While a turn is running, a second prompt to the same conversation is refused
+    with a "working…" notice (and your text is kept) rather than interleaving into the agent.
+  - **Worktrees.** Start a second, parallel workspace on a repository as its own git worktree
+    (under `.worktrees/`, invisible to the repo map and package views). A new worktree is flagged
+    "needs install" rather than silently running a minutes-long dependency install.
+- Raw conversation history is now stored **per repository per worktree**, appended turn by turn
+  (append-only JSONL), so a crash can lose at most the last line instead of a whole conversation.
+  A retired workspace keeps its history, capped with a retirement record. Existing history is read
+  unchanged — nothing needs migrating.
+
+### Note for the live site
+- Presence and the shared-session view reach the live site only after the relay is redeployed;
+  the work machine works immediately. (The relay carries the new presence signal but ships no new
+  code paths beyond it.)
+
 ## [0.7.2] - 2026-07-22
 
 ### Fixed

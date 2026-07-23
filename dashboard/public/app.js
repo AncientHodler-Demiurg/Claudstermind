@@ -1595,6 +1595,21 @@ function viewActivity() {
    trusted mode is on. Usage + cost shown; new folder/repo creation; session switching. */
 const wsPost = (action, body) => fetch("/api/workspace/" + action, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) }).then((r) => r.json()).catch(() => ({ ok: false }));
 const wsUuid = () => (crypto.randomUUID ? crypto.randomUUID() : "s-" + Date.now() + "-" + Math.random().toString(36).slice(2));
+// The workspace id a pane attaches to: repo + worktree. TWO terminals selecting the same repo
+// (and worktree) derive the SAME key, so they drive — and watch — the one shared conversation.
+const wsWorkspaceId = (repo, worktree) => (repo ? repo + "@" + (worktree || "main") : null);
+// This browser's stable identity for presence — kept across reloads so a refresh doesn't read as
+// a new terminal. A human label (editable) rides along so the roster is legible.
+const WS_CONN_KEY = "cm.conn.v1";
+function connIdentity() {
+  let v = null; try { v = JSON.parse(localStorage.getItem(WS_CONN_KEY) || "null"); } catch {}
+  if (!v || !v.id) {
+    v = { id: "t-" + Math.random().toString(36).slice(2) + Date.now().toString(36),
+      label: (navigator.platform || "terminal").split(" ")[0] + " · " + (navigator.userAgent.includes("Mobile") ? "mobile" : "desktop") };
+    try { localStorage.setItem(WS_CONN_KEY, JSON.stringify(v)); } catch {}
+  }
+  return v;
+}
 const fmtUsd = (n) => "$" + (Number(n) || 0).toFixed(2);
 
 // Pane grid limits. 8 across is sized for an ultrawide (5120px ⇒ ~600px a pane); narrower
@@ -1635,7 +1650,10 @@ function viewWorkspace() {
     dataSizes: {},                 // localPath -> { bytes, conversations, turns } — collected raw volume
     collapsedOrgs: new Set(),      // org names collapsed in the Repositories sidebar
     searchQuery: "", searchResults: null,   // full-text search over saved conversations
+    presence: [],                  // connected terminals (this one + others), from the server
+    worktrees: {},                 // repo -> [{ name, branch, isMain, needsInstall }]
   };
+  const CONN = connIdentity();
   let searchTimer = null;
   const fmtBytes = (n) => { n = n || 0; if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(0) + " KB"; return (n / 1048576).toFixed(1) + " MB"; };
   function dataBadge(localPath) {
@@ -1651,7 +1669,11 @@ function viewWorkspace() {
     for (const c of node.children || []) flattenRepos(c, rel ? rel + "/" + c.name : c.name, out);
     return out;
   }
-  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", mode: st.defaultMode, transcript: [], usage: {}, status: "idle", readonly: false, resume: null });
+  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", worktree: "main", mode: st.defaultMode, transcript: [], usage: {}, status: "idle", readonly: false, resume: null });
+  // Every pane with a repo runs under a shared, deterministic key (repo@worktree). Panes still
+  // waiting for a repo keep their random placeholder so they never collide before use.
+  function keyForPane(p) { return p.repo ? wsWorkspaceId(p.repo, p.worktree) : p.sessionKey; }
+  function assignKey(p) { if (p.repo) p.sessionKey = wsWorkspaceId(p.repo, p.worktree); }
 
   // ---- layout + pane persistence -------------------------------------------------
   // Panes are views; conversations are files on the work machine. Without this, a refresh
@@ -1663,7 +1685,7 @@ function viewWorkspace() {
     try {
       localStorage.setItem(WS_STORE_KEY, JSON.stringify({
         v: 1, cols: st.cols, rows: st.rows, sidebarMode: st.sidebarMode, defaultMode: st.defaultMode, activeId: st.activeId,
-        panes: st.panes.map((p) => ({ id: p.id, sessionKey: p.sessionKey, repo: p.repo, mode: p.mode })),
+        panes: st.panes.map((p) => ({ id: p.id, sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree || "main", mode: p.mode })),
       }));
     } catch { /* private mode / quota — the workspace still works, it just forgets */ }
   }
@@ -1676,7 +1698,7 @@ function viewWorkspace() {
     if (WS_MODE_IDS.has(s.defaultMode)) st.defaultMode = s.defaultMode;
     st.panes = s.panes.slice(0, st.cols * st.rows).map((p) => ({
       ...newPane(),
-      id: p.id || wsUuid(), sessionKey: p.sessionKey || wsUuid(), repo: p.repo || "",
+      id: p.id || wsUuid(), sessionKey: p.sessionKey || wsUuid(), repo: p.repo || "", worktree: p.worktree || "main",
       mode: WS_MODE_IDS.has(p.mode) ? p.mode : st.defaultMode,
     }));
     while (st.panes.length < st.cols * st.rows) st.panes.push(newPane());
@@ -1698,6 +1720,9 @@ function viewWorkspace() {
   }
   const paneUI = new Map();        // paneId -> { root, transcriptEl, promptEl, repoSel, usageEl, dot, sendBtn, badge }
   const paneOf = (key) => st.panes.find((p) => p.sessionKey === key);
+  // With shared keys, more than one pane in this window can hold the same session — fan updates
+  // to ALL of them so a session opened twice stays in lockstep.
+  const panesOf = (key) => st.panes.filter((p) => p.sessionKey === key);
   const activePane = () => st.panes.find((p) => p.id === st.activeId) || st.panes[0];
 
   const root = el("div", { class: "ws-root" }, []);
@@ -1712,6 +1737,36 @@ function viewWorkspace() {
   const shortRepo = (p) => (p || "").split(/[\\/]/).filter(Boolean).pop() || "repo";
   function note(msg) { bridgeNote.hidden = false; bridgeNote.textContent = msg; }
 
+  // ---- presence: which terminals are connected, and what they're viewing ----------
+  const presenceBar = el("div", { class: "ws-presence" }, []);
+  // Tell the server which workspace THIS terminal is looking at (its active pane's repo@worktree),
+  // so the roster shows who is on what. Debounced implicitly — it's cheap and only fires on change.
+  let lastAttached = null;
+  function reportAttach() {
+    const p = activePane();
+    const wsId = p && p.repo ? wsWorkspaceId(p.repo, p.worktree) : null;
+    if (wsId === lastAttached) return;
+    lastAttached = wsId;
+    wsPost("attach", { conn: CONN.id, workspaceId: wsId });
+  }
+  function renderPresence() {
+    const others = st.presence.filter((c) => c.id !== CONN.id);
+    if (!others.length) { presenceBar.hidden = true; presenceBar.replaceChildren(); return; }
+    presenceBar.hidden = false;
+    presenceBar.replaceChildren(
+      el("span", { class: "ws-presence-lbl" }, [`${others.length + 1} terminals`]),
+      ...others.map((c) => el("span", { class: "ws-term", title: (c.origin === "relay" ? "via the live site" : "local") + (c.workspaceId ? " · on " + shortRepo(c.workspaceId.split("@")[0]) + "@" + c.workspaceId.split("@")[1] : "") },
+        [el("span", { class: "ws-term-dot " + (c.origin === "relay" ? "--relay" : "--local") }, []), c.label || "terminal",
+          c.workspaceId ? el("span", { class: "ws-term-on" }, [" · " + shortRepo(c.workspaceId.split("@")[0]) + "@" + c.workspaceId.split("@")[1]]) : ""])),
+    );
+  }
+  // When a pane picks a repo, ask what's already live on it — so a second terminal learns "this
+  // is also open elsewhere" and can decide to share or (Phase 5) branch a new worktree.
+  function onRepoChosen(p) {
+    if (!p.repo) return;
+    wsPost("control", { action: "workspacesOn", args: { repo: p.repo } });
+  }
+
   // ---- repo <select> options (shared shape across panes) -------------------------
   function fillRepoSelect(sel, value) {
     const opts = [el("option", { value: "" }, ["— pick a repository —"]),
@@ -1723,10 +1778,25 @@ function viewWorkspace() {
     sel.value = value || "";
   }
 
+  // ---- worktree <select> for a pane -------------------------------------------------
+  function fillWorktreeSelect(sel, p) {
+    const list = st.worktrees[p.repo] || [{ name: "main", isMain: true }];
+    const names = list.map((w) => w.name);
+    if (!names.includes(p.worktree)) names.unshift(p.worktree || "main");   // keep the pane's own value shown
+    const opts = [...new Set(names)].map((n) => {
+      const w = list.find((x) => x.name === n);
+      return el("option", { value: n }, [n + (w?.needsInstall ? "  ⚠ needs install" : "")]);
+    });
+    opts.push(el("option", { value: "__new__" }, ["+ new worktree…"]));
+    sel.replaceChildren(...opts);
+    sel.value = p.worktree || "main";
+    sel.hidden = !p.repo;   // only meaningful once a repo is picked
+  }
+
   // ---- transcript rendering (handles both live {kind} and saved {role} items) ----
   function line(cls, kids) { return el("div", { class: "ws-line " + cls }, kids); }
   function renderItem(m) {
-    if (m.role === "user") return line("ws-user", [el("b", {}, ["you  "]), m.text]);
+    if (m.role === "user" || m.kind === "user") return line("ws-user", [el("b", {}, ["you  "]), m.text]);
     if (m.role === "assistant" || m.kind === "assistant") return line("ws-assistant", [m.text]);
     if (m.kind === "tool_use") return line("ws-tool", [el("i", { class: "ti ti-tool" }, []), " ", (m.tools || []).map((t) => t.name).join(", ")]);
     if (m.kind === "tool_result") return line("ws-toolres", ["✓ tool result"]);
@@ -1739,6 +1809,8 @@ function viewWorkspace() {
   // ---- one pane ------------------------------------------------------------------
   function buildPane(p) {
     const repoSel = el("select", { class: "wsel wsel-sm" }, []); fillRepoSelect(repoSel, p.repo);
+    const wtSel = el("select", { class: "wsel wsel-sm wsel-wt", title: "Worktree — a separate checkout for a parallel workspace on this repo" }, []);
+    fillWorktreeSelect(wtSel, p);
     const modeSel = el("select", { class: "wsel wsel-mode", title: "Permission mode for this pane" },
       WS_MODES.map((m) => el("option", { value: m.id }, [m.short])));
     modeSel.value = p.mode;
@@ -1749,11 +1821,24 @@ function viewWorkspace() {
     const transcriptEl = el("div", { class: "ws-transcript" }, []);
     const promptEl = el("textarea", { class: "ws-prompt", rows: "2", placeholder: "Message Claude… (Ctrl+Enter)" });
     const sendBtn = el("button", { class: "loginbtn ws-send" }, ["Send"]);
-    const header = el("div", { class: "ws-pane-hd" }, [dot, repoSel, modeSel, histBtn, el("span", { class: "ws-spacer" }), badge, closeBtn]);
+    const header = el("div", { class: "ws-pane-hd" }, [dot, repoSel, wtSel, modeSel, histBtn, el("span", { class: "ws-spacer" }), badge, closeBtn]);
     const paneRoot = el("div", { class: "ws-pane" }, [header, transcriptEl, el("div", { class: "ws-compose" }, [promptEl, sendBtn])]);
 
     paneRoot.addEventListener("mousedown", () => setActive(p.id));
-    repoSel.addEventListener("change", () => { p.repo = repoSel.value; p.readonly = false; p.resume = null; paintPane(p); saveLayout(); });
+    repoSel.addEventListener("change", () => { p.repo = repoSel.value; p.worktree = "main"; p.readonly = false; p.resume = null; assignKey(p); paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p); if (p.repo) wsPost("control", { action: "worktrees", args: { repo: p.repo } }); });
+    wtSel.addEventListener("change", () => {
+      const v = wtSel.value;
+      if (v === "__new__") {   // "+ new worktree…" — create one, then switch this pane to it
+        wtSel.value = p.worktree;
+        const name = window.prompt(`New worktree for ${shortRepo(p.repo)} (a separate checkout):`);
+        if (name == null || !name.trim()) return;
+        p._pendingWorktree = name.trim();
+        wsPost("control", { action: "worktreeAdd", args: { repo: p.repo, name: name.trim() } });
+        return;
+      }
+      p.worktree = v || "main"; p.readonly = false; p.resume = null; assignKey(p);
+      paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p);
+    });
     // Applies live: the server calls the SDK's setPermissionMode on a running session, so
     // switching mid-conversation behaves the same as switching it in the Claude Code UI.
     modeSel.addEventListener("change", () => { p.mode = modeSel.value; wsPost("control", { action: "setMode", args: { sessionKey: p.sessionKey, mode: p.mode } }); paintPane(p); saveLayout(); });
@@ -1762,7 +1847,7 @@ function viewWorkspace() {
     sendBtn.addEventListener("click", () => send(p));
     promptEl.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(p); } });
 
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, modeSel, usageEl: badge, dot, sendBtn });
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, usageEl: badge, dot, sendBtn });
     return paneRoot;
   }
 
@@ -1774,6 +1859,7 @@ function viewWorkspace() {
     // path that isn't a tracked repo.
     if (!Array.from(ui.repoSel.options).some((o) => o.value === (p.repo || ""))) fillRepoSelect(ui.repoSel, p.repo);
     else if (ui.repoSel.value !== (p.repo || "")) ui.repoSel.value = p.repo || "";
+    if (ui.wtSel) fillWorktreeSelect(ui.wtSel, p);
     if (ui.modeSel.value !== p.mode) ui.modeSel.value = p.mode;
     ui.modeSel.classList.toggle("danger", p.mode === "bypassPermissions");
     ui.modeSel.classList.toggle("plan", p.mode === "plan");
@@ -1795,6 +1881,7 @@ function viewWorkspace() {
     for (const p of st.panes) paneUI.get(p.id)?.root.classList.toggle("on", p.id === id);
     renderSidebar();
     saveLayout();
+    reportAttach();   // presence follows the active pane's workspace
   }
 
   function rebuildGrid() {
@@ -1946,7 +2033,34 @@ function viewWorkspace() {
 
   // ---- SSE handling --------------------------------------------------------------
   function onPayload({ kind, sessionKey, data }) {
+    if (kind === "presence") { st.presence = Array.isArray(data.connections) ? data.connections : []; renderPresence(); return; }
     if (kind === "state") {
+      if (Array.isArray(data.worktrees)) {
+        st.worktrees[data.worktreesRepo] = data.worktrees;
+        // A worktree we just asked to create arrived — switch the requesting pane onto it.
+        for (const p of st.panes) {
+          if (p.repo === data.worktreesRepo && p._pendingWorktree && data.worktrees.some((w) => w.name === p._pendingWorktree)) {
+            p.worktree = p._pendingWorktree; p._pendingWorktree = null; assignKey(p); reportAttach();
+          }
+          if (p.repo === data.worktreesRepo) paintPane(p);
+        }
+        return;
+      }
+      if (Array.isArray(data.workspacesOn)) {
+        // Another terminal may already be on this repo. Surface it on the panes that picked it,
+        // so "join the live one or start a worktree" is an informed choice, not a surprise.
+        const others = data.workspacesOn.filter((w) => true);
+        for (const p of st.panes) {
+          if (p.repo !== data.workspacesOnRepo) continue;
+          const mine = wsWorkspaceId(p.repo, p.worktree);
+          const sharing = others.filter((w) => w.workspaceId === mine).length > 1;
+          const otherWts = [...new Set(others.map((w) => w.worktree))].filter((w) => w !== p.worktree);
+          if (sharing || otherWts.length) {
+            note(`${shortRepo(p.repo)} is live in ${others.length} workspace(s)` + (otherWts.length ? ` · other worktrees: ${otherWts.join(", ")}` : "") + (sharing ? " · you're sharing this one" : ""));
+          }
+        }
+        return;
+      }
       // The repo list is derived from the TREE (the `.iz.md` markers), not the map.json list —
       // that's the single source of truth and fixes over-counting. `list` still carries
       // trusted/hasToken below.
@@ -1965,8 +2079,8 @@ function viewWorkspace() {
       }
       if (Array.isArray(data.search)) { st.searchResults = data.search; renderHistory(); }
       if (Array.isArray(data.dataSizes)) { st.dataSizes = Object.fromEntries(data.dataSizes.map((d) => [d.repo, d])); renderSidebar(); }
-      if (Array.isArray(data.sessions)) for (const s of data.sessions) { const p = paneOf(s.sessionKey); if (p) { p.status = s.status || p.status; if (s.mode) p.mode = s.mode; if (s.usage) p.usage = s.usage; paintPane(p); } }
-      if (data.session) { const p = paneOf(data.session.sessionKey); if (p) { Object.assign(p, { status: data.session.status ?? p.status, mode: data.session.mode ?? p.mode, usage: data.session.usage ?? p.usage }); paintPane(p); } }
+      if (Array.isArray(data.sessions)) for (const s of data.sessions) for (const p of panesOf(s.sessionKey)) { p.status = s.status || p.status; if (s.mode) p.mode = s.mode; if (s.usage) p.usage = s.usage; paintPane(p); }
+      if (data.session) for (const p of panesOf(data.session.sessionKey)) { Object.assign(p, { status: data.session.status ?? p.status, mode: data.session.mode ?? p.mode, usage: data.session.usage ?? p.usage }); paintPane(p); }
       // NOTE: the server's own defaultMode is deliberately NOT mirrored here. Every pane sends
       // its mode with each prompt, so the toolbar picker is a local "mode for new panes"
       // preference — echoing the server's would clobber it on every list refresh.
@@ -2001,31 +2115,54 @@ function viewWorkspace() {
       return;
     }
     if (kind === "event") {
-      // Workspace-level notices (create/error) carry no sessionKey.
-      if (!sessionKey && (data.kind === "created" || data.kind === "error")) {
-        note(data.kind === "created" ? `Created ${data.what}: ${data.path}` : ("⚠ " + data.message));
-        if (data.kind === "created") { wsPost("control", { action: "list" }); wsPost("control", { action: "tree" }); }
+      // Workspace-level notices (create/remove/note/error) carry no sessionKey.
+      if (!sessionKey && (data.kind === "created" || data.kind === "removed" || data.kind === "note" || data.kind === "error")) {
+        if (data.kind === "note") note(data.message);
+        else if (data.kind === "removed") note(`Removed ${data.what}: ${data.path}`);
+        else note(data.kind === "created" ? `Created ${data.what}: ${data.path}` : ("⚠ " + data.message));
+        // A new folder/repo changes the tree; a worktree does not (it's a dot-dir), so only refresh
+        // the tree for folder/repo creation.
+        if (data.kind === "created" && data.what !== "worktree") { wsPost("control", { action: "list" }); wsPost("control", { action: "tree" }); }
         return;
       }
       // A streamed event ALWAYS carries its session's key. Route strictly by it; drop frames
       // for a pane that no longer exists (e.g. trimmed by the layout picker) rather than
-      // spilling another session's output into the active pane.
-      const p = sessionKey ? paneOf(sessionKey) : activePane(); if (!p) return;
-      if (data.kind === "status") { p.status = data.status; paintPane(p); return; }
-      p.transcript.push(data);
-      if (data.usageTotal) p.usage = data.usageTotal;
-      paintPane(p); setUsageTotal();
+      // spilling another session's output into the active pane. Shared keys → fan to every pane.
+      const targets = sessionKey ? panesOf(sessionKey) : [activePane()].filter(Boolean); if (!targets.length) return;
+      // The turn lock refused this prompt (another terminal, or another pane, is mid-turn).
+      // Restore the typed text on the pane that sent it, so nothing is lost.
+      if (data.kind === "busy") {
+        for (const p of targets) { const ui = paneUI.get(p.id); if (ui && p._pendingText && !ui.promptEl.value) ui.promptEl.value = p._pendingText; p._pendingText = null; }
+        note("⏳ " + (data.message || "This workspace is working — wait for the current turn."));
+        return;
+      }
+      for (const p of targets) {
+        if (data.kind === "status") { p.status = data.status; paintPane(p); continue; }
+        // A user turn echoed by the server: this pane sent it (clear the pending buffer) or a
+        // shared pane in another terminal did (render it so both windows show the same thread).
+        if (data.kind === "user" && data.by && data.by === CONN.id) p._pendingText = null;
+        // The server refused the prompt (bad path, no token, …). The turn was never accepted, so
+        // restore the typed text — exactly as the busy path does — rather than losing it.
+        if (data.kind === "error" && p._pendingText) { const ui = paneUI.get(p.id); if (ui && !ui.promptEl.value) ui.promptEl.value = p._pendingText; p._pendingText = null; }
+        p.transcript.push(data);
+        if (data.usageTotal) p.usage = data.usageTotal;
+        paintPane(p);
+      }
+      setUsageTotal();
     }
   }
   function primeControls() { wsPost("control", { action: "list" }); wsPost("control", { action: "tree" }); wsPost("control", { action: "history", args: {} }); wsPost("control", { action: "dataSizes" }); }
   function openStream() {
     try { WS_ES && WS_ES.close(); } catch {}
-    WS_ES = new EventSource("/api/workspace/stream");
+    // Identify this terminal so the server's presence roster can name it.
+    const q = "?conn=" + encodeURIComponent(CONN.id) + "&label=" + encodeURIComponent(CONN.label);
+    WS_ES = new EventSource("/api/workspace/stream" + q);
     WS_ES.addEventListener("hello", (e) => {
       // The stream is now subscribed — only NOW request the initial state, so the bridge's
       // reply can't race an unsubscribed stream (it would be dropped silently).
       try { const d = JSON.parse(e.data); if (d.localConnected) { bridgeNote.hidden = true; bridgeNote.textContent = ""; } else note("The work machine isn't connected — start the local dashboard + relay."); } catch {}
       primeControls();
+      lastAttached = undefined; reportAttach();   // announce what this terminal is viewing
     });
     WS_ES.onmessage = (e) => { try { onPayload(JSON.parse(e.data)); } catch {} };
     WS_ES.onerror = () => note("Stream interrupted — retrying…");
@@ -2060,11 +2197,20 @@ function viewWorkspace() {
     if (p.readonly) return;
     const ui = paneUI.get(p.id); const text = ui.promptEl.value.trim(); if (!text) return;
     if (!p.repo) { note("Pick a repository for this pane first."); return; }
-    p.transcript.push({ role: "user", text }); ui.promptEl.value = ""; paintPane(p);
-    const body = { sessionKey: p.sessionKey, repo: p.repo, text, mode: p.mode };
+    assignKey(p);
+    // Don't append optimistically. The server echoes the accepted user turn to every terminal
+    // (so a SHARED session shows the prompt in both windows), and refuses it with `busy` if a
+    // turn is already running — appending here would show a prompt that was never actually sent.
+    ui.promptEl.value = ""; p._pendingText = text;
+    const body = { sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree, text, mode: p.mode, by: CONN.id };
     if (p.resume) { body.resume = p.resume; p.resume = null; }
     const r = await wsPost("prompt", body);
-    if (!r.ok) { p.transcript.push({ kind: "error", text: r.message || "Could not reach the work machine." }); paintPane(p); }
+    if (!r.ok) {
+      // Couldn't even reach the work machine — restore the text so nothing is lost.
+      if (ui.promptEl.value === "") ui.promptEl.value = p._pendingText || "";
+      p._pendingText = null;
+      p.transcript.push({ kind: "error", text: r.message || "Could not reach the work machine." }); paintPane(p);
+    }
   }
 
   // ---- toolbar controls ----------------------------------------------------------
@@ -2136,6 +2282,7 @@ function viewWorkspace() {
       el("span", { class: "ws-spacer" }, []),
       usageEl, newFolderBtn, newRepoBtn,
     ]),
+    presenceBar,
     bridgeNote,
     el("div", { class: "ws-body" }, [
       el("aside", { class: "ws-side" }, [modeToggle, sideList, el("div", { class: "ws-side-sep" }, []), histList]),

@@ -29,11 +29,28 @@ export class AgentLink {
     this.snapshotAt = null;
     this.pending = new Map();   // id -> { resolve, timer }
     this.wsSubscribers = new Set();   // SSE listeners for the remote-workspace stream
+    this.browsers = new Map();   // connId -> { id, label, origin:'relay', workspaceId } — this relay's OWN terminals
   }
 
   /** Register an SSE listener for WS_OUT frames from the bridge. Returns an unsubscribe fn. */
   addWsSubscriber(fn) { this.wsSubscribers.add(fn); return () => this.wsSubscribers.delete(fn); }
   _fanWsOut(payload) { for (const fn of this.wsSubscribers) { try { fn(payload); } catch {} } }
+
+  // ---- presence: this relay is a SENSOR. It knows only the browsers connected to IT (the work
+  // machine can't see them directly), so it reports them up the tunnel; the work machine merges
+  // them with its own localhost terminals into the authoritative list and broadcasts it back.
+  addBrowser(meta) { if (meta?.id) { this.browsers.set(meta.id, { origin: "relay", workspaceId: null, ...meta }); this._reportPresence(); } }
+  removeBrowser(id) { if (this.browsers.delete(id)) this._reportPresence(true); }
+  attachBrowser(id, workspaceId) { const b = this.browsers.get(id); if (b) { b.workspaceId = workspaceId || null; this._reportPresence(); } }
+  // `force` sends even an empty set — needed when the LAST browser disconnects, so the work
+  // machine drops it. On a fresh bridge attach with no browsers, staying quiet avoids a spurious
+  // frame (and keeps other WS_IN consumers from seeing presence noise).
+  _reportPresence(force = false) {
+    if (!this.sock) return;
+    const connections = [...this.browsers.values()];
+    if (!connections.length && !force) return;
+    try { this.sock.send(JSON.stringify({ t: FRAME.WS_IN, kind: "presence", sessionKey: null, data: { connections } })); } catch {}
+  }
 
   /** Send a WS_IN (workspace action) down to the bridge. */
   sendWsIn(kind, sessionKey, data) {
@@ -67,6 +84,9 @@ export class AgentLink {
     // Tell any open workspace streams the machine is (re)connected, so a stale
     // "disconnected" note on the still-open SSE clears without a page reload.
     this._fanWsOut({ kind: "state", sessionKey: null, data: { bridgeReconnected: true } });
+    // Re-announce our browsers up the fresh tunnel — they were connected before it came up, and
+    // the work machine's merged list would otherwise omit them until one reconnects.
+    this._reportPresence();
   }
 
   /** Settle every in-flight command once, clearing their timers. Shared by detach + replace. */

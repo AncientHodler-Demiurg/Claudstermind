@@ -195,6 +195,9 @@ export function createBridge(opts = {}) {
       // A remote Deploy trigger (from the live site) runs the local deploy pipeline and streams
       // its log back up the tunnel; everything else is a workspace action.
       if (frame.kind === "deploy" && opts.deploy) { runRemoteDeploy(); return; }
+      // The relay reporting ITS browsers (it is a sensor). Hand them to the work machine, which
+      // merges them with its own localhost terminals into the one authoritative presence list.
+      if (frame.kind === "presence") { try { opts.onRemotePresence?.(frame.data?.connections || []); } catch (e) { log("presence error:", e.message); } return; }
       try { workspace.handleIn(frame.kind, frame.sessionKey, frame.data); } catch (e) { log("workspace error:", e.message); }
     } else if (frame.t === FRAME.PING) {
       if (sock?.readyState === 1) sock.send(JSON.stringify({ t: FRAME.PONG }));
@@ -220,6 +223,9 @@ export function createBridge(opts = {}) {
 
   function scheduleReconnect() {
     clearInterval(snapTimer);
+    // The tunnel is down, so the relay's reported browsers are no longer reachable — clear the
+    // remote presence set so the merged list doesn't keep showing phantom live-site terminals.
+    try { opts.onRemotePresence?.([]); } catch {}
     if (stopped) return;
     reconnectTimer = setTimeout(connect, backoff);
     backoff = Math.min(backoff * 2, 30_000);
