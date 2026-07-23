@@ -1563,6 +1563,11 @@ function viewGit() {
 let OPS_TIMER = null;
 let RELAY_TIMER = null;
 let WS_ES = null;   // the Workspace EventSource (SSE stream of Claude session output)
+let WS_LAST_MSG_AT = 0;    // Date.now() of the last message (real event OR heartbeat) this stream delivered
+let WS_STALE_TIMER = null;   // polls WS_LAST_MSG_AT; force-reconnects a stream that's gone quiet too long
+// Comfortably above the 25s server heartbeat: two missed pulses plus slack, not one, so an
+// ordinary single slow tick over a mobile link never triggers a needless reconnect.
+const WS_STALE_MS = 65_000;
 /* ---------- relay: the tunnel between this LocalHost and the online site ----------
    Symmetric tab. On the LOCAL dashboard it CONTROLS the bridge (enable/disable, address,
    device secret) and shows whether the remote is online + receiving. On the ONLINE relay
@@ -2357,8 +2362,15 @@ function viewWorkspace() {
     // the bottom only when the pane was already there (or is short enough to be there already) —
     // someone actively watching a live response keeps following it either way.
     const wasNearBottom = ui.transcriptEl.scrollHeight - ui.transcriptEl.scrollTop - ui.transcriptEl.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX;
-    if (!p.transcript.length) ui.transcriptEl.replaceChildren(el("div", { class: "hint" }, [p.repo ? "Send a message — Claude runs in " + shortRepo(p.repo) + " on your machine." : "Pick a repository (dropdown, or the sidebar) to start."]));
-    else ui.transcriptEl.replaceChildren(...renderTranscript(p.transcript, p._expandedGroups));
+    if (!p.transcript.length && !p._liveText) ui.transcriptEl.replaceChildren(el("div", { class: "hint" }, [p.repo ? "Send a message — Claude runs in " + shortRepo(p.repo) + " on your machine." : "Pick a repository (dropdown, or the sidebar) to start."]));
+    else {
+      const nodes = renderTranscript(p.transcript, p._expandedGroups);
+      // The live-typing preview — text streamed so far this turn, not yet the authoritative
+      // complete line (that replaces it the moment the real "assistant" event lands; see
+      // onPayload's assistant_delta handling). Appended after the real transcript, never IN it.
+      if (p._liveText) nodes.push(line("ws-assistant ws-live", [p._liveText]));
+      ui.transcriptEl.replaceChildren(...nodes);
+    }
     if (wasNearBottom) ui.transcriptEl.scrollTop = ui.transcriptEl.scrollHeight;
   }
 
@@ -2531,6 +2543,10 @@ function viewWorkspace() {
 
   // ---- SSE handling --------------------------------------------------------------
   function onPayload({ kind, sessionKey, data }) {
+    // A real (not comment-only) pulse from the server — see the matching server-side comment.
+    // No pane state to update here; `WS_ES.onmessage` (below) already stamped `lastStreamMsgAt`
+    // for EVERY message including this one, which is this event's entire purpose.
+    if (kind === "heartbeat") return;
     if (kind === "presence") { st.presence = Array.isArray(data.connections) ? data.connections : []; renderPresence(); return; }
     if (kind === "state") {
       if (Array.isArray(data.worktrees)) {
@@ -2663,7 +2679,30 @@ function viewWorkspace() {
         note("⏳ " + (data.message || "This workspace is working — wait for the current turn."));
         return;
       }
+      // Reconnect catch-up reply (see `resync()` below, and `_resync` server-side): a wholesale
+      // replace of this pane's transcript/status/usage with whatever's actually true right now,
+      // not one more item to append. Fixes events a disconnected stream silently dropped — the
+      // whole reason a resync was requested in the first place.
+      if (data.kind === "resync") {
+        for (const p of targets) {
+          if (Array.isArray(data.transcript)) p.transcript = data.transcript;
+          if (data.status) p.status = data.status;
+          if (data.usage) p.usage = data.usage;
+          if (data.mode) p.mode = data.mode;
+          p._liveText = "";   // stale relative to whatever actually streamed before the reconnect
+          paintPane(p);
+        }
+        return;
+      }
       for (const p of targets) {
+        // Live typing preview (see lib/claudeSession.mjs's `includePartialMessages`/`stream_event`
+        // handling): each chunk just extends a transient, per-pane buffer — never pushed into
+        // `p.transcript` itself, so it's never persisted/resynced as real history. Any OTHER event
+        // kind means whatever was streaming is now either superseded by the real, complete line
+        // (the "assistant" event below) or the turn moved on (a tool call, the end of the turn) —
+        // either way the transient buffer's job is done, so every non-delta kind clears it.
+        if (data.kind === "assistant_delta") { p._liveText = (p._liveText || "") + (data.text || ""); paintPane(p); continue; }
+        p._liveText = "";
         if (data.kind === "status") { p.status = data.status; paintPane(p); continue; }
         // A user turn echoed by the server: this pane sent it (clear the pending buffer) or a
         // shared pane in another terminal did (render it so both windows show the same thread).
@@ -2685,20 +2724,40 @@ function viewWorkspace() {
     }
   }
   function primeControls() { wsPost("control", { action: "list" }); wsPost("control", { action: "tree" }); wsPost("control", { action: "history", args: {} }); wsPost("control", { action: "dataSizes" }); }
+  // Reconnect catch-up: ask the server for the CURRENT live state of every pane this terminal
+  // still has open (see `_resync` in lib/workspace.mjs). Every hop between a real event
+  // happening and it reaching this browser — the local SSE fan-out, the tunnel socket, the
+  // relay's per-browser fan-out — is fire-and-forget with no backlog, so a client that was
+  // disconnected for even one event's duration loses it silently and permanently. This is the
+  // fix: don't try to replay what was missed, just ask what's true right now.
+  function resyncOpenPanes() {
+    for (const p of st.panes) if (p.sessionKey && !p.readonly) wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey } });
+  }
   function openStream() {
     try { WS_ES && WS_ES.close(); } catch {}
     // Identify this terminal so the server's presence roster can name it.
     const q = "?conn=" + encodeURIComponent(CONN.id) + "&label=" + encodeURIComponent(CONN.label);
     WS_ES = new EventSource("/api/workspace/stream" + q);
+    WS_LAST_MSG_AT = Date.now();   // the moment we started waiting, not zero — a fresh stream isn't already stale
     WS_ES.addEventListener("hello", (e) => {
       // The stream is now subscribed — only NOW request the initial state, so the bridge's
       // reply can't race an unsubscribed stream (it would be dropped silently).
       try { const d = JSON.parse(e.data); if (d.localConnected) { bridgeNote.hidden = true; bridgeNote.textContent = ""; } else note("The work machine isn't connected — start the local dashboard + relay."); } catch {}
       primeControls();
+      resyncOpenPanes();   // catch up on anything the PREVIOUS connection silently missed
       lastAttached = undefined; reportAttach();   // announce what this terminal is viewing
     });
-    WS_ES.onmessage = (e) => { try { onPayload(JSON.parse(e.data)); } catch {} };
+    WS_ES.onmessage = (e) => { WS_LAST_MSG_AT = Date.now(); try { onPayload(JSON.parse(e.data)); } catch {} };
     WS_ES.onerror = () => note("Stream interrupted — retrying…");
+    // Staleness watchdog: a mobile carrier's NAT can silently drop an idle connection with no
+    // FIN/RST — Node's res.write() never throws in that case, so the server keeps "sending" into
+    // a connection nobody's listening on, and the browser's `onerror` never fires because nothing
+    // ever fails a read or write on ITS side either (see relay/server.mjs's & dashboard/server.mjs's
+    // matching heartbeat comments). Rather than trust `onerror` alone, notice the silence directly
+    // and force a reconnect — which re-fires `hello` and, via resyncOpenPanes() above, catches up
+    // on whatever the dead connection swallowed.
+    clearInterval(WS_STALE_TIMER);
+    WS_STALE_TIMER = setInterval(() => { if (Date.now() - WS_LAST_MSG_AT > WS_STALE_MS) openStream(); }, 10_000);
   }
 
   // ---- permission modal (FIFO queue — two panes can await at once) ----------------

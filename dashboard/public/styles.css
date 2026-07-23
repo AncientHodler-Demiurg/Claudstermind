@@ -411,6 +411,13 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 .ws-line.ws-result { color: #34d399; font-size: 11.5px; }
 .ws-line.ws-note { color: #34d399; font-size: 12px; }
 .ws-line.ws-err { color: #f87171; font-size: 12.5px; }
+/* The live-typing preview (see app.js's assistant_delta handling): text streamed so far this
+   turn, not yet finalized. A soft blinking cursor after the text is the only visual difference
+   from a normal assistant line — the "Claude is typing" signal, matching the desktop app's feel,
+   without looking like a second, separate kind of message. */
+.ws-line.ws-live::after { content: "▍"; display: inline-block; margin-left: 1px; color: var(--accent); animation: wsCursorBlink 1s step-start infinite; }
+@keyframes wsCursorBlink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .ws-line.ws-live::after { animation: none; opacity: .6; } }
 .ws-toolgroup { color: #7c9cff; font-size: 12px; }
 .ws-toolgroup-summary { cursor: pointer; list-style: none; }
 .ws-toolgroup-summary::-webkit-details-marker { display: none; }

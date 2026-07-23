@@ -4,6 +4,33 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.2] - 2026-07-23
+
+### Fixed
+- **Replies could silently vanish or arrive late/out of order**, especially over a remote/mobile
+  connection. Every hop between a real event happening and it reaching a browser (the local SSE
+  fan-out, the tunnel to the work machine, the relay's per-browser fan-out) was fire-and-forget
+  with no backlog — a client disconnected for even one event's duration lost it for good, with no
+  way to catch up short of a full page reload. Two fixes, working together:
+  - A reconnecting client now asks the work machine for the CURRENT live state of every pane it
+    still has open, straight from the in-memory session (not the persisted file, which only
+    updates at turn boundaries) — so whatever happened while disconnected is recovered instead of
+    lost.
+  - The stream's keep-alive pulse is now a real, observable event instead of an invisible SSE
+    comment, and the browser watches for it going quiet — if none arrive for a while (a mobile
+    carrier can silently kill an idle connection with no error on either side), the client now
+    reconnects proactively instead of waiting on a browser error that, in exactly this situation,
+    never comes.
+
+### Added
+- **See Claude typing, live** — matching the desktop app instead of one big reply landing all at
+  once with nothing visible in between. Assistant replies now stream into the chat as they're
+  generated, word by word, with a small blinking cursor while a reply is still in progress.
+
+### Note for the live site
+- All of this reaches the live site only after the relay is redeployed; the work machine works
+  immediately.
+
 ## [0.9.1] - 2026-07-23
 
 ### Fixed

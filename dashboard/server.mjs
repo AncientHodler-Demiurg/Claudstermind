@@ -549,7 +549,11 @@ const handler = async (req, res) => {
     res.write(`event: hello\ndata: ${JSON.stringify({ localConnected: true, connId })}\n\n`);
     write(JSON.stringify({ kind: "presence", data: { connections: presenceList() } }));
     broadcastPresence();
-    const hb = setInterval(() => { try { res.write(": keep-alive\n\n"); } catch {} PRESENCE.touch(connId, Date.now()); }, 25000); hb.unref?.();
+    // A real `data:` frame (not just a `: keep-alive` comment) — the comment form is invisible
+    // to EventSource's onmessage, so a browser watching a quiet workspace (no live turn) has no
+    // way to notice a silently-dead connection between real events. This gives the client a
+    // periodic pulse it can actually observe, to detect a stale stream and proactively reconnect.
+    const hb = setInterval(() => { try { res.write(`data: ${JSON.stringify({ kind: "heartbeat" })}\n\n`); } catch {} PRESENCE.touch(connId, Date.now()); }, 25000); hb.unref?.();
     req.on("close", () => { clearInterval(hb); WS_SUBS.delete(connId); PRESENCE.remove(connId); broadcastPresence(); });
     return;
   }

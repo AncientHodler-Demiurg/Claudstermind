@@ -357,7 +357,12 @@ export function createRelay(opts = {}) {
       res.write(`event: hello\ndata: ${JSON.stringify({ localConnected: link.connected, connId })}\n\n`);
       const unsub = link.addWsSubscriber((payload) => { try { res.write(`data: ${JSON.stringify(payload)}\n\n`); } catch {} });
       link.addBrowser({ id: connId, label, origin: "relay" });
-      const hb = setInterval(() => { try { res.write(": keep-alive\n\n"); } catch {} }, 25_000);
+      // A real `data:` frame, not a `: keep-alive` comment — see dashboard/server.mjs's matching
+      // workspace-stream heartbeat for why: a bare SSE comment is invisible to EventSource's
+      // onmessage, so a browser on a flaky/mobile link (the tunnel's far side, exactly where this
+      // stream is most likely to silently die) has nothing to notice the death of a quiet
+      // connection by, between real events.
+      const hb = setInterval(() => { try { res.write(`data: ${JSON.stringify({ kind: "heartbeat" })}\n\n`); } catch {} }, 25_000);
       hb.unref?.();
       req.on("close", () => { clearInterval(hb); unsub(); link.removeBrowser(connId); });
       return;
