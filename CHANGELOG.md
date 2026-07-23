@@ -4,6 +4,25 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.4] - 2026-07-23
+
+### Fixed
+- **A worktree pane never actually ran in its own worktree.** Selecting a worktree only changed
+  which conversation history it was labeled/grouped under — the underlying Claude session always
+  ran in the main repo checkout regardless, silently. This went unnoticed because the history
+  sidebar still correctly showed two separate conversations (e.g. `Repo` and `Repo@my-worktree`),
+  which looked exactly like real isolation even though both were editing the same directory the
+  whole time. A worktree pane's session now genuinely runs in its own checkout under
+  `.worktrees/`, matching what the UI has always implied.
+- As a direct consequence: prompting a pane whose worktree has since been removed (or was never
+  created) now fails with a clear "worktree not found" message instead of silently continuing in
+  the main checkout. If you have an older conversation tied to a worktree that's gone, reattach
+  that pane to "main" (or recreate the worktree) before sending it a new message — the past
+  conversation itself is untouched and still viewable from History either way.
+
+### Note for the live site
+- Reaches the live site only after the relay is redeployed; the work machine works immediately.
+
 ## [0.9.3] - 2026-07-23
 
 ### Fixed
