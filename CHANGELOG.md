@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.10] - 2026-07-23
+
+### Changed
+- **Corrected the copy button from v0.9.8.** That shipped a copy button on every reply — not
+  what was actually asked for. Replies are now parsed for fenced ` ``` ` code blocks; each one
+  renders as its own bordered "copy paste window" with a copy button for just that block, while
+  the surrounding prose stays plain text with no button at all.
+
+### Added
+- **Type ahead while Claude is still working.** A message sent while the pane is busy no longer
+  waits or gets silently refused — it's queued locally, shown as its own orange box in the chat
+  ("frozen" until the current turn finishes), and sent automatically the instant it's Claude's
+  turn again. Several queued messages send one at a time, in order. Mirrors typing ahead in
+  Claude's own desktop app.
+
 ## [0.9.9] - 2026-07-23
 
 ### Fixed

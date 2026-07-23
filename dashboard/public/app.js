@@ -2141,9 +2141,31 @@ function viewWorkspace() {
       done(ok);
     } catch { done(false); }
   }
+  // Splits assistant text on ```fenced``` code blocks: prose stays plain text, each code block
+  // becomes its own bordered, monospaced box with a copy button for JUST that block — not the
+  // whole message. This is specifically what was asked for (a "copy paste window" per code
+  // block, matching Claude's own rendering), not a copy button glued onto every reply.
+  const WS_FENCE_RE = /```([\w+-]*)\n?([\s\S]*?)```/g;
+  function renderAssistantText(text) {
+    if (typeof text !== "string" || !text.includes("```")) return [text];
+    const parts = []; let last = 0, mtch;
+    WS_FENCE_RE.lastIndex = 0;
+    while ((mtch = WS_FENCE_RE.exec(text))) {
+      if (mtch.index > last) parts.push(text.slice(last, mtch.index));
+      const lang = mtch[1] || "";
+      const code = mtch[2].replace(/\n$/, "");
+      parts.push(el("div", { class: "ws-codeblock" }, [
+        el("div", { class: "ws-codeblock-hd" }, [el("span", {}, [lang || "code"]), copyBtn(() => code)]),
+        el("pre", { class: "ws-codeblock-body" }, [code]),
+      ]));
+      last = WS_FENCE_RE.lastIndex;
+    }
+    if (last < text.length) parts.push(text.slice(last));
+    return parts;
+  }
   function renderItem(m) {
     if (m.role === "user" || m.kind === "user") return line("ws-user", [el("b", {}, ["you  "]), m.text]);
-    if (m.role === "assistant" || m.kind === "assistant") return line("ws-assistant", [m.text, copyBtn(() => m.text)]);
+    if (m.role === "assistant" || m.kind === "assistant") return line("ws-assistant", renderAssistantText(m.text));
     if (m.kind === "tool_use") return line("ws-tool", [el("i", { class: "ti ti-tool" }, []), " ", (m.tools || []).map((t) => t.name).join(", ")]);
     if (m.kind === "tool_result") return line("ws-toolres", ["✓ tool result"]);
     if (m.kind === "result") return line("ws-result", [`— done · ${(m.usage?.output_tokens || 0)} out tok · ~${fmtUsd(m.costUsd)}`]);
@@ -2355,7 +2377,7 @@ function viewWorkspace() {
     // never started a turn, so a stale "thinking" carried over from the old identity would spin
     // the busy indicator forever (no event for the OLD session can ever arrive to correct it once
     // sessionKey has moved on).
-    repoSel.addEventListener("change", () => { p.repo = repoSel.value; p.worktree = "main"; p.readonly = false; p.resume = null; p.status = "idle"; p._gen = (p._gen || 0) + 1; assignKey(p); paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p); if (p.repo) wsPost("control", { action: "worktrees", args: { repo: p.repo } }); });
+    repoSel.addEventListener("change", () => { p.repo = repoSel.value; p.worktree = "main"; p.readonly = false; p.resume = null; p.status = "idle"; p._queue = null; p._gen = (p._gen || 0) + 1; assignKey(p); paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p); if (p.repo) wsPost("control", { action: "worktrees", args: { repo: p.repo } }); });
     wtSel.addEventListener("change", () => {
       const v = wtSel.value;
       if (v === "__new__") {   // "+ new worktree…" — create one, then switch this pane to it
@@ -2366,7 +2388,9 @@ function viewWorkspace() {
         wsPost("control", { action: "worktreeAdd", args: { repo: p.repo, name: name.trim() } });
         return;
       }
-      p.worktree = v || "main"; p.readonly = false; p.resume = null; p.status = "idle"; p._gen = (p._gen || 0) + 1; assignKey(p);
+      // A different worktree is a different session — anything queued for the OLD one must
+      // never fire into it (see clearPane's same _queue reset).
+      p.worktree = v || "main"; p.readonly = false; p.resume = null; p.status = "idle"; p._queue = null; p._gen = (p._gen || 0) + 1; assignKey(p);
       paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p);
     });
     // Applies live: the server calls the SDK's setPermissionMode on a running session, so
@@ -2455,13 +2479,18 @@ function viewWorkspace() {
     // the bottom only when the pane was already there (or is short enough to be there already) —
     // someone actively watching a live response keeps following it either way.
     const wasNearBottom = ui.transcriptEl.scrollHeight - ui.transcriptEl.scrollTop - ui.transcriptEl.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX;
-    if (!p.transcript.length && !p._liveText) ui.transcriptEl.replaceChildren(el("div", { class: "hint" }, [p.repo ? "Send a message — Claude runs in " + shortRepo(p.repo) + " on your machine." : "Pick a repository (dropdown, or the sidebar) to start."]));
+    const hasQueue = p._queue && p._queue.length;
+    if (!p.transcript.length && !p._liveText && !hasQueue) ui.transcriptEl.replaceChildren(el("div", { class: "hint" }, [p.repo ? "Send a message — Claude runs in " + shortRepo(p.repo) + " on your machine." : "Pick a repository (dropdown, or the sidebar) to start."]));
     else {
       const nodes = renderTranscript(p.transcript, p._expandedGroups);
       // The live-typing preview — text streamed so far this turn, not yet the authoritative
       // complete line (that replaces it the moment the real "assistant" event lands; see
       // onPayload's assistant_delta handling). Appended after the real transcript, never IN it.
       if (p._liveText) nodes.push(line("ws-assistant ws-live", [p._liveText]));
+      // Queued messages — typed while Claude was still working, "frozen in cache" until this
+      // turn finishes (see send()/drainQueue()). Rendered distinctly (orange) so it's obvious
+      // these haven't actually been sent yet, in the order they'll go out.
+      if (hasQueue) for (const q of p._queue) nodes.push(line("ws-user ws-queued", [el("b", {}, ["you  "]), q.text, el("span", { class: "ws-queued-tag" }, ["queued — sending once this turn finishes"])]));
       ui.transcriptEl.replaceChildren(...nodes);
     }
     if (wasNearBottom) ui.transcriptEl.scrollTop = ui.transcriptEl.scrollHeight;
@@ -2502,6 +2531,7 @@ function viewWorkspace() {
     endSessions([p.sessionKey]);
     p.sessionKey = wsUuid(); p.transcript = []; p.usage = {}; p.status = "idle"; p.readonly = false; p.resume = null;
     p._expandedGroups = new Set();   // a cleared pane starts a fresh transcript — stale group keys don't apply
+    p._queue = null;   // anything queued for the OLD session must never fire into the fresh one
     p._gen = (p._gen || 0) + 1;   // invalidate any in-flight open still targeting the OLD identity
     paintPane(p); setUsageTotal(); saveLayout();
   }
@@ -2845,7 +2875,7 @@ function viewWorkspace() {
         // either way the transient buffer's job is done, so every non-delta kind clears it.
         if (data.kind === "assistant_delta") { p._liveText = (p._liveText || "") + (data.text || ""); paintPane(p); continue; }
         p._liveText = "";
-        if (data.kind === "status") { p.status = data.status; paintPane(p); continue; }
+        if (data.kind === "status") { p.status = data.status; paintPane(p); drainQueue(p); continue; }
         // A user turn echoed by the server: this pane sent it (clear the pending buffer) or a
         // shared pane in another terminal did (render it so both windows show the same thread).
         if (data.kind === "user" && data.by && data.by === CONN.id) p._pendingText = null;
@@ -2861,6 +2891,7 @@ function viewWorkspace() {
         p.transcript.push(data);
         if (data.usageTotal) p.usage = data.usageTotal;
         paintPane(p);
+        drainQueue(p);
       }
       setUsageTotal();
     }
@@ -2927,31 +2958,66 @@ function viewWorkspace() {
   }
 
   // ---- send --------------------------------------------------------------------
-  async function send(p) {
-    if (p.readonly) return;
-    const ui = paneUI.get(p.id); const text = ui.promptEl.value.trim(); if (!text) return;
-    if (!p.repo) { note("Pick a repository for this pane first."); return; }
+  // The actual dispatch — POSTs one prompt (with its own text/image) and handles the round-trip.
+  // Split out of send() so a queued item (drainQueue, below) can be dispatched identically once
+  // the pane goes idle, not just a prompt typed while already idle.
+  async function dispatchPrompt(p, text, image) {
     assignKey(p);
     // Don't append optimistically. The server echoes the accepted user turn to every terminal
     // (so a SHARED session shows the prompt in both windows), and refuses it with `busy` if a
     // turn is already running — appending here would show a prompt that was never actually sent.
-    ui.promptEl.value = ""; p._pendingText = text;
-    // Same "clear optimistically, restore on failure" treatment as the text above — the
-    // attached image (if any) is a one-shot per send, never left over for the next message.
-    const attachedImage = p.attachedImage;
-    p.attachedImage = null; wsPaintAttachment(p);
+    p._pendingText = text;
     const body = { sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree, text, mode: p.mode, by: CONN.id };
-    if (attachedImage) body.image = { mediaType: attachedImage.mediaType, base64Data: attachedImage.base64Data };
+    if (image) body.image = { mediaType: image.mediaType, base64Data: image.base64Data };
     if (p.resume) { body.resume = p.resume; p.resume = null; }
+    // Optimistic busy: the real "status":"thinking" event confirms this shortly over the stream,
+    // but setting it now closes a race — without it, a SECOND queued item could see paneBusy()
+    // still false in the brief window before that event arrives and dispatch immediately behind
+    // this one instead of waiting its turn.
+    p.status = "thinking"; paintPane(p);
     const r = await wsPost("prompt", body);
     if (!r.ok) {
       // Couldn't even reach the work machine — restore the text (and any attached image) so
       // nothing is lost.
-      if (attachedImage && !p.attachedImage) { p.attachedImage = attachedImage; wsPaintAttachment(p); }
-      if (ui.promptEl.value === "") ui.promptEl.value = p._pendingText || "";
+      if (image) { p.attachedImage = image; wsPaintAttachment(p); }
+      const ui = paneUI.get(p.id);
+      if (ui && ui.promptEl.value === "") ui.promptEl.value = p._pendingText || "";
       p._pendingText = null;
-      p.transcript.push({ kind: "error", text: r.message || "Could not reach the work machine." }); paintPane(p);
+      p.status = "idle";
+      p.transcript.push({ kind: "error", text: r.message || "Could not reach the work machine." });
+      paintPane(p);
+      drainQueue(p);   // this attempt failed outright — try the next queued item rather than stalling
     }
+  }
+  // The moment a pane genuinely stops being busy (called from every status/result/error
+  // transition in onPayload), send whatever queued up while it was working — one at a time; each
+  // dispatch sets status back to "thinking" immediately, so a pane with several queued messages
+  // drains them one turn at a time, not all at once.
+  function drainQueue(p) {
+    if (paneBusy(p) || !p._queue || !p._queue.length) return;
+    const next = p._queue.shift();
+    paintPane(p);
+    dispatchPrompt(p, next.text, next.image);
+  }
+  async function send(p) {
+    if (p.readonly) return;
+    const ui = paneUI.get(p.id); const text = ui.promptEl.value.trim(); if (!text) return;
+    if (!p.repo) { note("Pick a repository for this pane first."); return; }
+    // Same "clear optimistically, restore on failure" treatment either way — the attached image
+    // (if any) is a one-shot per send, never left over for the next message.
+    const attachedImage = p.attachedImage;
+    ui.promptEl.value = ""; p.attachedImage = null; wsPaintAttachment(p);
+    // While a turn is already running, don't even attempt the round-trip (the server would refuse
+    // it with `busy` anyway) — queue it locally instead: shown as its own orange box in the
+    // transcript, sent automatically the instant the current turn actually finishes. Mirrors
+    // typing ahead in Claude's own desktop app while it's still replying.
+    if (paneBusy(p)) {
+      p._queue = p._queue || [];
+      p._queue.push({ text, image: attachedImage || null });
+      paintPane(p);
+      return;
+    }
+    dispatchPrompt(p, text, attachedImage);
   }
 
   // ---- toolbar controls ----------------------------------------------------------
