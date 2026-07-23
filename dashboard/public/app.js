@@ -2624,6 +2624,11 @@ function viewWorkspace() {
         p._expandedGroups = new Set();   // a freshly-(re)opened transcript has no expand state yet
         p.repo = data.repo || p.repo;
         p.usage = data.usage || {};
+        // A session can still be live (mid-turn) when its pane is reattached — see
+        // `_liveOrSavedState` server-side. Without this, a pane reopened while Claude is still
+        // working would show "idle" (normal Send button, still spinner) despite a turn genuinely
+        // in progress underneath it.
+        if (data.status) p.status = data.status;
         if (req.mode === "resume" || req.mode === "restore") {
           // Adopt the saved conversation's key. The pane's own key would make the work machine
           // persist the continuation to a SECOND file holding only the new turns — Claude would

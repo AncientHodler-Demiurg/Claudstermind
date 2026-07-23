@@ -4,6 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.3] - 2026-07-23
+
+### Fixed
+- **A just-sent prompt could disappear, replaced by an older reply you hadn't seen yet**,
+  specifically after leaving the Workspace tab (for any other section of the dashboard) and
+  coming back. Reopening a workspace always re-fetches its conversation from the durably-saved
+  file — but that file only gets written when a turn actually finishes, so returning while a turn
+  was still running (or had just finished, before the write landed) showed the *previous* completed
+  exchange instead, with the new prompt and its reply nowhere to be seen. Reattaching a workspace
+  now prefers its **live, in-memory state** when a session is still running, falling back to the
+  saved file only once nothing live remains — so whatever's actually happening is always what you
+  see, whether you left mid-turn or not. This is the same live-state idea 0.9.2 used for a dropped
+  connection, now applied to the "leave the tab and come back" path too, which was the bigger gap.
+
+### Note for the live site
+- Reaches the live site only after the relay is redeployed; the work machine works immediately.
+
 ## [0.9.2] - 2026-07-23
 
 ### Fixed
