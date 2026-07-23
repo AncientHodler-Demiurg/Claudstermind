@@ -470,6 +470,13 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 .deploy-arrow { font-size: 22px; color: var(--ink-mute); }
 .deploy-actions-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .deploy-actions { display: flex; gap: 8px; }
+/* "Pending" wraps/contains both targets — visually the one number either action converges on. */
+.deploy-pending { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px 16px; }
+.deploy-ver-lg { font: 700 30px/1.2 ui-monospace, monospace; color: var(--ink); margin-top: 3px; }
+.deploy-targets { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 14px; }
+.deploy-targets .deploy-card { display: flex; flex-direction: column; gap: 6px; }
+.deploy-stale-note { font-size: 11px; color: var(--accent); margin-top: 2px; }
 .deploy-release { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
 .deploy-release-row { display: flex; gap: 8px; align-items: flex-start; margin-top: 8px; }
 .deploy-release-row .ws-prompt { flex: 1; }

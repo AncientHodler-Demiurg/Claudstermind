@@ -698,9 +698,32 @@ async function pollBackUp(noteEl, { attempts = 40, delayMs = 1500 } = {}) {
   noteEl.textContent = "⚠ Restart triggered, but the dashboard hasn't answered again after a minute — check it manually.";
 }
 
+/** Deploy's zero-downtime blue-green swap (lib/deploy.mjs) keeps the OLD container alive and
+ *  serving until the NEW one is health-checked — but stops the old one at the very end, exactly
+ *  when a SUCCESSFUL deploy's final confirmation would be written. Viewed via the live site (the
+ *  relay-forwarded stream — see relay/server.mjs's /api/deploy/stream, which has no buffered
+ *  replay the way the local dashboard's own DEPLOY.log does), that connection dying is the worst
+ *  possible moment for silence: it looks identical to a hang, right when the deploy actually
+ *  succeeded. Poll /api/deploy/status until Live genuinely matches what was deployed, rather than
+ *  trusting the stream alone to ever confirm it — the same "never silence" principle the restart
+ *  path already has (pollBackUp above) and the automaton blueprint's §3 calls for explicitly. */
+async function pollDeploySucceeded(noteEl, expectedVersion, { attempts = 60, delayMs = 2000 } = {}) {
+  for (let i = 0; i < attempts; i++) {
+    await new Promise((r) => setTimeout(r, delayMs));
+    try {
+      const st = await (await fetch("/api/deploy/status", { cache: "no-store", signal: AbortSignal.timeout(4000) })).json();
+      if (st?.live?.version === expectedVersion) { noteEl.textContent = "✓ Deploy finished — live is now v" + expectedVersion + "."; return; }
+    } catch { /* still mid-swap, or briefly unreachable — keep polling */ }
+  }
+  noteEl.textContent = "⚠ No confirmation received — check the version chip manually.";
+}
+
 function viewDeploy() {
   const root = el("div", { class: "deploy-wrap" }, []);
-  const verRow = el("div", { class: "deploy-vers" }, [el("div", { class: "hint" }, ["Loading version state…"])]);
+  // Wraps/contains both targets below it — visually the one number a Reload OR a Deploy each
+  // converge on, per the admin-panel refinement this replaces the old side-by-side Live/Pending
+  // cards with.
+  const pendingBanner = el("div", { class: "deploy-pending" }, [el("div", { class: "hint" }, ["Loading version state…"])]);
   const term = el("pre", { class: "deploy-term" }, ["(no deploy run yet)"]);
   const actions = el("div", { class: "deploy-actions" }, []);
   const note = el("div", { class: "hint" }, []);
@@ -708,25 +731,31 @@ function viewDeploy() {
   // Self-restart safety: a sandboxed pre-flight, then (only on ok:true) the real restart —
   // gated identically to Deploy above (same canDeploy/canRestart condition) rather than a
   // new auth path, and reusing this same log-terminal rendering (openLogStream) rather than
-  // building a second terminal widget.
+  // building a second terminal widget. "Reload" is this button's user-facing name — it's the
+  // local host's half of the same "pick up what's on disk" action Deploy is for the container.
   const rterm = el("pre", { class: "deploy-term" }, ["(no restart run yet)"]);
   const rActions = el("div", { class: "deploy-actions" }, []);
   const rNote = el("div", { class: "hint" }, []);
   let restarting = !!RESTART_ES;   // a stream from a previous mount of this section is still live
   let canRestart = true;           // updated by refresh() every poll; read by refreshRestartBtn()
 
-  const verCard = (title, v, tone) => el("div", { class: "deploy-card " + (tone || "") }, [
-    el("div", { class: "deploy-card-t" }, [title]),
-    el("div", { class: "deploy-ver" }, [v ? "v" + v.version : "—"]),
-    el("div", { class: "deploy-sha" }, [v ? (v.gitSha || "") + (v.builtAt ? " · " + new Date(v.builtAt).toLocaleString() : "") : "unreachable"]),
-  ]);
+  const verLine = (v) => v ? (v.gitSha || "") + (v.builtAt ? " · " + new Date(v.builtAt).toLocaleString() : "") : "unreachable";
 
-  function openStream() {
+  function openStream(expectedVersion) {
     try { DEPLOY_ES && DEPLOY_ES.close(); } catch {}
     DEPLOY_ES = openLogStream("/api/deploy/stream", term, (ok) => {
       note.textContent = ok ? "✓ Deploy finished — refresh version state." : "✗ Deploy failed — see the log.";
       refresh();
-    });
+    }, expectedVersion ? {
+      // ~2x a typical ~1min deploy's headroom — long enough that a merely-slow rebuild doesn't
+      // trip it, short enough that a genuinely silent stream doesn't leave "Deploying…" stuck.
+      timeoutMs: 90000,
+      onFallback: () => {
+        DEPLOY_ES = null;
+        note.textContent = "No confirmation received — checking if it actually deployed…";
+        pollDeploySucceeded(note, expectedVersion);
+      },
+    } : undefined);
   }
 
   function openRestartStream() {
@@ -769,19 +798,22 @@ function viewDeploy() {
     let st = {}; try { st = await (await fetch("/api/deploy/status", { cache: "no-store" })).json(); } catch {}
     const remote = !!st.remote;   // live site: the deploy runs on the work machine over the tunnel
     const pending = st.pending, live = st.live && st.live.version ? st.live : null;
+    // "Local host: running" — what code this process actually has loaded, frozen at ITS OWN start
+    // (pending.runningVersion — see lib/version.mjs), as opposed to `pending.version` (read live
+    // off disk every call, so it's what a Reload would produce, not necessarily what's running
+    // right now). Only the local host can have these diverge — a long-running process where files
+    // can change without a restart; the container has no such gap, it's atomic rebuild-and-swap.
+    const localRunning = pending ? { version: pending.runningVersion, gitSha: pending.gitSha, builtAt: pending.builtAt } : null;
+    const localStale = !!(pending && localRunning && pending.version !== localRunning.version);
     const same = pending && live && pending.version === live.version && pending.gitSha === live.gitSha;
-    verRow.replaceChildren(
-      verCard("Live · brain.ancientholdings.eu", live, same ? "ok" : "stale"),
-      el("div", { class: "deploy-arrow" }, [same ? "＝" : "⇒"]),
-      verCard(remote ? "Pending · the work machine" : "Pending · this machine", pending, "pending"),
-    );
+
     // Deploy is available locally (direct) or on the live site when the work machine is connected.
     const canDeploy = !remote || st.localConnected;
-    const deployBtn = el("button", { class: "loginbtn" + (same ? " secondary" : "") }, [st.running ? "Deploying…" : (same ? "Redeploy" : "Deploy to live ↗")]);
+    const deployBtn = el("button", { class: "loginbtn" + (same ? " secondary" : "") }, [st.running ? "Deploying…" : (same ? "Redeploy" : "Deploy ↗")]);
     if (st.running || !canDeploy) deployBtn.disabled = true;
     deployBtn.addEventListener("click", async () => {
       if (!confirm("Deploy the current build to brain.ancientholdings.eu? The relay rebuilds (~1 min).")) return;
-      note.textContent = "Starting deploy…"; openStream();
+      note.textContent = "Starting deploy…"; openStream(pending?.version);
       const r = await wsPost2("/api/deploy", {});
       if (!r.ok) { try { DEPLOY_ES.close(); } catch {} DEPLOY_ES = null; note.textContent = "⚠ " + (r.message || "could not start"); }
     });
@@ -789,7 +821,7 @@ function viewDeploy() {
     // tail is replayed after one finishes. There is nothing to show at any other time.
     actions.replaceChildren(deployBtn);
     if (remote && !st.localConnected) actions.append(el("span", { class: "hint" }, ["  (the work machine is offline)"]));
-    if (st.running && !DEPLOY_ES) openStream();
+    if (st.running && !DEPLOY_ES) openStream(pending?.version);
     if (st.logTail && st.logTail.length && term.textContent === "(no deploy run yet)") term.textContent = st.logTail.join("\n");
 
     // Restart local dashboard: no dedicated status endpoint exists (unlike Deploy's
@@ -797,14 +829,36 @@ function viewDeploy() {
     // Deploy just computed above rather than inventing a second one.
     canRestart = !remote || st.localConnected;
     refreshRestartBtn();
+
+    pendingBanner.replaceChildren(
+      el("div", { class: "deploy-card-t" }, ["Pending — what Reload or Deploy would produce"]),
+      el("div", { class: "deploy-ver-lg" }, [pending ? "v" + pending.version : "—"]),
+      el("div", { class: "deploy-sha" }, [verLine(pending)]),
+      el("div", { class: "deploy-targets" }, [
+        el("div", { class: "deploy-card" + (localStale ? " stale" : pending ? " ok" : "") }, [
+          el("div", { class: "deploy-card-t" }, [remote ? "Local host · the work machine" : "Local host · this machine"]),
+          el("div", { class: "deploy-ver" }, [localRunning ? "v" + localRunning.version : "—"]),
+          el("div", { class: "deploy-sha" }, [remote && !st.localConnected ? "offline" : verLine(localRunning)]),
+          localStale ? el("div", { class: "deploy-stale-note" }, ["⚠ running code is behind Pending — Reload to pick it up"]) : "",
+          el("div", { class: "deploy-actions-row" }, [rActions, rNote]),
+        ]),
+        el("div", { class: "deploy-card" + (live ? (same ? " ok" : " stale") : "") }, [
+          el("div", { class: "deploy-card-t" }, ["Live container · brain.ancientholdings.eu"]),
+          el("div", { class: "deploy-ver" }, [live ? "v" + live.version : "—"]),
+          el("div", { class: "deploy-sha" }, [verLine(live)]),
+          live && !same ? el("div", { class: "deploy-stale-note" }, ["⚠ behind Pending — Deploy to update"]) : "",
+          el("div", { class: "deploy-actions-row" }, [actions, note]),
+        ]),
+      ]),
+    );
   }
 
   function refreshRestartBtn() {
-    const restartBtn = el("button", { class: "loginbtn secondary" }, [restarting ? "Restarting…" : "⟳ Restart local dashboard"]);
+    const restartBtn = el("button", { class: "loginbtn secondary" }, [restarting ? "Reloading…" : "⟳ Reload"]);
     if (restarting || !canRestart) restartBtn.disabled = true;
     restartBtn.addEventListener("click", async () => {
-      if (!confirm("Run a sandboxed pre-flight and, only if it passes, restart the local dashboard now?")) return;
-      restarting = true; rNote.textContent = "Starting restart pre-flight…"; openRestartStream();
+      if (!confirm("Run a sandboxed pre-flight and, only if it passes, reload the local dashboard now?")) return;
+      restarting = true; rNote.textContent = "Starting reload pre-flight…"; openRestartStream();
       refreshRestartBtn();
       const r = await wsPost2("/api/dashboard/restart", {});
       if (!r.ok) { try { RESTART_ES.close(); } catch {} RESTART_ES = null; restarting = false; rNote.textContent = "⚠ " + (r.message || "could not start"); refreshRestartBtn(); }
@@ -815,14 +869,10 @@ function viewDeploy() {
 
   root.replaceChildren(
     el("h2", { class: "deploy-h" }, ["Deploy & Version"]),
-    el("div", { class: "hint" }, ["The version + changelog are cut by the agent when a change is built (Pantheonic §10). This panel just ships the built version to the live site."]),
-    verRow,
-    el("div", { class: "deploy-actions-row" }, [actions, note]),
+    el("div", { class: "hint" }, ["The version + changelog are cut by the agent when a change is built (Pantheonic §10). Reload picks up the local host's own on-disk code; Deploy ships it to the live container."]),
+    pendingBanner,
     el("h3", { style: "margin:14px 0 4px" }, ["Deploy log"]), term,
-    el("h3", { style: "margin:14px 0 4px" }, ["Restart local dashboard"]),
-    el("div", { class: "hint" }, ["Boots a sandboxed candidate on a scratch port and health-checks it before touching the live process — refuses (with the specific reason) if it wouldn't come back up."]),
-    el("div", { class: "deploy-actions-row" }, [rActions, rNote]),
-    el("h3", { style: "margin:14px 0 4px" }, ["Restart log"]), rterm,
+    el("h3", { style: "margin:14px 0 4px" }, ["Reload log"]), rterm,
   );
   refresh();
   return root;

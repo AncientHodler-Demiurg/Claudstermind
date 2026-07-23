@@ -4,6 +4,31 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.6] - 2026-07-23
+
+### Added
+- **Deploy & Version, restructured.** The panel now shows the Local host's actually-running
+  version next to its Reload button, and the Live container's actually-running version next to
+  its Deploy button, both wrapped in a "Pending" banner showing what either action would produce
+  — so it's visually obvious whether the two targets are already caught up or which one needs the
+  button next to it pressed.
+- **The local host now honestly distinguishes "running" from "pending."** A long-running process
+  can have newer code on disk than what it actually loaded at boot — `/api/version`'s new
+  `runningVersion` field freezes at process start, separate from `version` (always read fresh off
+  disk). The container needs no such distinction (an atomic rebuild-and-swap unit has only one
+  version, ever), so this only shows up for the local host.
+
+### Fixed
+- **The Deploy log could go silent at the exact moment a deploy succeeded**, when viewed from the
+  live site. The blue-green swap stops the OLD container only after the new one is healthy — but
+  that's also the instant a successful deploy's confirmation would be written, and the relay's
+  deploy-log stream (unlike the local dashboard's own) has no buffered replay, so a browser
+  watching through the old container lost the connection with nothing to show for it: looked
+  exactly like a hang. Deploy's log stream now has the same timeout-and-poll-until-confirmed
+  fallback the Reload button already had, so it always reaches a clear "done" or "check manually"
+  instead of silence — the "maximum feedback" principle from the automaton blueprint handoff
+  (`04-automaton-blueprint.md` §3), applied to the one gap where it wasn't yet.
+
 ## [0.9.5] - 2026-07-23
 
 ### Added
