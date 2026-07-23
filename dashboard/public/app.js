@@ -1615,6 +1615,7 @@ let RELAY_TIMER = null;
 let WS_ES = null;   // the Workspace EventSource (SSE stream of Claude session output)
 let WS_LAST_MSG_AT = 0;    // Date.now() of the last message (real event OR heartbeat) this stream delivered
 let WS_STALE_TIMER = null;   // polls WS_LAST_MSG_AT; force-reconnects a stream that's gone quiet too long
+let WS_EVER_CONNECTED = false;   // true after the FIRST successful "hello" — so only a later hello logs as a "reconnect"
 // Comfortably above the 25s server heartbeat: two missed pulses plus slack, not one, so an
 // ordinary single slow tick over a mobile link never triggers a needless reconnect.
 const WS_STALE_MS = 65_000;
@@ -2368,7 +2369,15 @@ function viewWorkspace() {
     const identityLabel = el("span", { class: "ws-identity" }, ["—"]);
     const topBar = el("div", { class: "ws-pane-hd" }, [dot, identityLabel, el("span", { class: "ws-spacer" }), closeBtn]);
     const controlsBar = el("div", { class: "ws-pane-controls" }, [repoSel, wtSel, modeSel, histBtn, el("span", { class: "ws-spacer" }), badge]);
-    const paneRoot = el("div", { class: "ws-pane" }, [topBar, transcriptEl, controlsBar, composeExtras, composeRow]);
+    // The live "what's happening right now" feed — a single always-visible line (tap to expand
+    // the full scrolling log) narrating every state transition: sending, thinking, streaming,
+    // running a tool, waiting for permission, done, a connection hiccup — everything the orange
+    // button alone couldn't tell you. See logActivity()/renderActivityLog().
+    const activityLine = el("div", { class: "ws-activity", title: "Tap for the full activity log" }, ["Idle"]);
+    const activityLog = el("div", { class: "ws-activity-log" }, []);
+    activityLog.hidden = true;
+    activityLine.addEventListener("click", () => { activityLog.hidden = !activityLog.hidden; if (!activityLog.hidden) renderActivityLog(p); });
+    const paneRoot = el("div", { class: "ws-pane" }, [topBar, activityLine, activityLog, transcriptEl, controlsBar, composeExtras, composeRow]);
 
     paneRoot.addEventListener("mousedown", () => setActive(p.id));
     // Repointing a pane to a different repo/worktree abandons its OLD identity — bump `_gen` so
@@ -2432,9 +2441,33 @@ function viewWorkspace() {
     });
     imgRemoveBtn.addEventListener("click", (e) => { e.stopPropagation(); p.attachedImage = null; wsShowImgErr(p, ""); wsPaintAttachment(p); });
 
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, usageEl: badge, dot, sendBtn, attachBtn, imgThumb, imgPreviewWrap, imgErr, identityLabel });
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, usageEl: badge, dot, sendBtn, attachBtn, imgThumb, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog });
     return paneRoot;
   }
+
+  // ---- live activity feed: "what's happening right now", separate from the chat transcript ----
+  const WS_ACTIVITY_CAP = 60;   // bounded so a long session's log can't grow without limit
+  function logActivity(p, text, tone) {
+    p._activity = p._activity || [];
+    p._activity.push({ at: Date.now(), text, tone: tone || "" });
+    if (p._activity.length > WS_ACTIVITY_CAP) p._activity.shift();
+    const ui = paneUI.get(p.id); if (!ui) return;
+    ui.activityLine.textContent = text;
+    ui.activityLine.className = "ws-activity" + (tone ? " " + tone : "");
+    if (!ui.activityLog.hidden) renderActivityLog(p);
+  }
+  function renderActivityLog(p) {
+    const ui = paneUI.get(p.id); if (!ui) return;
+    const items = (p._activity || []).slice().reverse().map((a) =>
+      el("div", { class: "ws-activity-item" + (a.tone ? " " + a.tone : "") }, [
+        el("span", { class: "ws-activity-time" }, [new Date(a.at).toLocaleTimeString()]),
+        a.text,
+      ]));
+    ui.activityLog.replaceChildren(...(items.length ? items : [el("div", { class: "hint" }, ["Nothing yet."])]));
+  }
+  // Connection-level events (a drop, a reconnect) aren't scoped to one pane's session — every
+  // pane watching this stream is equally affected, so it goes to all of them.
+  function logActivityAll(text, tone) { for (const p of st.panes) logActivity(p, text, tone); }
 
   function paintPane(p) {
     const ui = paneUI.get(p.id); if (!ui) return;
@@ -2847,7 +2880,7 @@ function viewWorkspace() {
       // The turn lock refused this prompt (another terminal, or another pane, is mid-turn).
       // Restore the typed text on the pane that sent it, so nothing is lost.
       if (data.kind === "busy") {
-        for (const p of targets) { const ui = paneUI.get(p.id); if (ui && p._pendingText && !ui.promptEl.value) ui.promptEl.value = p._pendingText; p._pendingText = null; }
+        for (const p of targets) { const ui = paneUI.get(p.id); if (ui && p._pendingText && !ui.promptEl.value) ui.promptEl.value = p._pendingText; p._pendingText = null; logActivity(p, "⏳ Still working on the previous turn…"); }
         note("⏳ " + (data.message || "This workspace is working — wait for the current turn."));
         return;
       }
@@ -2863,6 +2896,7 @@ function viewWorkspace() {
           if (data.mode) p.mode = data.mode;
           p._liveText = "";   // stale relative to whatever actually streamed before the reconnect
           paintPane(p);
+          logActivity(p, "↻ Reconnected — caught up", "ws-act-ok");
         }
         return;
       }
@@ -2873,9 +2907,24 @@ function viewWorkspace() {
         // kind means whatever was streaming is now either superseded by the real, complete line
         // (the "assistant" event below) or the turn moved on (a tool call, the end of the turn) —
         // either way the transient buffer's job is done, so every non-delta kind clears it.
-        if (data.kind === "assistant_delta") { p._liveText = (p._liveText || "") + (data.text || ""); paintPane(p); continue; }
+        if (data.kind === "assistant_delta") {
+          p._liveText = (p._liveText || "") + (data.text || "");
+          // Logged once per turn, not once per chunk — a chunk can arrive many times a second.
+          if (!p._streamingStarted) { p._streamingStarted = true; logActivity(p, "▸ Streaming reply…"); }
+          paintPane(p);
+          continue;
+        }
         p._liveText = "";
-        if (data.kind === "status") { p.status = data.status; paintPane(p); drainQueue(p); continue; }
+        if (data.kind === "status") {
+          p.status = data.status;
+          // A shared session can go "thinking" because ANOTHER terminal sent the prompt, not this
+          // one's own dispatchPrompt() — reset the streaming-logged flag here too, or this pane
+          // would never log "Streaming reply…" for a turn it didn't itself start.
+          if (data.status === "thinking") p._streamingStarted = false;
+          const STATUS_TEXT = { thinking: "● Thinking…", "awaiting-permission": "⏸ Waiting for tool permission…", idle: "✓ Idle", ended: "✓ Turn ended", error: "⚠ Errored" };
+          logActivity(p, STATUS_TEXT[data.status] || ("● " + data.status));
+          paintPane(p); drainQueue(p); continue;
+        }
         // A user turn echoed by the server: this pane sent it (clear the pending buffer) or a
         // shared pane in another terminal did (render it so both windows show the same thread).
         if (data.kind === "user" && data.by && data.by === CONN.id) p._pendingText = null;
@@ -2888,6 +2937,10 @@ function viewWorkspace() {
         // the NEXT status push (e.g. the following turn), which is exactly the stuck-spinner
         // gap this pane icon exists to avoid.
         if ((data.kind === "result" || data.kind === "error") && paneBusy(p)) p.status = "idle";
+        if (data.kind === "tool_use") logActivity(p, "🔧 Running: " + (data.tools || []).map((t) => t.name).join(", "));
+        else if (data.kind === "tool_result") logActivity(p, "✓ Tool finished — continuing…");
+        else if (data.kind === "result") logActivity(p, `✓ Reply complete — ${(data.usage?.output_tokens || 0)} out tok · ~${fmtUsd(data.costUsd)}`, "ws-act-ok");
+        else if (data.kind === "error") logActivity(p, "⚠ " + (data.text || data.message || "Unknown error"), "ws-act-err");
         p.transcript.push(data);
         if (data.usageTotal) p.usage = data.usageTotal;
         paintPane(p);
@@ -2917,11 +2970,13 @@ function viewWorkspace() {
       // reply can't race an unsubscribed stream (it would be dropped silently).
       try { const d = JSON.parse(e.data); if (d.localConnected) { bridgeNote.hidden = true; bridgeNote.textContent = ""; } else note("The work machine isn't connected — start the local dashboard + relay."); } catch {}
       primeControls();
+      if (WS_EVER_CONNECTED) logActivityAll("↻ Reconnected", "ws-act-ok");   // only a RE-connect is activity-log-worthy, not the first ever connect
+      WS_EVER_CONNECTED = true;
       resyncOpenPanes();   // catch up on anything the PREVIOUS connection silently missed
       lastAttached = undefined; reportAttach();   // announce what this terminal is viewing
     });
     WS_ES.onmessage = (e) => { WS_LAST_MSG_AT = Date.now(); try { onPayload(JSON.parse(e.data)); } catch {} };
-    WS_ES.onerror = () => note("Stream interrupted — retrying…");
+    WS_ES.onerror = () => { note("Stream interrupted — retrying…"); logActivityAll("⚠ Connection interrupted — reconnecting…", "ws-act-err"); };
     // Staleness watchdog: a mobile carrier's NAT can silently drop an idle connection with no
     // FIN/RST — Node's res.write() never throws in that case, so the server keeps "sending" into
     // a connection nobody's listening on, and the browser's `onerror` never fires because nothing
@@ -2930,7 +2985,9 @@ function viewWorkspace() {
     // and force a reconnect — which re-fires `hello` and, via resyncOpenPanes() above, catches up
     // on whatever the dead connection swallowed.
     clearInterval(WS_STALE_TIMER);
-    WS_STALE_TIMER = setInterval(() => { if (Date.now() - WS_LAST_MSG_AT > WS_STALE_MS) openStream(); }, 10_000);
+    WS_STALE_TIMER = setInterval(() => {
+      if (Date.now() - WS_LAST_MSG_AT > WS_STALE_MS) { logActivityAll("⚠ Connection gone quiet — reconnecting…", "ws-act-err"); openStream(); }
+    }, 10_000);
   }
 
   // ---- permission modal (FIFO queue — two panes can await at once) ----------------
@@ -2974,7 +3031,8 @@ function viewWorkspace() {
     // but setting it now closes a race — without it, a SECOND queued item could see paneBusy()
     // still false in the brief window before that event arrives and dispatch immediately behind
     // this one instead of waiting its turn.
-    p.status = "thinking"; paintPane(p);
+    p.status = "thinking"; p._streamingStarted = false; paintPane(p);
+    logActivity(p, "→ Sending your message…");
     const r = await wsPost("prompt", body);
     if (!r.ok) {
       // Couldn't even reach the work machine — restore the text (and any attached image) so
@@ -2986,7 +3044,10 @@ function viewWorkspace() {
       p.status = "idle";
       p.transcript.push({ kind: "error", text: r.message || "Could not reach the work machine." });
       paintPane(p);
+      logActivity(p, "⚠ Could not reach the work machine", "ws-act-err");
       drainQueue(p);   // this attempt failed outright — try the next queued item rather than stalling
+    } else {
+      logActivity(p, "✓ Message received — waiting for Claude to pick it up…");
     }
   }
   // The moment a pane genuinely stops being busy (called from every status/result/error

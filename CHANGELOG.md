@@ -4,6 +4,30 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.11] - 2026-07-24
+
+### Added
+- **A live activity feed on every pane** — "what's happening right now," separate from the chat
+  itself: sending, thinking, streaming the reply, running a tool, waiting for permission, done,
+  a connection hiccup and reconnect. A single always-visible line by default; tap it to expand
+  the full scrolling, timestamped log. This is what the orange Send button alone couldn't tell
+  you — real-time, granular feedback for the entire span between sending a prompt and getting an
+  answer, including the boring-but-important parts (a dropped connection, a stale stream forcing
+  a reconnect) that used to be invisible.
+
+### Fixed
+- **A recreated worktree could silently resurrect stale code** — reattaching to a branch left over
+  from before the worktree was removed, however far behind it had fallen (confirmed in production:
+  9 commits / a full day stale) with no indication anything was off. Recreating a worktree now
+  fast-forwards its branch to the repo's current tip when that's safe (no unique commits would be
+  lost), and clearly reports the situation instead — never silently discarding real work — when
+  the branch has genuinely diverged.
+
+### Note for the live site
+- Both reach the live site only after the relay is redeployed; the work machine works immediately
+  (the worktree fix needs the pending restart; the activity feed is pure frontend, no restart
+  needed for it specifically).
+
 ## [0.9.10] - 2026-07-23
 
 ### Changed

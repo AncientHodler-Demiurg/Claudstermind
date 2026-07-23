@@ -398,6 +398,21 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
    showing (repo@worktree) must never be in doubt, so this reads directly from the same p.repo/
    p.worktree the controls below (now moved near the compose row) do — see paintPane(). */
 .ws-identity { font-size: 12px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The live activity feed — "what's happening right now", separate from the chat transcript.
+   Always-visible single line by default (tap to expand the full scrolling log) — everything the
+   orange Send button alone couldn't tell you: sending, thinking, streaming, a tool running,
+   waiting for permission, done, a connection hiccup. See logActivity()/renderActivityLog(). */
+.ws-activity { padding: 4px 9px; font-size: 11px; color: var(--ink-dim); background: var(--panel2);
+  border-bottom: 1px solid var(--line); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-activity:hover { color: var(--ink); }
+.ws-activity.ws-act-ok { color: #34d399; }
+.ws-activity.ws-act-err { color: #f87171; }
+.ws-activity-log { max-height: 160px; overflow-y: auto; background: var(--panel2); border-bottom: 1px solid var(--line);
+  padding: 4px 9px; display: flex; flex-direction: column; gap: 2px; }
+.ws-activity-item { font-size: 10.5px; color: var(--ink-dim); display: flex; gap: 6px; }
+.ws-activity-item.ws-act-ok { color: #34d399; }
+.ws-activity-item.ws-act-err { color: #f87171; }
+.ws-activity-time { color: var(--ink-mute); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
 /* The interactive controls (repo/worktree/mode/history/usage) — moved down here, next to the
    compose row, rather than pinned in a header far from where you're actually typing. Mirrors
    Claude's own chat UI, which keeps its controls near the input, not in a fixed top bar. */
