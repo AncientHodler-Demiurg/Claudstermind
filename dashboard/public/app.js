@@ -1872,6 +1872,7 @@ function viewWorkspace() {
     searchQuery: "", searchResults: null,   // full-text search over saved conversations
     presence: [],                  // connected terminals (this one + others), from the server
     worktrees: {},                 // repo -> [{ name, branch, isMain, needsInstall }]
+    _pendingHistoryResume: null,   // { repo, worktree, sessionKey, timer } — a "resume a missing worktree" in flight
   };
   const CONN = connIdentity();
   let searchTimer = null;
@@ -2504,18 +2505,46 @@ function viewWorkspace() {
     // must key off that instead.
     const key = snippet != null ? h.sessionKey : h.workspaceId;
     const label = shortRepo(h.repo) || "—";
+    // A row whose worktree no longer exists (removed, or this box never had it) is real, permanent
+    // history — just not something "Resume" can casually continue, since there's no checkout left
+    // to run in. Marked distinctly so that's obvious at a glance, not discovered via a confusing
+    // refusal after clicking Resume.
+    const missing = !!h.missingWorktree;
     const openB = el("button", { class: "ws-ico", title: "Reopen read-only" }, ["👁"]);
-    const resumeB = el("button", { class: "ws-ico", title: "Resume live" }, ["▶"]);
+    const resumeB = el("button", { class: "ws-ico", title: missing ? "This worktree was removed — resume recreates it" : "Resume live" }, ["▶"]);
     openB.addEventListener("click", () => reopen(key, "open"));
-    resumeB.addEventListener("click", () => reopen(key, "resume"));
-    return el("div", { class: "ws-hist-item" }, [
+    resumeB.addEventListener("click", () => {
+      if (!missing) return reopen(key, "resume");
+      const ok = window.confirm(
+        `The worktree "${h.worktree}" for ${label} was removed.\n\n` +
+        `Resuming will RECREATE it (reattaching to its original branch, which git keeps even after ` +
+        `a worktree is removed) and continue this conversation there.\n\nRecreate "${h.worktree}" and resume?`
+      );
+      if (!ok) return;
+      resumeAfterRecreatingWorktree(h.repo, h.worktree, key);
+    });
+    return el("div", { class: "ws-hist-item" + (missing ? " missing-worktree" : "") }, [
       el("div", { class: "ws-hist-line1" }, [
         el("b", {}, [label + (h.worktree && h.worktree !== "main" ? "@" + h.worktree : "")]),
         el("span", { class: "ws-hist-meta" }, [snippet != null ? `${h.matchCount} match(es)` : `${h.turns || 0} turn(s)`]),
       ]),
+      missing ? el("div", { class: "ws-hist-missing" }, ["⚠ worktree removed — historical; Resume recreates it"]) : "",
       el("div", { class: "ws-hist-first" }, [snippet != null ? "…" + snippet + "…" : (h.firstPrompt || "(no prompt)")]),
       el("div", { class: "ws-hist-actions" }, [el("span", { class: "ws-hist-when" }, [when]), el("span", { class: "ws-spacer" }, []), openB, resumeB]),
     ]);
+  }
+  // Recreate-then-resume: the confirmed common case for a history row whose worktree is gone.
+  // worktreeAdd's actual confirmation arrives asynchronously over the stream (the `data.worktrees`
+  // state update — see onPayload), not from this POST's immediate response, so this just records
+  // intent and a safety-net timeout; the stream handler below completes the resume once the
+  // worktree genuinely exists.
+  function resumeAfterRecreatingWorktree(repo, worktree, sessionKey) {
+    clearTimeout(st._pendingHistoryResume?.timer);
+    const timer = setTimeout(() => {
+      if (st._pendingHistoryResume?.sessionKey === sessionKey) { note(`⚠ Could not recreate worktree "${worktree}" — resume cancelled.`); st._pendingHistoryResume = null; }
+    }, 8000);
+    st._pendingHistoryResume = { repo, worktree, sessionKey, timer };
+    wsPost("control", { action: "worktreeAdd", args: { repo, name: worktree } });
   }
   function renderHistory() {
     const searchBox = el("input", { class: "ws-search", type: "search", placeholder: "Search conversations…", value: st.searchQuery });
@@ -2560,6 +2589,17 @@ function viewWorkspace() {
             p.worktree = p._pendingWorktree; p._pendingWorktree = null; p._gen = (p._gen || 0) + 1; assignKey(p); reportAttach();
           }
           if (p.repo === data.worktreesRepo) paintPane(p);
+        }
+        // A history "resume" that recreated its missing worktree first (see
+        // resumeAfterRecreatingWorktree) — this state update, listing the worktree as real again,
+        // is the actual confirmation (worktreeAdd's own POST reply isn't; the create happens
+        // async over the stream). Complete the resume now that there's genuinely something to
+        // resume INTO.
+        if (st._pendingHistoryResume?.repo === data.worktreesRepo && data.worktrees.some((w) => w.name === st._pendingHistoryResume.worktree)) {
+          clearTimeout(st._pendingHistoryResume.timer);
+          const { sessionKey: resumeKey } = st._pendingHistoryResume;
+          st._pendingHistoryResume = null;
+          reopen(resumeKey, "resume");
         }
         return;
       }

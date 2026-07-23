@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.5] - 2026-07-23
+
+### Added
+- **History rows for a removed worktree are now marked, orange-bordered, as historical.** Resuming
+  one no longer just fails — it asks to recreate the worktree (reattaching to its original branch,
+  which git keeps even after a worktree is removed) and continues the conversation there once you
+  confirm.
+
 ## [0.9.4] - 2026-07-23
 
 ### Fixed

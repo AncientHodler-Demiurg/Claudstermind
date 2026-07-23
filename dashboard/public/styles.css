@@ -374,6 +374,11 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 .ws-hist-first { font-size: 11.5px; color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-hist-actions { display: flex; align-items: center; gap: 4px; }
 .ws-hist-when { font-size: 10px; color: var(--ink-dim); }
+/* A history row whose worktree has been removed — real, permanent history, just not something
+   Resume can casually continue (there's no checkout left to run in). The orange border/label
+   says so up front, rather than surprising you with a refusal after clicking Resume. */
+.ws-hist-item.missing-worktree { border-color: #f59e0b; }
+.ws-hist-missing { color: #f59e0b; font-size: 10.5px; }
 
 /* pane grid — up to 8 across × 2 down. Columns never shrink below WS_PANE_MIN, so on a
    narrower screen the grid scrolls sideways instead of crushing every pane to a sliver;
