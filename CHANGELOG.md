@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.9] - 2026-07-23
+
+### Fixed
+- **The `--resume ... is not a UUID` crash on "main" was still happening after v0.9.7 — because
+  it was data corruption, not just code.** A past bug had briefly stamped the workspace id itself
+  (`Claudstermind@main`) as the recorded "real session id" before any genuine one ever existed.
+  v0.9.7 only handled a workspace with NO real id recorded; it never validated one that WAS
+  recorded but corrupted. Worse, the lookup used the FIRST matching id in a file, not the most
+  recent — so once a real session finally started and got recorded correctly, the earlier
+  corrupted entry kept winning anyway. Confirmed directly against the actual affected file:
+  resolves to the genuine session id now, not the corrupted one. Three layers, since this one
+  cost enough already: the lookup now finds the most recent id and rejects a self-referential one
+  outright; `_prompt` refuses to hand the SDK a resume value equal to the workspace id regardless
+  of where it came from; `_persist` refuses to ever write one in the first place.
+
 ## [0.9.8] - 2026-07-23
 
 ### Fixed
