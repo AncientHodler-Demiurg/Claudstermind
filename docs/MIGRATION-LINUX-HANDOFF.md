@@ -54,26 +54,47 @@ Notes:
 ## 2. Extract the workspace
 
 The tar is the **whole workspace root** — it contains `Claudstermind/` alongside the ecosystem repos
-(`AncientPantheon/`, `StoaChain/`, …), plus `.claude/`, `brain data`, and (maybe) `.secrets/`.
+(`AncientPantheon/`, `StoaChain/`, `OuroborosNetwork/`, …), plus `.claude/`, brain data, and
+`.secrets/`.
 
-Pick a root dir and extract so the layout is exactly this (call the root **`$ROOT`**):
+**The destination is already chosen: `/home/ancientbox/ClaudeWS`.** That is `$ROOT` everywhere below.
+
+Two things about this archive will bite you if you use the obvious command:
+
+1. **It is NOT gzipped.** It is a plain `.tar` (produced by the dashboard's backup button), named
+   `claude-<YYYY-MM-DD>-<id>.tar`. `tar xzf` fails with *"not in gzip format"* — use `xf`, no `z`.
+2. **Every path inside is prefixed `_Claude/`** (the archive preserves the old Windows folder name).
+   Extracting as-is would give you `$ROOT/_Claude/Claudstermind/…` — one level too deep, and nothing
+   would resolve. Strip that component.
 
 ```bash
-export ROOT="$HOME/Claude"          # choose your location
-mkdir -p "$ROOT" && cd "$ROOT"
-tar xzf /media/<drive>/claudstermind-workspace.tgz    # extract here
+export ROOT="/home/ancientbox/ClaudeWS"
+mkdir -p "$ROOT"
+
+# check what you actually have first — name and format
+ls -la /media/<drive>/*.tar
+tar tf /media/<drive>/claude-<date>-<id>.tar | head -3     # expect: _Claude/ , _Claude/.claude/ , …
+
+# xf (NOT xzf) + strip the leading _Claude/ component
+tar xf /media/<drive>/claude-<date>-<id>.tar --strip-components=1 -C "$ROOT"
+```
+
+Verify immediately — if this shows nothing, the strip level was wrong:
+
+```bash
+ls "$ROOT"            # expect: Claudstermind  AncientPantheon  StoaChain  OuroborosNetwork  .secrets  .claude
 ```
 
 After extraction you MUST have this shape (the code resolves paths relative to it):
 
 ```
-$ROOT/
+/home/ancientbox/ClaudeWS/            # = $ROOT
 ├── Claudstermind/           # the dashboard + relay + libs (this repo)
 │   ├── dashboard/server.mjs # the local dashboard entry point
 │   ├── dashboard/data/map.json
 │   ├── brain/               # per-repo knowledge base
 │   └── ...
-├── .secrets/                # tokens (see step 4) — gitignored, may or may not be in the tar
+├── .secrets/                # tokens (see step 4) — gitignored; IS included in this archive
 ├── .claude/workspace/       # saved per-repo conversation history (the learning-loop substrate)
 ├── AncientPantheon/ StoaChain/ OuroborosNetwork/ ...   # the repos you'll drive Claude in
 └── LocalHost/registry.json  # optional; sets the dashboard port (else PORT env / 3020 fallback)
@@ -90,8 +111,23 @@ so this shape holds.
 ```bash
 cd "$ROOT/Claudstermind" && npm install
 cd "$ROOT/Claudstermind/dashboard" && npm install    # the dashboard has its own (jose)
-cd "$ROOT/Claudstermind" && node --test 2>&1 | tail -5   # sanity: should be ~185 pass, 0 fail
+cd "$ROOT/Claudstermind" && node --test 2>&1 | tail -5   # sanity: 0 fail
 ```
+
+**`node_modules` is deliberately NOT in the archive** (it is excluded, along with `dist`, `.next`,
+`build`, `.turbo`, `.vite`, `.pnpm-store`). Every repo you want to work in needs its own install.
+
+**Not every repo uses npm.** `StoaWallet` is a **pnpm** workspace (`packageManager: pnpm@9.15.0`,
+`pnpm-lock.yaml`, `workspace:*` protocol) — `npm install` there fails with an opaque
+`Cannot read properties of null (reading 'matches')`. Install pnpm before touching it:
+
+```bash
+sudo npm install -g pnpm@9        # or: corepack enable && corepack prepare pnpm@9.15.0 --activate
+cd "$ROOT/StoaChain/daimons/StoaWallet" && pnpm install
+```
+
+Its tests run from the repo ROOT (a vitest projects config), not per-package:
+`npx vitest run packages/core` — `pnpm --filter @stoawallet/core test` finds no test files.
 
 ---
 
@@ -195,8 +231,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=<your-user>
-WorkingDirectory=<$ROOT>/Claudstermind
+User=ancientbox
+WorkingDirectory=/home/ancientbox/ClaudeWS/Claudstermind
 Environment=PORT=3001
 ExecStart=/usr/bin/node dashboard/server.mjs
 Restart=on-failure
@@ -212,13 +248,13 @@ sudo systemctl enable --now claudstermind
 journalctl -u claudstermind -f      # watch it boot + "[bridge] connected"
 ```
 
-(Substitute real values for `<your-user>` and `<$ROOT>` — systemd doesn't expand shell vars.)
+(Values are already concrete for this box. Note systemd does NOT expand shell vars — `$ROOT` would not work here, which is why the path is written out. Adjust `User=` if you run as someone other than `ancientbox`, and check `which node` — the path is `/usr/bin/node` from the NodeSource install in step 1.)
 
 ---
 
 ## 9. Verify — the acceptance checklist
 
-1. `curl -s localhost:3001/api/version` → `{"version":"0.2.3",...}` (or newer).
+1. `curl -s localhost:3001/api/version` → `{"version":"0.8.0",...}` (or newer).
 2. On **brain.ancientholdings.eu** (sign in as the ancient admin): the header shows
    **"Local host connected"** (not "offline"). The **Workspace** tab is present.
 3. In Workspace: pick a repo, send a tiny prompt (e.g. *"reply with only: READY"*) → it streams a
@@ -250,7 +286,75 @@ bridge for good** (it's already stopped per rule 0 — now make sure it can't au
 
 ---
 
-## 11. What this box now owns
+## 11. Set up backups on this box (do this on day one)
+
+The archive you just extracted came from this system, and it is the only thing standing between the
+workspace and a bad `git reset`. GitHub holds what is **committed**; this holds everything else —
+`.git` history, uncommitted work, `.secrets`, unpushed branches.
+
+The default backup location is platform-derived: on Linux it is **`~/claude-backup`** (on the old
+Windows box it was `X:\_Claude-backup`). Point it wherever you actually want it — ideally a
+different physical disk than `$ROOT`:
+
+1. Dashboard → **Admin → Ops**.
+2. Set **location** (any absolute path), **enable** the daily backup, and set the **hour**.
+3. Click **💾 Back up now** once to prove the whole path works end to end. It archives immediately —
+   it deliberately ignores the "suite is active" gate, because you asked for it.
+
+Two behaviours worth knowing:
+
+- The **daily scheduler defers** while an agent is working and catches up when idle. It only runs
+  while the dashboard process is up — which, as a systemd service, it now always is.
+- **A single unreadable file aborts the whole tar.** On the old Windows box a running service held a
+  lock on a SQLite file (`pythia-khronoton/khronoton.db`) and every backup failed with
+  `Couldn't open …: Permission denied` — silently, for weeks. Linux is far more forgiving here
+  (POSIX lets you read a file another process has open), but if a backup ever reports
+  `tar-failed`, read `hardErrors` in the result: it names the exact offending path. Stop whatever
+  holds it, or add its directory to `EXCLUDE_DIRS` in `orchestrator/backup.mjs`.
+
+Check the result, don't assume it: a good run reports `ok:true` with a message like
+*"Archived 1.97 GB to claude-2026-07-23-d94bfc.tar in 53s."* and the archive should list clean
+(`tar tf <file> | head`).
+
+---
+
+## 12. State of the world as you take over (2026-07-23)
+
+Things that are true right now and would otherwise confuse you:
+
+**The package architecture changed days ago (the "Phase-4" reorg).** Ouronet-level libraries were
+split out of `StoaChain/stoa-js` into `OuroborosNetwork/_libs/ouronet-libs` and re-scoped:
+
+| Old (deprecated on npm) | New |
+|---|---|
+| `@stoachain/ouronet-core` | `@ouronet/ouronet-core` (4.4.0) |
+| `@stoachain/ouronet-codex` | `@ouronet/ouronet-codex` (0.5.7) |
+| `@stoachain/dalos-crypto` | `@ouronet/dalos-crypto` (4.0.4) |
+
+`@stoachain/stoa-core` and `@stoachain/kadena-stoic-legacy` (4.3.7) stay in `stoa-js`. **Never
+reintroduce a `@stoachain/ouronet-*` import** — those names are dead. Note `ouronet-core` pins its
+chain peers EXACTLY, so `stoa-js` and `ouronet-libs` must be released in lockstep.
+
+**Two things are deliberately unfinished — do not "fix" them without asking:**
+
+- **OuronetUI**: the re-pin landed on `dev` only; `main` is intentionally untouched and will receive
+  it through a normal release. Consequence: **`main`'s deploy workflow is currently broken** (it
+  still clones `stoa-js` expecting packages that moved). The fix is already committed on `dev`, so
+  the dev→main release carries it. Don't deploy `main` before that release.
+- **Codex** (`AncientPantheon/constructors/Codex`) sits on branch `feat/codex-migration-c-d`, which
+  is 34 commits ahead of `main` and holds every release tag. `main` is still at v0.0.1 even though
+  GitHub's default branch is `main`. A fast-forward would fix it; it is the human's call.
+
+**Local folder names lag their remotes** (cosmetic only): `OuroborosNetwork/_onchain/Ouronet` →
+remote `ouronet-pact`; `OuroborosNetwork/_libs/DALOS_Crypto` → remote `dalos-crypto`.
+
+**Dev servers that were running on the old box** (all stopped for the migration; restart as needed):
+Claudstermind `:3001`, LocalHost Aggregator `:3000`, Mnemosyne `:3005`, Pythia `:3006`,
+stoa-website `:5174`.
+
+---
+
+## 13. What this box now owns
 
 - The **source of truth** for the dashboard/relay code (deploys originate here).
 - The **workspace history** (`$ROOT/.claude/workspace/`) — the raw per-repo conversation substrate.
