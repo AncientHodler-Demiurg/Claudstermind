@@ -2348,10 +2348,14 @@ function viewOps() {
   if (RELAY_TIMER) { clearInterval(RELAY_TIMER); RELAY_TIMER = null; }
   const statusBox = el("div", { id: "opsStatus" }, [el("div", { class: "hint" }, ["Loading activity…"])]);
   const out = el("div", { id: "opsOut", class: "movecard", style: "display:none;white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:12px" });
+  // On-demand backup ALWAYS forces past the activity gate. The gate exists to stop the
+  // unattended DAILY run from archiving mid-write; a human clicking this button has
+  // already decided they want an archive now. Leaving it gated made the button appear
+  // broken — the overseer dashboard itself counts as an active session, so an ungated
+  // click almost always returned "Suite is active — backup skipped" and wrote nothing.
   const backupBtn = el("button", { class: "ghost", id: "btnBackup" }, ["💾 Back up now"]);
   const mpBtn = el("button", { class: "ghost", id: "btnMP" }, ["⚙ master-pollinate (dry-run)"]);
-  const forceWrap = el("label", { style: "font-size:11px;color:var(--ink-dim);display:inline-flex;gap:5px;align-items:center" }, [el("input", { type: "checkbox", id: "forceBk" }), "force (ignore activity gate)"]);
-  const controls = el("div", { class: "graph-controls" }, [backupBtn, mpBtn, forceWrap]);
+  const controls = el("div", { class: "graph-controls" }, [backupBtn, mpBtn]);
 
   /* --- automated daily backup: toggle, location, schedule, state --- */
   const schedBox = el("div", { class: "movecard", style: "margin-top:10px" }, [el("div", { class: "hint" }, ["Loading backup settings…"])]);
@@ -2390,7 +2394,7 @@ function viewOps() {
         saveBtn,
       ]),
       el("div", { style: "font-size:12px" }, stateBits),
-      el("div", { class: "hint", style: "margin-top:4px" }, ["The scheduler runs inside this dashboard, so keep it open (or auto-started) for daily backups. It writes to the location above — any drive or folder — and skips itself while an agent is working."]),
+      el("div", { class: "hint", style: "margin-top:4px" }, ["The scheduler runs inside this dashboard, so keep it open (or auto-started) for daily backups. It writes to the location above — any drive or folder — and defers while an agent is working, catching up once idle. “Back up now” above ignores that gate and archives immediately."]),
     );
   }
   loadSched();
@@ -2403,7 +2407,29 @@ function viewOps() {
     btn.textContent = old; btn.disabled = false; refresh();
   }
   backupBtn.addEventListener("click", async () => {
-    await post("/api/backup" + ($("#forceBk").checked ? "?force=1" : ""), backupBtn, "Backup");
+    // force=1 unconditionally — see the note where the button is created.
+    // Archiving the whole workspace takes minutes, so say so rather than looking hung,
+    // and render the outcome as a sentence instead of raw JSON.
+    backupBtn.disabled = true;
+    const old = backupBtn.textContent;
+    backupBtn.textContent = "… archiving";
+    out.style.display = "block";
+    out.textContent = "Backup — archiving the workspace to the configured location.\nThis takes a few minutes for a multi-GB workspace; you can leave this page open.";
+    try {
+      const r = await (await fetch("/api/backup?force=1", { method: "POST" })).json();
+      if (r.ok) {
+        // backup.mjs already composes a human sentence ("Archived 1.78 GB to <file> in 120s"),
+        // so lead with it and add the full path underneath for copy-paste.
+        out.textContent = "✅ " + (r.message || "Backup complete.") + (r.path ? "\n\n" + r.path : "");
+      } else {
+        out.textContent = "❌ Backup failed: " + (r.message || r.reason || "unknown error") + "\n\n" + JSON.stringify(r, null, 2);
+      }
+    } catch (e) {
+      out.textContent = "❌ Backup error: " + e;
+    }
+    backupBtn.textContent = old;
+    backupBtn.disabled = false;
+    refresh();
     refreshArchives();
   });
   mpBtn.addEventListener("click", () => post("/api/master-pollinate", mpBtn, "master-pollinate dry-run"));
@@ -2477,8 +2503,11 @@ function viewOps() {
     const idle = !a.active;
     const color = idle ? "#34d399" : "#fbbf24";
     const lb = d.lastBackup;
-    // gate the buttons on idle unless force
-    backupBtn.disabled = !idle && !$("#forceBk").checked;
+    // The on-demand backup is NEVER disabled: it forces past the activity gate by
+    // design, so greying it out while a session is live (the overseer dashboard itself
+    // counts as one) is what made it look like the feature did not exist.
+    // master-pollinate stays idle-gated — a cascade genuinely must not run mid-work.
+    backupBtn.disabled = false;
     mpBtn.disabled = !idle;
     $("#opsStatus").replaceChildren(
       el("div", { class: "statbar" }, [
