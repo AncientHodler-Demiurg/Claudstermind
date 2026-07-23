@@ -4,6 +4,28 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.8] - 2026-07-23
+
+### Fixed
+- **A pane's worktree label could disagree with what it was actually showing.** Resuming a
+  conversation updated the pane's repo but never its worktree — so a pane resumed onto a
+  different worktree than whatever it happened to be showing before kept the OLD worktree's label
+  forever, even though the content, session, and repo all correctly switched underneath it.
+
+### Added
+- **An always-visible identity readout** on each pane — repo@worktree, plain text, never a
+  control — so what a pane is actually showing is never in doubt regardless of scroll position or
+  what was just resumed into it.
+- **Controls moved down to the compose row**, next to the input rather than pinned in a fixed
+  header far away from it — matching Claude's own chat UI, which keeps its controls near where
+  you're actually typing.
+- **A copy button on every reply**, matching Claude's own copy affordance — always visible (not
+  hover-only, so it works on touch), copies the message text with a brief confirmation.
+
+### Note for the live site
+- All three reach the live site only after the relay is redeployed; the work machine works
+  immediately (no restart needed — these are pure frontend changes).
+
 ## [0.9.7] - 2026-07-23
 
 ### Fixed

@@ -2115,9 +2115,35 @@ function viewWorkspace() {
 
   // ---- transcript rendering (handles both live {kind} and saved {role} items) ----
   function line(cls, kids) { return el("div", { class: "ws-line " + cls }, kids); }
+  // A small always-visible (not hover-only — this has to work on touch) copy button, matching
+  // the copy affordance on every Claude response elsewhere. `getText` is a thunk rather than a
+  // plain string so it's evaluated at click time, not render time.
+  function copyBtn(getText) {
+    const b = el("button", { class: "ws-copy", type: "button", title: "Copy" }, ["⧉"]);
+    const flash = (ok) => {
+      b.textContent = ok ? "✓" : "✗"; b.classList.toggle("copied", ok);
+      setTimeout(() => { b.textContent = "⧉"; b.classList.remove("copied"); }, 1200);
+    };
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const text = getText();
+      if (navigator.clipboard?.writeText) { navigator.clipboard.writeText(text).then(() => flash(true), () => wsFallbackCopy(text, flash)); }
+      else wsFallbackCopy(text, flash);
+    });
+    return b;
+  }
+  function wsFallbackCopy(text, done) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      const ok = document.execCommand("copy"); document.body.removeChild(ta);
+      done(ok);
+    } catch { done(false); }
+  }
   function renderItem(m) {
     if (m.role === "user" || m.kind === "user") return line("ws-user", [el("b", {}, ["you  "]), m.text]);
-    if (m.role === "assistant" || m.kind === "assistant") return line("ws-assistant", [m.text]);
+    if (m.role === "assistant" || m.kind === "assistant") return line("ws-assistant", [m.text, copyBtn(() => m.text)]);
     if (m.kind === "tool_use") return line("ws-tool", [el("i", { class: "ti ti-tool" }, []), " ", (m.tools || []).map((t) => t.name).join(", ")]);
     if (m.kind === "tool_result") return line("ws-toolres", ["✓ tool result"]);
     if (m.kind === "result") return line("ws-result", [`— done · ${(m.usage?.output_tokens || 0)} out tok · ~${fmtUsd(m.costUsd)}`]);
@@ -2311,8 +2337,16 @@ function viewWorkspace() {
     imgErr.hidden = true;
     const composeRow = el("div", { class: "ws-compose" }, [attachBtn, imgFileInput, promptEl, sendBtn]);
     const composeExtras = el("div", { class: "ws-compose-extras" }, [imgPreviewWrap, imgErr]);
-    const header = el("div", { class: "ws-pane-hd" }, [dot, repoSel, wtSel, modeSel, histBtn, el("span", { class: "ws-spacer" }), badge, closeBtn]);
-    const paneRoot = el("div", { class: "ws-pane" }, [header, transcriptEl, composeExtras, composeRow]);
+    // A slim, ALWAYS-visible identity readout — plain text, not a control — so which
+    // repo@worktree this pane is actually showing is never in doubt regardless of scroll
+    // position or which conversation was just resumed into it. Kept separate from the
+    // interactive controls below, which move to the bottom (see next block) to sit near the
+    // compose row the way Claude's own UI keeps its controls near the input, not in a fixed
+    // header far from where you're actually typing.
+    const identityLabel = el("span", { class: "ws-identity" }, ["—"]);
+    const topBar = el("div", { class: "ws-pane-hd" }, [dot, identityLabel, el("span", { class: "ws-spacer" }), closeBtn]);
+    const controlsBar = el("div", { class: "ws-pane-controls" }, [repoSel, wtSel, modeSel, histBtn, el("span", { class: "ws-spacer" }), badge]);
+    const paneRoot = el("div", { class: "ws-pane" }, [topBar, transcriptEl, controlsBar, composeExtras, composeRow]);
 
     paneRoot.addEventListener("mousedown", () => setActive(p.id));
     // Repointing a pane to a different repo/worktree abandons its OLD identity — bump `_gen` so
@@ -2374,7 +2408,7 @@ function viewWorkspace() {
     });
     imgRemoveBtn.addEventListener("click", (e) => { e.stopPropagation(); p.attachedImage = null; wsShowImgErr(p, ""); wsPaintAttachment(p); });
 
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, usageEl: badge, dot, sendBtn, attachBtn, imgThumb, imgPreviewWrap, imgErr });
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, usageEl: badge, dot, sendBtn, attachBtn, imgThumb, imgPreviewWrap, imgErr, identityLabel });
     return paneRoot;
   }
 
@@ -2387,6 +2421,14 @@ function viewWorkspace() {
     if (!Array.from(ui.repoSel.options).some((o) => o.value === (p.repo || ""))) fillRepoSelect(ui.repoSel, p.repo);
     else if (ui.repoSel.value !== (p.repo || "")) ui.repoSel.value = p.repo || "";
     if (ui.wtSel) fillWorktreeSelect(ui.wtSel, p);
+    // The always-visible identity readout — the single source of truth for "what is this pane
+    // actually showing," kept in lockstep with the SAME p.repo/p.worktree the controls below
+    // read from, so the two can never disagree the way the header label used to.
+    if (ui.identityLabel) {
+      ui.identityLabel.textContent = p.repo
+        ? shortRepo(p.repo) + (p.worktree && p.worktree !== "main" ? " @ " + p.worktree : "")
+        : "Pick a repository";
+    }
     if (ui.modeSel.value !== p.mode) ui.modeSel.value = p.mode;
     ui.modeSel.classList.toggle("danger", p.mode === "bypassPermissions");
     ui.modeSel.classList.toggle("plan", p.mode === "plan");
@@ -2713,6 +2755,11 @@ function viewWorkspace() {
         p.transcript = data.transcript || [];
         p._expandedGroups = new Set();   // a freshly-(re)opened transcript has no expand state yet
         p.repo = data.repo || p.repo;
+        // `repo` was already updated here but `worktree` never was — a pane resuming a conversation
+        // on a DIFFERENT worktree than whatever it happened to be showing kept the OLD worktree's
+        // label/dropdown forever, even though the content, sessionKey, and repo all correctly
+        // switched. This is exactly what "resumed Romania but the header still says main" was.
+        p.worktree = data.worktree || p.worktree;
         p.usage = data.usage || {};
         // A session can still be live (mid-turn) when its pane is reattached — see
         // `_liveOrSavedState` server-side. Without this, a pane reopened while Claude is still
