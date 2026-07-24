@@ -456,6 +456,33 @@ const handler = async (req, res) => {
 
   const who = await guard(req, OIDC);
 
+  // ---- LocalHost mirror (direct, on this machine) — checked THIS early, before every other
+  // route including /api/me and /api/version, because provenance beats path: a mirrored site's
+  // own request for /api/me (or any other path that happens to collide with one of ours) must
+  // reach ITS server, not get silently answered by ours. This used to sit much further down,
+  // after several routes with colliding names — so a mirrored app's own identically-named
+  // endpoint was ALWAYS shadowed by ours, no matter what its Referer proved. Confirmed in
+  // production: Mnemosyne's own /api/me call was being answered by Claudstermind's instead,
+  // breaking its client-side auth-state rendering (the "no login button" symptom) silently.
+  if (path === "/api/mirror/list" && req.method === "GET") {
+    // Straight from the central registry — resolved by relative path, no drive letters,
+    // and absent LocalHost simply yields an empty list rather than a 500.
+    return sendJSON(res, 200, { ok: true, projects: registryProjects(MASTER_ROOT) });
+  }
+  // Explicit `/mirror/<port>/…`, plus the provenance fallback below for the
+  // root-absolute URLs a mirrored site emits. Any method, so forms work.
+  const mirrorHit = parseMirrorPath(path);
+  if (mirrorHit) {
+    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only" });
+    return proxyToMirror(req, res, mirrorHit.port, mirrorHit.sub + (url.search || ""));
+  }
+  // A request the mirrored page itself made (root-absolute asset, fetch, form post) — ahead of
+  // EVERY dashboard route on purpose, per the above.
+  if (who.canExecute) {
+    const fromPage = mirrorFromReferer(req.headers, { allowedPorts: mirrorablePorts(MASTER_ROOT) });
+    if (fromPage) return proxyToMirror(req, res, fromPage, path + (url.search || ""));
+  }
+
   // ---- version: PUBLIC, before the gate — the header medallion shows it on every surface.
   // `preflight` identifies THIS process as a CM_PREFLIGHT=1 sandboxed candidate, so
   // lib/selfRestart.mjs's runPreflight can tell a genuine candidate apart from some other
@@ -537,27 +564,6 @@ const handler = async (req, res) => {
     if (!ACTIONS.has(d.action)) return sendJSON(res, 400, { ok: false, error: "unknown action" });
     const r = await AGG.api("/api/" + d.action, { method: "POST", body: { key: d.key } });
     return sendJSON(res, r.ok ? 200 : 502, r.ok ? (r.data ?? { ok: true }) : { ok: false, error: r.error || "aggregator unreachable" });
-  }
-
-  // ---- LocalHost mirror (direct, on this machine) ----
-  if (path === "/api/mirror/list" && req.method === "GET") {
-    // Straight from the central registry — resolved by relative path, no drive letters,
-    // and absent LocalHost simply yields an empty list rather than a 500.
-    return sendJSON(res, 200, { ok: true, projects: registryProjects(MASTER_ROOT) });
-  }
-  // Explicit `/mirror/<port>/…`, plus the provenance fallback below for the
-  // root-absolute URLs a mirrored site emits. Any method, so forms work.
-  const mirrorHit = parseMirrorPath(path);
-  if (mirrorHit) {
-    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only" });
-    return proxyToMirror(req, res, mirrorHit.port, mirrorHit.sub + (url.search || ""));
-  }
-  // A request the mirrored page itself made (root-absolute asset, fetch, form post).
-  // Ahead of the dashboard's own routes on purpose: provenance beats path, so a mirrored
-  // site asking for /styles.css gets ITS stylesheet, not the dashboard's.
-  if (who.canExecute) {
-    const fromPage = mirrorFromReferer(req.headers, { allowedPorts: mirrorablePorts(MASTER_ROOT) });
-    if (fromPage) return proxyToMirror(req, res, fromPage, path + (url.search || ""));
   }
 
   // ---- local Workspace: SSE stream of this machine's Claude sessions ----

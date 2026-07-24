@@ -227,6 +227,26 @@ export function createRelay(opts = {}) {
     const who = await guard(req, oidc);
     const connected = link.connected;
 
+    // ---- Made BY a mirrored page — checked THIS early, before every other route including
+    // /api/me and /api/version, because provenance beats path: a mirrored site's own request for
+    // /api/me (or any other path that happens to collide with one of ours) must reach ITS server,
+    // not get silently answered by ours. This used to sit much further down, after several routes
+    // with colliding names — so a mirrored app's own identically-named endpoint was ALWAYS
+    // shadowed by ours, no matter what its Referer proved. Confirmed in production: Mnemosyne's
+    // own /api/me call was being answered by the relay's instead, breaking its client-side
+    // auth-state rendering (the "no login button" symptom) silently. Explicit `/mirror/<port>/…`
+    // requests have no such collision risk (the prefix is distinctive), but moved up alongside
+    // for the same reasoning and to keep both forms together. ----
+    const mirrorHit = parseMirrorPath(path);
+    if (mirrorHit) {
+      if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Mirror is ancient-only." });
+      return relayToMirror(req, res, link, mirrorHit.port, mirrorHit.sub + (url.search || ""));
+    }
+    if (who.canExecute && link.connected) {
+      const fromPage = mirrorFromReferer(req.headers, { allowedPorts: mirrorPorts() });
+      if (fromPage) return relayToMirror(req, res, link, fromPage, path + (url.search || ""));
+    }
+
     if (path === "/api/version") { res.setHeader("cache-control", "no-store"); return sendJSON(res, 200, readVersion()); }
 
     if (path === "/api/me") {
@@ -290,16 +310,6 @@ export function createRelay(opts = {}) {
       const r = await link.relay("mirrorList", {}, 8000);
       rememberMirrorPorts(r?.projects);
       return sendJSON(res, 200, { ok: !!r?.ok, projects: r?.projects || [] });
-    }
-    const mirrorHit = parseMirrorPath(path);
-    if (mirrorHit) {
-      if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Mirror is ancient-only." });
-      return relayToMirror(req, res, link, mirrorHit.port, mirrorHit.sub + (url.search || ""));
-    }
-    // Made BY a mirrored page — provenance beats path, so this goes ahead of our own routes.
-    if (who.canExecute && link.connected) {
-      const fromPage = mirrorFromReferer(req.headers, { allowedPorts: mirrorPorts() });
-      if (fromPage) return relayToMirror(req, res, link, fromPage, path + (url.search || ""));
     }
 
     // ---- remote deploy: version state, log stream, and the trigger (ancient-only) ----

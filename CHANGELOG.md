@@ -4,6 +4,37 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.13] - 2026-07-24
+
+### Fixed
+- **The mirror wasn't wired up right, in two separate ways — both confirmed by loading a real
+  mirrored site (Mnemosyne) end to end:**
+  - **No login button showed up.** Any route the mirrored app names the same as one of ours —
+    `/api/me`, in Mnemosyne's case — was silently shadowed by our OWN route of that name, since
+    ours always matched first regardless of provenance. The mirrored page's client-side
+    auth-check JS was calling `/api/me` and getting OUR shape back, not its own, so it never knew
+    it was logged in. Fixed by checking mirror provenance (Referer/cookie) BEFORE any
+    same-named route, in both the local dashboard and the relay — the two places this routing
+    happens.
+  - **Clicking the codex button 404'd.** `mirrorFromReferer`/`mirrorFromCookie` deliberately
+    excluded navigations (`sec-fetch-mode: navigate`) on the theory that a mistyped dashboard URL
+    should 404 on the dashboard, not turn into the mirrored site. In practice this broke the most
+    common interaction with a mirrored SPA there is: a framework router (Next.js's `<Link>`)
+    navigating the iframe to a root-absolute path it has no idea is mirrored. Every in-app
+    navigation 404'd on the dashboard instead of reaching the app. The "mistyped URL" risk turns
+    out to already be covered without excluding navigations at all — protected routes are matched
+    first regardless, and the cookie fallback only ever runs after every real route and static
+    file has already refused the path — so the exclusion is gone.
+- **LocalHost's Stop button was a silent no-op for any dev server it didn't start itself**
+  (this Claudstermind release doesn't touch that code — it lives in the sibling LocalHost repo —
+  but the symptom ("stop doesn't show it's stopped, then start gives no feedback") was reported
+  and root-caused as part of this same investigation, so it's noted here too). `lsof -ti tcp:<port>`,
+  the only thing the fallback kill used, returned nothing on this host for a socket `ss -ltnp` and
+  `fuser` both found immediately — so Stop reported success while the process kept running, and the
+  next Start crashed with `EADDRINUSE`. Fixed there by falling back through `fuser`/`ss` when `lsof`
+  comes up empty; confirmed by starting Mnemosyne outside the panel and stopping it through the
+  panel, port freed within a second.
+
 ## [0.9.12] - 2026-07-24
 
 ### Added
