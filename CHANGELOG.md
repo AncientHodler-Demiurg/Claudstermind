@@ -4,6 +4,27 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.16] - 2026-07-24
+
+### Fixed
+- **The "Login with AncientHub" button was missing on a mirrored site (confirmed against
+  Mnemosyne) — root-caused past v0.9.13's routing fix.** That fix protected same-named routes
+  (like `/api/me`) as long as the request's Referer still looked like `/mirror/<port>/…`. But the
+  moment the mirrored app's OWN client-side router moves the address bar to some other
+  root-absolute path (a `<Link>` click, or Next's own RSC navigation) — a "second hop" — that
+  proof disappears: the request's Referer no longer shows `/mirror/…`, and the cookie fallback
+  can't safely fill the gap either, since it can't tell that apart from the dashboard's OWN
+  traffic (a stale mirror cookie rides along on that too). Confirmed directly: `/api/me` fell
+  through to Claudstermind's own route, which answered `authenticated:true` with no name/role —
+  reading as "already signed in," which is why the login button never appeared.
+- Fixed at the source instead of guessing server-side: the mirror now injects a small runtime
+  script into every mirrored HTML page (alongside the existing `<base>` tag) that patches
+  `fetch`/`XMLHttpRequest.open` to rewrite root-absolute URLs under the `/mirror/<port>/` prefix
+  before they ever leave the browser — landing on the explicit mirror route directly, no
+  provenance guessing needed. Only the outgoing request target is touched, never
+  `history`/`location`, so a framework's own client-side router (which tracks navigation state
+  independently of what URL `fetch()` actually hits) can't be confused by it.
+
 ## [0.9.15] - 2026-07-24
 
 ### Added
