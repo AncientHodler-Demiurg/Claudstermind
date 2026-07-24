@@ -2652,7 +2652,10 @@ function viewWorkspace() {
 
   // ---- per-repo history ----------------------------------------------------------
   function loadHistory(repo) { st.historyRepo = repo || null; wsPost("control", { action: "history", args: { repo: repo || undefined } }); histList.replaceChildren(el("div", { class: "hint" }, ["Loading history…"])); }
-  function histItem(h, snippet) {
+  // `onAction`, if given, fires after Open/Resume is clicked — used by the expanded full-page
+  // history view to close itself once you've actually picked a conversation, without changing
+  // the normal sidebar's behavior (there, it's simply omitted).
+  function histItem(h, snippet, onAction) {
     const when = h.updatedAt ? new Date(h.updatedAt).toLocaleString() : "";
     // Search results (`snippet != null`) are still one row per saved SESSION (`h.sessionKey`,
     // from `searchSessions`). The plain history list is now one row per WORKSPACE — every past
@@ -2667,9 +2670,9 @@ function viewWorkspace() {
     const missing = !!h.missingWorktree;
     const openB = el("button", { class: "ws-ico", title: "Reopen read-only" }, ["👁"]);
     const resumeB = el("button", { class: "ws-ico", title: missing ? "This worktree was removed — resume recreates it" : "Resume live" }, ["▶"]);
-    openB.addEventListener("click", () => reopen(key, "open"));
+    openB.addEventListener("click", () => { reopen(key, "open"); onAction?.(); });
     resumeB.addEventListener("click", () => {
-      if (!missing) return reopen(key, "resume");
+      if (!missing) { reopen(key, "resume"); onAction?.(); return; }
       const ok = window.confirm(
         `The worktree "${h.worktree}" for ${label} was removed.\n\n` +
         `Resuming will RECREATE it (reattaching to its original branch, which git keeps even after ` +
@@ -2677,6 +2680,7 @@ function viewWorkspace() {
       );
       if (!ok) return;
       resumeAfterRecreatingWorktree(h.repo, h.worktree, key);
+      onAction?.();
     });
     return el("div", { class: "ws-hist-item" + (missing ? " missing-worktree" : "") }, [
       el("div", { class: "ws-hist-line1" }, [
@@ -2711,13 +2715,105 @@ function viewWorkspace() {
         else { st.searchResults = null; renderHistory(); }
       }, 280);
     });
-    const title = el("div", { class: "ws-hist-hd" }, ["History", el("span", { class: "ws-hist-scope" }, [st.historyRepo ? shortRepo(st.historyRepo) : "all repos"]), (() => { const b = el("button", { class: "ws-ico", title: "Refresh" }, ["⟳"]); b.addEventListener("click", () => { st.searchQuery = ""; st.searchResults = null; loadHistory(st.historyRepo); }); return b; })()]);
+    const expandBtn = el("button", { class: "ws-ico", title: "Expand — full page, grouped by organisation/repo" }, ["⤢"]);
+    expandBtn.addEventListener("click", () => openHistoryExpanded());
+    const title = el("div", { class: "ws-hist-hd" }, ["History", el("span", { class: "ws-hist-scope" }, [st.historyRepo ? shortRepo(st.historyRepo) : "all repos"]), expandBtn, (() => { const b = el("button", { class: "ws-ico", title: "Refresh" }, ["⟳"]); b.addEventListener("click", () => { st.searchQuery = ""; st.searchResults = null; loadHistory(st.historyRepo); }); return b; })()]);
     const searching = st.searchResults !== null && st.searchQuery.trim();
     const rows = searching
       ? (st.searchResults.length ? st.searchResults.map((h) => histItem(h, h.snippet)) : [el("div", { class: "hint" }, [`No conversation matches “${st.searchQuery.trim()}”.`])])
       : (st.history.length ? st.history.map((h) => histItem(h)) : [el("div", { class: "hint" }, ["No saved conversations yet."])]);
     histList.replaceChildren(title, searchBox, ...rows);
     if (searchBox.value) { searchBox.focus(); searchBox.setSelectionRange(searchBox.value.length, searchBox.value.length); }
+    // Keep the expanded full-page view (if currently open) in lockstep — same trigger points
+    // renderHistory() itself runs from (onPayload's data.history/data.search handling), so both
+    // views refresh together without duplicating that plumbing.
+    if (historyExpandedRepaint) historyExpandedRepaint();
+  }
+  // Set only while the expanded view is open; renderHistory() calls it (see above) so the
+  // full-page view stays live without its own separate update wiring.
+  let historyExpandedRepaint = null;
+  // repo -> its org, reusing the EXACT same classification the Repositories sidebar already uses
+  // (curated MAP.orgs first, else the path's own top folder) — one org taxonomy, everywhere.
+  function groupHistoryByOrgRepo(rows) {
+    const byOrg = new Map();
+    for (const h of rows) {
+      const org = orgOfPath(h.repo || "");
+      if (!byOrg.has(org)) byOrg.set(org, new Map());
+      const byRepo = byOrg.get(org);
+      const repoKey = h.repo || "—";
+      if (!byRepo.has(repoKey)) byRepo.set(repoKey, []);
+      byRepo.get(repoKey).push(h);
+    }
+    const known = Object.keys(MAP?.orgs || {}).filter((o) => byOrg.has(o));
+    const rest = [...byOrg.keys()].filter((o) => !known.includes(o)).sort();
+    return [...known, ...rest].map((org) => ({ org, repos: byOrg.get(org) }));
+  }
+  // The full-page expanded history — same data as the cramped sidebar list, but with room to
+  // actually navigate: grouped by organisation, then by repository, sortable/scrollable, with
+  // the same search box. Picking a conversation (Open/Resume) closes it automatically.
+  function openHistoryExpanded() {
+    const searchBox = el("input", { class: "ws-search", type: "search", placeholder: "Search conversations…", value: st.searchQuery });
+    const body = el("div", { class: "ws-hexp-body" }, []);
+    const closeBtn = el("button", { class: "ghost" }, ["Close"]);
+    const overlay = el("div", { class: "modal-overlay ws-hexp-overlay" }, [
+      el("div", { class: "modal ws-hexp-modal" }, [
+        el("div", { class: "ws-hexp-hd" }, [el("h2", { class: "ws-hexp-title" }, ["History — every repository"]), searchBox, closeBtn]),
+        body,
+      ]),
+    ]);
+    const closeFn = () => { historyExpandedRepaint = null; overlay.remove(); };
+    // Local to this one modal instance — resets each time it's reopened, which is fine (unlike
+    // the Repositories sidebar's collapse state, this doesn't need to persist across sessions).
+    const collapsedOrgs = new Set();
+    function paintExpanded() {
+      const searching = st.searchResults !== null && st.searchQuery.trim();
+      if (searching) {
+        const items = st.searchResults.length
+          ? st.searchResults.map((h) => histItem(h, h.snippet, closeFn))
+          : [el("div", { class: "hint" }, [`No conversation matches “${st.searchQuery.trim()}”.`])];
+        body.replaceChildren(el("div", { class: "ws-hexp-flat" }, items));
+        return;
+      }
+      if (!st.history.length) { body.replaceChildren(el("div", { class: "hint" }, ["No saved conversations yet."])); return; }
+      body.replaceChildren(...groupHistoryByOrgRepo(st.history).map(({ org, repos }) => {
+        const meta = (MAP?.orgs || {})[org] || { color: "#64748b" };
+        const totalCount = [...repos.values()].reduce((n, arr) => n + arr.length, 0);
+        const collapsed = collapsedOrgs.has(org);
+        const hd = el("div", { class: "ws-orggroup-hd" }, [
+          el("span", { class: "ws-org-chev" }, [collapsed ? "▸" : "▾"]),
+          el("span", { class: "ws-org-dot" }, []), el("b", {}, [org]), el("span", { class: "ws-org-count" }, [String(totalCount)]),
+        ]);
+        hd.addEventListener("click", () => { if (collapsed) collapsedOrgs.delete(org); else collapsedOrgs.add(org); paintExpanded(); });
+        if (collapsed) return el("div", { class: "ws-orggroup collapsed", style: `--org:${meta.color}` }, [hd]);
+        const repoSections = [...repos.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([repo, items]) => {
+          items.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+          return el("div", { class: "ws-hexp-repo" }, [
+            el("div", { class: "ws-hexp-repo-hd" }, [shortRepo(repo) || "—", el("span", { class: "ws-org-count" }, [String(items.length)])]),
+            el("div", { class: "ws-hexp-repo-body" }, items.map((h) => histItem(h, null, closeFn))),
+          ]);
+        });
+        return el("div", { class: "ws-orggroup", style: `--org:${meta.color}` }, [
+          hd,
+          el("div", { class: "ws-orggroup-body ws-hexp-repos" }, repoSections),
+        ]);
+      }));
+    }
+    searchBox.addEventListener("input", () => {
+      st.searchQuery = searchBox.value;
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        if (st.searchQuery.trim()) wsPost("control", { action: "search", args: { query: st.searchQuery.trim(), repo: st.historyRepo || undefined } });
+        else { st.searchResults = null; paintExpanded(); }
+      }, 280);
+    });
+    closeBtn.addEventListener("click", closeFn);
+    // Click the dimmed backdrop (not the panel itself) to close, same as the permission modal's
+    // convention elsewhere in this app.
+    overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) closeFn(); });
+    document.body.appendChild(overlay);
+    historyExpandedRepaint = paintExpanded;
+    paintExpanded();
+    searchBox.focus();
   }
   function reopen(sessionKey, mode) {
     const p = activePane(); if (!p) { note("Open a pane first."); return; }

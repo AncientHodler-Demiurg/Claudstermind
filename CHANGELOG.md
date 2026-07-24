@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.12] - 2026-07-24
+
+### Added
+- **An expand button (⤢) on History** — opens a full-page view of every saved conversation across
+  every repository, grouped by organisation then by repository (the same taxonomy the
+  Repositories sidebar already uses), with collapsible org groups and the same search. The
+  sidebar's cramped scrolling list stays as the quick-glance default; this is for when there are
+  too many conversations to navigate in that small a space. Picking a conversation (Open/Resume)
+  closes the expanded view automatically.
+
 ## [0.9.11] - 2026-07-24
 
 ### Added
