@@ -2522,8 +2522,13 @@ function viewWorkspace() {
       if (p._liveText) nodes.push(line("ws-assistant ws-live", [p._liveText]));
       // Queued messages — typed while Claude was still working, "frozen in cache" until this
       // turn finishes (see send()/drainQueue()). Rendered distinctly (orange) so it's obvious
-      // these haven't actually been sent yet, in the order they'll go out.
-      if (hasQueue) for (const q of p._queue) nodes.push(line("ws-user ws-queued", [el("b", {}, ["you  "]), q.text, el("span", { class: "ws-queued-tag" }, ["queued — sending once this turn finishes"])]));
+      // these haven't actually been sent yet, in the order they'll go out. Several queued at once
+      // are shown individually here but drainQueue() merges them into ONE prompt on release —
+      // the tag says so whenever there's more than one, so it's clear before it happens.
+      const queuedTag = hasQueue && p._queue.length > 1
+        ? "queued — will be merged with the other" + (p._queue.length - 1 > 1 ? "s" : "") + " into one message once this turn finishes"
+        : "queued — sending once this turn finishes";
+      if (hasQueue) for (const q of p._queue) nodes.push(line("ws-user ws-queued", [el("b", {}, ["you  "]), q.text, el("span", { class: "ws-queued-tag" }, [queuedTag])]));
       ui.transcriptEl.replaceChildren(...nodes);
     }
     if (wasNearBottom) ui.transcriptEl.scrollTop = ui.transcriptEl.scrollHeight;
@@ -3147,14 +3152,21 @@ function viewWorkspace() {
     }
   }
   // The moment a pane genuinely stops being busy (called from every status/result/error
-  // transition in onPayload), send whatever queued up while it was working — one at a time; each
-  // dispatch sets status back to "thinking" immediately, so a pane with several queued messages
-  // drains them one turn at a time, not all at once.
+  // transition in onPayload), release whatever queued up while it was working — merged into ONE
+  // prompt, not fired as N separate turns. Draining one-at-a-time would answer each queued
+  // message in isolation, missing whatever context the LATER ones added — the opposite of how
+  // typing three follow-up thoughts while someone's still talking actually works: you say all
+  // three once they stop, as one turn, not as three separate interruptions.
   function drainQueue(p) {
     if (paneBusy(p) || !p._queue || !p._queue.length) return;
-    const next = p._queue.shift();
+    const items = p._queue;
+    p._queue = null;
+    const text = items.map((i) => i.text).join("\n\n");
+    // At most one image can ride along on a single turn — the last one queued wins, same as if
+    // it had been attached to a freshly-typed message right before sending.
+    const image = [...items].reverse().find((i) => i.image)?.image || null;
     paintPane(p);
-    dispatchPrompt(p, next.text, next.image);
+    dispatchPrompt(p, text, image);
   }
   async function send(p) {
     if (p.readonly) return;

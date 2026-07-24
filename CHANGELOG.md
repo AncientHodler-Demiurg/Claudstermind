@@ -4,6 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.15] - 2026-07-24
+
+### Added
+- **Role color, at a glance.** Your own messages now sit in a solid blue bubble with white text;
+  Claude's replies use its signature accent color instead of the plain neutral ink both used to
+  share — the two were visually identical before except for the bubble background.
+
+### Changed
+- **Queued ("stasis") messages merge into ONE prompt on release, instead of firing one at a
+  time.** Typing (and sending) several messages while Claude is still working queues each as its
+  own orange box, same as before — but the moment the current turn finishes, everything queued is
+  now joined into a single prompt (one blank line between each) and sent as one turn, not replayed
+  as N separate round trips that would've answered each fragment in isolation. The orange queued
+  text itself now also reads in orange (previously only the border/background and the "queued" tag
+  were orange, not the message text) — and turns white the instant it's released, exactly the
+  "held in stasis, then released" feedback that was asked for.
+
 ## [0.9.14] - 2026-07-24
 
 ### Fixed
