@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.14] - 2026-07-24
+
+### Fixed
+- **The Reload button's pre-flight failed with "crashed" — root-caused after it correctly refused
+  to touch the live process.** The sandboxed candidate `server.listen()` had no `error` handler,
+  so a scratch-port collision (a random draw out of ~20000 ports lands, rarely, on one already in
+  use) crashed it uncaught instead of failing gracefully — confirmed directly against the real
+  restart log (`"crashed", {code:1, signal:null}`, the exact signature of an unhandled
+  `EADDRINUSE`). Two fixes: the candidate's own listener now has a real `error` handler that logs
+  clearly and exits instead of crashing with a raw stack trace; and `runSelfRestart` now retries
+  once on a freshly-rolled port when the pre-flight reason is `"crashed"` — a genuine code defect
+  would crash again just as fast on the retry and still get reported, but a one-in-20000 port
+  collision now self-heals instead of forcing a second manual click. A `"timeout"` pre-flight is
+  left alone; a hang isn't fixed by trying a different port.
+
 ## [0.9.13] - 2026-07-24
 
 ### Fixed

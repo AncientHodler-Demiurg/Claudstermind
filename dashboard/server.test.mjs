@@ -122,6 +122,58 @@ test("runSelfRestart reports the crashed reason + detail verbatim when the pre-f
   assert.equal(spawnCalls, 0);
 });
 
+test("REGRESSION: runSelfRestart retries once on a fresh port when the pre-flight candidate crashes, and succeeds if the retry is healthy — a scratch-port collision must self-heal instead of failing the whole restart", async () => {
+  // Confirmed in production: the candidate's own server.listen() had no error handler (fixed
+  // separately), so a scratch-port collision crashed it, reported as reason:"crashed" — and
+  // nothing retried, so the operator saw "pre-flight failed" and had to click Reload again by
+  // hand. A collision is rare-but-real on a random draw; unlike an actual code defect (which
+  // would crash again just as fast on the retry), it's fixed by simply trying a different port.
+  const seenPorts = [];
+  let preflightCalls = 0;
+  const result = await runSelfRestart({
+    repoRoot: "/fake/repo",
+    scratchPort: 34573,
+    preflightStepsFn: (opts) => { seenPorts.push(opts.scratchPort); return { spawn: { cmd: "node", args: [], cwd: "/", env: {} }, poll: { url: "http://x", intervalMs: 1, timeoutMs: 1 } }; },
+    runPreflightFn: async () => {
+      preflightCalls++;
+      return preflightCalls === 1 ? { ok: false, reason: "crashed", detail: { code: 1, signal: null } } : { ok: true };
+    },
+    randomScratchPortFn: () => 34574,
+    spawnFn: () => ({ unref() {} }),
+  });
+  assert.equal(preflightCalls, 2, "must retry exactly once after a crash, not give up on the first try");
+  assert.deepEqual(seenPorts, [34573, 34574], "the retry must use a freshly-rolled port, not the same colliding one");
+  assert.equal(result.ok, true, "a crash followed by a healthy retry must succeed, not surface the first attempt's failure");
+});
+
+test("runSelfRestart does NOT retry a second time — two crashes in a row report failure rather than retrying forever", async () => {
+  let preflightCalls = 0;
+  const result = await runSelfRestart({
+    repoRoot: "/fake/repo",
+    scratchPort: 34575,
+    preflightStepsFn: () => ({ spawn: { cmd: "node", args: [], cwd: "/", env: {} }, poll: { url: "http://x", intervalMs: 1, timeoutMs: 1 } }),
+    runPreflightFn: async () => { preflightCalls++; return { ok: false, reason: "crashed", detail: { code: 1, signal: null } }; },
+    randomScratchPortFn: () => 34576,
+    spawnFn: () => ({ unref() {} }),
+  });
+  assert.equal(preflightCalls, 2, "exactly two attempts total — not an unbounded retry loop");
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "crashed");
+});
+
+test("runSelfRestart does NOT retry a 'timeout' reason — only a 'crashed' pre-flight is retried, since a hang isn't fixed by a different port", async () => {
+  let preflightCalls = 0;
+  const result = await runSelfRestart({
+    repoRoot: "/fake/repo",
+    scratchPort: 34577,
+    runPreflightFn: async () => { preflightCalls++; return { ok: false, reason: "timeout" }; },
+    spawnFn: () => ({ unref() {} }),
+  });
+  assert.equal(preflightCalls, 1, "a timeout must not trigger the crash-only retry");
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "timeout");
+});
+
 test("runSelfRestart triggers the real restart command only after the pre-flight reports ok:true", async () => {
   let spawned = null;
   const result = await runSelfRestart({

@@ -349,10 +349,25 @@ export async function runSelfRestart({
   runPreflightFn = runPreflight,
   restartCommandFn = restartCommand,
   spawnFn = spawn,
+  randomScratchPortFn = randomScratchPort,
 } = {}) {
-  const steps = preflightStepsFn({ repoRoot, scratchPort, timeoutMs });
-  onLog(`▶ self-restart pre-flight: booting a sandboxed candidate on scratch port ${scratchPort}…`);
-  const result = await runPreflightFn(steps);
+  // Confirmed in production: the candidate's own server.listen() has no 'error' handler (now
+  // fixed separately — see the entrypoint block below), so a scratch-port collision crashes it
+  // uncaught, reported here as reason:"crashed". A collision on a random draw out of ~20000 ports
+  // is rare but not impossible, and — unlike a real code defect, which would crash again just as
+  // fast on a retry — is fixed by simply trying a different port. One retry turns that rare,
+  // self-resolving flake into a silent success instead of a false "pre-flight failed" that made
+  // the operator click Reload again by hand (exactly what was reported).
+  let port = scratchPort;
+  let result;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const steps = preflightStepsFn({ repoRoot, scratchPort: port, timeoutMs });
+    onLog(`▶ self-restart pre-flight: booting a sandboxed candidate on scratch port ${port}…`);
+    result = await runPreflightFn(steps);
+    if (result.ok || result.reason !== "crashed" || attempt === 2) break;
+    onLog(`… pre-flight candidate crashed (port ${port} may have collided with something already listening) — retrying once on a fresh port.`);
+    port = randomScratchPortFn(PORT);
+  }
   if (!result.ok) {
     onLog(`✗ pre-flight failed (${result.reason}) — the live process is untouched.` + (result.detail ? ` ${JSON.stringify(result.detail)}` : ""));
     return { ok: false, reason: result.reason, detail: result.detail };
@@ -1077,6 +1092,17 @@ export function bootLocalSubsystems({
 // behavior for the real deployment; the only thing this changes is that `import`ing this module
 // no longer binds a real port / spawns a real bridge / touches real disk as a side effect.
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  // A bind failure (EADDRINUSE, most likely) has no listener here otherwise, so Node treats it
+  // as an uncaught exception — a stack-trace crash with exit code 1. Confirmed in production: a
+  // self-restart pre-flight candidate (dashboard/selfRestart.mjs's runPreflight, spawning THIS
+  // same entrypoint on a random scratch port) hit exactly that when its port collided, and the
+  // resulting bare "crashed" report gave no hint why. This doesn't prevent the collision — see
+  // runSelfRestart's retry-with-a-fresh-port for that — but turns the crash into one clear,
+  // attributable log line instead of a raw stack trace, on this process AND the real one alike.
+  server.on("error", (err) => {
+    console.error(`\n  ✗ Claudstermind Dashboard failed to bind ${HOST}:${PORT} — ${err.code || err.message}\n`);
+    process.exit(1);
+  });
   server.listen(PORT, HOST, () => {
     console.log(`\n  Claudstermind Dashboard  →  http://localhost:${PORT}`);
     console.log(
