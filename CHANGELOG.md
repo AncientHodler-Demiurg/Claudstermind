@@ -4,6 +4,35 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.17] - 2026-07-25
+
+### Fixed
+- **The mirror's WebSocket "the-fix-doesn't-actually-help" gap: v0.9.16's fetch/XHR/WebSocket
+  URL rewrite fixed HOW a same-origin call finds its way to `/mirror/<port>/…`, but the mirror
+  still only ever proxied regular HTTP — a WebSocket upgrade request landed at the right URL and
+  then just... 404'd, since nothing on the server side ever relayed it.** Confirmed by direct,
+  extensive reproduction against a real Next.js dev server (many isolated variants, narrowing it
+  down byte by byte): its HMR upgrade actually completing turns out to gate Client Component
+  hydration for at least this app — without it, `fetch("/api/me")` (and anything else a mounted
+  component does) never fires at all, not a wrong answer, just silence. Added the other half:
+  `dashboard/server.mjs`'s `server.on("upgrade", …)` now actually relays a `/mirror/<port>/…`
+  WebSocket upgrade to the real dev server (a raw TCP pipe, handshake written by hand — there's
+  no response object on an upgrade, only the socket).
+- **A second, narrower trap inside that same fix: forwarding the upgrade's cookie header the same
+  way a regular request (correctly) drops it entirely broke the SAME hydration hand-off again.**
+  Confirmed directly: the raw socket handshake (101) succeeds either way, but the dev server
+  silently never finishes whatever it does next without a cookie present (in reproduction, just
+  this project's own sticky mirror cookie — the dev server itself sets none). Fixed by forwarding
+  the cookie jar on an upgrade, filtered by name instead of dropped wholesale — the dashboard's
+  own session cookie(s) are named explicitly and still never reach a site being merely displayed;
+  everything else (the mirror's own cookie included) rides along.
+- Also requires the mirrored app's own `next.config` to list the mirror's origin(s) under Next
+  16's `allowedDevOrigins` (a separate, per-app config change — not something this fix can supply
+  from outside); done for Mnemosyne as a companion change.
+- Still open: the relay/tunnel (remote) path doesn't carry a WebSocket at all yet, so this
+  specific class of bug can still affect a mirrored Next.js App Router site viewed remotely —
+  flagged in code as a known follow-up, not silently claimed fixed.
+
 ## [0.9.16] - 2026-07-24
 
 ### Fixed

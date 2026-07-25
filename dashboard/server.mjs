@@ -44,10 +44,12 @@ import { preflightSteps, runPreflight, restartCommand, killInFlightCandidate } f
 import { writeFileSync } from "node:fs";
 import { readRelayConfig, writeRelayConfig, readDeviceSecret, saveDeviceSecret } from "../lib/relayConfig.mjs";
 import { createAggregator, registryProjects, mirrorablePorts } from "../lib/localhost.mjs";
-import { parseMirrorPath, mirrorFromReferer, mirrorFromCookie, forwardRequestHeaders, buildMirrorResponse } from "../lib/mirror.mjs";
+import { parseMirrorPath, mirrorFromReferer, mirrorFromCookie, forwardRequestHeaders, buildMirrorResponse, buildUpgradeRequest } from "../lib/mirror.mjs";
+import net from "node:net";
 import { createPresence } from "../lib/presence.mjs";
 import { readOidcConfig } from "./auth/oidcConfig.mjs";
 import { handleAuthRoute, guard, denyPage } from "./auth/routes.mjs";
+import { SESSION_COOKIE, LOGIN_COOKIE } from "./auth/session.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dir, "public");
@@ -1017,6 +1019,46 @@ const server = http.createServer((req, res) => {
     if (!res.headersSent) sendJSON(res, 500, { error: "internal error" });
     else res.end();
   });
+});
+
+// ---- LocalHost mirror: relay a WebSocket upgrade to the mirrored dev server ----
+// Root-caused a real "the mirrored site's login button never appears" report: confirmed by
+// direct reproduction against a real Next.js dev server, its HMR upgrade handshake completes at
+// the raw-socket level (a 101) regardless, but silently never finishes whatever handoff
+// Client Component hydration was waiting on when the cookie header was dropped the way a regular
+// HTTP forward (correctly) drops it — so a mirror that only proxies regular HTTP (this
+// dashboard's prior behavior, and still the whole story for the relay/tunnel case) can leave
+// real app functionality permanently inert, not just lose auto-refresh as the UI hint used to
+// imply. lib/mirror.mjs's injected runtime script rewrites a same-origin `new WebSocket(...)`
+// call under `/mirror/<port>/…` the same way it already does for fetch/XHR; this is the server
+// side that actually relays it, by hand — Node's http server hands upgrade requests to their own
+// event, bypassing the regular request handler entirely, and there's no response object to
+// answer with, only the raw socket. `dropCookieNames` keeps the "never hand the dashboard's own
+// session to a site being merely displayed" rule intact while still forwarding the rest of the
+// cookie jar (see buildUpgradeRequest's comment for why the whole header can't just be dropped
+// here the way it is for a regular request).
+server.on("upgrade", (req, clientSocket, head) => {
+  let hit = null;
+  try { hit = parseMirrorPath(new URL(req.url, "http://localhost").pathname); } catch {}
+  // Same allowlist the regular HTTP mirror routes check — never relay to an arbitrary port.
+  if (!hit || !mirrorablePorts(MASTER_ROOT).includes(hit.port)) {
+    try { clientSocket.destroy(); } catch {}
+    return;
+  }
+  const upstream = net.connect(hit.port, "127.0.0.1", () => {
+    const search = (() => { try { return new URL(req.url, "http://localhost").search || ""; } catch { return ""; } })();
+    upstream.write(buildUpgradeRequest({
+      method: req.method, path: hit.sub + search, headers: req.headers, host: "127.0.0.1", port: hit.port,
+      dropCookieNames: [SESSION_COOKIE, LOGIN_COOKIE],
+    }));
+    if (head && head.length) upstream.write(head);
+    upstream.pipe(clientSocket);
+    clientSocket.pipe(upstream);
+  });
+  // Either side dying (dev server restarting mid-session, browser tab closing) must not leave
+  // the other half of the pipe as an orphaned, silently-leaking socket.
+  upstream.on("error", () => { try { clientSocket.destroy(); } catch {} });
+  clientSocket.on("error", () => { try { upstream.destroy(); } catch {} });
 });
 
 process.on("unhandledRejection", (err) => console.error("dashboard: unhandled rejection —", err));
