@@ -16,12 +16,17 @@ import http from "node:http";
 import { readFile } from "node:fs";
 import { join, extname, resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
 import { readOidcConfig } from "../dashboard/auth/oidcConfig.mjs";
 import { handleAuthRoute, guard } from "../dashboard/auth/routes.mjs";
+import { SESSION_COOKIE, LOGIN_COOKIE } from "../dashboard/auth/session.mjs";
 import { AgentLink, authorizeMutation, routeToCommand } from "./relay-core.mjs";
 import { readVersion } from "../lib/version.mjs";
-import { parseMirrorPath, mirrorFromReferer, mirrorFromCookie, forwardRequestHeaders, buildMirrorResponse } from "../lib/mirror.mjs";
+import {
+  parseMirrorPath, mirrorFromReferer, mirrorFromCookie, forwardRequestHeaders, buildMirrorResponse,
+  forwardUpgradeHeaders, websocketAccept,
+} from "../lib/mirror.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PUBLIC = resolve(__dir, "..", "dashboard", "public");
@@ -468,7 +473,14 @@ export function createRelay(opts = {}) {
   }
 
   // ---- the bridge tunnel ----
-  const wss = new WebSocketServer({ server, path: "/agent" });
+  // `noServer: true` — NOT `{ server, path: "/agent" }` — because `ws`'s own auto-attached
+  // upgrade listener doesn't just ignore a path it doesn't own, it actively responds 400 and
+  // destroys the socket for ANY mismatched path (confirmed reading its source: shouldHandle()
+  // false → abortHandshake(socket, 400) unconditionally). That silently ate every
+  // /mirror/<port>/… WebSocket upgrade below before this fix, no matter what our own listener
+  // did — Node calls every 'upgrade' listener, but ws's runs synchronously and wins the race.
+  // One dispatcher below decides which path gets which handling instead.
+  const wss = new WebSocketServer({ noServer: true });
   wss.on("connection", (sock) => {
     let authed = false;
     sock.isAlive = true;
@@ -498,6 +510,96 @@ export function createRelay(opts = {}) {
   }, 30_000);
   heartbeat.unref?.();
   server.on("close", () => clearInterval(heartbeat));
+
+  // ---- LocalHost mirror: relay a browser's WebSocket all the way to a dev server on the work
+  // machine, over the SAME agent tunnel above ----
+  //
+  // Root-caused a real "the mirrored site's login button never appears, even after updating and
+  // restarting everything" report specifically for the REMOTE (this file) path: the local
+  // dashboard's direct mirror got its own WebSocket relay (dashboard/server.mjs's
+  // `server.on("upgrade", …)`); this file never had an equivalent, so a mirrored Next.js dev
+  // server's own HMR WebSocket — confirmed by direct reproduction to gate that app's Client
+  // Component hydration completing at all — had nothing to connect to once the connection had
+  // to cross the tunnel instead of just going straight to 127.0.0.1.
+  //
+  // The browser's handshake is answered HERE, directly, on a raw socket — not via the `ws`
+  // library's own WebSocketServer machinery (that instance is reserved for "/agent" only, see
+  // its own noServer comment above). This keeps the whole path a transparent byte pipe end to
+  // end: relay never parses a WebSocket frame, it only ever sees raw bytes in (browser socket)
+  // and relays them down the tunnel as WS_IN "mirror-ws-data", and raw bytes up the tunnel
+  // (WS_OUT "mirror-ws-data" from the agent, which itself holds a raw socket to the real dev
+  // server — see agent/agent.mjs) get written straight back out to the browser socket. `connId`
+  // multiplexes many mirrored connections over the one tunnel socket.
+  const MIRROR_WS_CONNS = new Map();   // connId -> the browser's raw socket
+
+  // The ONE dispatcher for every upgrade this server sees — see the noServer comment above for
+  // why it can't be two independent listeners.
+  server.on("upgrade", async (req, socket, head) => {
+    const url = new URL(req.url, "http://localhost");
+
+    if (url.pathname === "/agent") { wss.handleUpgrade(req, socket, head, (sock) => wss.emit("connection", sock, req)); return; }
+
+    const hit = parseMirrorPath(url.pathname);
+    if (!hit) { try { socket.destroy(); } catch {} return; }
+
+    const who = await guard(req, oidc);
+    if (!who.canExecute || !link.connected || !mirrorPorts().includes(hit.port)) { try { socket.destroy(); } catch {} return; }
+
+    const key = req.headers["sec-websocket-key"];
+    if (!key || req.headers.upgrade?.toLowerCase() !== "websocket") { try { socket.destroy(); } catch {} return; }
+
+    const connId = randomUUID();
+    MIRROR_WS_CONNS.set(connId, socket);
+    const cleanup = () => { if (MIRROR_WS_CONNS.get(connId) === socket) MIRROR_WS_CONNS.delete(connId); };
+    socket.on("close", () => { cleanup(); link.sendWsIn("mirror-ws-close", null, { connId }); });
+    socket.on("error", () => { try { socket.destroy(); } catch {} });
+    socket.on("data", (chunk) => { link.sendWsIn("mirror-ws-data", null, { connId, dataB64: chunk.toString("base64") }); });
+
+    try {
+      socket.write(
+        "HTTP/1.1 101 Switching Protocols\r\n" +
+        "Upgrade: websocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        `Sec-WebSocket-Accept: ${websocketAccept(key)}\r\n\r\n`,
+      );
+    } catch { cleanup(); return; }
+    if (head && head.length) link.sendWsIn("mirror-ws-data", null, { connId, dataB64: head.toString("base64") });
+    link.sendWsIn("mirror-ws-open", null, {
+      connId, port: hit.port, path: hit.sub + (url.search || ""),
+      // Same rule as the regular HTTP mirror path: the dashboard's own session cookie never
+      // reaches a site being merely displayed — but (confirmed by direct reproduction) THIS
+      // handshake, unlike a regular request, doesn't complete the hydration hand-off it gates
+      // when the cookie header is dropped wholesale, so the rest of the jar rides along
+      // (lib/mirror.mjs's forwardUpgradeHeaders comment has the full story).
+      headers: forwardUpgradeHeaders(req.headers, { dropCookieNames: [SESSION_COOKIE, LOGIN_COOKIE] }),
+    });
+  });
+
+  // The agent's half of an open mirror-ws connection — bytes flowing back, or it closing.
+  link.addWsSubscriber((payload) => {
+    // The tunnel itself just died (AgentLink.detach fans this "state" event) — every mirror-ws
+    // connection currently open is now orphaned on the agent side too (its raw socket to the
+    // real dev server dies with the same process, or is explicitly torn down by
+    // agent.mjs's own closeAllMirrorWs()), so nothing will ever send an individual
+    // "mirror-ws-close" for any of them. Left unhandled, each browser-facing socket here would
+    // sit open forever — confirmed directly: it's exactly what kept a test's server.close()
+    // from ever completing. Force-close them all now instead of waiting for a signal that
+    // will never arrive.
+    if (payload.kind === "state" && payload.data?.bridgeDisconnected) {
+      for (const [connId, socket] of MIRROR_WS_CONNS) { try { socket.destroy(); } catch {} MIRROR_WS_CONNS.delete(connId); }
+      return;
+    }
+    if (!payload.kind || !payload.kind.startsWith("mirror-ws-")) return;
+    const { connId } = payload.data || {};
+    const socket = MIRROR_WS_CONNS.get(connId);
+    if (!socket) return;
+    if (payload.kind === "mirror-ws-data" && payload.data.dataB64) {
+      try { socket.write(Buffer.from(payload.data.dataB64, "base64")); } catch {}
+    } else if (payload.kind === "mirror-ws-close") {
+      try { socket.destroy(); } catch {}
+      MIRROR_WS_CONNS.delete(connId);
+    }
+  });
 
   return { server, wss, link, oidc, publicDir };
 }

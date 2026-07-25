@@ -22,8 +22,9 @@ import { executeCommand as realExecuteCommand } from "../lib/commands.mjs";
 import { WorkspaceManager } from "../lib/workspace.mjs";
 import { readActivity } from "../orchestrator/activity.mjs";
 import { readBackupConfig } from "../orchestrator/backupConfig.mjs";
-import { createAggregator, registryProjects } from "../lib/localhost.mjs";
-import { forwardRequestHeaders } from "../lib/mirror.mjs";
+import net from "node:net";
+import { createAggregator, registryProjects, mirrorablePorts } from "../lib/localhost.mjs";
+import { forwardRequestHeaders, buildUpgradeRequest } from "../lib/mirror.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 
@@ -237,6 +238,77 @@ export function createBridge(opts = {}) {
     if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
   }
 
+  // ---- LocalHost mirror: relay a WebSocket a remote browser opened all the way to a dev
+  // server on THIS machine ----
+  //
+  // The regular "mirror" COMMAND above is one request → one reply, which is all HTTP needs —
+  // but a WebSocket (a mirrored dev server's own HMR client, most notably) is a persistent,
+  // bidirectional BYTE STREAM with no natural request/reply shape to fit through that. Root-
+  // caused a real "the mirrored site's login button never appears, even after updating and
+  // restarting everything" report: confirmed by direct reproduction that at least one real dev
+  // server's Client Component hydration doesn't complete without its own HMR WebSocket actually
+  // connecting — and the relay/tunnel path (this file) never carried a WebSocket at all, only
+  // the local dashboard's direct proxy did (dashboard/server.mjs's `server.on("upgrade", …)`).
+  //
+  // The design goal is the SAME "dumb pipe" the local case already is — nobody in the middle
+  // needs to understand WebSocket framing, just relay raw bytes — so this end (agent → real dev
+  // server) is a raw `net.Socket`, exactly like the local proxy's upstream connection, using the
+  // SAME buildUpgradeRequest() to write the handshake by hand. The other end (relay → browser)
+  // is ALSO a raw socket, not the `ws` library (see relay/server.mjs) — the browser's own
+  // handshake is answered directly there, independently of this one, since Sec-WebSocket-Accept
+  // is a pure function of the key each side received and never needs to be relayed itself.
+  // Raw bytes for an open connection travel as WS_IN "mirror-ws-data" (relay → agent) / WS_OUT
+  // "mirror-ws-data" (agent → relay), tagged by `connId` so many mirrored sockets can multiplex
+  // over the ONE tunnel connection this file already maintains.
+  const mirrorWsUpstreams = new Map();   // connId -> net.Socket to the real dev server
+
+  function mirrorWsSend(kind, connId, data) {
+    if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.WS_OUT, kind, sessionKey: null, data: { connId, ...data } }));
+  }
+
+  function handleMirrorWsOpen({ connId, port, path, headers } = {}) {
+    if (!connId || !port || !mirrorablePorts(paths.root).includes(Number(port))) {
+      mirrorWsSend("mirror-ws-close", connId, {});
+      return;
+    }
+    const up = net.connect(Number(port), "127.0.0.1");
+    let handshakeDone = false;
+    let buf = Buffer.alloc(0);
+    up.on("connect", () => {
+      up.write(buildUpgradeRequest({ method: "GET", path: path || "/", headers: headers || {}, host: "127.0.0.1", port: Number(port) }));
+    });
+    up.on("data", (chunk) => {
+      if (!handshakeDone) {
+        buf = Buffer.concat([buf, chunk]);
+        // The dev server's OWN 101 response is consumed here, never forwarded — the browser
+        // already got ITS OWN 101 from the relay (its handshake is entirely separate; only the
+        // BYTES after this point are the actual WebSocket traffic both ends care about).
+        const headerEnd = buf.indexOf("\r\n\r\n");
+        if (headerEnd === -1) return;
+        handshakeDone = true;
+        const rest = buf.subarray(headerEnd + 4);
+        buf = Buffer.alloc(0);
+        if (rest.length) mirrorWsSend("mirror-ws-data", connId, { dataB64: rest.toString("base64") });
+        return;
+      }
+      mirrorWsSend("mirror-ws-data", connId, { dataB64: chunk.toString("base64") });
+    });
+    const closeUp = () => { if (mirrorWsUpstreams.get(connId) === up) mirrorWsUpstreams.delete(connId); mirrorWsSend("mirror-ws-close", connId, {}); };
+    up.on("error", closeUp);
+    up.on("close", closeUp);
+    mirrorWsUpstreams.set(connId, up);
+  }
+
+  function handleMirrorWsData({ connId, dataB64 } = {}) {
+    const up = mirrorWsUpstreams.get(connId);
+    if (up && dataB64) { try { up.write(Buffer.from(dataB64, "base64")); } catch {} }
+  }
+
+  function handleMirrorWsClose({ connId } = {}) {
+    const up = mirrorWsUpstreams.get(connId);
+    if (up) { try { up.destroy(); } catch {} mirrorWsUpstreams.delete(connId); }
+  }
+
   function onMessage(ev) {
     let frame; try { frame = JSON.parse(typeof ev.data === "string" ? ev.data : ev.data.toString()); } catch { return; }
     if (!validateFrame(frame).ok) return;
@@ -249,6 +321,11 @@ export function createBridge(opts = {}) {
     } else if (frame.t === FRAME.COMMAND) {
       handleCommand(frame);
     } else if (frame.t === FRAME.WS_IN) {
+      // LocalHost mirror: a remote browser's WebSocket, relayed byte-for-byte (see the block
+      // above handleCommand for why this can't just be a COMMAND/RESULT round trip).
+      if (frame.kind === "mirror-ws-open") { handleMirrorWsOpen(frame.data); return; }
+      if (frame.kind === "mirror-ws-data") { handleMirrorWsData(frame.data); return; }
+      if (frame.kind === "mirror-ws-close") { handleMirrorWsClose(frame.data); return; }
       // A remote Deploy trigger (from the live site) runs the local deploy pipeline and streams
       // its log back up the tunnel; everything else is a workspace action.
       if (frame.kind === "deploy" && opts.deploy) { runRemoteDeploy(); return; }
@@ -284,11 +361,20 @@ export function createBridge(opts = {}) {
     }).catch((e) => { log("no WebSocket implementation:", e.message); scheduleReconnect(); });
   }
 
+  /** Every open mirror-ws upstream is only reachable through the tunnel connection that opened
+   *  it — once that's gone (a drop, a deliberate stop), the relay's own end is gone too, so
+   *  there's nothing left to relay bytes to. Shared by scheduleReconnect and stop(). */
+  function closeAllMirrorWs() {
+    for (const up of mirrorWsUpstreams.values()) { try { up.destroy(); } catch {} }
+    mirrorWsUpstreams.clear();
+  }
+
   function scheduleReconnect() {
     clearInterval(snapTimer);
     // The tunnel is down, so the relay's reported browsers are no longer reachable — clear the
     // remote presence set so the merged list doesn't keep showing phantom live-site terminals.
     try { opts.onRemotePresence?.([]); } catch {}
+    closeAllMirrorWs();
     if (stopped) return;
     reconnectTimer = setTimeout(connect, backoff);
     backoff = Math.min(backoff * 2, 30_000);
@@ -300,6 +386,7 @@ export function createBridge(opts = {}) {
       stopped = true;
       clearInterval(snapTimer); clearTimeout(reconnectTimer);
       try { sock?.close(); } catch {}
+      closeAllMirrorWs();
       // Symmetric with the addSink() above — without this, restarting the bridge against the same
       // shared WorkspaceManager (dashboard/server.mjs's startBridgeFromConfig, on every relay-
       // config save) leaks one more permanently-dead sink closure into `_sinks` every time.

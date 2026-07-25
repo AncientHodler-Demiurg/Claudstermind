@@ -4,6 +4,38 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.18] - 2026-07-25
+
+### Fixed
+- **The mirror's WebSocket relay only ever existed for the LOCAL path — remote (the actual live
+  site, brain.ancientholdings.eu) never carried a WebSocket at all, so a phone/browser viewing a
+  mirrored site remotely still hit the "HMR never connects → hydration never finishes → login
+  button never appears" bug from v0.9.16/v0.9.17, no matter how many times everything got
+  updated and restarted.** Confirmed directly against the actual remote report: local mirroring
+  was already fixed and proven working; the live-site path was the one still broken, because it
+  genuinely had no code for it yet.
+- Added the missing piece: the relay now answers a mirrored WebSocket's handshake itself (a raw
+  socket, RFC 6455 by hand — not the `ws` library, which is reserved for the agent tunnel) and
+  relays raw bytes down that SAME tunnel to the agent, tagged by a connection id so many mirrored
+  sockets can share the one tunnel connection; the agent opens its own raw connection to the real
+  dev server and relays bytes back the same way — the exact "dumb pipe" design the local relay
+  already uses, just split across the middle.
+- Found and fixed two more traps building this: (1) `ws`'s own auto-attached upgrade listener for
+  the agent tunnel doesn't just ignore a path it doesn't own, it actively 400s and destroys ANY
+  mismatched-path socket — silently eating every mirror WebSocket until the tunnel's own listener
+  was switched to `noServer: true` with one unified dispatcher; (2) when the tunnel itself drops,
+  nothing was tearing down the browser-facing sockets still open from before — each one would sit
+  open forever, since the individual "this mirror connection closed" signal that would normally
+  clean it up can never arrive once the tunnel that would carry it is already gone.
+- Full suite: 397/398 (1 known unrelated pre-existing failure), including a new real end-to-end
+  test — a real `ws` client, through a real relay, over a real agent tunnel, to a real `ws` echo
+  server standing in for a mirrored dev server — proving messages actually round-trip and that
+  the session cookie is filtered the same way the local path's is.
+- Still not fully proven: this hasn't been exercised against the actual production reverse proxy
+  (Caddy) in front of the live container — it forwards the existing `/agent` WebSocket tunnel
+  today, and this new path is structurally identical, but that's an inference, not a live
+  confirmation yet.
+
 ## [0.9.17] - 2026-07-25
 
 ### Fixed
