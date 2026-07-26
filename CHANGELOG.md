@@ -4,6 +4,25 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.19] - 2026-07-26
+
+### Fixed
+- **v0.9.18's remote mirror WebSocket relay was itself broken behind the live site's actual
+  reverse proxy — confirmed directly against production, not guessed.** Read nginx's own error
+  log for the exact request (`GET /mirror/3005/socket`): `upstream prematurely closed connection
+  while reading response header from upstream` — a bare `socket.destroy()` on any rejected
+  upgrade (no session, port not yet known, malformed handshake) sent nginx zero bytes, which it
+  correctly reports as ITS OWN 502 Bad Gateway rather than whatever status the relay actually
+  meant to send. A direct browser-to-relay connection wouldn't notice the difference; behind the
+  reverse proxy that's the ONLY way this is ever really reached, it's indistinguishable from the
+  relay crashing outright.
+- Every rejection now writes a real, minimal HTTP response (404/400/403/503, matching the actual
+  reason) before closing the socket. Reproduced the exact production 502 directly against nginx
+  first, then confirmed the fix resolves it the same way (curl, same request, same headers).
+- New regression test drives a raw HTTP client (no WebSocket library) against an unauthenticated
+  upgrade request and asserts a real status line comes back — the exact shape of request that
+  502'd in production. Full suite: 398/399 (1 known unrelated pre-existing failure).
+
 ## [0.9.18] - 2026-07-25
 
 ### Fixed

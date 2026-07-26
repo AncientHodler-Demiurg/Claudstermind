@@ -532,6 +532,20 @@ export function createRelay(opts = {}) {
   // multiplexes many mirrored connections over the one tunnel socket.
   const MIRROR_WS_CONNS = new Map();   // connId -> the browser's raw socket
 
+  // A rejected upgrade must still be a WELL-FORMED HTTP response, not a bare socket.destroy() —
+  // confirmed directly in production: nginx (sitting in front of this relay, terminating TLS)
+  // reports ANY upstream connection that closes before sending response headers as its OWN
+  // "502 Bad Gateway", not whatever status this code actually meant to send. A direct
+  // browser-to-relay connection wouldn't notice the difference (the WebSocket handshake failed
+  // either way), but with a reverse proxy in front — the ONLY way this is ever actually
+  // reached — a silent socket.destroy() is indistinguishable from the relay itself crashing.
+  function rejectUpgrade(socket, status, message) {
+    try {
+      socket.write(`HTTP/1.1 ${status} ${message}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+    } catch {}
+    try { socket.destroy(); } catch {}
+  }
+
   // The ONE dispatcher for every upgrade this server sees — see the noServer comment above for
   // why it can't be two independent listeners.
   server.on("upgrade", async (req, socket, head) => {
@@ -540,13 +554,14 @@ export function createRelay(opts = {}) {
     if (url.pathname === "/agent") { wss.handleUpgrade(req, socket, head, (sock) => wss.emit("connection", sock, req)); return; }
 
     const hit = parseMirrorPath(url.pathname);
-    if (!hit) { try { socket.destroy(); } catch {} return; }
-
-    const who = await guard(req, oidc);
-    if (!who.canExecute || !link.connected || !mirrorPorts().includes(hit.port)) { try { socket.destroy(); } catch {} return; }
+    if (!hit) { rejectUpgrade(socket, 404, "Not Found"); return; }
 
     const key = req.headers["sec-websocket-key"];
-    if (!key || req.headers.upgrade?.toLowerCase() !== "websocket") { try { socket.destroy(); } catch {} return; }
+    if (!key || req.headers.upgrade?.toLowerCase() !== "websocket") { rejectUpgrade(socket, 400, "Bad Request"); return; }
+
+    const who = await guard(req, oidc);
+    if (!who.canExecute) { rejectUpgrade(socket, 403, "Forbidden"); return; }
+    if (!link.connected || !mirrorPorts().includes(hit.port)) { rejectUpgrade(socket, 503, "Service Unavailable"); return; }
 
     const connId = randomUUID();
     MIRROR_WS_CONNS.set(connId, socket);

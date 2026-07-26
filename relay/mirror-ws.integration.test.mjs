@@ -153,3 +153,28 @@ test("mirror WebSocket relay: a port the relay has never seen registered is refu
   assert.equal(opened, false, "must not have opened for a port the relay hasn't learned about");
   assert.notEqual(client.readyState, WebSocket.OPEN);
 });
+
+test("REGRESSION: a refused upgrade is a well-formed HTTP response, not a bare socket close — confirmed directly in production, nginx turns a bare close into its own 502 instead of the real status", async (t) => {
+  const { relayPort } = await setup(t);   // no cookie at all — the exact request that 502'd in production
+
+  const raw = await new Promise((resolve_, reject) => {
+    const req = http.request({
+      host: "127.0.0.1", port: relayPort, path: "/mirror/59999/socket", method: "GET",
+      headers: {
+        Connection: "Upgrade", Upgrade: "websocket",
+        "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+      },
+    });
+    req.on("upgrade", (res) => resolve_({ status: res.statusCode, viaUpgradeEvent: true }));
+    req.on("response", (res) => resolve_({ status: res.statusCode, viaUpgradeEvent: false }));
+    req.on("error", reject);
+    req.end();
+    setTimeout(() => reject(new Error("timed out waiting for a response")), 3000);
+  });
+
+  // The exact bug: an unauthenticated request used to get NO response at all (a bare
+  // socket.destroy()) — Node's http client surfaces that as a connection error, which is what a
+  // reverse proxy in front (nginx, in production) reports as ITS OWN 502, not a real status.
+  assert.ok(raw.status, "must receive an actual HTTP status line, not a connection reset");
+  assert.equal(raw.status, 403, "no session at all reads as canExecute:false, i.e. Forbidden");
+});
