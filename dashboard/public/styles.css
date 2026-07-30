@@ -466,13 +466,24 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
    distinctly "you" against its solid blue bubble above. */
 .ws-line.ws-assistant { color: var(--accent); }
 /* A fenced code block within a reply — its own bordered "copy paste window", separate from the
-   surrounding prose (which stays plain text, no button). Matches Claude's own code-block
-   rendering: a small header (language + copy) above the monospaced body. */
+   surrounding prose. Matches Claude's own code-block rendering: a small header (language +
+   copy) above the monospaced body. Only a FENCED block gets the copy button — the prose around
+   it gets lightweight markdown (bold/headers/lists/inline code) via renderInline/renderProseBlock
+   in app.js, not a second copy-paste window. */
 .ws-codeblock { background: #05070f; border: 1px solid var(--line); border-radius: 8px; margin: 6px 0; overflow: hidden; }
 .ws-codeblock-hd { display: flex; align-items: center; justify-content: space-between; padding: 5px 9px;
   font-size: 10.5px; color: var(--ink-mute); text-transform: uppercase; letter-spacing: .03em; border-bottom: 1px solid var(--line); }
 .ws-codeblock-body { margin: 0; padding: 10px 12px; font: 12px/1.5 ui-monospace, monospace; color: #cdd6f4;
   white-space: pre-wrap; word-break: break-word; overflow-x: auto; }
+/* Inline `code` in prose — a lighter-weight cousin of the fenced .ws-codeblock above: no header,
+   no copy button, just enough visual distinction (chip background, monospace) to read as code
+   rather than prose, matching Claude's own inline-code rendering. */
+.ws-inline-code { background: var(--chip); border-radius: 4px; padding: 1px 5px; font: 12px/1.4 ui-monospace, monospace; }
+.ws-line.ws-assistant .ws-inline-code { color: var(--ink); }
+/* A `#`..`######` line in a reply — bold and one size step up, not a full heading hierarchy
+   (this is a chat transcript, not a document — six visually distinct heading sizes would be
+   excessive here; one consistent step reads clearly enough at any nesting depth). */
+.ws-md-heading { display: block; font-size: 1.08em; margin: 2px 0; }
 /* Always visible (not hover-only — has to work on touch), sitting in the code block's own header
    rather than floating over the text. */
 .ws-copy { background: transparent; border: 1px solid var(--line); border-radius: 6px; color: var(--ink-dim);

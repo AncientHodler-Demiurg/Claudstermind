@@ -4,6 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.21] - 2026-07-30
+
+### Added
+- **Replies now render lightweight markdown, not just code fences.** `renderAssistantText`
+  previously only special-cased ` ```fenced``` ` code blocks — everything else was pushed through
+  as a raw, unparsed string, so a real reply's `**bold**`, `### headers`, and `- bullet` lines
+  showed up as literal asterisks/hashes/dashes (confirmed directly from a screenshot). Added a
+  small inline parser (`**bold**`, `` `code` ``, `[text](url)`) plus line-level heading/bullet
+  handling for the prose around code fences — bold recurses one level so `` **`code`** `` nests a
+  real `<code>` inside the `<strong>` instead of showing literal backticks.
+  Deliberately **not** underscore-based (no `__bold__`/`_italic_`): this is a developer chat where
+  prose is full of `snake_case_identifiers` — treating `_` as emphasis would mangle
+  `pythia_cronoton_keyset` into "pythia*cronoton*keyset". Asterisk emphasis also refuses
+  leading/trailing whitespace inside the markers (CommonMark's own rule) so `2 * 3 * 4` doesn't
+  read as italic. Verified directly against the exact reported content, including the
+  bold-wrapping-code and stray-asterisk cases above.
+
 ## [0.9.20] - 2026-07-30
 
 ### Fixed

@@ -2142,17 +2142,81 @@ function viewWorkspace() {
       done(ok);
     } catch { done(false); }
   }
-  // Splits assistant text on ```fenced``` code blocks: prose stays plain text, each code block
-  // becomes its own bordered, monospaced box with a copy button for JUST that block — not the
-  // whole message. This is specifically what was asked for (a "copy paste window" per code
-  // block, matching Claude's own rendering), not a copy button glued onto every reply.
+  // Lightweight inline markdown for the PROSE around code fences — **bold**, *italic*, `code`,
+  // [text](url). Deliberately not underscore-based (no __bold__/_italic_): this is a developer
+  // chat where prose is full of snake_case_identifiers and file_names — treating `_` as an
+  // emphasis marker would mangle `pythia_cronoton_keyset` into "pythia<em>cronoton</em>keyset".
+  // Asterisks avoid that whole class of false positive, and are what Claude's own replies
+  // actually use in practice. The emphasis patterns also refuse leading/trailing whitespace
+  // right inside the markers (CommonMark's own rule) so "2 * 3 * 4" doesn't get read as italic.
+  // Confirmed in production: without ANY of this, a real reply's **bold** markers, ### headers,
+  // and - bullet lines all showed up as literal asterisks/hashes/dashes — this was never
+  // intentional, "prose stays plain text" only ever meant "not a second code-block", not "no
+  // markdown at all".
+  const WS_INLINE_SRC = "(\\*\\*(?!\\s)[^*\\n]+?(?<!\\s)\\*\\*|`[^`\\n]+`|\\[[^\\]\\n]+\\]\\((https?://[^)\\s]+|mailto:[^)\\s]+)\\)|\\*(?!\\s)[^*\\n]+?(?<!\\s)\\*)";
+  // `renderInline` recurses into itself (see the "**" branch below), and a shared, single global
+  // RegExp's `lastIndex` is mutable cross-call state — a naive module-level `const WS_INLINE_RE =
+  // /…/g` would have the recursive call's OWN loop clobber the OUTER call's position mid-scan
+  // (both `.exec()` against the same object), corrupting or infinite-looping the outer text.
+  // A fresh RegExp per call sidesteps that entirely — each invocation's `lastIndex` is its own.
+  function renderInline(text) {
+    const re = new RegExp(WS_INLINE_SRC, "g");
+    const out = []; let last = 0, m;
+    while ((m = re.exec(text))) {
+      if (m.index > last) out.push(text.slice(last, m.index));
+      const tok = m[0];
+      // Bold recurses one level (so **`code`** nests a real <code> inside the <strong> instead
+      // of showing literal backtick characters — confirmed a real, actual shape in production:
+      // "**`docs/HANDOFF-pact-pyth-ledger.md`**"). Inline code does NOT recurse — its whole point
+      // is verbatim content, `**not bold**` inside backticks must stay literal text.
+      if (tok.startsWith("**")) out.push(el("strong", {}, renderInline(tok.slice(2, -2))));
+      else if (tok.startsWith("`")) out.push(el("code", { class: "ws-inline-code" }, [tok.slice(1, -1)]));
+      else if (tok.startsWith("[")) {
+        const lm = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(tok);
+        out.push(el("a", { href: lm[2], target: "_blank", rel: "noopener noreferrer" }, renderInline(lm[1])));
+      } else out.push(el("em", {}, renderInline(tok.slice(1, -1))));
+      last = re.lastIndex;
+    }
+    if (last < text.length) out.push(text.slice(last));
+    return out;
+  }
+  // Block-level: a leading `#`..`######` line becomes a heading (bold, a size step up); a
+  // `-`/`*`/`1.` line keeps its own marker (prettified to "•" for bullets) but gets inline
+  // formatting applied to its content. Everything rides on the SAME .ws-line's existing
+  // `white-space: pre-wrap`, so newlines between these still lay out exactly as sent — this
+  // only replaces individual LINES' content, never restructures the block into real <ul>/<p>
+  // (which would fight that pre-wrap layout for no visual benefit in a chat transcript).
+  const WS_HEADING_RE = /^(#{1,6})\s+(.*)$/;
+  const WS_BULLET_RE = /^([-*])\s+(.*)$/;
+  const WS_ORDERED_RE = /^(\d+\.)\s+(.*)$/;
+  function renderProseBlock(text) {
+    const lines = text.split("\n");
+    const out = [];
+    lines.forEach((raw, i) => {
+      if (i > 0) out.push("\n");
+      const h = WS_HEADING_RE.exec(raw);
+      if (h) { out.push(el("strong", { class: "ws-md-heading" }, renderInline(h[2]))); return; }
+      const b = WS_BULLET_RE.exec(raw);
+      if (b) { out.push("•  ", ...renderInline(b[2])); return; }
+      const o = WS_ORDERED_RE.exec(raw);
+      if (o) { out.push(o[1] + "  ", ...renderInline(o[2])); return; }
+      out.push(...renderInline(raw));
+    });
+    return out;
+  }
+  // Splits assistant text on ```fenced``` code blocks: each code block becomes its own bordered,
+  // monospaced box with a copy button for JUST that block — not the whole message (matching
+  // Claude's own rendering, not a copy button glued onto every reply) — and the prose AROUND
+  // those blocks gets the lightweight markdown treatment above, instead of showing up as literal
+  // **/`/#/- characters.
   const WS_FENCE_RE = /```([\w+-]*)\n?([\s\S]*?)```/g;
   function renderAssistantText(text) {
-    if (typeof text !== "string" || !text.includes("```")) return [text];
+    if (typeof text !== "string") return [text];
+    if (!text.includes("```")) return renderProseBlock(text);
     const parts = []; let last = 0, mtch;
     WS_FENCE_RE.lastIndex = 0;
     while ((mtch = WS_FENCE_RE.exec(text))) {
-      if (mtch.index > last) parts.push(text.slice(last, mtch.index));
+      if (mtch.index > last) parts.push(...renderProseBlock(text.slice(last, mtch.index)));
       const lang = mtch[1] || "";
       const code = mtch[2].replace(/\n$/, "");
       parts.push(el("div", { class: "ws-codeblock" }, [
@@ -2161,7 +2225,7 @@ function viewWorkspace() {
       ]));
       last = WS_FENCE_RE.lastIndex;
     }
-    if (last < text.length) parts.push(text.slice(last));
+    if (last < text.length) parts.push(...renderProseBlock(text.slice(last)));
     return parts;
   }
   function renderItem(m) {
