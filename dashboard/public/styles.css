@@ -484,6 +484,10 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
    (this is a chat transcript, not a document — six visually distinct heading sizes would be
    excessive here; one consistent step reads clearly enough at any nesting depth). */
 .ws-md-heading { display: block; font-size: 1.08em; margin: 2px 0; }
+/* An image attached to a sent prompt — a modest thumbnail above the message text (its own block,
+   not inline with it), clickable through to the full image in a new tab. */
+.ws-user-image-link { display: block; margin-bottom: 6px; }
+.ws-user-image { display: block; max-width: 220px; max-height: 220px; border-radius: 6px; border: 1px solid rgba(255,255,255,.25); }
 /* Always visible (not hover-only — has to work on touch), sitting in the code block's own header
    rather than floating over the text. */
 .ws-copy { background: transparent; border: 1px solid var(--line); border-radius: 6px; color: var(--ink-dim);

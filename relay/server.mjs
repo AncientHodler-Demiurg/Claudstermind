@@ -363,6 +363,22 @@ export function createRelay(opts = {}) {
       return;
     }
 
+    // ---- remote workspace: serve an attached prompt image (ancient-only) ----
+    // Same shape as the local dashboard's own /api/workspace/image, forwarded down the tunnel as
+    // a one-shot COMMAND/RESULT (agent/agent.mjs's "workspaceImage") — a single image fetch has
+    // no need for a WebSocket relay's raw-byte streaming, base64 in one reply is enough.
+    if (req.method === "GET" && path === "/api/workspace/image") {
+      if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The workspace is ancient-only." });
+      if (!link.connected) return sendJSON(res, 503, { ok: false, message: "Local Claudstermind is not connected." });
+      const workspaceIdParam = url.searchParams.get("workspaceId");
+      const relPath = url.searchParams.get("path");
+      if (!workspaceIdParam || !relPath) return sendJSON(res, 404, { ok: false, message: "image not found" });
+      const r = await link.relay("workspaceImage", { workspaceId: workspaceIdParam, path: relPath }, 15_000);
+      if (!r || !r.ok) return sendJSON(res, r?.status || 502, { ok: false, message: r?.message || "image fetch failed" });
+      res.writeHead(200, { "content-type": r.mimeType, "cache-control": "private, max-age=31536000, immutable" });
+      return res.end(Buffer.from(r.bodyB64, "base64"));
+    }
+
     // ---- remote workspace: SSE stream of the bridge's Claude session output (ancient-only) ----
     if (req.method === "GET" && path === "/api/workspace/stream") {
       if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The workspace is ancient-only." });

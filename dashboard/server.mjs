@@ -34,6 +34,7 @@ import { readBrain, scanPackages, cachedActivity } from "../lib/snapshot.mjs";
 import { executeCommand } from "../lib/commands.mjs";
 import { createBridge } from "../agent/agent.mjs";
 import { WorkspaceManager } from "../lib/workspace.mjs";
+import * as store from "../lib/workspaceStore.mjs";
 import { readVersion } from "../lib/version.mjs";
 import { runDeploy } from "../lib/deploy.mjs";
 import { runHeuristicDistill, runClaudeDistill, readDistillConfig, writeDistillConfig, readDistillUsage } from "../lib/distill.mjs";
@@ -581,6 +582,25 @@ const handler = async (req, res) => {
     if (!ACTIONS.has(d.action)) return sendJSON(res, 400, { ok: false, error: "unknown action" });
     const r = await AGG.api("/api/" + d.action, { method: "POST", body: { key: d.key } });
     return sendJSON(res, r.ok ? 200 : 502, r.ok ? (r.data ?? { ok: true }) : { ok: false, error: r.error || "aggregator unreachable" });
+  }
+
+  // ---- local Workspace: serve an attached prompt image ----
+  // Root-caused a real "the image disappears from the UI the instant I hit send" report: the
+  // image was already saved to disk (WorkspaceManager._saveImage) and already attached to the
+  // persisted turn record — nothing was ever missing server-side. It just had nowhere to point a
+  // browser AT: no route served the bytes back, and (fixed separately, lib/workspace.mjs) the
+  // live "user" event didn't even carry the reference to try. `path` is untrusted client input;
+  // resolveImagePath's strict-regex validation is what stands between this and an arbitrary-
+  // file-read primitive, not anything happening here.
+  if (path === "/api/workspace/image" && req.method === "GET") {
+    if (!WORKSPACE) return sendJSON(res, 404, { error: "workspace unavailable in this mode" });
+    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Execute permission required." });
+    const workspaceIdParam = url.searchParams.get("workspaceId");
+    const relPath = url.searchParams.get("path");
+    const resolved = workspaceIdParam && relPath ? store.resolveImagePath(WORKSPACE.transcriptDir, workspaceIdParam, relPath) : null;
+    if (!resolved) return sendJSON(res, 404, { ok: false, message: "image not found" });
+    res.writeHead(200, { "content-type": resolved.mimeType, "cache-control": "private, max-age=31536000, immutable" });
+    return res.end(readFileSync(resolved.abs));
   }
 
   // ---- local Workspace: SSE stream of this machine's Claude sessions ----

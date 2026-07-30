@@ -2229,7 +2229,21 @@ function viewWorkspace() {
     return parts;
   }
   function renderItem(m) {
-    if (m.role === "user" || m.kind === "user") return line("ws-user", [el("b", {}, ["you  "]), m.text]);
+    if (m.role === "user" || m.kind === "user") {
+      const kids = [el("b", {}, ["you  "])];
+      // Root-caused a real "the image disappears from the UI the instant I hit send" report: the
+      // image was always saved server-side and attached to the persisted turn — this pane just
+      // never rendered it. `m.image`/`m.workspaceId` now ride the live "user" event AND the
+      // stored turn record alike, so this covers both a just-sent prompt and reopening history.
+      if (m.image && m.workspaceId) {
+        const src = `/api/workspace/image?workspaceId=${encodeURIComponent(m.workspaceId)}&path=${encodeURIComponent(m.image.path)}`;
+        kids.push(el("a", { href: src, target: "_blank", rel: "noopener noreferrer", class: "ws-user-image-link" }, [
+          el("img", { class: "ws-user-image", src, alt: "attached image" }, []),
+        ]));
+      }
+      kids.push(m.text);
+      return line("ws-user", kids);
+    }
     if (m.role === "assistant" || m.kind === "assistant") return line("ws-assistant", renderAssistantText(m.text));
     if (m.kind === "tool_use") return line("ws-tool", [el("i", { class: "ti ti-tool" }, []), " ", (m.tools || []).map((t) => t.name).join(", ")]);
     if (m.kind === "tool_result") return line("ws-toolres", ["✓ tool result"]);

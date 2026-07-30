@@ -20,6 +20,7 @@ import { FRAME, validateFrame } from "../lib/protocol.mjs";
 import { buildSnapshot as realBuildSnapshot } from "../lib/snapshot.mjs";
 import { executeCommand as realExecuteCommand } from "../lib/commands.mjs";
 import { WorkspaceManager } from "../lib/workspace.mjs";
+import { resolveImagePath } from "../lib/workspaceStore.mjs";
 import { readActivity } from "../orchestrator/activity.mjs";
 import { readBackupConfig } from "../orchestrator/backupConfig.mjs";
 import net from "node:net";
@@ -202,6 +203,19 @@ export function createBridge(opts = {}) {
     if (frame.cmd.type === "mirrorList") {
       const projects = registryProjects(paths.root);
       if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result: { ok: true, projects } }));
+      return;
+    }
+    // A remote browser (relay/server.mjs) asking to view a prompt's attached image. Base64 over
+    // the tunnel, same shape as "mirror" above — one request, one reply, no need for the raw-byte
+    // streaming a WebSocket relay would need. `path` is untrusted client input; resolveImagePath's
+    // strict-regex validation is what stands between this and an arbitrary-file-read primitive.
+    if (frame.cmd.type === "workspaceImage") {
+      const { workspaceId: wid, path: relPath } = frame.cmd.args || {};
+      let result;
+      const resolved = wid && relPath ? resolveImagePath(workspace.transcriptDir, wid, relPath) : null;
+      if (!resolved) result = { ok: false, status: 404, message: "image not found" };
+      else { try { result = { ok: true, mimeType: resolved.mimeType, bodyB64: readFileSync(resolved.abs).toString("base64") }; } catch (e) { result = { ok: false, status: 500, message: e.message }; } }
+      if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
       return;
     }
     // LocalHost aggregator: the remote panel can't frame the work machine's :3000 origin,

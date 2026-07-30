@@ -4,6 +4,25 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.22] - 2026-07-30
+
+### Fixed
+- **An attached image vanished from the workspace UI the instant it was sent.** `_prompt` already
+  saved the image to disk (content-addressed, deduped) and attached it to the *persisted* JSONL
+  turn record — but the *live* broadcast event (`send("event", key, {kind:"user",...})`) that
+  actually paints the message in the browser never carried the `image`/`workspaceId` fields, so
+  the thumbnail only ever existed in history, never in the live view. Both `_prompt` branches (new
+  session and existing session) now include them.
+- Added a serving path for those images end-to-end: `resolveImagePath(dir, id, relPath)` in
+  `lib/workspaceStore.mjs` (strict regex-validated — the regex's character class is the sole
+  containment against arbitrary-file-read from untrusted client input, since it can't produce `..`
+  or an absolute path), a local `GET /api/workspace/image` route in `dashboard/server.mjs`, a
+  matching `workspaceImage` tunnel command in `agent/agent.mjs` (base64 over one COMMAND/RESULT
+  round trip, mirroring the existing `mirror` command's shape) for remote/mirrored sessions, and
+  the corresponding relay-side forwarding route in `relay/server.mjs`. The client (`app.js`) now
+  renders a clickable thumbnail (opens full-size in a new tab) above the message text whenever a
+  turn carries `image`/`workspaceId`.
+
 ## [0.9.21] - 2026-07-30
 
 ### Added
