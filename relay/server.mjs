@@ -25,7 +25,7 @@ import { AgentLink, authorizeMutation, routeToCommand } from "./relay-core.mjs";
 import { readVersion } from "../lib/version.mjs";
 import {
   parseMirrorPath, mirrorFromReferer, mirrorFromCookie, forwardRequestHeaders, buildMirrorResponse,
-  forwardUpgradeHeaders, websocketAccept,
+  forwardUpgradeHeaders, websocketAccept, mirrorForwardedHeaders,
 } from "../lib/mirror.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -89,7 +89,9 @@ async function relayToMirror(req, res, link, port, target) {
     bodyB64 = Buffer.concat(chunks).toString("base64");
   }
   const r = await link.relay("mirror", {
-    port, path: target, method: req.method, headers: forwardRequestHeaders(req.headers), bodyB64,
+    port, path: target, method: req.method,
+    headers: { ...forwardRequestHeaders(req.headers), ...mirrorForwardedHeaders(req.headers, port) },
+    bodyB64,
   }, 20_000);
   if (!r || !r.ok) {
     res.writeHead(r?.status || 502, { "content-type": "text/plain" });

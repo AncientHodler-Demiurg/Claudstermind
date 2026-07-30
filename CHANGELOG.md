@@ -4,6 +4,26 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.20] - 2026-07-30
+
+### Fixed
+- **"Login with AncientHub" through the mirror redirected to the hub, which then refused it with
+  `{"error":"invalid_request"}`.** Confirmed directly: Mnemosyne's own login route deliberately
+  derives its OAuth `redirect_uri` from the request's host (good, portable design) — but the
+  mirror was only ever telling it its OWN loopback address, never the browser-facing one, and
+  never the `/mirror/<port>` path prefix at all (no standard header carries a path — only the
+  origin). So Mnemosyne built a `redirect_uri` missing the mirror's prefix, and the identity
+  provider correctly refused a callback URL it had never registered for that client.
+- Added `X-Forwarded-Host`/`X-Forwarded-Proto`/`X-Forwarded-Prefix` on every mirrored request
+  (`mirrorForwardedHeaders`, both the local and relay/tunnel proxy paths) — the last one via the
+  de-facto `X-Forwarded-Prefix` convention several proxies already use for exactly this "app
+  mounted under a sub-path" gap. Verified end to end: the login flow now correctly asks the hub
+  to return to `.../mirror/<port>/admin/callback` instead of the mirror's own loopback address.
+- Still open, and out of scope for Claudstermind alone: the hub itself needs the new mirrored
+  callback URL added to Mnemosyne's registered client before login can fully succeed through the
+  mirror — a separate, deliberately-paused decision given it touches a shared identity provider
+  used by every app in the ecosystem, not just this one.
+
 ## [0.9.19] - 2026-07-26
 
 ### Fixed

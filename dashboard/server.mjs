@@ -44,7 +44,7 @@ import { preflightSteps, runPreflight, restartCommand, killInFlightCandidate } f
 import { writeFileSync } from "node:fs";
 import { readRelayConfig, writeRelayConfig, readDeviceSecret, saveDeviceSecret } from "../lib/relayConfig.mjs";
 import { createAggregator, registryProjects, mirrorablePorts } from "../lib/localhost.mjs";
-import { parseMirrorPath, mirrorFromReferer, mirrorFromCookie, forwardRequestHeaders, buildMirrorResponse, buildUpgradeRequest } from "../lib/mirror.mjs";
+import { parseMirrorPath, mirrorFromReferer, mirrorFromCookie, forwardRequestHeaders, buildMirrorResponse, buildUpgradeRequest, mirrorForwardedHeaders } from "../lib/mirror.mjs";
 import net from "node:net";
 import { createPresence } from "../lib/presence.mjs";
 import { readOidcConfig } from "./auth/oidcConfig.mjs";
@@ -189,7 +189,7 @@ async function proxyToMirror(req, res, port, target) {
       : await new Promise((resolve_) => { const c = []; req.on("data", (d) => c.push(d)); req.on("end", () => resolve_(Buffer.concat(c))); });
     const r = await fetch(`http://127.0.0.1:${port}${target}`, {
       method: req.method,
-      headers: forwardRequestHeaders(req.headers),
+      headers: { ...forwardRequestHeaders(req.headers), ...mirrorForwardedHeaders(req.headers, port) },
       body,
       redirect: "manual",
     });
