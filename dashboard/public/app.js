@@ -1945,7 +1945,7 @@ function viewWorkspace() {
   // deliberately abandoned (cleared, or repointed to a different repo/worktree) — a
   // pendingOpens entry captures the pane's gen at request time, so a reply that arrives
   // after the pane moved on can tell it no longer applies (see beginPendingOpen).
-  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", worktree: "main", mode: st.defaultMode, transcript: [], usage: {}, status: "idle", readonly: false, resume: null, _gen: 0, _expandedGroups: new Set() });
+  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", worktree: "main", mode: st.defaultMode, transcript: [], usage: {}, status: "idle", readonly: false, resume: null, _gen: 0, _expandedGroups: new Set(), attachedImages: [] });
   // Every pane with a repo runs under a shared, deterministic key (repo@worktree). Panes still
   // waiting for a repo keep their random placeholder so they never collide before use.
   function keyForPane(p) { return p.repo ? wsWorkspaceId(p.repo, p.worktree) : p.sessionKey; }
@@ -2233,13 +2233,18 @@ function viewWorkspace() {
       const kids = [el("b", {}, ["you  "])];
       // Root-caused a real "the image disappears from the UI the instant I hit send" report: the
       // image was always saved server-side and attached to the persisted turn — this pane just
-      // never rendered it. `m.image`/`m.workspaceId` now ride the live "user" event AND the
+      // never rendered it. `m.images`/`m.workspaceId` now ride the live "user" event AND the
       // stored turn record alike, so this covers both a just-sent prompt and reopening history.
-      if (m.image && m.workspaceId) {
-        const src = `/api/workspace/image?workspaceId=${encodeURIComponent(m.workspaceId)}&path=${encodeURIComponent(m.image.path)}`;
-        kids.push(el("a", { href: src, target: "_blank", rel: "noopener noreferrer", class: "ws-user-image-link" }, [
-          el("img", { class: "ws-user-image", src, alt: "attached image" }, []),
-        ]));
+      // `m.image` (singular) is the pre-multi-image shape — still read here so history rows
+      // written before this feature landed keep rendering, never rewritten on disk.
+      const imgs = m.images || (m.image ? [m.image] : []);
+      if (imgs.length && m.workspaceId) {
+        kids.push(el("div", { class: "ws-user-images" }, imgs.map((img) => {
+          const src = `/api/workspace/image?workspaceId=${encodeURIComponent(m.workspaceId)}&path=${encodeURIComponent(img.path)}`;
+          return el("a", { href: src, target: "_blank", rel: "noopener noreferrer", class: "ws-user-image-link" }, [
+            el("img", { class: "ws-user-image", src, alt: "attached image" }, []),
+          ]);
+        })));
       }
       kids.push(m.text);
       return line("ws-user", kids);
@@ -2308,10 +2313,12 @@ function viewWorkspace() {
   }
 
   // ---- image attach ---------------------------------------------------------------
-  // One image per pane, riding the existing `prompt` payload (no new upload route/control
-  // action) as `{ mediaType, base64Data }` — see lib/workspace.mjs `_prompt`/`_saveImage` and
-  // lib/workspaceStore.mjs `saveImage`'s IMAGE_EXT for the closed list this must match.
+  // Up to WS_IMG_MAX_COUNT images per pane (Claude Code's own attachment limit), riding the
+  // existing `prompt` payload (no new upload route/control action) as `images: [{ mediaType,
+  // base64Data }, ...]` — see lib/workspace.mjs `_prompt`/`_saveImages` and lib/workspaceStore.mjs
+  // `saveImage`'s IMAGE_EXT for the closed mediaType list this must match.
   const WS_IMG_ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp"];
+  const WS_IMG_MAX_COUNT = 5;
   // "roughly 3 MB" per design — measured on the ENCODED (base64) string, since that's what
   // actually rides the WS control frame; base64 chars ≈ bytes (ASCII), so string length is a
   // fine proxy without decoding back to bytes just to check.
@@ -2370,6 +2377,13 @@ function viewWorkspace() {
     if (drawable.close) drawable.close();
     return null;
   }
+  /** Attach a whole batch (a multi-select from the file picker, a multi-file drop, or several
+   *  clipboard image items) ONE AT A TIME, awaiting each before starting the next — wsAttachImageFile
+   *  does a read-modify-write of p.attachedImages, so firing them concurrently would race (two
+   *  calls both reading the same "existing" array before either commits, silently dropping one). */
+  async function wsAttachImageFiles(p, files) {
+    for (const f of files) await wsAttachImageFile(p, f);
+  }
   /** Entry point for all three attach paths (file-picker, paste, drag-drop) — same file-in,
    *  same attached-state-out, so they're functionally equivalent per the design. Skips
    *  recompression for an already-under-cap PNG/JPEG/WebP (keeps a small screenshot crisp);
@@ -2377,6 +2391,8 @@ function viewWorkspace() {
    *  wsCompressImage, which always emits an allowed mediaType. */
   async function wsAttachImageFile(p, file) {
     wsShowImgErr(p, "");
+    const existing = p.attachedImages || [];
+    if (existing.length >= WS_IMG_MAX_COUNT) { wsShowImgErr(p, `You can attach up to ${WS_IMG_MAX_COUNT} images per message.`); return; }
     if (!file || !/^image\//.test(file.type || "")) { wsShowImgErr(p, "That isn't an image file."); return; }
     let attachment = null;
     try {
@@ -2388,21 +2404,40 @@ function viewWorkspace() {
       }
     } catch { attachment = null; }
     if (!attachment) { wsShowImgErr(p, "That image is too large to attach, even after compression — try a smaller one."); return; }
-    p.attachedImage = attachment;
+    // Re-check the cap: two attach paths (e.g. a fast double-paste) can both start this async
+    // function while `existing` was still under the cap — read `p.attachedImages` fresh here,
+    // right before committing, not the possibly-stale `existing` captured above.
+    if ((p.attachedImages || []).length >= WS_IMG_MAX_COUNT) { wsShowImgErr(p, `You can attach up to ${WS_IMG_MAX_COUNT} images per message.`); return; }
+    p.attachedImages = [...(p.attachedImages || []), attachment];
     wsPaintAttachment(p);
   }
   function wsShowImgErr(p, msg) {
     const ui = paneUI.get(p.id); if (!ui) return;
     ui.imgErr.textContent = msg || ""; ui.imgErr.hidden = !msg;
   }
-  /** Sync the preview thumbnail + remove control to p.attachedImage — called after every
+  /** Build one preview chip (thumbnail + its own remove ×) for an attached image at `idx` —
+   *  removing it splices just that index out of p.attachedImages, unlike the old single-image
+   *  design's one fixed remove button. */
+  function wsImgChip(p, img, idx) {
+    const thumb = el("img", { class: "ws-img-thumb", alt: "attached image" });
+    thumb.src = img.dataUrl;
+    const removeBtn = el("button", { class: "ws-img-x", type: "button", title: "Remove this image" }, ["×"]);
+    removeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      p.attachedImages = (p.attachedImages || []).filter((_, i) => i !== idx);
+      wsShowImgErr(p, "");
+      wsPaintAttachment(p);
+    });
+    return el("div", { class: "ws-img-chip" }, [thumb, removeBtn]);
+  }
+  /** Sync the preview thumbnails + remove controls to p.attachedImages — called after every
    *  attach, remove, and a successful/failed send (see wsAttachImageFile, the remove button,
    *  and send()). */
   function wsPaintAttachment(p) {
     const ui = paneUI.get(p.id); if (!ui) return;
-    const img = p.attachedImage;
-    ui.imgPreviewWrap.hidden = !img;
-    if (img) ui.imgThumb.src = img.dataUrl; else ui.imgThumb.removeAttribute("src");
+    const imgs = p.attachedImages || [];
+    ui.imgPreviewWrap.hidden = !imgs.length;
+    ui.imgPreviewWrap.replaceChildren(...imgs.map((img, idx) => wsImgChip(p, img, idx)));
   }
 
   // ---- one pane ------------------------------------------------------------------
@@ -2428,11 +2463,11 @@ function viewWorkspace() {
     // drag-drop straight onto the compose row — all three funnel into wsAttachImageFile, so they
     // end up in the exact same attached/preview state (see design's "functionally equivalent
     // entry points").
-    const imgFileInput = el("input", { type: "file", accept: WS_IMG_ALLOWED_TYPES.join(","), class: "ws-img-input" });
-    const attachBtn = el("button", { class: "ws-ico ws-attach", type: "button", title: "Attach an image — click, paste, or drag onto the box" }, ["📎"]);
-    const imgThumb = el("img", { class: "ws-img-thumb", alt: "attached image" });
-    const imgRemoveBtn = el("button", { class: "ws-img-x", type: "button", title: "Remove attached image" }, ["×"]);
-    const imgPreviewWrap = el("div", { class: "ws-img-preview" }, [imgThumb, imgRemoveBtn]);
+    const imgFileInput = el("input", { type: "file", accept: WS_IMG_ALLOWED_TYPES.join(","), multiple: "", class: "ws-img-input" });
+    const attachBtn = el("button", { class: "ws-ico ws-attach", type: "button", title: `Attach up to ${WS_IMG_MAX_COUNT} images — click, paste, or drag onto the box` }, ["📎"]);
+    // Filled dynamically by wsPaintAttachment() — one chip (thumbnail + its own ×) per attached
+    // image, up to WS_IMG_MAX_COUNT — not fixed single elements the way one-image-only used to be.
+    const imgPreviewWrap = el("div", { class: "ws-img-preview" }, []);
     imgPreviewWrap.hidden = true;
     const imgErr = el("div", { class: "ws-img-err" }, []);
     imgErr.hidden = true;
@@ -2488,38 +2523,33 @@ function viewWorkspace() {
     sendBtn.addEventListener("click", () => send(p));
     promptEl.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(p); } });
     // Attach path 1: file-picker button opens the hidden native input; its change event is the
-    // one place ALL browsers report the chosen file.
+    // one place ALL browsers report the chosen file(s) — `multiple` lets one dialog pick several
+    // at once, up to WS_IMG_MAX_COUNT.
     attachBtn.addEventListener("click", (e) => { e.stopPropagation(); imgFileInput.click(); });
     imgFileInput.addEventListener("change", () => {
-      const f = imgFileInput.files && imgFileInput.files[0];
-      imgFileInput.value = "";   // reset so re-picking the SAME file still fires change next time
-      if (f) wsAttachImageFile(p, f);
+      const files = imgFileInput.files ? [...imgFileInput.files] : [];
+      imgFileInput.value = "";   // reset so re-picking the SAME file(s) still fires change next time
+      wsAttachImageFiles(p, files);
     });
     // Attach path 2: paste an image straight into the textarea — mirrors Claude Desktop.
     // Only intercepted when the clipboard actually carries an image; a text paste (the common
-    // case) is left completely alone.
+    // case) is left completely alone. Every image item on the clipboard is attached, not just
+    // the first — some browsers/OSes report a multi-image copy as several file items.
     promptEl.addEventListener("paste", (e) => {
       const items = e.clipboardData && e.clipboardData.items; if (!items) return;
-      for (const item of items) {
-        if (item.kind === "file" && /^image\//.test(item.type)) {
-          e.preventDefault();
-          const f = item.getAsFile();
-          if (f) wsAttachImageFile(p, f);
-          return;
-        }
-      }
+      const files = [...items].filter((item) => item.kind === "file" && /^image\//.test(item.type)).map((item) => item.getAsFile()).filter(Boolean);
+      if (files.length) { e.preventDefault(); wsAttachImageFiles(p, files); }
     });
-    // Attach path 3: drag-and-drop an image file onto the compose row.
+    // Attach path 3: drag-and-drop one or more image files onto the compose row.
     composeRow.addEventListener("dragover", (e) => { e.preventDefault(); composeRow.classList.add("ws-drag"); });
     composeRow.addEventListener("dragleave", () => composeRow.classList.remove("ws-drag"));
     composeRow.addEventListener("drop", (e) => {
       e.preventDefault(); composeRow.classList.remove("ws-drag");
-      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-      if (f) wsAttachImageFile(p, f);
+      const files = e.dataTransfer && e.dataTransfer.files ? [...e.dataTransfer.files] : [];
+      wsAttachImageFiles(p, files);
     });
-    imgRemoveBtn.addEventListener("click", (e) => { e.stopPropagation(); p.attachedImage = null; wsShowImgErr(p, ""); wsPaintAttachment(p); });
 
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, usageEl: badge, dot, sendBtn, attachBtn, imgThumb, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog });
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, usageEl: badge, dot, sendBtn, attachBtn, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog });
     return paneRoot;
   }
 
@@ -3208,17 +3238,17 @@ function viewWorkspace() {
   }
 
   // ---- send --------------------------------------------------------------------
-  // The actual dispatch — POSTs one prompt (with its own text/image) and handles the round-trip.
+  // The actual dispatch — POSTs one prompt (with its own text/images) and handles the round-trip.
   // Split out of send() so a queued item (drainQueue, below) can be dispatched identically once
   // the pane goes idle, not just a prompt typed while already idle.
-  async function dispatchPrompt(p, text, image) {
+  async function dispatchPrompt(p, text, images) {
     assignKey(p);
     // Don't append optimistically. The server echoes the accepted user turn to every terminal
     // (so a SHARED session shows the prompt in both windows), and refuses it with `busy` if a
     // turn is already running — appending here would show a prompt that was never actually sent.
     p._pendingText = text;
     const body = { sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree, text, mode: p.mode, by: CONN.id };
-    if (image) body.image = { mediaType: image.mediaType, base64Data: image.base64Data };
+    if (images && images.length) body.images = images.map((img) => ({ mediaType: img.mediaType, base64Data: img.base64Data }));
     if (p.resume) { body.resume = p.resume; p.resume = null; }
     // Optimistic busy: the real "status":"thinking" event confirms this shortly over the stream,
     // but setting it now closes a race — without it, a SECOND queued item could see paneBusy()
@@ -3228,9 +3258,9 @@ function viewWorkspace() {
     logActivity(p, "→ Sending your message…");
     const r = await wsPost("prompt", body);
     if (!r.ok) {
-      // Couldn't even reach the work machine — restore the text (and any attached image) so
+      // Couldn't even reach the work machine — restore the text (and any attached images) so
       // nothing is lost.
-      if (image) { p.attachedImage = image; wsPaintAttachment(p); }
+      if (images && images.length) { p.attachedImages = images; wsPaintAttachment(p); }
       const ui = paneUI.get(p.id);
       if (ui && ui.promptEl.value === "") ui.promptEl.value = p._pendingText || "";
       p._pendingText = null;
@@ -3254,31 +3284,33 @@ function viewWorkspace() {
     const items = p._queue;
     p._queue = null;
     const text = items.map((i) => i.text).join("\n\n");
-    // At most one image can ride along on a single turn — the last one queued wins, same as if
-    // it had been attached to a freshly-typed message right before sending.
-    const image = [...items].reverse().find((i) => i.image)?.image || null;
+    // Every queued message's images ride along too, in the order they were typed — a merged turn
+    // is still just one prompt, so it respects the same WS_IMG_MAX_COUNT cap a single send does.
+    const allImages = items.flatMap((i) => i.images || []);
+    const images = allImages.slice(0, WS_IMG_MAX_COUNT);
+    if (allImages.length > WS_IMG_MAX_COUNT) note(`Only the first ${WS_IMG_MAX_COUNT} images across your queued messages were sent — Claude's own per-message limit.`);
     paintPane(p);
-    dispatchPrompt(p, text, image);
+    dispatchPrompt(p, text, images);
   }
   async function send(p) {
     if (p.readonly) return;
     const ui = paneUI.get(p.id); const text = ui.promptEl.value.trim(); if (!text) return;
     if (!p.repo) { note("Pick a repository for this pane first."); return; }
-    // Same "clear optimistically, restore on failure" treatment either way — the attached image
-    // (if any) is a one-shot per send, never left over for the next message.
-    const attachedImage = p.attachedImage;
-    ui.promptEl.value = ""; p.attachedImage = null; wsPaintAttachment(p);
+    // Same "clear optimistically, restore on failure" treatment either way — the attached images
+    // (if any) are a one-shot per send, never left over for the next message.
+    const attachedImages = p.attachedImages || [];
+    ui.promptEl.value = ""; p.attachedImages = []; wsPaintAttachment(p);
     // While a turn is already running, don't even attempt the round-trip (the server would refuse
     // it with `busy` anyway) — queue it locally instead: shown as its own orange box in the
     // transcript, sent automatically the instant the current turn actually finishes. Mirrors
     // typing ahead in Claude's own desktop app while it's still replying.
     if (paneBusy(p)) {
       p._queue = p._queue || [];
-      p._queue.push({ text, image: attachedImage || null });
+      p._queue.push({ text, images: attachedImages });
       paintPane(p);
       return;
     }
-    dispatchPrompt(p, text, attachedImage);
+    dispatchPrompt(p, text, attachedImages);
   }
 
   // ---- toolbar controls ----------------------------------------------------------

@@ -490,10 +490,12 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
    (this is a chat transcript, not a document — six visually distinct heading sizes would be
    excessive here; one consistent step reads clearly enough at any nesting depth). */
 .ws-md-heading { display: block; font-size: 1.08em; margin: 2px 0; }
-/* An image attached to a sent prompt — a modest thumbnail above the message text (its own block,
-   not inline with it), clickable through to the full image in a new tab. */
-.ws-user-image-link { display: block; margin-bottom: 6px; }
-.ws-user-image { display: block; max-width: 220px; max-height: 220px; border-radius: 6px; border: 1px solid rgba(255,255,255,.25); }
+/* Images attached to a sent prompt — up to 5, Claude Code's own limit — a row of modest
+   thumbnails above the message text (its own block, not inline with it), wrapping onto more than
+   one line when there isn't room; each clickable through to its full image in a new tab. */
+.ws-user-images { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.ws-user-image-link { display: block; }
+.ws-user-image { display: block; max-width: 140px; max-height: 140px; border-radius: 6px; border: 1px solid rgba(255,255,255,.25); }
 /* Always visible (not hover-only — has to work on touch), sitting in the code block's own header
    rather than floating over the text. */
 .ws-copy { background: transparent; border: 1px solid var(--line); border-radius: 6px; color: var(--ink-dim);
@@ -534,14 +536,17 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
    see claudeSession.mjs's re-arm-from-idle comment and .ws-status.deepwork above. */
 .ws-send.busy.deepwork { background: #f87171; border-color: #f87171; color: #2a0a0a; }
 .ws-send.busy.deepwork:hover { filter: brightness(1.05); }
-/* Image attach: hidden native file input (triggered by the 📎 button), a small thumbnail
-   preview with a remove (×) control, and an inline error line for the "still too large after
-   compression" case — sits above the compose row so it doesn't reflow the textarea/send button. */
+/* Image attach: hidden native file input (triggered by the 📎 button, `multiple` so one dialog
+   picks several at once), up to WS_IMG_MAX_COUNT thumbnail chips — each with its OWN remove (×)
+   control, not one fixed control for a single image — and an inline error line for the "still too
+   large after compression" / "too many images" cases — sits above the compose row so it doesn't
+   reflow the textarea/send button. */
 .ws-img-input { display: none; }
 .ws-attach { font-size: 15px; align-self: flex-end; }
 .ws-attach:disabled { opacity: .4; cursor: default; }
 .ws-compose-extras:empty { display: none; }
-.ws-img-preview { display: flex; align-items: center; gap: 6px; padding: 0 9px; margin-top: 6px; }
+.ws-img-preview { display: flex; flex-wrap: wrap; gap: 10px; padding: 0 9px; margin-top: 6px; }
+.ws-img-chip { display: flex; align-items: center; gap: 4px; }
 .ws-img-thumb { max-width: 64px; max-height: 64px; border-radius: 6px; border: 1px solid var(--line); object-fit: cover; }
 .ws-img-x { background: transparent; border: 1px solid var(--line); color: var(--ink-dim); border-radius: 50%; cursor: pointer;
   width: 18px; height: 18px; line-height: 1; font-size: 12px; padding: 0; }

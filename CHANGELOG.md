@@ -4,6 +4,31 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.25] - 2026-07-31
+
+### Fixed
+- **Attaching a second image silently replaced the first instead of adding to it.** The whole
+  attach pipeline — client compose state, the wire payload, the persisted turn record, the live
+  broadcast, and what actually rode to the SDK — only ever had room for ONE image
+  (`p.attachedImage`, `image: {...}`, `s.prompt(text, image)`). Picking, pasting, or dropping a
+  second image just overwrote the first; only the last one you attached ever made it into the
+  message. Migrated the whole path to arrays: `p.attachedImages`, `images: [...]`, and
+  `s.prompt(text, images)` — matching Claude Code's own 5-image-per-message limit
+  (`MAX_IMAGES_PER_PROMPT` server-side, `WS_IMG_MAX_COUNT` client-side). The old singular `image`
+  field is still accepted on input (normalized to a one-item array) so nothing that already
+  depended on it broke, and existing history rows saved before this change (still `.image`
+  singular on disk) keep rendering — nothing is rewritten.
+
+### Added
+- **Attach up to 5 images at once.** The compose row's 📎 button now opens a multi-select file
+  picker, drag-dropping several files at once attaches all of them, and pasting a multi-image
+  clipboard entry attaches every image item, not just the first. Each attached image gets its own
+  thumbnail chip with its own remove (×) — no more one fixed preview slot. `_saveImages` validates
+  every image's mediaType BEFORE writing any of them to disk, so a bad image later in a batch can't
+  leave an earlier valid one's file stranded with no turn record to reference it. A prompt with
+  more than 5 images is refused with a clear error, both from the client (before it's even sent)
+  and the server (defense in depth for anything arriving over the WS tunnel directly).
+
 ## [0.9.24] - 2026-07-31
 
 ### Added
