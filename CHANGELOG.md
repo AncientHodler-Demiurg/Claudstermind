@@ -4,6 +4,24 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.23] - 2026-07-31
+
+### Fixed
+- **The Send button (and busy indicator) could go "ready" while Claude was still genuinely
+  working, misleading you into thinking the last prompt's work was done.** Root cause: a turn
+  can end (a `result` message, resetting status to idle) while the SDK keeps the query alive for
+  backgrounded work — a Bash command or Task run in the background, or a deferred tool use (the
+  SDK's own `terminal_reason: "background_requested"` / `deferred_tool_use` semantics). When that
+  backgrounded work later settles, the SAME query stream resumes yielding real content (more
+  assistant text, tool calls, a second `result`) with no new prompt ever sent — so the ONLY place
+  that used to re-arm `status: "thinking"` (dequeuing a fresh user prompt in `_input()`) never
+  fired again, and the busy indicator stayed stuck on idle for the rest of the session even as
+  more replies kept streaming in. `ClaudeSession`'s main event loop now re-arms `"thinking"`
+  itself whenever it observes real incoming turn activity while idle, not only when a new prompt
+  goes out — reproduced directly against the real class with a mock SDK stream that ends a turn
+  early then keeps producing content, confirmed failing before the fix and passing after
+  (`lib/claudeSession.test.mjs`).
+
 ## [0.9.22] - 2026-07-30
 
 ### Fixed
