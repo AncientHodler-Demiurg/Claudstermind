@@ -2568,15 +2568,23 @@ function viewWorkspace() {
     ui.modeSel.classList.toggle("danger", p.mode === "bypassPermissions");
     ui.modeSel.classList.toggle("plan", p.mode === "plan");
     const busy = paneBusy(p);
+    const deep = p.status === "deepwork";
     ui.dot.classList.toggle("spinning", busy);
-    ui.dot.title = busy ? "Claude is working this turn…" : "Idle";
+    ui.dot.classList.toggle("deepwork", deep);
+    ui.dot.title = deep ? "Deep Work — the visible turn ended but Claude is still producing more (a backgrounded task settling)…" : busy ? "Claude is working this turn…" : "Idle";
     // Busy is a visual-only signal on the Send button (color + label), distinct from `disabled`:
     // the button stays clickable while busy so a prompt typed mid-turn still round-trips to the
     // server's `busy` refusal (see send()), which is what restores the typed text today. Turning
     // it fully unclickable is a bigger behavior change (queuing) that hasn't landed yet.
+    // Deep Work gets its own red treatment, layered on top of (not instead of) `busy` — it's the
+    // same turn-lock, just flagged as open-ended background activity rather than an ordinary
+    // "one moment" foreground turn, so you're never misled into thinking it's actually idle.
     ui.sendBtn.classList.toggle("busy", busy);
-    ui.sendBtn.textContent = busy ? "Working…" : "Send";
-    ui.sendBtn.title = busy ? "Claude is still working this turn — sending now will be held until it finishes." : "";
+    ui.sendBtn.classList.toggle("deepwork", deep);
+    ui.sendBtn.textContent = deep ? "Deep Work…" : busy ? "Working…" : "Send";
+    ui.sendBtn.title = deep
+      ? "Claude finished the visible turn but is still doing background work — more output is expected. Sending now will be held until it finishes."
+      : busy ? "Claude is still working this turn — sending now will be held until it finishes." : "";
     ui.promptEl.disabled = !!p.readonly;
     ui.sendBtn.disabled = !!p.readonly;
     ui.attachBtn.disabled = !!p.readonly;
@@ -2638,7 +2646,11 @@ function viewWorkspace() {
     const live = keys.filter(Boolean);
     if (live.length) wsPost("control", { action: "delete", args: { sessionKeys: live } });
   }
-  const paneBusy = (p) => p.status === "thinking" || p.status === "awaiting-permission";
+  // "deepwork" is a Claude session whose visible turn already ended but whose underlying SDK
+  // query is still producing content — a backgrounded Bash/Task settling and the model
+  // auto-continuing with no new prompt sent (see claudeSession.mjs's re-arm-from-idle comment).
+  // It counts as busy (blocks a same-pane send, keeps the turn-lock), but paints distinctly.
+  const paneBusy = (p) => p.status === "thinking" || p.status === "awaiting-permission" || p.status === "deepwork";
 
   /** × on a pane: end its session and give the pane a clean key, so the next message starts a
    *  genuinely new conversation rather than appending to the one you just cleared. */
@@ -3098,9 +3110,11 @@ function viewWorkspace() {
           p.status = data.status;
           // A shared session can go "thinking" because ANOTHER terminal sent the prompt, not this
           // one's own dispatchPrompt() — reset the streaming-logged flag here too, or this pane
-          // would never log "Streaming reply…" for a turn it didn't itself start.
-          if (data.status === "thinking") p._streamingStarted = false;
-          const STATUS_TEXT = { thinking: "● Thinking…", "awaiting-permission": "⏸ Waiting for tool permission…", idle: "✓ Idle", ended: "✓ Turn ended", error: "⚠ Errored" };
+          // would never log "Streaming reply…" for a turn it didn't itself start. "deepwork" is
+          // the same kind of fresh burst (a backgrounded task settling) and deserves the same
+          // reset, or its own live-typing preview would never get its "Streaming reply…" log line.
+          if (data.status === "thinking" || data.status === "deepwork") p._streamingStarted = false;
+          const STATUS_TEXT = { thinking: "● Thinking…", "awaiting-permission": "⏸ Waiting for tool permission…", idle: "✓ Idle", ended: "✓ Turn ended", error: "⚠ Errored", deepwork: "🔴 Deep Work — still producing more…" };
           logActivity(p, STATUS_TEXT[data.status] || ("● " + data.status));
           paintPane(p); drainQueue(p); continue;
         }

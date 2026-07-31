@@ -442,6 +442,12 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 .ws-status.spinning { border-top-color: #34d399; animation: wsSpin .7s linear infinite; }
 @keyframes wsSpin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .ws-status.spinning { animation: none; border-color: #34d399; } }
+/* Deep Work — the visible turn already ended but Claude's SDK query is still producing content
+   (a backgrounded Bash/Task settling with no new prompt sent, see claudeSession.mjs). Still spins
+   (it's still `busy`) but in red, not green — deliberately alarming-adjacent so it reads as
+   distinct from an ordinary foreground turn, not just "still thinking as expected". */
+.ws-status.spinning.deepwork { border-top-color: #f87171; }
+@media (prefers-reduced-motion: reduce) { .ws-status.deepwork { animation: none; border-color: #f87171; } }
 .ws-usage { font-size: 10.5px; color: var(--ink-dim); white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ws-x, .ws-ico { background: transparent; border: 1px solid transparent; color: var(--ink-dim); border-radius: 6px; cursor: pointer; font-size: 13px; padding: 2px 6px; }
 .ws-x:hover, .ws-ico:hover { border-color: var(--line); color: var(--ink); }
@@ -523,6 +529,11 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
    harder-to-miss signal than the small header spinner dot alone. */
 .ws-send.busy { background: #f59e0b; border-color: #f59e0b; color: #1a1400; }
 .ws-send.busy:hover { filter: brightness(1.05); }
+/* Deep Work overrides the ordinary orange busy color with red: the visible turn already ended
+   (this isn't "hang tight a moment") but Claude is still producing content in the background —
+   see claudeSession.mjs's re-arm-from-idle comment and .ws-status.deepwork above. */
+.ws-send.busy.deepwork { background: #f87171; border-color: #f87171; color: #2a0a0a; }
+.ws-send.busy.deepwork:hover { filter: brightness(1.05); }
 /* Image attach: hidden native file input (triggered by the 📎 button), a small thumbnail
    preview with a remove (×) control, and an inline error line for the "still too large after
    compression" case — sits above the compose row so it doesn't reflow the textarea/send button. */

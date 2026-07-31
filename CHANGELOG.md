@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.24] - 2026-07-31
+
+### Added
+- **A "Deep Work" indicator, distinct from the ordinary orange "Working…" state.** The previous
+  fix (0.9.23) re-armed the busy signal when a backgrounded task keeps producing content after its
+  visible turn's "result" — but it re-armed as plain "thinking", indistinguishable from a normal
+  foreground turn. You asked to actually be able to tell the two apart: Claude is still
+  genuinely delivering more output, just not in direct response to something you just sent. The
+  re-arm is now its own `"deepwork"` status, painted red (Send button + status dot) instead of
+  orange, both in `claudeSession.mjs` (the status itself) and the web console (`app.js`/
+  `styles.css`). The server-side turn lock (`workspace.mjs`'s single-writer refusal) now also
+  recognizes `"deepwork"` as busy — a prompt sent while a session is between "result" and its
+  backgrounded work actually settling is refused with the same `busy` event as an ordinary
+  mid-turn send, not silently accepted into an already-live query.
+
 ## [0.9.23] - 2026-07-31
 
 ### Fixed
