@@ -4,6 +4,24 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.26] - 2026-07-31
+
+### Fixed
+- **A message queued while Claude was busy showed no sign an image had been attached at all** —
+  only the tag/text rendered, never a thumbnail, even though `drainQueue()` correctly carries the
+  images through to the real, eventually-sent prompt (confirmed by tracing the actual current
+  code: `send()` → `p._queue.push({text, images})` → `drainQueue()`'s `flatMap` → `dispatchPrompt()`
+  → `body.images`, every step already threading it through correctly, and independently exercised
+  by the full multi-image test suite added in 0.9.25). This was a pure display gap in the transient
+  "queued" preview box, not a data-loss bug — but with no visual confirmation while waiting, there
+  was no way to tell the two apart just by looking. The queued box now renders each attached
+  image's thumbnail straight from its local (not-yet-uploaded) data URL, the same bytes the actual
+  send will carry.
+- **A message queued during "Deep Work" (see 0.9.24) was indistinguishable from one queued during
+  an ordinary busy turn** — both showed the same orange box. Queued messages now render pink
+  specifically when queued while the pane is in `"deepwork"`, matching the Send button/status dot's
+  own distinct treatment for that state.
+
 ## [0.9.25] - 2026-07-31
 
 ### Fixed

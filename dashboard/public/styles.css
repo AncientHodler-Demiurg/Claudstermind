@@ -467,6 +467,12 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
    the instant the turn actually finishes and drainQueue() fires. */
 .ws-line.ws-queued { background: color-mix(in srgb, #f59e0b 16%, var(--chip)); border: 1px solid #f59e0b; color: #f59e0b; }
 .ws-queued-tag { display: block; margin-top: 3px; font-size: 10px; font-weight: 400; color: #f59e0b; }
+/* A message queued while the pane was specifically in "deepwork" (not just an ordinary busy
+   turn) — pink instead of orange, matching the Send button/status dot's own Deep Work red/pink
+   treatment, so it's clear at a glance THIS queued message is waiting on open-ended background
+   activity, not "hang tight a moment". */
+.ws-line.ws-queued.ws-queued-deep { background: color-mix(in srgb, #f472b6 16%, var(--chip)); border-color: #f472b6; color: #f472b6; }
+.ws-line.ws-queued.ws-queued-deep .ws-queued-tag { color: #f472b6; }
 /* Claude's own signature color throughout the rest of the UI (tooltips, headers) — reused here
    so a reply reads as distinctly "Claude" at a glance, the same way the user's own text reads as
    distinctly "you" against its solid blue bubble above. */

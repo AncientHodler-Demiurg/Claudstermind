@@ -2637,14 +2637,27 @@ function viewWorkspace() {
       // onPayload's assistant_delta handling). Appended after the real transcript, never IN it.
       if (p._liveText) nodes.push(line("ws-assistant ws-live", [p._liveText]));
       // Queued messages — typed while Claude was still working, "frozen in cache" until this
-      // turn finishes (see send()/drainQueue()). Rendered distinctly (orange) so it's obvious
-      // these haven't actually been sent yet, in the order they'll go out. Several queued at once
-      // are shown individually here but drainQueue() merges them into ONE prompt on release —
-      // the tag says so whenever there's more than one, so it's clear before it happens.
+      // turn finishes (see send()/drainQueue()). Rendered distinctly (orange, or pink during
+      // "deepwork" — see paintPane's busy/deep handling above) so it's obvious these haven't
+      // actually been sent yet, in the order they'll go out. Several queued at once are shown
+      // individually here but drainQueue() merges them into ONE prompt on release — the tag says
+      // so whenever there's more than one, so it's clear before it happens.
       const queuedTag = hasQueue && p._queue.length > 1
         ? "queued — will be merged with the other" + (p._queue.length - 1 > 1 ? "s" : "") + " into one message once this turn finishes"
         : "queued — sending once this turn finishes";
-      if (hasQueue) for (const q of p._queue) nodes.push(line("ws-user ws-queued", [el("b", {}, ["you  "]), q.text, el("span", { class: "ws-queued-tag" }, [queuedTag])]));
+      const queuedCls = "ws-user ws-queued" + (p.status === "deepwork" ? " ws-queued-deep" : "");
+      if (hasQueue) for (const q of p._queue) {
+        const kids = [el("b", {}, ["you  "])];
+        // A queued message's images are still local blobs (not yet uploaded/saved) — render
+        // straight from their own dataUrl, the same bytes the real send will carry, rather than
+        // waiting for a server round-trip that hasn't happened yet. Previously this box showed
+        // NO indication an image was attached at all while queued (only the final, actually-sent
+        // message rendered one) — confirmed report: images looked like they might not be
+        // attached at all until the turn actually released.
+        if (q.images && q.images.length) kids.push(el("div", { class: "ws-user-images" }, q.images.map((img) => el("img", { class: "ws-user-image", src: img.dataUrl, alt: "attached image (queued)" }, []))));
+        kids.push(q.text, el("span", { class: "ws-queued-tag" }, [queuedTag]));
+        nodes.push(line(queuedCls, kids));
+      }
       ui.transcriptEl.replaceChildren(...nodes);
     }
     if (wasNearBottom) ui.transcriptEl.scrollTop = ui.transcriptEl.scrollHeight;
