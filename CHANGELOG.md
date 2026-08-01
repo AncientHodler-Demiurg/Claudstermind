@@ -4,6 +4,27 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.30] - 2026-08-01
+
+### Added
+- **The compose box grows as you type, up to 10 lines, then scrolls** — instead of staying a fixed
+  2-line box, matching Claude Code's own desktop compose box. Computed from the textarea's actual
+  computed line-height/padding, not a hardcoded pixel guess. Manual drag-resize is dropped (it
+  would just fight the auto-grow on the next keystroke).
+
+### Fixed
+- **A prompt sent right as Deep Work "finished" could get its reply muddled with that background
+  activity's own leftover output — with no sign anything was wrong.** The busy indicator can
+  briefly, genuinely go idle (a real `result`), then a prompt sent in that exact window gets
+  accepted as an ordinary new turn — but there's a real chance the backgrounded task that just
+  "finished" is still producing its own tail of output, which can arrive interleaved with (or
+  instead of) a reply to that new prompt, making the sent prompt look lost. `ClaudeSession` now
+  stamps `_lastDeepWorkEndedAt` the moment a deepwork phase actually ends; a prompt accepted within
+  10 seconds of that is flagged `deepWorkRisk` (persisted turn + live broadcast alike). The web
+  console renders it as the normal blue "sent" bubble but ringed in red with a warning tag — sent
+  for real, unlike a queued message, but landed in a window where the reply might still be
+  catching up on background work rather than actually addressing it.
+
 ## [0.9.29] - 2026-08-01
 
 ### Added

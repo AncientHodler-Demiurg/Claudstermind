@@ -2285,6 +2285,15 @@ function viewWorkspace() {
         })));
       }
       kids.push(m.text);
+      // Sent right as a "deepwork" phase was wrapping up (see lib/workspace.mjs's
+      // DEEP_WORK_RISK_GRACE_MS) — real chance that phase's own leftover output arrives
+      // interleaved with (or instead of) a reply to THIS prompt. Flagged red rather than the
+      // normal blue bubble, so "it looked captured but nothing seemed to happen" reads as "this
+      // landed in a risky window, give it a moment (or just resend)" instead of looking lost.
+      if (m.deepWorkRisk) {
+        kids.push(el("span", { class: "ws-deepwork-risk-tag" }, ["⚠ sent as Deep Work was wrapping up — reply may still be catching up"]));
+        return line("ws-user ws-deepwork-risk", kids);
+      }
       return line("ws-user", kids);
     }
     if (m.role === "assistant" || m.kind === "assistant") return line("ws-assistant", renderAssistantText(m.text));
@@ -2357,6 +2366,22 @@ function viewWorkspace() {
   // `saveImage`'s IMAGE_EXT for the closed mediaType list this must match.
   const WS_IMG_ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp"];
   const WS_IMG_MAX_COUNT = 5;
+  // The compose box grows with what you type — up to WS_PROMPT_MAX_ROWS lines — instead of
+  // staying a fixed 2-line box, matching Claude Code's own desktop compose box. Computed from the
+  // textarea's OWN computed line-height/padding (getComputedStyle), not a hardcoded pixel guess,
+  // so a future CSS tweak to .ws-prompt can't silently desync the cap from what's actually drawn.
+  const WS_PROMPT_MIN_ROWS = 2;
+  const WS_PROMPT_MAX_ROWS = 10;
+  function wsAutoResizePrompt(el) {
+    const cs = getComputedStyle(el);
+    const lineHeight = parseFloat(cs.lineHeight) || 18;
+    const extra = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+    const maxHeight = lineHeight * WS_PROMPT_MAX_ROWS + extra;
+    el.style.height = "auto";   // collapse first — scrollHeight only shrinks correctly measured from a fresh baseline
+    const needed = el.scrollHeight;
+    el.style.height = Math.min(needed, maxHeight) + "px";
+    el.style.overflowY = needed > maxHeight ? "auto" : "hidden";
+  }
   // "roughly 3 MB" per design — measured on the ENCODED (base64) string, since that's what
   // actually rides the WS control frame; base64 chars ≈ bytes (ASCII), so string length is a
   // fine proxy without decoding back to bytes just to check.
@@ -2508,7 +2533,8 @@ function viewWorkspace() {
     const closeBtn = el("button", { class: "ws-x", title: "Clear this pane (ends its session)" }, ["×"]);
     const histBtn = el("button", { class: "ws-ico", title: "History for this repo" }, ["⏱"]);
     const transcriptEl = el("div", { class: "ws-transcript" }, []);
-    const promptEl = el("textarea", { class: "ws-prompt", rows: "2", placeholder: "Message Claude… (Ctrl+Enter)" });
+    const promptEl = el("textarea", { class: "ws-prompt", rows: String(WS_PROMPT_MIN_ROWS), placeholder: "Message Claude… (Ctrl+Enter)" });
+    promptEl.addEventListener("input", () => wsAutoResizePrompt(promptEl));
     const sendBtn = el("button", { class: "loginbtn ws-send" }, ["Send"]);
     // Attach affordance: a file-picker button (hidden native <input type=file>) plus paste and
     // drag-drop straight onto the compose row — all three funnel into wsAttachImageFile, so they
@@ -3300,7 +3326,7 @@ function viewWorkspace() {
         // fixing whatever the error says, has everything to work with again.
         if (data.kind === "error" && p._pendingText) {
           const ui = paneUI.get(p.id);
-          if (ui && !ui.promptEl.value) ui.promptEl.value = p._pendingText;
+          if (ui && !ui.promptEl.value) { ui.promptEl.value = p._pendingText; wsAutoResizePrompt(ui.promptEl); }
           if (p._pendingImages && p._pendingImages.length && !(p.attachedImages && p.attachedImages.length)) { p.attachedImages = p._pendingImages; wsPaintAttachment(p); }
           p._pendingText = null; p._pendingImages = null;
         }
@@ -3424,7 +3450,7 @@ function viewWorkspace() {
       // nothing is lost.
       if (images && images.length) { p.attachedImages = images; wsPaintAttachment(p); }
       const ui = paneUI.get(p.id);
-      if (ui && ui.promptEl.value === "") ui.promptEl.value = p._pendingText || "";
+      if (ui && ui.promptEl.value === "") { ui.promptEl.value = p._pendingText || ""; wsAutoResizePrompt(ui.promptEl); }
       p._pendingText = null; p._pendingImages = null;
       p.status = "idle";
       p.transcript.push({ kind: "error", text: r.message || "Could not reach the work machine." });
@@ -3461,7 +3487,7 @@ function viewWorkspace() {
     // Same "clear optimistically, restore on failure" treatment either way — the attached images
     // (if any) are a one-shot per send, never left over for the next message.
     const attachedImages = p.attachedImages || [];
-    ui.promptEl.value = ""; p.attachedImages = []; wsPaintAttachment(p);
+    ui.promptEl.value = ""; wsAutoResizePrompt(ui.promptEl); p.attachedImages = []; wsPaintAttachment(p);
     // While a turn is already running, don't even attempt the round-trip (the server would refuse
     // it with `busy` anyway) — queue it locally instead: shown as its own orange box in the
     // transcript, sent automatically the instant the current turn actually finishes. Mirrors
