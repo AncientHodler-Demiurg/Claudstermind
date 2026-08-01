@@ -4,6 +4,29 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.28] - 2026-08-01
+
+### Added
+- **Backend plumbing for model/effort/fast-mode switching, context-window usage, and plan usage
+  limits — no UI yet, this lands next.** The Claude Agent SDK's `Query` object exposes a live
+  control surface this app never used: `setModel()`/`applyFlagSettings({effortLevel, fastMode})`
+  to switch mid-session, `supportedModels()` for the selector's catalog (display name, description,
+  effort/fast-mode support — matches Claude Code Desktop's own model picker), `getContextUsage()`
+  for a per-conversation context-window breakdown, and
+  `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()` for claude.ai plan rate-limit
+  utilization (5-hour/7-day/per-model windows) — **the last one is Anthropic's own experimental
+  naming; the method name and response shape may change without notice in a future SDK release.**
+  `ClaudeSession` now wraps all of these (never throwing — null/[] when unsupported, so a UI meter
+  degrades gracefully rather than breaking a pane), `model`/`effort`/`fastMode` are threaded into
+  a NEW session's initial options the same way `mode` already was, and an EXISTING session's prompt
+  can now switch model/effort/fastMode mid-conversation too (previously only permission mode could
+  change on a live pane — model was new-session-only). Three new "control" actions
+  (`setModel`/`setEffort`/`setFastMode`) mirror the existing `setMode`; three read-only ones
+  (`models`/`contextUsage`/`usageLimits`) back the eventual UI — `models`/`usageLimits` are
+  account-wide (any live session can answer, and the model catalog is cached across sessions since
+  it's a property of the CLI build/account, not the specific conversation), `contextUsage` is
+  strictly per-conversation (never borrowed from an unrelated session).
+
 ## [0.9.27] - 2026-08-01
 
 ### Fixed
