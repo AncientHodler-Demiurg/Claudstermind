@@ -4,6 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.29] - 2026-08-01
+
+### Added
+- **Model, effort, and fast-mode selectors per pane** — matches Claude Code Desktop's own picker.
+  Each pane's controls bar now shows a model dropdown (populated from the SDK's live model
+  catalog), a reasoning-effort dropdown (only shown for models that support one, options taken
+  from that model's own `supportedEffortLevels`), and a "Fast" toggle (only shown for models that
+  support fast mode). Switching any of them applies immediately to a live session and rides every
+  future prompt (including a brand new session) either way.
+- **A context-window usage readout per pane** — the existing token-count badge now also shows
+  "N% ctx" (hover for the exact token/max breakdown), refreshed once each turn actually finishes.
+- **A plan usage-limits badge** (5-hour / 7-day utilization, hover for the full per-model/
+  reset-time breakdown) in the workspace toolbar — **built on the SDK's own EXPERIMENTAL usage
+  API**, so it's hidden entirely rather than shown broken on any build where that API doesn't
+  answer (API-key auth, or a future SDK update that changes its shape).
+
 ## [0.9.28] - 2026-08-01
 
 ### Added

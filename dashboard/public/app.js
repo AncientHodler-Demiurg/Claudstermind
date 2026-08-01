@@ -1924,6 +1924,14 @@ function viewWorkspace() {
     presence: [],                  // connected terminals (this one + others), from the server
     worktrees: {},                 // repo -> [{ name, branch, isMain, needsInstall }]
     _pendingHistoryResume: null,   // { repo, worktree, sessionKey, timer } — a "resume a missing worktree" in flight
+    // The model catalog (display name, description, effort/fast-mode support) — a property of the
+    // CLI build/account, not per-pane, so it's ONE global list every pane's selector reads from
+    // (mirrors the server's own cross-session _modelsCache — see lib/workspace.mjs).
+    models: [],
+    // claude.ai plan rate-limit utilization (5h/7d/per-model) — also account-wide, not per-pane.
+    // EXPERIMENTAL per the SDK's own naming (see claudeSession.mjs getUsageLimits) — null until the
+    // first live session answers, and may simply never populate on a non-claude.ai-subscriber build.
+    usageLimits: null,
   };
   const CONN = connIdentity();
   let searchTimer = null;
@@ -1945,7 +1953,7 @@ function viewWorkspace() {
   // deliberately abandoned (cleared, or repointed to a different repo/worktree) — a
   // pendingOpens entry captures the pane's gen at request time, so a reply that arrives
   // after the pane moved on can tell it no longer applies (see beginPendingOpen).
-  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", worktree: "main", mode: st.defaultMode, transcript: [], usage: {}, status: "idle", readonly: false, resume: null, _gen: 0, _expandedGroups: new Set(), attachedImages: [] });
+  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", worktree: "main", mode: st.defaultMode, model: null, effort: null, fastMode: false, transcript: [], usage: {}, status: "idle", readonly: false, resume: null, _gen: 0, _expandedGroups: new Set(), attachedImages: [], contextUsage: null });
   // Every pane with a repo runs under a shared, deterministic key (repo@worktree). Panes still
   // waiting for a repo keep their random placeholder so they never collide before use.
   function keyForPane(p) { return p.repo ? wsWorkspaceId(p.repo, p.worktree) : p.sessionKey; }
@@ -2052,6 +2060,12 @@ function viewWorkspace() {
   const sideList = el("div", { class: "ws-side-list" }, []);
   const histList = el("div", { class: "ws-hist" }, []);
   const usageEl = el("span", { class: "ws-usage-total" }, ["—"]);
+  // Plan usage limits (5-hour/7-day/per-model) — account-wide, EXPERIMENTAL per the SDK's own
+  // naming (see claudeSession.mjs getUsageLimits). Hidden entirely until the first real answer
+  // arrives (a non-claude.ai-subscriber build, e.g. API-key auth, may never populate this at all —
+  // that's expected, not an error, so there's no "unavailable" placeholder to show meanwhile).
+  const usageLimitsEl = el("span", { class: "ws-usage-limits", title: "Plan usage limits (experimental)" }, []);
+  usageLimitsEl.hidden = true;
   const defaultModeSel = el("select", { class: "wsel wsel-sm ws-defmode" }, []);
   const permHost = el("div", {});
 
@@ -2112,6 +2126,30 @@ function viewWorkspace() {
     sel.replaceChildren(...opts);
     sel.value = p.worktree || "main";
     sel.hidden = !p.repo;   // only meaningful once a repo is picked
+  }
+
+  // ---- model/effort selector for a pane ---------------------------------------------
+  // st.models is ONE global catalog (mirrors the server's cross-session cache — see
+  // lib/workspace.mjs _models): a property of the CLI build/account, not per-pane, so every
+  // pane's selector reads from the same list once any session anywhere has answered it.
+  function modelInfoFor(value) { return st.models.find((m) => m.value === value) || null; }
+  function fillModelSelect(sel, value) {
+    const opts = [el("option", { value: "" }, ["Default"]), ...st.models.map((m) => el("option", { value: m.value }, [m.displayName]))];
+    sel.replaceChildren(...opts);
+    // A pane's already-chosen model may not (yet) be in a freshly-(re)fetched catalog — inject an
+    // option so the dropdown still shows it rather than silently reverting to "Default".
+    if (value && !st.models.some((m) => m.value === value)) opts.push(el("option", { value }, [value]));
+    sel.value = value || "";
+  }
+  // Effort options depend on the CURRENTLY selected model — rebuilt every paint, not just on
+  // model change, since st.models itself can arrive/refresh asynchronously after the pane exists.
+  function fillEffortSelect(sel, p) {
+    const info = modelInfoFor(p.model);
+    const levels = info?.supportsEffort ? (info.supportedEffortLevels || []) : [];
+    sel.hidden = !levels.length;
+    if (!levels.length) return;
+    sel.replaceChildren(el("option", { value: "" }, ["Default effort"]), ...levels.map((lv) => el("option", { value: lv }, [lv[0].toUpperCase() + lv.slice(1)])));
+    sel.value = levels.includes(p.effort) ? p.effort : "";
   }
 
   // ---- transcript rendering (handles both live {kind} and saved {role} items) ----
@@ -2448,6 +2486,19 @@ function viewWorkspace() {
     const modeSel = el("select", { class: "wsel wsel-mode", title: "Permission mode for this pane" },
       WS_MODES.map((m) => el("option", { value: m.id }, [m.short])));
     modeSel.value = p.mode;
+    // Model + effort + fast mode — matches Claude Code Desktop's own selector (model, then a
+    // reasoning-effort level for models that support one, then a fast-mode toggle for models that
+    // support that). st.models populates once ANY session anywhere has answered "models" (see
+    // fillModelSelect) — until then this just shows "Default", same as never having picked one.
+    const modelSel = el("select", { class: "wsel wsel-sm wsel-model", title: "Model for this pane" });
+    fillModelSelect(modelSel, p.model);
+    const effortSel = el("select", { class: "wsel wsel-sm wsel-effort", title: "Reasoning effort" });
+    fillEffortSelect(effortSel, p);
+    const fastModeLabel = el("label", { class: "ws-fastmode", title: "Fast mode — quicker, lighter-weight responses" }, [
+      el("input", { type: "checkbox", class: "ws-fastmode-cb" }, []), " Fast",
+    ]);
+    const fastModeCb = fastModeLabel.querySelector("input");
+    fastModeCb.checked = !!p.fastMode;
     // The pane's turn-lock status icon — a plain CSS spinner (no glyph, no dependency):
     // a bordered ring that rotates while the pane's session is busy, and sits still
     // (idle/done) otherwise. Driven by paintPane() from p.status, which onPayload keeps
@@ -2481,7 +2532,7 @@ function viewWorkspace() {
     // header far from where you're actually typing.
     const identityLabel = el("span", { class: "ws-identity" }, ["—"]);
     const topBar = el("div", { class: "ws-pane-hd" }, [dot, identityLabel, el("span", { class: "ws-spacer" }), closeBtn]);
-    const controlsBar = el("div", { class: "ws-pane-controls" }, [repoSel, wtSel, modeSel, histBtn, el("span", { class: "ws-spacer" }), badge]);
+    const controlsBar = el("div", { class: "ws-pane-controls" }, [repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, histBtn, el("span", { class: "ws-spacer" }), badge]);
     // The live "what's happening right now" feed — a single always-visible line (tap to expand
     // the full scrolling log) narrating every state transition: sending, thinking, streaming,
     // running a tool, waiting for permission, done, a connection hiccup — everything the orange
@@ -2518,6 +2569,24 @@ function viewWorkspace() {
     // Applies live: the server calls the SDK's setPermissionMode on a running session, so
     // switching mid-conversation behaves the same as switching it in the Claude Code UI.
     modeSel.addEventListener("change", () => { p.mode = modeSel.value; wsPost("control", { action: "setMode", args: { sessionKey: p.sessionKey, mode: p.mode } }); paintPane(p); saveLayout(); });
+    // Model/effort/fast-mode: applied immediately to a LIVE session (setModel/setEffort/
+    // setFastMode no-op harmlessly server-side if there's no live session yet — the choice still
+    // rides the NEXT prompt's own body either way, see dispatchPrompt).
+    modelSel.addEventListener("change", () => {
+      p.model = modelSel.value || null;
+      wsPost("control", { action: "setModel", args: { sessionKey: p.sessionKey, model: p.model } });
+      paintPane(p); saveLayout();   // repaint: the effort/fast-mode controls depend on the new model
+    });
+    effortSel.addEventListener("change", () => {
+      p.effort = effortSel.value || null;
+      wsPost("control", { action: "setEffort", args: { sessionKey: p.sessionKey, effort: p.effort } });
+      saveLayout();
+    });
+    fastModeCb.addEventListener("change", () => {
+      p.fastMode = fastModeCb.checked;
+      wsPost("control", { action: "setFastMode", args: { sessionKey: p.sessionKey, enabled: p.fastMode } });
+      saveLayout();
+    });
     histBtn.addEventListener("click", (e) => { e.stopPropagation(); loadHistory(p.repo || null); });
     closeBtn.addEventListener("click", (e) => { e.stopPropagation(); clearPane(p); });
     sendBtn.addEventListener("click", () => send(p));
@@ -2549,7 +2618,7 @@ function viewWorkspace() {
       wsAttachImageFiles(p, files);
     });
 
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, usageEl: badge, dot, sendBtn, attachBtn, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog });
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, attachBtn, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog });
     return paneRoot;
   }
 
@@ -2597,6 +2666,13 @@ function viewWorkspace() {
     if (ui.modeSel.value !== p.mode) ui.modeSel.value = p.mode;
     ui.modeSel.classList.toggle("danger", p.mode === "bypassPermissions");
     ui.modeSel.classList.toggle("plan", p.mode === "plan");
+    // Model/effort/fast-mode: rebuilt every paint (cheap — a handful of <option>s), since
+    // st.models can arrive/refresh asynchronously well after the pane and its selects exist.
+    fillModelSelect(ui.modelSel, p.model);
+    fillEffortSelect(ui.effortSel, p);
+    const modelInfo = modelInfoFor(p.model);
+    ui.fastModeLabel.hidden = !modelInfo?.supportsFastMode;
+    ui.fastModeCb.checked = !!p.fastMode;
     const busy = paneBusy(p);
     const deep = p.status === "deepwork";
     ui.dot.classList.toggle("spinning", busy);
@@ -2620,7 +2696,10 @@ function viewWorkspace() {
     ui.attachBtn.disabled = !!p.readonly;
     ui.promptEl.placeholder = p.readonly ? "Read-only — pick the repo above or Resume from history to continue" : (p.resume ? "Resuming saved session — your next message continues it" : "Message Claude… (Ctrl+Enter)");
     const u = p.usage || {};
-    ui.usageEl.textContent = (u.inputTokens || u.outputTokens) ? `${((u.inputTokens || 0) + (u.outputTokens || 0)).toLocaleString()} tok` : "—";
+    const ctx = p.contextUsage;
+    const ctxPct = ctx && typeof ctx.percentage === "number" ? Math.round(ctx.percentage <= 1 ? ctx.percentage * 100 : ctx.percentage) : null;
+    ui.usageEl.textContent = (u.inputTokens || u.outputTokens) ? `${((u.inputTokens || 0) + (u.outputTokens || 0)).toLocaleString()} tok` + (ctxPct !== null ? ` · ${ctxPct}% ctx` : "") : "—";
+    ui.usageEl.title = ctx ? `Context window: ${(ctx.totalTokens || 0).toLocaleString()} / ${(ctx.maxTokens || 0).toLocaleString()} tokens (${ctxPct ?? "—"}%)` : "";
     // paintPane fires on every streamed event during a turn — a full replaceChildren() would
     // otherwise (a) blow away any tool-group a user just expanded (fixed by handing the pane's
     // persisted `_expandedGroups` into renderTranscript) and (b) yank the scroll position back to
@@ -2729,6 +2808,28 @@ function viewWorkspace() {
     let tok = 0;
     for (const p of st.panes) { tok += (p.usage?.inputTokens || 0) + (p.usage?.outputTokens || 0); }
     usageEl.textContent = `${st.cols}×${st.rows} = ${st.panes.length} pane(s) · ${tok.toLocaleString()} tok`;
+  }
+  // Compact "5h X% · 7d Y%" badge — full per-model/reset-time breakdown in the tooltip, since a
+  // popover for account-wide data used maybe a few times a session isn't worth the extra chrome.
+  function renderUsageLimits() {
+    const limits = st.usageLimits;
+    if (!limits || !limits.rate_limits_available || !limits.rate_limits) { usageLimitsEl.hidden = true; return; }
+    const rl = limits.rate_limits;
+    const pct = (w) => (w && typeof w.utilization === "number" ? Math.round(w.utilization) : null);
+    const resets = (w) => w?.resets_at ? new Date(w.resets_at).toLocaleString() : null;
+    const parts = [];
+    if (pct(rl.five_hour) !== null) parts.push(`5h ${pct(rl.five_hour)}%`);
+    if (pct(rl.seven_day) !== null) parts.push(`7d ${pct(rl.seven_day)}%`);
+    if (!parts.length) { usageLimitsEl.hidden = true; return; }
+    usageLimitsEl.hidden = false;
+    usageLimitsEl.textContent = parts.join(" · ");
+    const detail = [];
+    if (pct(rl.five_hour) !== null) detail.push(`5-hour: ${pct(rl.five_hour)}%` + (resets(rl.five_hour) ? `, resets ${resets(rl.five_hour)}` : ""));
+    if (pct(rl.seven_day) !== null) detail.push(`7-day: ${pct(rl.seven_day)}%` + (resets(rl.seven_day) ? `, resets ${resets(rl.seven_day)}` : ""));
+    if (pct(rl.seven_day_opus) !== null) detail.push(`7-day (Opus): ${pct(rl.seven_day_opus)}%`);
+    if (pct(rl.seven_day_sonnet) !== null) detail.push(`7-day (Sonnet): ${pct(rl.seven_day_sonnet)}%`);
+    for (const m of rl.model_scoped || []) if (typeof m.utilization === "number") detail.push(`${m.display_name}: ${Math.round(m.utilization)}%`);
+    usageLimitsEl.title = "Plan usage limits (experimental)" + (detail.length ? "\n" + detail.join("\n") : "");
   }
 
   // ---- sidebar: Repositories | Tree ----------------------------------------------
@@ -3025,6 +3126,10 @@ function viewWorkspace() {
       }
       if (Array.isArray(data.search)) { st.searchResults = data.search; renderHistory(); }
       if (Array.isArray(data.dataSizes)) { st.dataSizes = Object.fromEntries(data.dataSizes.map((d) => [d.repo, d])); renderSidebar(); }
+      // The model catalog — ONE global list (see st.models above); a fresh answer replaces it and
+      // every pane's selector is repainted so a newly-available model shows up everywhere at once,
+      // not just in whichever pane happened to ask.
+      if (Array.isArray(data.models) && data.models.length) { st.models = data.models; for (const p of st.panes) paintPane(p); }
       if (Array.isArray(data.sessions)) for (const s of data.sessions) for (const p of panesOf(s.sessionKey)) { p.status = s.status || p.status; if (s.mode) p.mode = s.mode; if (s.usage) p.usage = s.usage; paintPane(p); }
       if (data.session) for (const p of panesOf(data.session.sessionKey)) { Object.assign(p, { status: data.session.status ?? p.status, mode: data.session.mode ?? p.mode, usage: data.session.usage ?? p.usage }); paintPane(p); }
       // NOTE: the server's own defaultMode is deliberately NOT mirrored here. Every pane sends
@@ -3152,6 +3257,12 @@ function viewWorkspace() {
         }
         return;
       }
+      // Context-window usage is per-conversation — stored on the requesting pane(s) only.
+      if (data.kind === "contextUsage") { for (const p of targets) { p.contextUsage = data.usage; paintPane(p); } return; }
+      // Plan usage limits are account-wide, not per-conversation (see lib/workspace.mjs
+      // _usageLimits) — stored globally so ANY pane's usage display reflects the latest answer,
+      // not just whichever pane happened to ask.
+      if (data.kind === "usageLimits") { st.usageLimits = data.limits; renderUsageLimits(); return; }
       for (const p of targets) {
         // Live typing preview (see lib/claudeSession.mjs's `includePartialMessages`/`stream_event`
         // handling): each chunk just extends a transient, per-pane buffer — never pushed into
@@ -3205,13 +3316,16 @@ function viewWorkspace() {
         else if (data.kind === "error") logActivity(p, "⚠ " + (data.text || data.message || "Unknown error"), "ws-act-err");
         p.transcript.push(data);
         if (data.usageTotal) p.usage = data.usageTotal;
+        // Context usage changes every turn — refresh it once a turn actually finishes (not on
+        // every streamed chunk, which would spam the control channel for no visible benefit).
+        if (data.kind === "result") wsPost("control", { action: "contextUsage", args: { sessionKey: p.sessionKey } });
         paintPane(p);
         drainQueue(p);
       }
       setUsageTotal();
     }
   }
-  function primeControls() { wsPost("control", { action: "list" }); wsPost("control", { action: "tree" }); wsPost("control", { action: "history", args: {} }); wsPost("control", { action: "dataSizes" }); }
+  function primeControls() { wsPost("control", { action: "list" }); wsPost("control", { action: "tree" }); wsPost("control", { action: "history", args: {} }); wsPost("control", { action: "dataSizes" }); wsPost("control", { action: "models" }); wsPost("control", { action: "usageLimits" }); }
   // Reconnect catch-up: ask the server for the CURRENT live state of every pane this terminal
   // still has open (see `_resync` in lib/workspace.mjs). Every hop between a real event
   // happening and it reaching this browser — the local SSE fan-out, the tunnel socket, the
@@ -3291,6 +3405,12 @@ function viewWorkspace() {
     p._pendingText = text; p._pendingImages = images || [];
     const body = { sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree, text, mode: p.mode, by: CONN.id };
     if (images && images.length) body.images = images.map((img) => ({ mediaType: img.mediaType, base64Data: img.base64Data }));
+    // Model/effort/fast-mode ride every prompt too — this is what actually applies them for a
+    // BRAND NEW session (setModel/setEffort/setFastMode control actions only affect a session
+    // that already exists; see lib/workspace.mjs _prompt's model/effort/fastMode handling).
+    if (p.model) body.model = p.model;
+    if (p.effort) body.effort = p.effort;
+    if (p.fastMode) body.fastMode = true;
     if (p.resume) { body.resume = p.resume; p.resume = null; }
     // Optimistic busy: the real "status":"thinking" event confirms this shortly over the stream,
     // but setting it now closes a race — without it, a SECOND queued item could see paneBusy()
@@ -3422,7 +3542,7 @@ function viewWorkspace() {
       el("label", { class: "ws-trust", title: "The permission mode new panes start in. Each pane can then be switched on its own." }, ["New panes:", defaultModeSel]),
       applyAllBtn,
       el("span", { class: "ws-spacer" }, []),
-      usageEl, newFolderBtn, newRepoBtn,
+      usageEl, usageLimitsEl, newFolderBtn, newRepoBtn,
     ]),
     presenceBar,
     bridgeNote,

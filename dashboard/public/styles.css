@@ -321,6 +321,10 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 .ws-spacer { flex: 1; }
 .ws-trust { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink); }
 .ws-usage-total { font-size: 12px; color: var(--ink-dim); }
+/* Plan usage limits (5h/7d) — a compact badge, full breakdown in its title tooltip (see
+   renderUsageLimits in app.js). Hidden entirely on a build where the SDK's experimental
+   usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET() never answers (e.g. API-key auth). */
+.ws-usage-limits { font-size: 12px; color: var(--ink-dim); border: 1px solid var(--line); border-radius: 6px; padding: 2px 7px; cursor: default; }
 .wsel { background: var(--chip); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font-size: 13px; min-width: 200px; }
 .wsel-sm { min-width: 0; flex: 1; padding: 4px 8px; font-size: 12.5px; }
 
@@ -345,6 +349,16 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 .wsel-mode.plan { border-color: #60a5fa; color: #93c5fd; background: color-mix(in srgb, #60a5fa 14%, transparent); }
 .ws-modes { width: 100%; }
 .ws-mode { flex: 1; }
+/* Model + effort + fast-mode — matches Claude Code Desktop's own selector. wsel-model shows the
+   full display name (wider than the fixed-width mode select, since names like "Opus 5" or a
+   longer alias need room); wsel-effort is hidden entirely (see fillEffortSelect in app.js) for a
+   model with no effort levels, same "just don't show it" treatment as ws-fastmode below. */
+.wsel-model { min-width: 0; flex: 0 1 auto; max-width: 120px; padding: 3px 4px; font-size: 11.5px; }
+.wsel-effort { min-width: 0; flex: 0 0 auto; width: 92px; padding: 3px 4px; font-size: 11.5px; }
+.wsel-effort[hidden] { display: none; }
+.ws-fastmode { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--ink-dim); cursor: pointer; white-space: nowrap; }
+.ws-fastmode[hidden] { display: none; }
+.ws-fastmode-cb { cursor: pointer; }
 
 /* body: sidebar + pane grid */
 .ws-body { display: flex; gap: 12px; align-items: stretch; }
