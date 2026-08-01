@@ -944,7 +944,9 @@ function learningPanel() {
   async function refresh() {
     let st = {}; try { st = await (await fetch("/api/distill/status", { cache: "no-store" })).json(); } catch { box.replaceChildren(el("div", { class: "hint" }, ["Distillation status unavailable."])); return; }
     const u = st.usage || {}, cfg = st.config || {};
-    const usageText = `Claude distill usage: ${u.runs || 0} run(s) · ${((u.inputTokens || 0) + (u.outputTokens || 0)).toLocaleString()} tok · ~${fmtUsd(u.costUsd)}`;
+    // Token counts only — no dollar-equivalent figure. This is subscription usage, not metered
+    // billing, so a synthesized "~$X" cost was never a real charge, just a confusing guess.
+    const usageText = `Claude distill usage: ${u.runs || 0} run(s) · ${((u.inputTokens || 0) + (u.outputTokens || 0)).toLocaleString()} tok`;
     const note = el("span", { class: "hint", style: "margin-left:8px" }, []);
     const run = async (mode) => {
       note.textContent = mode === "claude" ? "Distilling with Claude…" : "Distilling…";
@@ -1870,8 +1872,6 @@ function connIdentity() {
   }
   return v;
 }
-const fmtUsd = (n) => "$" + (Number(n) || 0).toFixed(2);
-
 // Pane grid limits. 8 across is sized for an ultrawide (5120px ⇒ ~600px a pane); narrower
 // screens keep the panes readable and scroll the grid sideways instead of crushing them.
 const WS_MAX_COLS = 8, WS_MAX_ROWS = 2;
@@ -2252,7 +2252,7 @@ function viewWorkspace() {
     if (m.role === "assistant" || m.kind === "assistant") return line("ws-assistant", renderAssistantText(m.text));
     if (m.kind === "tool_use") return line("ws-tool", [el("i", { class: "ti ti-tool" }, []), " ", (m.tools || []).map((t) => t.name).join(", ")]);
     if (m.kind === "tool_result") return line("ws-toolres", ["✓ tool result"]);
-    if (m.kind === "result") return line("ws-result", [`— done · ${(m.usage?.output_tokens || 0)} out tok · ~${fmtUsd(m.costUsd)}`]);
+    if (m.kind === "result") return line("ws-result", [`— done · ${(m.usage?.output_tokens || 0)} out tok`]);
     if (m.kind === "error") return line("ws-err", ["⚠ " + (m.text || m.message || "Unknown error")]);
     if (m.kind === "created") return line("ws-note", [`created ${m.what}: ${m.path}`]);
     return null;
@@ -2620,7 +2620,7 @@ function viewWorkspace() {
     ui.attachBtn.disabled = !!p.readonly;
     ui.promptEl.placeholder = p.readonly ? "Read-only — pick the repo above or Resume from history to continue" : (p.resume ? "Resuming saved session — your next message continues it" : "Message Claude… (Ctrl+Enter)");
     const u = p.usage || {};
-    ui.usageEl.textContent = (u.inputTokens || u.outputTokens) ? `${((u.inputTokens || 0) + (u.outputTokens || 0)).toLocaleString()} tok · ~${fmtUsd(u.costUsd)}` : "—";
+    ui.usageEl.textContent = (u.inputTokens || u.outputTokens) ? `${((u.inputTokens || 0) + (u.outputTokens || 0)).toLocaleString()} tok` : "—";
     // paintPane fires on every streamed event during a turn — a full replaceChildren() would
     // otherwise (a) blow away any tool-group a user just expanded (fixed by handing the pane's
     // persisted `_expandedGroups` into renderTranscript) and (b) yank the scroll position back to
@@ -2726,9 +2726,9 @@ function viewWorkspace() {
   }
 
   function setUsageTotal() {
-    let cost = 0, tok = 0;
-    for (const p of st.panes) { cost += p.usage?.costUsd || 0; tok += (p.usage?.inputTokens || 0) + (p.usage?.outputTokens || 0); }
-    usageEl.textContent = `${st.cols}×${st.rows} = ${st.panes.length} pane(s) · ${tok.toLocaleString()} tok · ~${fmtUsd(cost)} (covered by subscription)`;
+    let tok = 0;
+    for (const p of st.panes) { tok += (p.usage?.inputTokens || 0) + (p.usage?.outputTokens || 0); }
+    usageEl.textContent = `${st.cols}×${st.rows} = ${st.panes.length} pane(s) · ${tok.toLocaleString()} tok`;
   }
 
   // ---- sidebar: Repositories | Tree ----------------------------------------------
@@ -3111,10 +3111,28 @@ function viewWorkspace() {
       // for a pane that no longer exists (e.g. trimmed by the layout picker) rather than
       // spilling another session's output into the active pane. Shared keys → fan to every pane.
       const targets = sessionKey ? panesOf(sessionKey) : [activePane()].filter(Boolean); if (!targets.length) return;
-      // The turn lock refused this prompt (another terminal, or another pane, is mid-turn).
-      // Restore the typed text on the pane that sent it, so nothing is lost.
+      // The turn lock refused this prompt. `_pendingText` set on a target pane here means THIS
+      // client's OWN dispatchPrompt() raced: paneBusy() read idle a moment before the server's
+      // real status (often "deepwork" — its transition has no client-side optimistic set the way
+      // a fresh send() does, only an incoming event, so the window to race it is real) caught up.
+      // That's never a genuinely different terminal's send — a pane's `_pendingText` only reflects
+      // an attempt THIS browser tab itself made. Previously this just dumped the typed TEXT back
+      // into the input box and silently dropped any attached IMAGES — "captured, then handed back
+      // to you" instead of "captured and queued", exactly the reported bug. Re-queue it instead,
+      // precisely as if paneBusy() had seen this coming in the first place — drainQueue() releases
+      // it automatically the instant the turn genuinely ends, same as any other queued message.
       if (data.kind === "busy") {
-        for (const p of targets) { const ui = paneUI.get(p.id); if (ui && p._pendingText && !ui.promptEl.value) ui.promptEl.value = p._pendingText; p._pendingText = null; logActivity(p, "⏳ Still working on the previous turn…"); }
+        for (const p of targets) {
+          if (p._pendingText) {
+            p._queue = p._queue || [];
+            p._queue.push({ text: p._pendingText, images: p._pendingImages || [] });
+            p._pendingText = null; p._pendingImages = null;
+            paintPane(p);
+            logActivity(p, "⏳ Queued — sending once the current turn finishes…");
+          } else {
+            logActivity(p, "⏳ Still working on the previous turn…");
+          }
+        }
         note("⏳ " + (data.message || "This workspace is working — wait for the current turn."));
         return;
       }
@@ -3163,10 +3181,18 @@ function viewWorkspace() {
         }
         // A user turn echoed by the server: this pane sent it (clear the pending buffer) or a
         // shared pane in another terminal did (render it so both windows show the same thread).
-        if (data.kind === "user" && data.by && data.by === CONN.id) p._pendingText = null;
-        // The server refused the prompt (bad path, no token, …). The turn was never accepted, so
-        // restore the typed text — exactly as the busy path does — rather than losing it.
-        if (data.kind === "error" && p._pendingText) { const ui = paneUI.get(p.id); if (ui && !ui.promptEl.value) ui.promptEl.value = p._pendingText; p._pendingText = null; }
+        if (data.kind === "user" && data.by && data.by === CONN.id) { p._pendingText = null; p._pendingImages = null; }
+        // The server refused the prompt outright (bad path, no token, too many images, …) — a
+        // rejection, not a "try again shortly" like `busy`, so retrying automatically would just
+        // fail the same way again. Restore the typed text AND any attached images (previously
+        // only the text came back — the images were silently dropped) so a manual retry, after
+        // fixing whatever the error says, has everything to work with again.
+        if (data.kind === "error" && p._pendingText) {
+          const ui = paneUI.get(p.id);
+          if (ui && !ui.promptEl.value) ui.promptEl.value = p._pendingText;
+          if (p._pendingImages && p._pendingImages.length && !(p.attachedImages && p.attachedImages.length)) { p.attachedImages = p._pendingImages; wsPaintAttachment(p); }
+          p._pendingText = null; p._pendingImages = null;
+        }
         // The turn concludes here, success or failure — stop the spinner even though the
         // server doesn't always follow a result/error with its own "status" event (it stays
         // "thinking" internally between turns). Without this the spinner would only clear on
@@ -3175,7 +3201,7 @@ function viewWorkspace() {
         if ((data.kind === "result" || data.kind === "error") && paneBusy(p)) p.status = "idle";
         if (data.kind === "tool_use") logActivity(p, "🔧 Running: " + (data.tools || []).map((t) => t.name).join(", "));
         else if (data.kind === "tool_result") logActivity(p, "✓ Tool finished — continuing…");
-        else if (data.kind === "result") logActivity(p, `✓ Reply complete — ${(data.usage?.output_tokens || 0)} out tok · ~${fmtUsd(data.costUsd)}`, "ws-act-ok");
+        else if (data.kind === "result") logActivity(p, `✓ Reply complete — ${(data.usage?.output_tokens || 0)} out tok`, "ws-act-ok");
         else if (data.kind === "error") logActivity(p, "⚠ " + (data.text || data.message || "Unknown error"), "ws-act-err");
         p.transcript.push(data);
         if (data.usageTotal) p.usage = data.usageTotal;
@@ -3259,7 +3285,10 @@ function viewWorkspace() {
     // Don't append optimistically. The server echoes the accepted user turn to every terminal
     // (so a SHARED session shows the prompt in both windows), and refuses it with `busy` if a
     // turn is already running — appending here would show a prompt that was never actually sent.
-    p._pendingText = text;
+    // `_pendingImages` rides alongside `_pendingText`: if the server's busy refusal DOES land
+    // (see onPayload's "busy" handling), both are needed to re-queue this attempt exactly as if
+    // paneBusy() had correctly seen it coming — not just the text.
+    p._pendingText = text; p._pendingImages = images || [];
     const body = { sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree, text, mode: p.mode, by: CONN.id };
     if (images && images.length) body.images = images.map((img) => ({ mediaType: img.mediaType, base64Data: img.base64Data }));
     if (p.resume) { body.resume = p.resume; p.resume = null; }
@@ -3276,7 +3305,7 @@ function viewWorkspace() {
       if (images && images.length) { p.attachedImages = images; wsPaintAttachment(p); }
       const ui = paneUI.get(p.id);
       if (ui && ui.promptEl.value === "") ui.promptEl.value = p._pendingText || "";
-      p._pendingText = null;
+      p._pendingText = null; p._pendingImages = null;
       p.status = "idle";
       p.transcript.push({ kind: "error", text: r.message || "Could not reach the work machine." });
       paintPane(p);

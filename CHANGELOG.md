@@ -4,6 +4,30 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.27] - 2026-08-01
+
+### Fixed
+- **A prompt that raced into the server's busy turn-lock got its text handed back to the input box
+  instead of being queued — and silently lost any attached images entirely.** `paneBusy()` is a
+  client-side inference; it can read "idle" for a brief window after the server has actually
+  already moved on (to "thinking", or especially "deepwork", which has no client-side optimistic
+  set the way a fresh `send()` does — only an incoming event, so the race window is real). When
+  that happens, the server's `busy` refusal used to just dump the typed text back into the compose
+  box and drop any attached images on the floor — "captured, then handed back to you" instead of
+  "captured and queued", which is what prompted the report. `_pendingImages` now rides alongside
+  `_pendingText`, and a `busy` refusal for this client's own attempt re-queues text + images
+  exactly as if `paneBusy()` had correctly seen it coming — released automatically the instant the
+  turn actually finishes, same as any other queued message. A genuine `error` refusal (bad path, no
+  token, too many images — a rejection, not a "try later") still restores text AND images to the
+  compose box for a manual retry, rather than auto-requeuing a prompt that would just fail the same
+  way again.
+
+### Changed
+- **Removed the "~$X" dollar-cost display throughout the workspace UI.** This is subscription
+  usage, not metered billing — the synthesized cost figure was never a real charge, just a
+  confusing guess dressed up as one. Every usage readout (pane badge, grid total, turn-complete
+  activity log, result line, distill-usage panel) now shows token counts only.
+
 ## [0.9.26] - 2026-07-31
 
 ### Fixed
