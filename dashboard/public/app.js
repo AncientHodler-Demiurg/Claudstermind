@@ -2674,6 +2674,29 @@ function viewWorkspace() {
   // pane watching this stream is equally affected, so it goes to all of them.
   function logActivityAll(text, tone) { for (const p of st.panes) logActivity(p, text, tone); }
 
+  // Coalesce repaints. paintPane() rebuilds a pane's ENTIRE transcript DOM (~30ms for a long
+  // conversation — measured). During an active agentic turn the server streams many events a
+  // second (tool_use, tool_result, assistant, result); calling paintPane synchronously on each
+  // (see onPayload) means several full rebuilds per second, saturating the single JS main thread
+  // badly enough to visibly lag typing anywhere on the page — the reported bug, and the part
+  // 0.9.31's delta-only fix didn't cover (it removed the per-CHUNK repaints but left the
+  // per-EVENT ones). schedulePaint() marks a pane dirty and flushes at most ONCE per animation
+  // frame, so a burst of N events in a frame collapses to one rebuild and the main thread stays
+  // free between frames for input. User-driven actions (send, control changes) still call
+  // paintPane directly for instant feedback — only the high-frequency stream path is coalesced.
+  let _paintDirty = new Set();
+  let _paintRAF = 0;
+  function flushPaints() {
+    _paintRAF = 0;
+    const ids = _paintDirty; _paintDirty = new Set();
+    for (const id of ids) { const pane = st.panes.find((x) => x.id === id); if (pane) paintPane(pane); }
+  }
+  function schedulePaint(p) {
+    _paintDirty.add(p.id);
+    if (_paintRAF) return;
+    _paintRAF = (window.requestAnimationFrame || ((fn) => setTimeout(fn, 16)))(flushPaints);
+  }
+
   function paintPane(p) {
     const ui = paneUI.get(p.id); if (!ui) return;
     ui.root.classList.toggle("on", p.id === st.activeId);
@@ -3340,7 +3363,7 @@ function viewWorkspace() {
           if (data.status === "thinking" || data.status === "deepwork") p._streamingStarted = false;
           const STATUS_TEXT = { thinking: "● Thinking…", "awaiting-permission": "⏸ Waiting for tool permission…", idle: "✓ Idle", ended: "✓ Turn ended", error: "⚠ Errored", deepwork: "🔴 Deep Work — still producing more…" };
           logActivity(p, STATUS_TEXT[data.status] || ("● " + data.status));
-          paintPane(p); drainQueue(p); continue;
+          schedulePaint(p); drainQueue(p); continue;
         }
         // A user turn echoed by the server: this pane sent it (clear the pending buffer) or a
         // shared pane in another terminal did (render it so both windows show the same thread).
@@ -3371,7 +3394,7 @@ function viewWorkspace() {
         // Context usage changes every turn — refresh it once a turn actually finishes (not on
         // every streamed chunk, which would spam the control channel for no visible benefit).
         if (data.kind === "result") wsPost("control", { action: "contextUsage", args: { sessionKey: p.sessionKey } });
-        paintPane(p);
+        schedulePaint(p);
         drainQueue(p);
       }
       setUsageTotal();

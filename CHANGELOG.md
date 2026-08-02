@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.32] - 2026-08-02
+
+### Fixed
+- **Typing lag during an active turn, continued — 0.9.31 only covered part of it.** That fix made
+  the streaming-text *chunks* cheap, but a full transcript rebuild (`paintPane`, ~30ms for a long
+  conversation — measured) still ran synchronously on *every other* streamed event too: every
+  `tool_use`, `tool_result`, `assistant`, `result`. During a tool-heavy agentic turn those arrive
+  several times a second, so several ~30ms rebuilds a second still blocked the main thread and
+  lagged typing. Repaints from the stream are now coalesced through `requestAnimationFrame`: each
+  event just marks the pane dirty (cheap) and returns, and at most one rebuild happens per frame —
+  a burst of 6 events dropped from ~77ms of blocking to ~21ms (one rebuild) in direct measurement,
+  with the main thread left free between frames for input. User-driven actions (send, model/mode
+  changes) still repaint synchronously for instant feedback — only the high-frequency stream path
+  is coalesced.
+
 ## [0.9.31] - 2026-08-02
 
 ### Fixed
