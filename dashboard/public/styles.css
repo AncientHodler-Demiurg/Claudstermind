@@ -468,6 +468,11 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 
 .ws-transcript { flex: 1; background: transparent; padding: 11px 12px; min-height: 220px; max-height: 60vh;
   overflow-y: auto; display: flex; flex-direction: column; gap: 8px; font-size: 13px; line-height: 1.5; }
+/* Per-turn wrapper for the incremental renderer (renderTranscriptInto): generates no box of its
+   own, so its child lines participate in the transcript's flex column (row gap, per-line
+   align-self) exactly as if they were direct children — the wrapper exists only as one cacheable,
+   atomically-insertable/removable DOM node per turn, never affecting layout. */
+.ws-turn { display: contents; }
 .ws-line { white-space: pre-wrap; word-break: break-word; }
 /* A fixed hex, not a theme variable: this bubble is its own solid color of ink regardless of
    light/dark theme (same reasoning as the queued-orange and error-red below), so white text on

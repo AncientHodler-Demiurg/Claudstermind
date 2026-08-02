@@ -4,6 +4,24 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.33] - 2026-08-02
+
+### Fixed
+- **Typing lag on long conversations, root-caused and actually fixed.** Using the suggested repro
+  (open a long history — a real 76-turn conversation), measured directly: one transcript repaint
+  rebuilt the ENTIRE conversation's DOM (846 items / ~9,500 nodes) from scratch = **99ms**, and
+  that ran on every streamed event during an active turn. 0.9.31/0.9.32 reduced how *often* it
+  fired (delta coalescing + rAF batching) but each rebuild was still O(whole history) — so on a
+  long conversation even one repaint per frame blew the frame budget 6× and lagged typing. The
+  transcript now renders incrementally: it's split into turns, and since finalized turns are
+  immutable (the transcript is append-only), their rendered DOM is cached and left untouched — only
+  the current, growing turn is re-rendered per paint. Measured on the same real conversation:
+  appending now touches only the last turn = **0.9ms** instead of 99ms (~110× less work,
+  independent of how long the conversation is). Per-turn wrappers use `display:contents` so the
+  flat flex layout (right-aligned user bubbles, row spacing) is completely unchanged; tool-group
+  expand state and the live-typing/queued rendering are all preserved; a wholesale transcript
+  replacement (resync/reopen) still falls back to a full render.
+
 ## [0.9.32] - 2026-08-02
 
 ### Fixed

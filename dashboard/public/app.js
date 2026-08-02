@@ -2338,7 +2338,11 @@ function viewWorkspace() {
   // in its natural chronological position (the tool-group's own position is reserved at its first
   // event and filled in once the group closes, so later-arriving tool events in the same turn still
   // land in the one group even though other items were emitted in between).
-  function renderTranscript(items, expandedGroups) {
+  // `keyBase` offsets each tool-group's key so it stays GLOBALLY unique/stable even when `items`
+  // is only one turn's slice (see renderTurns' incremental rendering) — keyBase + localIndex ==
+  // the item's index in the full transcript, exactly what a whole-array render produced before,
+  // so persisted expand-state keys in `_expandedGroups` remain valid across the two call styles.
+  function renderTranscript(items, expandedGroups, keyBase = 0) {
     const out = [];
     let group = null, groupSlot = null, groupKey = null;
     const closeGroup = () => {
@@ -2349,7 +2353,7 @@ function viewWorkspace() {
     items.forEach((m, i) => {
       if (isTurnBoundary(m)) closeGroup();   // a new turn starts here — flush the prior turn's group first
       if (isToolEvent(m)) {
-        if (!group) { group = []; groupKey = i; groupSlot = out.length; out.push(null); }
+        if (!group) { group = []; groupKey = keyBase + i; groupSlot = out.length; out.push(null); }
         group.push(m);
       } else {
         const node = renderItem(m); if (node) out.push(node);
@@ -2357,6 +2361,67 @@ function viewWorkspace() {
     });
     closeGroup();
     return out.filter(Boolean);
+  }
+
+  // Split a transcript into turns — each begins at a turn boundary (a `user` item) and runs to the
+  // next, so tool-grouping (which is per-turn) renders identically whether done whole or per-slice.
+  // Items before the first user message (rare — a stray note/created event) form an initial turn.
+  function splitTurns(items) {
+    const turns = []; let cur = null;
+    items.forEach((m, i) => {
+      if (!cur || isTurnBoundary(m)) { cur = { start: i, items: [] }; turns.push(cur); }
+      cur.items.push(m);
+    });
+    return turns;
+  }
+  // One turn's rendered lines, wrapped in a `display:contents` container so the wrapper is a single
+  // DOM node to cache/insert/remove atomically WITHOUT disturbing the transcript's flat flex layout
+  // (align-self on user bubbles, row gap) — the wrapper generates no box of its own.
+  function renderTurnContainer(turn, expandedGroups) {
+    return el("div", { class: "ws-turn" }, renderTranscript(turn.items, expandedGroups, turn.start));
+  }
+  // Incrementally reconcile a pane's transcript DOM. FINALIZED turns (every turn but the last) are
+  // immutable once a newer turn exists (the transcript is append-only), so their rendered container
+  // nodes are cached and reused untouched — only the LAST (growing) turn is re-rendered each paint.
+  // That makes an append O(last turn), not O(whole history): the exact fix for "one 50ms full
+  // rebuild per streamed event on a long conversation lags typing". `tailExtras` are the live-typing
+  // preview + queued-message nodes, which always trail the real turns. Falls back to a full
+  // replaceChildren whenever the cache can't be trusted (transcript replaced, e.g. resync/reopen).
+  function renderTranscriptInto(ui, p, tailExtras) {
+    const t = ui.transcriptEl;
+    const turns = splitTurns(p.transcript);
+    // Invalidate the whole cache if the transcript array itself was swapped (resync/reopen give a
+    // brand-new array) — reused nodes from a different conversation would be flat-out wrong.
+    if (ui._txRef !== p.transcript) { ui._txRef = p.transcript; ui._turnCache = new Map(); ui._domFinalized = []; }
+    const cache = ui._turnCache;
+    const finalized = [];
+    for (let i = 0; i < turns.length - 1; i++) {
+      const turn = turns[i];
+      // A finalized turn is keyed by its start index + item count — both stable for an append-only
+      // prefix, so a hit is guaranteed reusable; a miss (first sight, or the turn grew before being
+      // finalized) renders once and caches.
+      const key = turn.start + ":" + turn.items.length;
+      let node = cache.get(key);
+      if (!node) { node = renderTurnContainer(turn, p._expandedGroups); cache.set(key, node); }
+      finalized.push(node);
+    }
+    const lastTurn = turns[turns.length - 1];
+    const lastNode = renderTurnContainer(lastTurn, p._expandedGroups);
+    const domFinal = ui._domFinalized || [];
+    // Fast path: the finalized prefix already in the DOM is unchanged (same node refs, still
+    // attached) — leave that (potentially huge) prefix untouched, append any newly-finalized turns,
+    // and swap only the trailing section (last turn + live/queued extras).
+    const prefixIntact = domFinal.length <= finalized.length
+      && domFinal.every((n, i) => n === finalized[i] && n.parentNode === t);
+    if (prefixIntact && t.childNodes.length >= domFinal.length) {
+      while (t.childNodes.length > domFinal.length) t.removeChild(t.lastChild);   // drop old tail
+      for (let i = domFinal.length; i < finalized.length; i++) t.appendChild(finalized[i]);
+      t.appendChild(lastNode);
+      for (const n of tailExtras) t.appendChild(n);
+    } else {
+      t.replaceChildren(...finalized, lastNode, ...tailExtras);
+    }
+    ui._domFinalized = finalized;
   }
 
   // ---- image attach ---------------------------------------------------------------
@@ -2646,7 +2711,10 @@ function viewWorkspace() {
 
     // _liveNode: the currently-rendered live-streaming-text DOM node, if any (set by paintPane,
     // read+updated directly by onPayload's assistant_delta handler — see there for why).
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, attachBtn, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _liveNode: null });
+    // _txRef/_turnCache/_domFinalized back the incremental transcript renderer (renderTranscriptInto):
+    // the transcript array last rendered, a cache of finalized-turn container nodes, and the
+    // finalized nodes currently in the DOM (for the untouched-prefix fast path).
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, attachBtn, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _liveNode: null, _txRef: null, _turnCache: null, _domFinalized: [] });
     return paneRoot;
   }
 
@@ -2759,24 +2827,24 @@ function viewWorkspace() {
     // someone actively watching a live response keeps following it either way.
     const wasNearBottom = ui.transcriptEl.scrollHeight - ui.transcriptEl.scrollTop - ui.transcriptEl.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX;
     const hasQueue = p._queue && p._queue.length;
-    if (!p.transcript.length && !p._liveText && !hasQueue) ui.transcriptEl.replaceChildren(el("div", { class: "hint" }, [p.repo ? "Send a message — Claude runs in " + shortRepo(p.repo) + " on your machine." : "Pick a repository (dropdown, or the sidebar) to start."]));
-    else {
-      const nodes = renderTranscript(p.transcript, p._expandedGroups);
+    if (!p.transcript.length && !p._liveText && !hasQueue) {
+      ui.transcriptEl.replaceChildren(el("div", { class: "hint" }, [p.repo ? "Send a message — Claude runs in " + shortRepo(p.repo) + " on your machine." : "Pick a repository (dropdown, or the sidebar) to start."]));
+      ui._domFinalized = []; ui._txRef = null; ui._liveNode = null;   // reset incremental cache (see renderTranscriptInto)
+    } else {
+      // Trailing extras that always sit AFTER the real turns: the live-typing preview, then any
+      // queued (typed-while-busy) messages.
+      const tailExtras = [];
       // The live-typing preview — text streamed so far this turn, not yet the authoritative
       // complete line (that replaces it the moment the real "assistant" event lands; see
-      // onPayload's assistant_delta handling). Appended after the real transcript, never IN it.
-      // The node reference is stashed on `ui` so onPayload's assistant_delta handler can update
-      // just its textContent directly on every SUBSEQUENT chunk of this same turn, instead of
-      // calling this whole (expensive, O(transcript length)) paintPane() again per chunk — see the
-      // "typing lags while a reply streams" fix there for why that matters.
-      if (p._liveText) { const liveNode = line("ws-assistant ws-live", [p._liveText]); nodes.push(liveNode); ui._liveNode = liveNode; }
+      // onPayload's assistant_delta handling). The node reference is stashed on `ui` so the
+      // assistant_delta handler can update just its textContent directly on every SUBSEQUENT chunk
+      // of this turn (O(1)) instead of repainting — see the streaming-lag fix there.
+      if (p._liveText) { const liveNode = line("ws-assistant ws-live", [p._liveText]); tailExtras.push(liveNode); ui._liveNode = liveNode; }
       else ui._liveNode = null;
       // Queued messages — typed while Claude was still working, "frozen in cache" until this
       // turn finishes (see send()/drainQueue()). Rendered distinctly (orange, or pink during
-      // "deepwork" — see paintPane's busy/deep handling above) so it's obvious these haven't
-      // actually been sent yet, in the order they'll go out. Several queued at once are shown
-      // individually here but drainQueue() merges them into ONE prompt on release — the tag says
-      // so whenever there's more than one, so it's clear before it happens.
+      // "deepwork") so it's obvious these haven't gone out yet, in the order they'll be sent.
+      // Several queued at once are shown individually but drainQueue() merges them into ONE prompt.
       const queuedTag = hasQueue && p._queue.length > 1
         ? "queued — will be merged with the other" + (p._queue.length - 1 > 1 ? "s" : "") + " into one message once this turn finishes"
         : "queued — sending once this turn finishes";
@@ -2784,16 +2852,12 @@ function viewWorkspace() {
       if (hasQueue) for (const q of p._queue) {
         const kids = [el("b", {}, ["you  "])];
         // A queued message's images are still local blobs (not yet uploaded/saved) — render
-        // straight from their own dataUrl, the same bytes the real send will carry, rather than
-        // waiting for a server round-trip that hasn't happened yet. Previously this box showed
-        // NO indication an image was attached at all while queued (only the final, actually-sent
-        // message rendered one) — confirmed report: images looked like they might not be
-        // attached at all until the turn actually released.
+        // straight from their own dataUrl, the same bytes the real send will carry.
         if (q.images && q.images.length) kids.push(el("div", { class: "ws-user-images" }, q.images.map((img) => el("img", { class: "ws-user-image", src: img.dataUrl, alt: "attached image (queued)" }, []))));
         kids.push(q.text, el("span", { class: "ws-queued-tag" }, [queuedTag]));
-        nodes.push(line(queuedCls, kids));
+        tailExtras.push(line(queuedCls, kids));
       }
-      ui.transcriptEl.replaceChildren(...nodes);
+      renderTranscriptInto(ui, p, tailExtras);
     }
     if (wasNearBottom) ui.transcriptEl.scrollTop = ui.transcriptEl.scrollHeight;
   }
