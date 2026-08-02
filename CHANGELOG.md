@@ -4,6 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.35] - 2026-08-02
+
+### Fixed
+- **The whole workspace laggy (typing, tab-switch black flash) on a weaker/software-rendering
+  browser — e.g. a Windows browser without GPU acceleration — while identical code is perfectly
+  smooth on a GPU-accelerated (Linux) browser.** That contrast isolates it to client-side
+  RENDERING cost, not app logic: a long conversation's transcript is thousands of DOM nodes, and a
+  browser painting that whole thing on the CPU (no hardware acceleration) chokes on it, dragging
+  everything including keystrokes. The per-turn wrappers now use `content-visibility: auto` (with
+  `contain-intrinsic-size: auto 200px` for scroll stability), so the browser skips layout and paint
+  for any turn scrolled out of view — it only ever renders the turns actually on screen, regardless
+  of how long the conversation is. The DOM is unchanged (history, find-in-page, scrolling all still
+  work); the browser just stops being asked to paint what you can't see. Layout is pixel-identical
+  (the wrapper is now its own flex column mirroring the transcript's, so user bubbles still
+  right-align and spacing is unchanged). This is the app-side lever for weak clients; turning on the
+  browser's hardware acceleration where it's off is still worth doing independently.
+
 ## [0.9.34] - 2026-08-02
 
 ### Fixed
