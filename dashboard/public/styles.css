@@ -468,19 +468,19 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 
 .ws-transcript { flex: 1; background: transparent; padding: 11px 12px; min-height: 220px; max-height: 60vh;
   overflow-y: auto; display: flex; flex-direction: column; gap: 8px; font-size: 13px; line-height: 1.5; }
-/* Per-turn wrapper for the incremental renderer (renderTranscriptInto). It's its OWN flex column
-   (mirroring the transcript's: same column direction + row gap) so its child lines lay out and
-   align EXACTLY as if they were direct transcript children — a user bubble's align-self:flex-end
-   still right-aligns within the full transcript width, between-turn spacing still comes from the
-   transcript's own gap. Why a real box instead of the simpler `display:contents`: `content-
-   visibility:auto` needs a box to work. It lets the browser SKIP layout + paint of any turn
-   scrolled out of view — so a long conversation (thousands of nodes) never asks the browser to
-   render more than the turns actually on screen. That's the fix for "the whole thing lags on a
-   weaker/software-rendering client (e.g. a Windows browser without GPU acceleration)" — the DOM
-   is unchanged, but the browser only paints what's visible. `contain-intrinsic-size: auto 200px`
-   reserves a size estimate for not-yet-rendered turns (and remembers the real size once seen) so
-   the scrollbar/position stays stable; find-in-page still reaches skipped content. */
-.ws-turn { display: flex; flex-direction: column; gap: 8px; content-visibility: auto; contain-intrinsic-size: auto 200px; }
+/* Per-turn wrapper for the incremental renderer (renderTranscriptInto): generates no box of its
+   own (`display:contents`), so its child lines participate in the transcript's flat flex column
+   (row gap, per-line align-self) exactly as if they were direct children — the wrapper is only a
+   single cacheable, atomically-insertable/removable DOM node per turn. Keeping the DOM SMALL (a
+   capped number of turns; see WS_TURN_RENDER_CAP) is what keeps a long conversation light for a
+   weak client — deliberately NOT `content-visibility:auto`, whose on-scroll rendering made
+   scrolling feel like it was loading. */
+.ws-turn { display: contents; }
+/* "Show earlier messages" — the affordance to render turns beyond the cap, at the top of the
+   transcript, styled as a quiet full-width chip rather than a loud button. */
+.ws-show-earlier { align-self: center; background: var(--chip); color: var(--ink-dim); border: 1px solid var(--line);
+  border-radius: 999px; padding: 4px 14px; font-size: 12px; cursor: pointer; margin-bottom: 2px; }
+.ws-show-earlier:hover { color: var(--ink); border-color: var(--accent); }
 .ws-line { white-space: pre-wrap; word-break: break-word; }
 /* A fixed hex, not a theme variable: this bubble is its own solid color of ink regardless of
    light/dark theme (same reasoning as the queued-orange and error-red below), so white text on

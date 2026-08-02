@@ -1883,6 +1883,13 @@ const WS_OPEN_TIMEOUT_MS = 8000;
 // it was already within this many px of it — otherwise someone scrolled up to read history keeps
 // their spot instead of being yanked back down mid-turn.
 const WS_SCROLL_NEAR_BOTTOM_PX = 48;
+// Only the most recent WS_TURN_RENDER_CAP turns are kept in the DOM by default; older ones sit
+// behind a "show earlier" control (see renderTranscriptInto). This keeps the standing DOM small
+// on a long conversation so a weaker/software-rendering browser isn't asked to lay out and paint
+// thousands of nodes at once — the real fix for the whole workspace lagging on such a client,
+// WITHOUT content-visibility's on-scroll rendering (which made scrolling feel like it was
+// "loading"). Everything rendered is real and accurately sized, so scrolling stays smooth.
+const WS_TURN_RENDER_CAP = 20;
 const WS_STORE_KEY = "cm.workspace.v1";
 // Mirrors PERMISSION_MODES in lib/claudeSession.mjs — the browser can't import it, so the
 // ids must stay in step with that list (the server ignores any it doesn't recognise).
@@ -2380,48 +2387,65 @@ function viewWorkspace() {
   function renderTurnContainer(turn, expandedGroups) {
     return el("div", { class: "ws-turn" }, renderTranscript(turn.items, expandedGroups, turn.start));
   }
-  // Incrementally reconcile a pane's transcript DOM. FINALIZED turns (every turn but the last) are
-  // immutable once a newer turn exists (the transcript is append-only), so their rendered container
-  // nodes are cached and reused untouched — only the LAST (growing) turn is re-rendered each paint.
-  // That makes an append O(last turn), not O(whole history): the exact fix for "one 50ms full
-  // rebuild per streamed event on a long conversation lags typing". `tailExtras` are the live-typing
-  // preview + queued-message nodes, which always trail the real turns. Falls back to a full
-  // replaceChildren whenever the cache can't be trusted (transcript replaced, e.g. resync/reopen).
+  // Incrementally reconcile a pane's transcript DOM. Two things bound the work:
+  //  • CAP: only the most recent WS_TURN_RENDER_CAP turns are in the DOM; older ones hide behind a
+  //    "show earlier" button (p._showAllTurns lifts the cap). This keeps the standing DOM small so
+  //    a weak/software-rendering browser never lays out/paints thousands of nodes at once.
+  //  • INCREMENTAL: among the visible turns, FINALIZED ones (all but the last) are immutable
+  //    (append-only transcript) so their rendered container nodes are cached and the unchanged
+  //    leading run is left untouched — only the growing last turn re-renders each paint.
+  // `lead` = the optional show-earlier button + the finalized turn containers (the stable prefix);
+  // `tailExtras` = the live-typing preview + queued-message nodes that trail the real turns. Falls
+  // back to a full replaceChildren whenever the stable prefix can't be trusted.
   function renderTranscriptInto(ui, p, tailExtras) {
     const t = ui.transcriptEl;
-    const turns = splitTurns(p.transcript);
-    // Invalidate the whole cache if the transcript array itself was swapped (resync/reopen give a
+    const allTurns = splitTurns(p.transcript);
+    const showAll = !!p._showAllTurns;
+    const turns = showAll ? allTurns : allTurns.slice(-WS_TURN_RENDER_CAP);
+    const hidden = allTurns.length - turns.length;
+    // Invalidate all cached nodes if the transcript array itself was swapped (resync/reopen give a
     // brand-new array) — reused nodes from a different conversation would be flat-out wrong.
-    if (ui._txRef !== p.transcript) { ui._txRef = p.transcript; ui._turnCache = new Map(); ui._domFinalized = []; }
+    if (ui._txRef !== p.transcript) { ui._txRef = p.transcript; ui._turnCache = new Map(); ui._domLead = []; ui._showEarlierNode = null; }
     const cache = ui._turnCache;
-    const finalized = [];
+    const lead = [];
+    // The show-earlier button — cached and reused across paints (stable node ⇒ the fast path can
+    // keep it in place), rebuilt only when the hidden-count changes so its label stays accurate.
+    if (hidden > 0) {
+      if (!ui._showEarlierNode || ui._showEarlierHidden !== hidden) {
+        const btn = el("button", { class: "ws-show-earlier" }, [`▲ Show ${hidden} earlier message${hidden === 1 ? "" : "s"}`]);
+        btn.addEventListener("click", () => { p._showAllTurns = true; paintPane(p); });
+        ui._showEarlierNode = btn; ui._showEarlierHidden = hidden;
+      }
+      lead.push(ui._showEarlierNode);
+    } else { ui._showEarlierNode = null; ui._showEarlierHidden = 0; }
     for (let i = 0; i < turns.length - 1; i++) {
       const turn = turns[i];
-      // A finalized turn is keyed by its start index + item count — both stable for an append-only
-      // prefix, so a hit is guaranteed reusable; a miss (first sight, or the turn grew before being
-      // finalized) renders once and caches.
+      // Keyed by global start index + item count — both stable for an append-only prefix, so a hit
+      // is guaranteed reusable; a miss (first sight, or a turn that grew before being finalized)
+      // renders once and caches.
       const key = turn.start + ":" + turn.items.length;
       let node = cache.get(key);
       if (!node) { node = renderTurnContainer(turn, p._expandedGroups); cache.set(key, node); }
-      finalized.push(node);
+      lead.push(node);
     }
     const lastTurn = turns[turns.length - 1];
-    const lastNode = renderTurnContainer(lastTurn, p._expandedGroups);
-    const domFinal = ui._domFinalized || [];
-    // Fast path: the finalized prefix already in the DOM is unchanged (same node refs, still
-    // attached) — leave that (potentially huge) prefix untouched, append any newly-finalized turns,
-    // and swap only the trailing section (last turn + live/queued extras).
-    const prefixIntact = domFinal.length <= finalized.length
-      && domFinal.every((n, i) => n === finalized[i] && n.parentNode === t);
-    if (prefixIntact && t.childNodes.length >= domFinal.length) {
-      while (t.childNodes.length > domFinal.length) t.removeChild(t.lastChild);   // drop old tail
-      for (let i = domFinal.length; i < finalized.length; i++) t.appendChild(finalized[i]);
-      t.appendChild(lastNode);
+    const lastNode = lastTurn ? renderTurnContainer(lastTurn, p._expandedGroups) : null;
+    const domLead = ui._domLead || [];
+    // Fast path: the leading run already in the DOM is unchanged (same node refs, still attached) —
+    // leave it, append any newly-added lead nodes, and swap only the trailing section (last turn +
+    // live/queued extras). The lead only changes when the visible window shifts (a new turn past
+    // the cap) or "show earlier" is clicked — infrequent; streaming just grows the last turn.
+    const prefixIntact = domLead.length <= lead.length
+      && domLead.every((n, i) => n === lead[i] && n.parentNode === t);
+    if (prefixIntact && t.childNodes.length >= domLead.length) {
+      while (t.childNodes.length > domLead.length) t.removeChild(t.lastChild);   // drop old tail
+      for (let i = domLead.length; i < lead.length; i++) t.appendChild(lead[i]);
+      if (lastNode) t.appendChild(lastNode);
       for (const n of tailExtras) t.appendChild(n);
     } else {
-      t.replaceChildren(...finalized, lastNode, ...tailExtras);
+      t.replaceChildren(...lead, ...(lastNode ? [lastNode] : []), ...tailExtras);
     }
-    ui._domFinalized = finalized;
+    ui._domLead = lead;
   }
 
   // ---- image attach ---------------------------------------------------------------
@@ -2711,10 +2735,10 @@ function viewWorkspace() {
 
     // _liveNode: the currently-rendered live-streaming-text DOM node, if any (set by paintPane,
     // read+updated directly by onPayload's assistant_delta handler — see there for why).
-    // _txRef/_turnCache/_domFinalized back the incremental transcript renderer (renderTranscriptInto):
+    // _txRef/_turnCache/_domLead back the incremental transcript renderer (renderTranscriptInto):
     // the transcript array last rendered, a cache of finalized-turn container nodes, and the
-    // finalized nodes currently in the DOM (for the untouched-prefix fast path).
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, attachBtn, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _liveNode: null, _liveTextNode: null, _scrollRAF: 0, _txRef: null, _turnCache: null, _domFinalized: [] });
+    // leading (show-earlier button + finalized) nodes currently in the DOM (untouched-prefix fast path).
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, attachBtn, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _liveNode: null, _liveTextNode: null, _scrollRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
     return paneRoot;
   }
 
@@ -2837,11 +2861,14 @@ function viewWorkspace() {
     // the bottom even for someone who deliberately scrolled up to read earlier history. Snap to
     // the bottom only when the pane was already there (or is short enough to be there already) —
     // someone actively watching a live response keeps following it either way.
-    const wasNearBottom = ui.transcriptEl.scrollHeight - ui.transcriptEl.scrollTop - ui.transcriptEl.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX;
+    // A freshly (re)opened conversation should land at the bottom (latest message), even though
+    // the pane wasn't scrolled there before — a one-shot flag set where the transcript is replaced.
+    const forceBottom = !!p._scrollBottomNext; p._scrollBottomNext = false;
+    const wasNearBottom = forceBottom || (ui.transcriptEl.scrollHeight - ui.transcriptEl.scrollTop - ui.transcriptEl.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX);
     const hasQueue = p._queue && p._queue.length;
     if (!p.transcript.length && !p._liveText && !hasQueue) {
       ui.transcriptEl.replaceChildren(el("div", { class: "hint" }, [p.repo ? "Send a message — Claude runs in " + shortRepo(p.repo) + " on your machine." : "Pick a repository (dropdown, or the sidebar) to start."]));
-      ui._domFinalized = []; ui._txRef = null; ui._liveNode = null; ui._liveTextNode = null;   // reset incremental cache (see renderTranscriptInto)
+      ui._domLead = []; ui._txRef = null; ui._liveNode = null; ui._liveTextNode = null; ui._showEarlierNode = null;   // reset incremental cache (see renderTranscriptInto)
     } else {
       // Trailing extras that always sit AFTER the real turns: the live-typing preview, then any
       // queued (typed-while-busy) messages.
@@ -3288,6 +3315,8 @@ function viewWorkspace() {
         if ((p._gen || 0) !== req.gen) continue;   // this pane has moved on since the request — discard, don't apply
         p.transcript = data.transcript || [];
         p._expandedGroups = new Set();   // a freshly-(re)opened transcript has no expand state yet
+        p._showAllTurns = false;         // a (re)opened conversation starts capped to recent turns
+        p._scrollBottomNext = true;      // …and lands at the bottom (latest), not scrolled up
         p.repo = data.repo || p.repo;
         // `repo` was already updated here but `worktree` never was — a pane resuming a conversation
         // on a DIFFERENT worktree than whatever it happened to be showing kept the OLD worktree's

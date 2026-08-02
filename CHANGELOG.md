@@ -4,6 +4,25 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.36] - 2026-08-02
+
+### Changed
+- **Replaced 0.9.35's `content-visibility` with real DOM capping — same lag fix, no scroll jank.**
+  0.9.35 fixed the typing lag on weak clients but introduced sluggish scrolling: `content-
+  visibility:auto` renders off-screen turns on demand as you scroll into them and only estimates
+  their height until then, so scrolling up felt like it was "loading" and the scrollbar resisted.
+  Now only the most recent `WS_TURN_RENDER_CAP` (20) turns are kept in the DOM — measured on a real
+  76-turn conversation, the standing DOM dropped from ~6,200 nodes to ~800 — with a quiet "▲ Show N
+  earlier messages" chip at the top to render the rest on demand. Everything in the DOM is real and
+  accurately sized, so scrolling is smooth again, and the small DOM keeps painting cheap on a
+  software-rendering browser (the lag fix is preserved). `content-visibility` is dropped and the
+  per-turn wrapper is back to `display:contents`.
+
+### Fixed
+- **A (re)opened conversation now lands at the bottom (latest message)** instead of scrolled up
+  near the top — a one-shot scroll-to-bottom on transcript open/reopen. (You could previously
+  return to a workspace and find it scrolled way up.)
+
 ## [0.9.35] - 2026-08-02
 
 ### Fixed
