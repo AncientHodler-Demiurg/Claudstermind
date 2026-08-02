@@ -1939,8 +1939,38 @@ function viewWorkspace() {
     // EXPERIMENTAL per the SDK's own naming (see claudeSession.mjs getUsageLimits) — null until the
     // first live session answers, and may simply never populate on a non-claude.ai-subscriber build.
     usageLimits: null,
+    // Every LIVE session on the work machine right now (across ALL clients, not just this one's
+    // panes) — sessionKey → { workspaceId, repo, worktree, status }. Kept fresh from the sessions
+    // snapshot (`data.sessions`), single-session updates (`data.session`), and per-session status
+    // events. Drives the live-conversation stats readout and the green "active" mark on History.
+    liveSessions: new Map(),
   };
   const CONN = connIdentity();
+  // Upsert/replace the global live-sessions map, then refresh the readouts that depend on it.
+  function setLiveSessions(list) {
+    st.liveSessions = new Map((list || []).filter((s) => s && s.sessionKey).map((s) => [s.sessionKey, s]));
+    renderLiveStats(); renderHistory();
+  }
+  function upsertLiveSession(s) {
+    if (!s || !s.sessionKey) return;
+    // An ended/errored session is no longer live — drop it rather than leaving a stale "active" row.
+    if (s.status === "ended" || s.status === "error") st.liveSessions.delete(s.sessionKey);
+    else st.liveSessions.set(s.sessionKey, { ...(st.liveSessions.get(s.sessionKey) || {}), ...s });
+    renderLiveStats(); renderHistory();
+  }
+  // A session's status changed (from a "status"/"result" event) — keep the map in step so the
+  // "working" count and per-row "working" mark don't lag until the next full snapshot.
+  function noteSessionStatus(sessionKey, status) {
+    const cur = st.liveSessions.get(sessionKey);
+    if (!cur || cur.status === status) return;
+    st.liveSessions.set(sessionKey, { ...cur, status });
+    renderLiveStats(); renderHistory();
+  }
+  const WS_BUSY_STATUSES = new Set(["thinking", "awaiting-permission", "deepwork"]);
+  // Set of workspaceIds that have a live session right now (for the History "active" mark).
+  function activeWorkspaceIds() { const set = new Map(); for (const s of st.liveSessions.values()) if (s.workspaceId) set.set(s.workspaceId, s); return set; }
+  // How many connected terminals are currently viewing a given workspace (presence `attach`).
+  function clientsOnWorkspace(wsId) { return st.presence.filter((c) => c.workspaceId === wsId).length; }
   let searchTimer = null;
   const fmtBytes = (n) => { n = n || 0; if (n < 1024) return n + " B"; if (n < 1048576) return (n / 1024).toFixed(0) + " KB"; return (n / 1048576).toFixed(1) + " MB"; };
   function dataBadge(localPath) {
@@ -2067,6 +2097,11 @@ function viewWorkspace() {
   const sideList = el("div", { class: "ws-side-list" }, []);
   const histList = el("div", { class: "ws-hist" }, []);
   const usageEl = el("span", { class: "ws-usage-total" }, ["—"]);
+  // Live-conversation stats — how many conversations are live on the work machine RIGHT NOW, how
+  // many are actively working, and how many terminals (clients) are connected across everywhere
+  // (local + the relay). Derived from st.liveSessions + st.presence (see renderLiveStats).
+  const liveStatsEl = el("span", { class: "ws-livestats", title: "Live across all clients: conversations open · working now · connected terminals" }, []);
+  liveStatsEl.hidden = true;
   // Plan usage limits (5-hour/7-day/per-model) — account-wide, EXPERIMENTAL per the SDK's own
   // naming (see claudeSession.mjs getUsageLimits). Hidden entirely until the first real answer
   // arrives (a non-claude.ai-subscriber build, e.g. API-key auth, may never populate this at all —
@@ -2994,6 +3029,23 @@ function viewWorkspace() {
   }
   // Compact "5h X% · 7d Y%" badge — full per-model/reset-time breakdown in the tooltip, since a
   // popover for account-wide data used maybe a few times a session isn't worth the extra chrome.
+  // "N conversations · M working · K clients" — the live cross-client picture. Hidden when nothing
+  // is live and only this terminal is connected (nothing worth showing).
+  function renderLiveStats() {
+    if (!liveStatsEl) return;
+    const live = st.liveSessions.size;
+    let working = 0; for (const s of st.liveSessions.values()) if (WS_BUSY_STATUSES.has(s.status)) working++;
+    const clients = st.presence.length || 1;
+    if (!live && clients <= 1) { liveStatsEl.hidden = true; return; }
+    liveStatsEl.hidden = false;
+    const conv = `${live} conversation${live === 1 ? "" : "s"}`;
+    const work = working ? ` · ${working} working` : "";
+    const cli = ` · ${clients} client${clients === 1 ? "" : "s"}`;
+    liveStatsEl.replaceChildren(
+      el("span", { class: "ws-livestats-dot" + (working ? " on" : "") }, []),
+      conv + work + cli,
+    );
+  }
   function renderUsageLimits() {
     const limits = st.usageLimits;
     if (!limits || !limits.rate_limits_available || !limits.rate_limits) { usageLimitsEl.hidden = true; return; }
@@ -3090,6 +3142,12 @@ function viewWorkspace() {
     // to run in. Marked distinctly so that's obvious at a glance, not discovered via a confusing
     // refusal after clicking Resume.
     const missing = !!h.missingWorktree;
+    // Is this conversation LIVE right now (a session on its workspace, on this machine, across any
+    // client)? If so, mark it green — and, if working, note it. `snippet` rows are search results
+    // keyed by session, not workspace, so the live-mark only applies to the plain workspace list.
+    const liveSession = snippet == null && h.workspaceId ? activeWorkspaceIds().get(h.workspaceId) : null;
+    const liveWorking = liveSession && WS_BUSY_STATUSES.has(liveSession.status);
+    const openCount = liveSession ? clientsOnWorkspace(h.workspaceId) : 0;
     const openB = el("button", { class: "ws-ico", title: "Reopen read-only" }, ["👁"]);
     const resumeB = el("button", { class: "ws-ico", title: missing ? "This worktree was removed — resume recreates it" : "Resume live" }, ["▶"]);
     openB.addEventListener("click", () => { reopen(key, "open"); onAction?.(); });
@@ -3104,9 +3162,15 @@ function viewWorkspace() {
       resumeAfterRecreatingWorktree(h.repo, h.worktree, key);
       onAction?.();
     });
-    return el("div", { class: "ws-hist-item" + (missing ? " missing-worktree" : "") }, [
+    return el("div", { class: "ws-hist-item" + (missing ? " missing-worktree" : "") + (liveSession ? " ws-hist-live" : "") }, [
       el("div", { class: "ws-hist-line1" }, [
-        el("b", {}, [label + (h.worktree && h.worktree !== "main" ? "@" + h.worktree : "")]),
+        el("span", { class: "ws-hist-label" }, [
+          el("b", {}, [label + (h.worktree && h.worktree !== "main" ? "@" + h.worktree : "")]),
+          // A green "live" badge on conversations with a session running right now — mirrors the
+          // orange "removed worktree" mark, but for "active", with how many chat boxes it's open in.
+          liveSession ? el("span", { class: "ws-hist-livebadge" + (liveWorking ? " working" : "") },
+            [liveWorking ? "● working" : "● live", ...(openCount > 1 ? [` · ${openCount} open`] : [])]) : "",
+        ]),
         el("span", { class: "ws-hist-meta" }, [snippet != null ? `${h.matchCount} match(es)` : `${h.turns || 0} turn(s)`]),
       ]),
       missing ? el("div", { class: "ws-hist-missing" }, ["⚠ worktree removed — historical; Resume recreates it"]) : "",
@@ -3249,7 +3313,7 @@ function viewWorkspace() {
     // No pane state to update here; `WS_ES.onmessage` (below) already stamped `lastStreamMsgAt`
     // for EVERY message including this one, which is this event's entire purpose.
     if (kind === "heartbeat") return;
-    if (kind === "presence") { st.presence = Array.isArray(data.connections) ? data.connections : []; renderPresence(); return; }
+    if (kind === "presence") { st.presence = Array.isArray(data.connections) ? data.connections : []; renderPresence(); renderLiveStats(); renderHistory(); return; }
     if (kind === "state") {
       if (Array.isArray(data.worktrees)) {
         st.worktrees[data.worktreesRepo] = data.worktrees;
@@ -3313,8 +3377,8 @@ function viewWorkspace() {
       // every pane's selector is repainted so a newly-available model shows up everywhere at once,
       // not just in whichever pane happened to ask.
       if (Array.isArray(data.models) && data.models.length) { st.models = data.models; for (const p of st.panes) paintPane(p); }
-      if (Array.isArray(data.sessions)) for (const s of data.sessions) for (const p of panesOf(s.sessionKey)) { p.status = s.status || p.status; if (s.mode) p.mode = s.mode; if (s.usage) p.usage = s.usage; paintPane(p); }
-      if (data.session) for (const p of panesOf(data.session.sessionKey)) { Object.assign(p, { status: data.session.status ?? p.status, mode: data.session.mode ?? p.mode, usage: data.session.usage ?? p.usage }); paintPane(p); }
+      if (Array.isArray(data.sessions)) { setLiveSessions(data.sessions); for (const s of data.sessions) for (const p of panesOf(s.sessionKey)) { p.status = s.status || p.status; if (s.mode) p.mode = s.mode; if (s.usage) p.usage = s.usage; paintPane(p); } }
+      if (data.session) { upsertLiveSession(data.session); for (const p of panesOf(data.session.sessionKey)) { Object.assign(p, { status: data.session.status ?? p.status, mode: data.session.mode ?? p.mode, usage: data.session.usage ?? p.usage }); paintPane(p); } }
       // NOTE: the server's own defaultMode is deliberately NOT mirrored here. Every pane sends
       // its mode with each prompt, so the toolbar picker is a local "mode for new panes"
       // preference — echoing the server's would clobber it on every list refresh.
@@ -3476,6 +3540,7 @@ function viewWorkspace() {
         p._liveText = "";
         if (data.kind === "status") {
           p.status = data.status;
+          noteSessionStatus(sessionKey, data.status);   // keep the global live-conversation stats fresh for our own sessions immediately
           // A shared session can go "thinking" because ANOTHER terminal sent the prompt, not this
           // one's own dispatchPrompt() — reset the streaming-logged flag here too, or this pane
           // would never log "Streaming reply…" for a turn it didn't itself start. "deepwork" is
@@ -3743,7 +3808,7 @@ function viewWorkspace() {
       el("label", { class: "ws-trust", title: "The permission mode new panes start in. Each pane can then be switched on its own." }, ["New panes:", defaultModeSel]),
       applyAllBtn,
       el("span", { class: "ws-spacer" }, []),
-      usageEl, usageLimitsEl, newFolderBtn, newRepoBtn,
+      liveStatsEl, usageEl, usageLimitsEl, newFolderBtn, newRepoBtn,
     ]),
     presenceBar,
     bridgeNote,

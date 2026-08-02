@@ -4,6 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.10.1] - 2026-08-02
+
+### Added
+- **Live-conversation stats in the workspace toolbar** — "N conversations · M working · K clients":
+  how many conversations are live on the work machine right now, how many are actively working, and
+  how many terminals are connected across everywhere (local + the relay), with a green pulse when
+  anything is working. It's the true cross-client picture (every session on the work machine, every
+  connected client), not just this browser's panes.
+- **Active conversations are marked green in the History list** — mirroring the existing orange
+  "removed worktree" mark. A conversation with a session running right now gets a green border and a
+  "● live" (or "● working") badge, plus "· N open" when it's open in more than one chat box — so you
+  can see at a glance which conversations are active and where.
+- Backing this, the work machine now broadcasts a compact sessions snapshot on every status/result
+  transition (not only on the occasional full refresh), so these readouts stay fresh across all
+  clients even for conversations you don't have open locally.
+
 ## [0.10.0] - 2026-08-02
 
 ### Added

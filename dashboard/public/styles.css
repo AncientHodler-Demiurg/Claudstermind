@@ -410,6 +410,19 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
    says so up front, rather than surprising you with a refusal after clicking Resume. */
 .ws-hist-item.missing-worktree { border-color: #f59e0b; }
 .ws-hist-missing { color: #f59e0b; font-size: 10.5px; }
+/* A conversation that's LIVE right now (a session running on its workspace, across any client) —
+   a green border mirroring the orange "removed worktree" mark, plus an inline badge saying whether
+   it's just live or actively working, and in how many chat boxes it's open. */
+.ws-hist-item.ws-hist-live { border-color: #34d399; }
+.ws-hist-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.ws-hist-livebadge { flex: 0 0 auto; font-size: 9.5px; color: #34d399; border: 1px solid color-mix(in srgb, #34d399 45%, transparent);
+  border-radius: 999px; padding: 0 6px; white-space: nowrap; }
+.ws-hist-livebadge.working { color: #86efac; border-color: #34d399; background: color-mix(in srgb, #34d399 16%, transparent); }
+/* The toolbar "N conversations · M working · K clients" readout. */
+.ws-livestats { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-dim);
+  border: 1px solid var(--line); border-radius: 6px; padding: 2px 9px; }
+.ws-livestats-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-mute); flex: 0 0 auto; }
+.ws-livestats-dot.on { background: #34d399; animation: wsCursorBlink 1.4s step-start infinite; }
 
 /* pane grid — up to 8 across × 2 down. Columns never shrink below WS_PANE_MIN, so on a
    narrower screen the grid scrolls sideways instead of crushing every pane to a sliver;
