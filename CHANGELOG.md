@@ -4,6 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.37] - 2026-08-02
+
+### Fixed
+- **Typing lag that returned as soon as a SECOND pane was open (fine at 1×1).** The clue that it
+  scaled with pane count pointed at cross-pane forced layout, and direct measurement pinned it: the
+  live-streaming preview held the ENTIRE in-progress reply in one uncapped `pre-wrap` text node. A
+  long agent reply is 50–150KB; laying that node out costs ~7ms for 120KB (measured). With one pane
+  it stayed hidden (you don't type into the pane that's mid-stream), but with a second pane, typing
+  there reads that pane's textarea height — which forces a whole-document layout flush that
+  re-lays-out the giant streaming node on EVERY keystroke (~7ms each, far worse on a weak client).
+  The live preview now renders only its last `WS_LIVE_TAIL_CHARS` (6000) characters, coalesced to
+  one update + one scroll per animation frame; the complete reply still lands in full the instant
+  the turn's real message arrives and replaces the preview. Re-measured with a 122KB reply in a
+  second pane: per-keystroke cost dropped from ~7.2ms to ~0.8ms. (Also simplifies the delta path —
+  per chunk is now just an O(1) buffer append plus scheduling that per-frame render.)
+
 ## [0.9.36] - 2026-08-02
 
 ### Changed
