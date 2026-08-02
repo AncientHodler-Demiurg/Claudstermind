@@ -2644,7 +2644,9 @@ function viewWorkspace() {
       wsAttachImageFiles(p, files);
     });
 
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, attachBtn, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog });
+    // _liveNode: the currently-rendered live-streaming-text DOM node, if any (set by paintPane,
+    // read+updated directly by onPayload's assistant_delta handler — see there for why).
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, attachBtn, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _liveNode: null });
     return paneRoot;
   }
 
@@ -2740,7 +2742,12 @@ function viewWorkspace() {
       // The live-typing preview — text streamed so far this turn, not yet the authoritative
       // complete line (that replaces it the moment the real "assistant" event lands; see
       // onPayload's assistant_delta handling). Appended after the real transcript, never IN it.
-      if (p._liveText) nodes.push(line("ws-assistant ws-live", [p._liveText]));
+      // The node reference is stashed on `ui` so onPayload's assistant_delta handler can update
+      // just its textContent directly on every SUBSEQUENT chunk of this same turn, instead of
+      // calling this whole (expensive, O(transcript length)) paintPane() again per chunk — see the
+      // "typing lags while a reply streams" fix there for why that matters.
+      if (p._liveText) { const liveNode = line("ws-assistant ws-live", [p._liveText]); nodes.push(liveNode); ui._liveNode = liveNode; }
+      else ui._liveNode = null;
       // Queued messages — typed while Claude was still working, "frozen in cache" until this
       // turn finishes (see send()/drainQueue()). Rendered distinctly (orange, or pink during
       // "deepwork" — see paintPane's busy/deep handling above) so it's obvious these haven't
@@ -3300,7 +3307,26 @@ function viewWorkspace() {
           p._liveText = (p._liveText || "") + (data.text || "");
           // Logged once per turn, not once per chunk — a chunk can arrive many times a second.
           if (!p._streamingStarted) { p._streamingStarted = true; logActivity(p, "▸ Streaming reply…"); }
-          paintPane(p);
+          // Root-caused a real "typing in the compose box lags badly while a reply streams"
+          // report: paintPane() rebuilds the ENTIRE transcript's DOM from scratch
+          // (renderTranscript + replaceChildren) — cheap for a short conversation, but a chunk can
+          // arrive many times a SECOND, and for any conversation of real length that's a full
+          // O(transcript length) DOM rebuild that many times a second, monopolizing the single JS
+          // main thread badly enough to visibly delay keystrokes anywhere on the page (confirmed
+          // cross-browser, which rules out a browser-specific rendering quirk — this is raw JS/DOM
+          // cost, the same in every engine). The FIRST chunk of a turn still needs the full
+          // paintPane() (nothing rendered yet to update in place); every chunk after that just
+          // updates the live node's own text directly — O(1) instead of O(transcript length) — and
+          // replicates paintPane's own "stay pinned to the bottom if already there" behavior,
+          // since this path skips the rest of paintPane() entirely.
+          const ui = paneUI.get(p.id);
+          if (ui && ui._liveNode) {
+            const wasNearBottom = ui.transcriptEl.scrollHeight - ui.transcriptEl.scrollTop - ui.transcriptEl.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX;
+            ui._liveNode.textContent = p._liveText;
+            if (wasNearBottom) ui.transcriptEl.scrollTop = ui.transcriptEl.scrollHeight;
+          } else {
+            paintPane(p);
+          }
           continue;
         }
         p._liveText = "";

@@ -4,6 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.31] - 2026-08-02
+
+### Fixed
+- **Typing in the compose box lagged badly while a reply was streaming — reproduced across
+  browsers (Chrome and Opera both), ruling out a browser-specific rendering quirk.** Root cause:
+  every streamed text chunk (`assistant_delta`, which can arrive many times a second) called the
+  same `paintPane()` an ordinary event does — a full rebuild of the ENTIRE transcript's DOM
+  (`renderTranscript` + `replaceChildren`), not just the streaming line. For any conversation of
+  real length, that's an O(transcript length) DOM rebuild happening several times a second,
+  monopolizing the single JS main thread badly enough to visibly delay keystrokes anywhere on the
+  page — the same cost in every browser engine, which is exactly why switching browsers didn't
+  help. Only the FIRST chunk of a turn still needs the full repaint (nothing rendered yet to
+  update); every chunk after that now just updates the live line's own `textContent` directly —
+  O(1) instead of O(transcript length) — replicating the same "stay pinned to the bottom" behavior
+  paintPane's own full path already had.
+
 ## [0.9.30] - 2026-08-01
 
 ### Added
