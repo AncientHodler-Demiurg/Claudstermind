@@ -463,6 +463,11 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 .ws-status.spinning.deepwork { border-top-color: #f87171; }
 @media (prefers-reduced-motion: reduce) { .ws-status.deepwork { animation: none; border-color: #f87171; } }
 .ws-usage { font-size: 10.5px; color: var(--ink-dim); white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* "✓ Saved" pane-header badge — a calm green chip confirming the conversation is fully persisted
+   and safe to close / continue elsewhere (see p._saved in app.js). Hidden while a turn is live. */
+.ws-saved { font-size: 10.5px; color: #34d399; border: 1px solid color-mix(in srgb, #34d399 45%, transparent);
+  border-radius: 999px; padding: 1px 8px; white-space: nowrap; flex: 0 0 auto; }
+.ws-saved[hidden] { display: none; }
 .ws-x, .ws-ico { background: transparent; border: 1px solid transparent; color: var(--ink-dim); border-radius: 6px; cursor: pointer; font-size: 13px; padding: 2px 6px; }
 .ws-x:hover, .ws-ico:hover { border-color: var(--line); color: var(--ink); }
 

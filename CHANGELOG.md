@@ -4,6 +4,31 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.10.0] - 2026-08-02
+
+### Added
+- **A "✓ Saved" badge on each pane**, shown when the conversation is idle and its latest turn is
+  durably on disk — so you know at a glance it's safe to close the pane or continue the same
+  conversation on another machine. It's backed by a real signal, not a guess: a turn is flushed to
+  the JSONL store the instant it completes, *before* the `result` event is broadcast, so that event
+  now carries `persisted: true` and the badge reflects genuine on-disk state. It clears the moment a
+  new prompt goes out and stays hidden while Claude is working.
+
+### Changed
+- **Closing a pane mid-turn no longer loses the in-flight reply.** Previously closing a working pane
+  interrupted Claude's query and the reply-in-progress was lost (your "sometimes the last prompts
+  get lost"). Now the work machine lets that turn **finish in the background and saves it**, then
+  cleans the session up once it's idle — so you can close the pane, reopen the conversation (on the
+  same or a different machine), and find the completed answer waiting. An already-idle pane still
+  closes and cleans up immediately (no lingering session/subprocess). The close confirmation is
+  reworded to reflect this ("let it finish in the background… reopen anytime").
+
+### Note
+- Cross-machine live view was already the case and is unchanged: the work machine fans every event
+  to all viewers at once (local + the relay tunnel), so the SAME live conversation open on two
+  machines stays in sync on send. This release makes it safe to *hand off* a mid-turn conversation
+  between machines, not just view it.
+
 ## [0.9.37] - 2026-08-02
 
 ### Fixed

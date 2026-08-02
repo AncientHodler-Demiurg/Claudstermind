@@ -2646,7 +2646,12 @@ function viewWorkspace() {
     // compose row the way Claude's own UI keeps its controls near the input, not in a fixed
     // header far from where you're actually typing.
     const identityLabel = el("span", { class: "ws-identity" }, ["—"]);
-    const topBar = el("div", { class: "ws-pane-hd" }, [dot, identityLabel, el("span", { class: "ws-spacer" }), closeBtn]);
+    // "✓ Saved" badge — shown when the conversation is fully persisted and idle (see p._saved,
+    // set from the server's `persisted` result flag), so it's clear at a glance that closing this
+    // pane or continuing on another machine is safe. Hidden while working or before the first save.
+    const savedBadge = el("span", { class: "ws-saved", title: "This conversation is saved — safe to close, or continue it on another machine." }, ["✓ Saved"]);
+    savedBadge.hidden = true;
+    const topBar = el("div", { class: "ws-pane-hd" }, [dot, identityLabel, el("span", { class: "ws-spacer" }), savedBadge, closeBtn]);
     const controlsBar = el("div", { class: "ws-pane-controls" }, [repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, histBtn, el("span", { class: "ws-spacer" }), badge]);
     // The live "what's happening right now" feed — a single always-visible line (tap to expand
     // the full scrolling log) narrating every state transition: sending, thinking, streaming,
@@ -2738,7 +2743,7 @@ function viewWorkspace() {
     // _txRef/_turnCache/_domLead back the incremental transcript renderer (renderTranscriptInto):
     // the transcript array last rendered, a cache of finalized-turn container nodes, and the
     // leading (show-earlier button + finalized) nodes currently in the DOM (untouched-prefix fast path).
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, attachBtn, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, attachBtn, savedBadge, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
     return paneRoot;
   }
 
@@ -2846,6 +2851,9 @@ function viewWorkspace() {
     ui.dot.classList.toggle("spinning", busy);
     ui.dot.classList.toggle("deepwork", deep);
     ui.dot.title = deep ? "Deep Work — the visible turn ended but Claude is still producing more (a backgrounded task settling)…" : busy ? "Claude is working this turn…" : "Idle";
+    // "✓ Saved" shows only when the pane is genuinely at rest AND its latest turn is persisted —
+    // never mid-turn (nothing to promise) and never before the first save.
+    if (ui.savedBadge) ui.savedBadge.hidden = busy || !p._saved;
     // Busy is a visual-only signal on the Send button (color + label), distinct from `disabled`:
     // the button stays clickable while busy so a prompt typed mid-turn still round-trips to the
     // server's `busy` refusal (see send()), which is what restores the typed text today. Turning
@@ -2949,7 +2957,10 @@ function viewWorkspace() {
   /** × on a pane: end its session and give the pane a clean key, so the next message starts a
    *  genuinely new conversation rather than appending to the one you just cleared. */
   function clearPane(p) {
-    if (paneBusy(p) && !window.confirm("This pane is still working. Clear it and end that session?")) return;
+    // A busy pane no longer LOSES its in-flight reply on close — the work machine lets the turn
+    // finish and saves it (see lib/workspace.mjs's graceful delete). So the confirm is reassuring,
+    // not a warning: it'll finish in the background and be waiting when you reopen the conversation.
+    if (paneBusy(p) && !window.confirm("Claude is still working here. Close the pane and let it finish in the background? The reply is saved to the conversation — reopen it anytime to see the result.")) return;
     endSessions([p.sessionKey]);
     p.sessionKey = wsUuid(); p.transcript = []; p.usage = {}; p.status = "idle"; p.readonly = false; p.resume = null;
     p._expandedGroups = new Set();   // a cleared pane starts a fresh transcript — stale group keys don't apply
@@ -2963,7 +2974,7 @@ function viewWorkspace() {
     const want = c * r;
     if (st.panes.length > want) {
       const dropped = st.panes.slice(want);
-      if (dropped.some(paneBusy) && !window.confirm(`${dropped.filter(paneBusy).length} pane(s) being dropped are still working. End those sessions?`)) return;
+      if (dropped.some(paneBusy) && !window.confirm(`${dropped.filter(paneBusy).length} pane(s) being dropped are still working. Close them and let those turns finish and save in the background?`)) return;
       endSessions(dropped.map((p) => p.sessionKey));
       st.panes.length = want;
     }
@@ -3495,9 +3506,14 @@ function viewWorkspace() {
         // the NEXT status push (e.g. the following turn), which is exactly the stuck-spinner
         // gap this pane icon exists to avoid.
         if ((data.kind === "result" || data.kind === "error") && paneBusy(p)) p.status = "idle";
+        // `persisted` (see lib/workspace.mjs _onEvent) means this turn is already durably on disk by
+        // the time we see the result — so it's genuinely safe to close the pane / continue this
+        // conversation on another machine. `p._saved` drives the "✓ Saved — safe to close" badge
+        // (paintPane); it's cleared the moment a new prompt goes out (dispatchPrompt).
+        if (data.kind === "result" && data.persisted) p._saved = true;
         if (data.kind === "tool_use") logActivity(p, "🔧 Running: " + (data.tools || []).map((t) => t.name).join(", "));
         else if (data.kind === "tool_result") logActivity(p, "✓ Tool finished — continuing…");
-        else if (data.kind === "result") logActivity(p, `✓ Reply complete — ${(data.usage?.output_tokens || 0)} out tok`, "ws-act-ok");
+        else if (data.kind === "result") logActivity(p, `✓ Reply complete${data.persisted ? " & saved — safe to close" : ""} — ${(data.usage?.output_tokens || 0)} out tok`, "ws-act-ok");
         else if (data.kind === "error") logActivity(p, "⚠ " + (data.text || data.message || "Unknown error"), "ws-act-err");
         p.transcript.push(data);
         if (data.usageTotal) p.usage = data.usageTotal;
@@ -3601,7 +3617,7 @@ function viewWorkspace() {
     // but setting it now closes a race — without it, a SECOND queued item could see paneBusy()
     // still false in the brief window before that event arrives and dispatch immediately behind
     // this one instead of waiting its turn.
-    p.status = "thinking"; p._streamingStarted = false; paintPane(p);
+    p.status = "thinking"; p._streamingStarted = false; p._saved = false; paintPane(p);
     logActivity(p, "→ Sending your message…");
     const r = await wsPost("prompt", body);
     if (!r.ok) {
