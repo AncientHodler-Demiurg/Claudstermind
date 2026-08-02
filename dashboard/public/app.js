@@ -2714,7 +2714,7 @@ function viewWorkspace() {
     // _txRef/_turnCache/_domFinalized back the incremental transcript renderer (renderTranscriptInto):
     // the transcript array last rendered, a cache of finalized-turn container nodes, and the
     // finalized nodes currently in the DOM (for the untouched-prefix fast path).
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, attachBtn, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _liveNode: null, _txRef: null, _turnCache: null, _domFinalized: [] });
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, attachBtn, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _liveNode: null, _liveTextNode: null, _scrollRAF: 0, _txRef: null, _turnCache: null, _domFinalized: [] });
     return paneRoot;
   }
 
@@ -2763,6 +2763,18 @@ function viewWorkspace() {
     _paintDirty.add(p.id);
     if (_paintRAF) return;
     _paintRAF = (window.requestAnimationFrame || ((fn) => setTimeout(fn, 16)))(flushPaints);
+  }
+  // Keep the transcript pinned to the bottom while streaming, but force the (expensive on a large
+  // transcript) scrollHeight-read/scrollTop-write layout at most ONCE per frame — not once per
+  // streamed chunk. `_scrollRAF` guards against scheduling more than one flush per frame.
+  const _raf = window.requestAnimationFrame || ((fn) => setTimeout(fn, 16));
+  function scheduleLiveScroll(ui) {
+    if (ui._scrollRAF) return;
+    ui._scrollRAF = _raf(() => {
+      ui._scrollRAF = 0;
+      const t = ui.transcriptEl; if (!t) return;
+      if (t.scrollHeight - t.scrollTop - t.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX) t.scrollTop = t.scrollHeight;
+    });
   }
 
   function paintPane(p) {
@@ -2829,7 +2841,7 @@ function viewWorkspace() {
     const hasQueue = p._queue && p._queue.length;
     if (!p.transcript.length && !p._liveText && !hasQueue) {
       ui.transcriptEl.replaceChildren(el("div", { class: "hint" }, [p.repo ? "Send a message — Claude runs in " + shortRepo(p.repo) + " on your machine." : "Pick a repository (dropdown, or the sidebar) to start."]));
-      ui._domFinalized = []; ui._txRef = null; ui._liveNode = null;   // reset incremental cache (see renderTranscriptInto)
+      ui._domFinalized = []; ui._txRef = null; ui._liveNode = null; ui._liveTextNode = null;   // reset incremental cache (see renderTranscriptInto)
     } else {
       // Trailing extras that always sit AFTER the real turns: the live-typing preview, then any
       // queued (typed-while-busy) messages.
@@ -2839,8 +2851,8 @@ function viewWorkspace() {
       // onPayload's assistant_delta handling). The node reference is stashed on `ui` so the
       // assistant_delta handler can update just its textContent directly on every SUBSEQUENT chunk
       // of this turn (O(1)) instead of repainting — see the streaming-lag fix there.
-      if (p._liveText) { const liveNode = line("ws-assistant ws-live", [p._liveText]); tailExtras.push(liveNode); ui._liveNode = liveNode; }
-      else ui._liveNode = null;
+      if (p._liveText) { const liveNode = line("ws-assistant ws-live", [p._liveText]); tailExtras.push(liveNode); ui._liveNode = liveNode; ui._liveTextNode = liveNode.firstChild; }
+      else { ui._liveNode = null; ui._liveTextNode = null; }
       // Queued messages — typed while Claude was still working, "frozen in cache" until this
       // turn finishes (see send()/drainQueue()). Rendered distinctly (orange, or pink during
       // "deepwork") so it's obvious these haven't gone out yet, in the order they'll be sent.
@@ -3391,26 +3403,26 @@ function viewWorkspace() {
         // (the "assistant" event below) or the turn moved on (a tool call, the end of the turn) —
         // either way the transient buffer's job is done, so every non-delta kind clears it.
         if (data.kind === "assistant_delta") {
-          p._liveText = (p._liveText || "") + (data.text || "");
+          const chunk = data.text || "";
+          p._liveText = (p._liveText || "") + chunk;
           // Logged once per turn, not once per chunk — a chunk can arrive many times a second.
           if (!p._streamingStarted) { p._streamingStarted = true; logActivity(p, "▸ Streaming reply…"); }
-          // Root-caused a real "typing in the compose box lags badly while a reply streams"
-          // report: paintPane() rebuilds the ENTIRE transcript's DOM from scratch
-          // (renderTranscript + replaceChildren) — cheap for a short conversation, but a chunk can
-          // arrive many times a SECOND, and for any conversation of real length that's a full
-          // O(transcript length) DOM rebuild that many times a second, monopolizing the single JS
-          // main thread badly enough to visibly delay keystrokes anywhere on the page (confirmed
-          // cross-browser, which rules out a browser-specific rendering quirk — this is raw JS/DOM
-          // cost, the same in every engine). The FIRST chunk of a turn still needs the full
-          // paintPane() (nothing rendered yet to update in place); every chunk after that just
-          // updates the live node's own text directly — O(1) instead of O(transcript length) — and
-          // replicates paintPane's own "stay pinned to the bottom if already there" behavior,
-          // since this path skips the rest of paintPane() entirely.
+          // Live-typing preview. Two things here were the real, measured cause of "typing lags
+          // while a reply streams", and BOTH scale with reply length (so short replies never
+          // showed it): (1) re-setting the ENTIRE growing `textContent` every chunk is O(reply
+          // length) per chunk => O(n²) over the whole reply — a 42KB reply's late chunks measured
+          // ~2ms each and climbing; a 100KB+ agent reply is far worse. Appending ONLY the new
+          // chunk to the live text node (appendData) is O(chunk) instead. (2) reading scrollHeight
+          // + writing scrollTop forces a synchronous layout of the (large) transcript on EVERY
+          // chunk; deferring that to one rAF per frame (scheduleLiveScroll) bounds it to ~60/s
+          // regardless of chunk rate. The FIRST chunk still needs the full paintPane (nothing
+          // rendered yet); every chunk after appends in place.
           const ui = paneUI.get(p.id);
           if (ui && ui._liveNode) {
-            const wasNearBottom = ui.transcriptEl.scrollHeight - ui.transcriptEl.scrollTop - ui.transcriptEl.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX;
-            ui._liveNode.textContent = p._liveText;
-            if (wasNearBottom) ui.transcriptEl.scrollTop = ui.transcriptEl.scrollHeight;
+            let tn = ui._liveTextNode;
+            if (!tn || tn.parentNode !== ui._liveNode) { ui._liveNode.textContent = p._liveText; ui._liveTextNode = ui._liveNode.firstChild; }
+            else tn.appendData(chunk);   // O(chunk), not O(whole reply)
+            scheduleLiveScroll(ui);
           } else {
             paintPane(p);
           }

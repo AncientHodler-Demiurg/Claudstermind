@@ -4,6 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.9.34] - 2026-08-02
+
+### Fixed
+- **The actual typing-lag cause: the live-streaming preview was O(n²) in reply length.** After
+  ruling out caching (server confirmed serving the right build, no service worker), system CPU
+  contention (load 0.3 on 16 cores), and per-keystroke layout (~1ms), direct measurement found it:
+  the `assistant_delta` handler re-set the ENTIRE growing `textContent` on every streamed chunk —
+  O(reply length) per chunk, so O(n²) over the whole reply. Measured on a 42KB reply, per-chunk
+  cost climbed 0.55ms → 1.88ms and kept rising; a typical 100KB+ agent reply is far worse, which is
+  exactly why the lag showed up during long/heavy streaming and never in short-reply or
+  static-history tests. It now appends only the new chunk to the live text node (`appendData`,
+  O(chunk)) and defers the scrollHeight/scrollTop forced layout to at most once per animation frame
+  instead of once per chunk. Re-measured: flat ~0.001ms per chunk regardless of reply length (the
+  curve is gone entirely), so a streaming reply no longer starves the main thread and typing stays
+  responsive however long the reply gets.
+
 ## [0.9.33] - 2026-08-02
 
 ### Fixed
