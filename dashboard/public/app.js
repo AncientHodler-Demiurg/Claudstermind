@@ -2568,8 +2568,16 @@ function viewWorkspace() {
    *  clipboard image items) ONE AT A TIME, awaiting each before starting the next — wsAttachImageFile
    *  does a read-modify-write of p.attachedImages, so firing them concurrently would race (two
    *  calls both reading the same "existing" array before either commits, silently dropping one). */
-  async function wsAttachImageFiles(p, files) {
-    for (const f of files) await wsAttachImageFile(p, f);
+  function wsAttachImageFiles(p, files) {
+    // Serialize ALL attach operations for this pane through one promise chain, so two entry points
+    // firing close together (e.g. two quick pastes, or a pick landing while a drop is still
+    // decoding) can never interleave their read-modify-write of p.attachedImages and clobber each
+    // other — a hard guarantee against "I added several images but only the last stuck", regardless
+    // of timing.
+    p._attachChain = (p._attachChain || Promise.resolve())
+      .then(async () => { for (const f of files) await wsAttachImageFile(p, f); })
+      .catch(() => {});
+    return p._attachChain;
   }
   /** Entry point for all three attach paths (file-picker, paste, drag-drop) — same file-in,
    *  same attached-state-out, so they're functionally equivalent per the design. Skips
@@ -2658,7 +2666,16 @@ function viewWorkspace() {
     const histBtn = el("button", { class: "ws-ico", title: "History for this repo" }, ["⏱"]);
     const transcriptEl = el("div", { class: "ws-transcript" }, []);
     const promptEl = el("textarea", { class: "ws-prompt", rows: String(WS_PROMPT_MIN_ROWS), placeholder: "Message Claude… (Ctrl+Enter)" });
-    promptEl.addEventListener("input", () => wsAutoResizePrompt(promptEl));
+    // Auto-resize on a rAF, not synchronously on every keystroke: wsAutoResizePrompt reads
+    // scrollHeight, which forces a synchronous layout flush — cheap alone, but on a weaker client
+    // with several panes it's per-keystroke work that competes with painting the character. Coalesced
+    // to at most once per frame, the keystroke handler returns immediately and the box still grows
+    // smoothly a frame later.
+    let _resizeRAF = 0;
+    promptEl.addEventListener("input", () => {
+      if (_resizeRAF) return;
+      _resizeRAF = (window.requestAnimationFrame || ((fn) => setTimeout(fn, 16)))(() => { _resizeRAF = 0; wsAutoResizePrompt(promptEl); });
+    });
     const sendBtn = el("button", { class: "loginbtn ws-send" }, ["Send"]);
     // Attach affordance: a file-picker button (hidden native <input type=file>) plus paste and
     // drag-drop straight onto the compose row — all three funnel into wsAttachImageFile, so they

@@ -4,6 +4,25 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.10.2] - 2026-08-03
+
+### Fixed
+- **Typing lag with multiple chat boxes open (fine with one) on a weaker browser.** With several
+  panes side by side, resizing the compose box on each keystroke reflowed and RE-PAINTED the whole
+  grid — every pane — so the per-keystroke cost scaled with pane count, and a weaker/software-
+  rendering browser (e.g. Vivaldi/Chromium on a machine with less headroom) couldn't keep up. Two
+  changes: (1) each pane now uses CSS `contain: layout paint`, so a change inside one pane
+  (typing, a streaming reply) only repaints THAT pane, not its siblings; (2) the compose box's
+  auto-resize runs on a `requestAnimationFrame` instead of synchronously on every keystroke, so the
+  keystroke handler no longer forces a layout flush inline. Layout is unchanged (panes still tile,
+  scroll, and size the same); the per-keystroke work is now per-pane, not per-grid.
+
+### Changed
+- **Hardened multi-image attach against any interleaving.** Attaching several images (pick, paste,
+  or drag) now runs through a per-pane serialized queue, so two attaches firing close together can
+  never race each other's update to the attachment list — a hard guarantee against "I added several
+  images but only the last one stuck", independent of timing.
+
 ## [0.10.1] - 2026-08-02
 
 ### Added

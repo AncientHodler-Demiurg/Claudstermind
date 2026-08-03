@@ -433,8 +433,15 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 @media (max-width: 720px) { .ws-body { flex-direction: column; } .ws-side { width: auto; flex: none; max-height: 240px; }
   .ws-grid { grid-template-columns: 1fr; grid-template-rows: repeat(auto-fill, minmax(340px, 1fr)); } }
 
+/* `contain: layout paint` ISOLATES each pane's rendering: a change inside one pane (typing, a
+   streaming reply, the compose box auto-growing) no longer forces the browser to re-lay-out and
+   RE-PAINT the sibling panes. With several chat boxes open that was the multiplier behind
+   "typing lags hard with 3 panes" on a weaker/software-rendering browser — each keystroke repainted
+   the whole grid; now it repaints only its own pane. (Not `size`/`strict` containment — the grid
+   still sizes the panes; only their internal layout+paint is fenced off. Native <select> popups and
+   tooltips render outside the box and are unaffected.) */
 .ws-pane { display: flex; flex-direction: column; min-width: 0; background: var(--panel2); border: 1px solid var(--line);
-  border-radius: 12px; overflow: hidden; min-height: 300px; }
+  border-radius: 12px; overflow: hidden; min-height: 300px; contain: layout paint; }
 .ws-pane.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .ws-pane.ro { opacity: .96; }
 .ws-pane-hd { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-bottom: 1px solid var(--line); background: var(--panel); }
