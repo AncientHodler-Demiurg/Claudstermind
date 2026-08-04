@@ -2685,6 +2685,12 @@ function viewWorkspace() {
       _resizeRAF = (window.requestAnimationFrame || ((fn) => setTimeout(fn, 16)))(() => { _resizeRAF = 0; wsAutoResizePrompt(promptEl); });
     });
     const sendBtn = el("button", { class: "loginbtn ws-send" }, ["Send"]);
+    // "■ Stop" — interrupt the current turn mid-flight (Claude Code's stop button) without ending
+    // the conversation. Shown only while the pane is working (see paintPane); sends the "stop"
+    // action, which the work machine turns into an SDK interrupt (see lib/workspace.mjs _stop).
+    const stopBtn = el("button", { class: "ws-stop", title: "Stop the current response (keeps the conversation)" }, ["■ Stop"]);
+    stopBtn.hidden = true;
+    stopBtn.addEventListener("click", () => { assignKey(p); wsPost("stop", { sessionKey: p.sessionKey }); logActivity(p, "■ Stopping…"); });
     // Attach affordance: a file-picker button (hidden native <input type=file>) plus paste and
     // drag-drop straight onto the compose row — all three funnel into wsAttachImageFile, so they
     // end up in the exact same attached/preview state (see design's "functionally equivalent
@@ -2697,7 +2703,7 @@ function viewWorkspace() {
     imgPreviewWrap.hidden = true;
     const imgErr = el("div", { class: "ws-img-err" }, []);
     imgErr.hidden = true;
-    const composeRow = el("div", { class: "ws-compose" }, [attachBtn, imgFileInput, promptEl, sendBtn]);
+    const composeRow = el("div", { class: "ws-compose" }, [attachBtn, imgFileInput, promptEl, stopBtn, sendBtn]);
     const composeExtras = el("div", { class: "ws-compose-extras" }, [imgPreviewWrap, imgErr]);
     // A slim, ALWAYS-visible identity readout — plain text, not a control — so which
     // repo@worktree this pane is actually showing is never in doubt regardless of scroll
@@ -2808,7 +2814,7 @@ function viewWorkspace() {
     // _txRef/_turnCache/_domLead back the incremental transcript renderer (renderTranscriptInto):
     // the transcript array last rendered, a cache of finalized-turn container nodes, and the
     // leading (show-earlier button + finalized) nodes currently in the DOM (untouched-prefix fast path).
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, stopBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
     return paneRoot;
   }
 
@@ -2939,6 +2945,9 @@ function viewWorkspace() {
     const bgActive = bg.length > 0;
     ui.sendBtn.classList.toggle("work-pulse", busy || bgActive);
     ui.sendBtn.textContent = deep ? "Deep Work…" : busy ? "Working…" : "Send";
+    // The Stop button appears only while the pane is actively working a turn (thinking / deep work /
+    // awaiting permission) — it interrupts that turn without ending the conversation.
+    if (ui.stopBtn) ui.stopBtn.hidden = !busy || !!p.readonly;
     const bgLine = bgActive ? `⚙ ${bg.length} background ${bg.length === 1 ? "task" : "tasks"} running` + (bg.some((t) => t.description) ? ": " + bg.map((t) => t.description).filter(Boolean).join(", ") : "") : "";
     ui.sendBtn.title = deep
       ? "Claude finished the visible turn but is still doing background work — more output is expected. Sending now will be held until it finishes."
@@ -3665,6 +3674,7 @@ function viewWorkspace() {
         // the chat turn, so it's NOT transcript content and must NOT be pushed as such. It's the
         // one signal that hidden work is happening even while the chat sits idle/free (see
         // claudeSession.mjs). `background` REPLACES the live set; taskStarted/taskDone just narrate.
+        if (data.kind === "interrupted") { logActivity(p, "■ Stopped — the response was interrupted; send another message anytime.", "ws-act-ok"); continue; }
         if (data.kind === "background") { p._background = data.tasks || []; schedulePaint(p); continue; }
         if (data.kind === "taskStarted") { if (!data.skipTranscript) logActivity(p, "⚙ Background " + (data.workflowName ? `workflow “${data.workflowName}”` : "task") + " started" + (data.description ? " — " + data.description : ""), "ws-act-ok"); continue; }
         if (data.kind === "taskDone") { if (!data.skipTranscript) logActivity(p, (data.status === "completed" ? "✓" : "⚠") + " Background task " + data.status + (data.summary ? " — " + data.summary : ""), data.status === "completed" ? "ws-act-ok" : "ws-act-err"); continue; }

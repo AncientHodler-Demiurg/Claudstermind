@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.14.0] - 2026-08-04
+
+### Added
+- **Stop a response mid-flight** — like Claude Code's ■ stop button. A red "■ Stop" appears in the
+  compose row whenever a pane is actively working (thinking / deep work / awaiting permission);
+  clicking it **interrupts the current turn but keeps the conversation** so you can immediately send
+  a different message — it does NOT end the session the way closing the pane does. Under the hood it
+  drives the SDK query's `interrupt()` (a new `ClaudeSession.interrupt()`), settling any pending
+  permission first so the turn can unwind, persisting whatever completed, and flipping the pane back
+  to idle. Works locally and over the relay (the "stop" action was already allowed across the
+  tunnel). The web logs "■ Stopped — send another message anytime." Covered by new tests asserting
+  the turn is interrupted while the session stays alive.
+
 ## [0.13.3] - 2026-08-04
 
 ### Fixed

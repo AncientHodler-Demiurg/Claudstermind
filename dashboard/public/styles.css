@@ -602,6 +602,12 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
   font-family: inherit; font-size: 13px; resize: none; min-height: 40px; overflow-y: hidden; }
 .ws-prompt:disabled { opacity: .5; }
 .ws-send { padding: 8px 16px; }
+/* "■ Stop" — interrupt the in-flight response. A distinct red so it reads as "halt", shown only
+   while a turn is working (see paintPane). Sits next to Send in the compose row. */
+.ws-stop { align-self: flex-end; padding: 8px 14px; border-radius: 10px; font-weight: 700; font-size: 13px; cursor: pointer;
+  background: #f87171; border: 1px solid #f87171; color: #2a0a0a; white-space: nowrap; }
+.ws-stop:hover { filter: brightness(1.05); }
+.ws-stop[hidden] { display: none; }
 /* Busy = Claude is mid-turn in this pane. The button itself becomes the loud indicator
    (orange), reverting to the normal accent color the instant the turn ends — a bigger,
    harder-to-miss signal than the small header spinner dot alone. */
