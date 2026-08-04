@@ -36,6 +36,7 @@ const MIME = {
   ".js": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml", ".ico": "image/x-icon", ".png": "image/png",
   ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
+  ".webmanifest": "application/manifest+json; charset=utf-8",   // PWA install manifest
 };
 
 function sendJSON(res, code, obj) {

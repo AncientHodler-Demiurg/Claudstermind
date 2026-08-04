@@ -4,6 +4,30 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.12.0] - 2026-08-04
+
+### Added
+- **Mobile / PWA — Phase 1: installable, and genuinely usable on a phone.** Claudstermind is now a
+  Progressive Web App: a web manifest + a small service worker mean you can "install to home
+  screen" and get a standalone, app-like window (`display: standalone`, brand icons, dark
+  theme-color). The service worker is deliberately **network-first** — when online it always serves
+  the freshest files and only falls back to cache offline, so it can't reintroduce the stale-version
+  problems (and it never touches `/api/*` or the event stream). Alongside it, a coherent responsive
+  pass: below 760px the header compacts (informational pills dropped, section/sub nav become
+  swipeable strips instead of wrapping tall), padding tightens, tap targets grow to ~44px, the
+  compose box uses 16px text to avoid iOS zoom-on-focus, cards reflow to one column, and notch /
+  home-indicator safe-area insets are honored. Verified at a 390px phone viewport: no horizontal
+  overflow, service worker registers, layout reads cleanly.
+  - This is Phase 1 of a staged build. **Phase 2** replaces the workspace grid on mobile with a
+    one-pane-at-a-time tab strip + a slide-in sidebar drawer (right now the panes stack vertically,
+    which works but isn't ideal on a phone). **Phase 3+** walks each remaining page (Map, Git, Ops,
+    Admin…) at phone width for deep polish.
+
+### Note for the live site
+- The manifest is served with the correct `application/manifest+json` content type only after the
+  server picks up the new MIME entry — the local dashboard needs a restart, and the live relay gets
+  it on this deploy. (Until then browsers still parse it, just less strictly.)
+
 ## [0.11.0] - 2026-08-04
 
 ### Added

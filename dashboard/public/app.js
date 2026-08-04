@@ -4628,4 +4628,11 @@ function moveTip(e) {
 }
 function hideTip() { $("#tooltip").hidden = true; }
 
+// Register the service worker (installability + offline fallback; it's network-first, so it never
+// serves stale — see sw.js). Best-effort: a browser without SW support, or a refused registration,
+// just means no "install" prompt, never a broken page. Only over HTTPS or localhost (SW requirement).
+if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
+  window.addEventListener("load", () => { navigator.serviceWorker.register("/sw.js").catch(() => {}); });
+}
+
 boot();

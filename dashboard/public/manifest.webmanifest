@@ -1,0 +1,16 @@
+{
+  "name": "Claudstermind",
+  "short_name": "Claudstermind",
+  "description": "Drive remote Claude sessions from anywhere — the Claudstermind workspace.",
+  "start_url": "/#workspace",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b1020",
+  "theme_color": "#0b1020",
+  "icons": [
+    { "src": "/brand/claudstermind-mark.png?v=2", "sizes": "256x256", "type": "image/png", "purpose": "any" },
+    { "src": "/brand/claudstermind-glow.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/brand/claudstermind-glow.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

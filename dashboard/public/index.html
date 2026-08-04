@@ -2,11 +2,22 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- viewport-fit=cover so content can extend under a notch; the app then pads with the
+       env(safe-area-inset-*) values (see styles.css). maximum-scale left unset so pinch-zoom
+       stays available (accessibility). -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Claudstermind — Master Map</title>
   <link rel="stylesheet" href="/styles.css" />
   <!-- Claudstermind brain mark — the generated blue circuit-brain logo (transparent). -->
   <link rel="icon" type="image/png" href="/brand/favicon.png?v=2" />
+  <!-- PWA: installable to the home screen as a standalone app. -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#0b1020" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Claudstermind" />
+  <link rel="apple-touch-icon" href="/brand/claudstermind-mark.png?v=2" />
 </head>
 <body data-theme="dark">
   <!-- The Pantheonic Header: sticky, full-chrome-width separator, up to 3 fixed levels. -->

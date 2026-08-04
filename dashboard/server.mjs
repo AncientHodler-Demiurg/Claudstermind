@@ -98,6 +98,7 @@ const MIME = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
+  ".webmanifest": "application/manifest+json; charset=utf-8",   // PWA install manifest
 };
 
 // `onMissing` lets a caller take over when the dashboard has no such file — used by the
