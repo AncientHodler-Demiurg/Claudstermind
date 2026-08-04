@@ -4,6 +4,27 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.11.0] - 2026-08-04
+
+### Added
+- **Hidden background work is now visible** — when the agent spawns work that runs independently of
+  the chat turn (a Workflow, a backgrounded Task/Bash), the chat can sit idle ("free") while that
+  work keeps going, and until now there was no way to tell. The driving session actually receives
+  the SDK's `background_tasks_changed` / `task_started` / `task_notification` system messages on its
+  stream even between turns; Claudstermind was dropping them. It now tracks the live set of
+  background tasks per session and surfaces it:
+  - the **Send button gets a blinking ring** whenever *any* work is happening — an ordinary or
+    deep-work turn, **or** background work while the chat is otherwise free (the case you couldn't
+    see);
+  - a **"⚙ N background" badge** in the pane header when the chat is idle but background work runs,
+    with a hover listing what's running (and workflow names / task summaries logged to the activity
+    line as they start and finish);
+  - the count rides the sessions snapshot, so it shows across clients and survives reconnect.
+  Background work is deliberately kept distinct from the chat's own "deep work" status — the chat
+  really is free (you can keep talking), it's just that something's still cooking on its own.
+  (Best-effort pending a real workflow run to confirm the SDK emits these on the idle stream as the
+  type definitions indicate; the parsing + per-session tracking are unit-tested.)
+
 ## [0.10.2] - 2026-08-03
 
 ### Fixed

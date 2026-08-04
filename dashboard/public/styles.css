@@ -605,6 +605,19 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
    see claudeSession.mjs's re-arm-from-idle comment and .ws-status.deepwork above. */
 .ws-send.busy.deepwork { background: #f87171; border-color: #f87171; color: #2a0a0a; }
 .ws-send.busy.deepwork:hover { filter: brightness(1.05); }
+/* "Work is happening" pulse — a blinking ring around the Send button whenever ANY work is active:
+   an ordinary/deep-work turn, OR agent-spawned background work (a workflow/task) that keeps running
+   even while the chat is idle and the button still reads "Send". The ring blinks so it's noticeable
+   at rest; a darker outline variant when the chat is free (background-only) vs the loud busy colors. */
+@keyframes wsWorkPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(148,163,184,0); } 50% { box-shadow: 0 0 0 2px rgba(148,163,184,.9); } }
+.ws-send.work-pulse { animation: wsWorkPulse 1.15s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .ws-send.work-pulse { animation: none; box-shadow: 0 0 0 2px rgba(148,163,184,.7); } }
+/* "⚙ N background" pane-header badge — chat is free but hidden work runs; a calm slate chip that
+   pulses gently, so background activity is discoverable, not only implied by the button ring. */
+.ws-bgwork { font-size: 10.5px; color: #cbd5e1; border: 1px solid color-mix(in srgb, #94a3b8 55%, transparent);
+  border-radius: 999px; padding: 1px 8px; white-space: nowrap; flex: 0 0 auto; animation: wsWorkPulse 1.6s ease-in-out infinite; }
+.ws-bgwork[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { .ws-bgwork { animation: none; } }
 /* Image attach: hidden native file input (triggered by the 📎 button, `multiple` so one dialog
    picks several at once), up to WS_IMG_MAX_COUNT thumbnail chips — each with its OWN remove (×)
    control, not one fixed control for a single image — and an inline error line for the "still too

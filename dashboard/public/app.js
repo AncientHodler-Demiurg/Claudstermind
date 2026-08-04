@@ -2703,7 +2703,12 @@ function viewWorkspace() {
     // pane or continuing on another machine is safe. Hidden while working or before the first save.
     const savedBadge = el("span", { class: "ws-saved", title: "This conversation is saved — safe to close, or continue it on another machine." }, ["✓ Saved"]);
     savedBadge.hidden = true;
-    const topBar = el("div", { class: "ws-pane-hd" }, [dot, identityLabel, el("span", { class: "ws-spacer" }), savedBadge, closeBtn]);
+    // "⚙ N background" badge — shown when the chat is free but agent-spawned work (a workflow /
+    // backgrounded task) is still running, so hidden work is discoverable, not just felt via the
+    // Send button's blinking border. Hover lists what's running.
+    const bgBadge = el("span", { class: "ws-bgwork" }, []);
+    bgBadge.hidden = true;
+    const topBar = el("div", { class: "ws-pane-hd" }, [dot, identityLabel, el("span", { class: "ws-spacer" }), bgBadge, savedBadge, closeBtn]);
     const controlsBar = el("div", { class: "ws-pane-controls" }, [repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, histBtn, el("span", { class: "ws-spacer" }), badge]);
     // The live "what's happening right now" feed — a single always-visible line (tap to expand
     // the full scrolling log) narrating every state transition: sending, thinking, streaming,
@@ -2795,7 +2800,7 @@ function viewWorkspace() {
     // _txRef/_turnCache/_domLead back the incremental transcript renderer (renderTranscriptInto):
     // the transcript array last rendered, a cache of finalized-turn container nodes, and the
     // leading (show-earlier button + finalized) nodes currently in the DOM (untouched-prefix fast path).
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, attachBtn, savedBadge, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
     return paneRoot;
   }
 
@@ -2915,10 +2920,24 @@ function viewWorkspace() {
     // "one moment" foreground turn, so you're never misled into thinking it's actually idle.
     ui.sendBtn.classList.toggle("busy", busy);
     ui.sendBtn.classList.toggle("deepwork", deep);
+    // Hidden background work: a workflow / backgrounded task the agent spawned that runs
+    // INDEPENDENTLY of the chat turn — so it can be active even while the chat is idle ("free") and
+    // you'd otherwise have no idea. A blinking border on the Send button means "work is happening":
+    // it pulses in every working state (busy/deep-work) AND when the chat is free but background
+    // work is still running — the case you couldn't see before. The button stays a normal "Send"
+    // (the chat genuinely IS free — you can talk) but its blinking border says "…and something's
+    // still cooking in the background."
+    const bg = Array.isArray(p._background) ? p._background : [];
+    const bgActive = bg.length > 0;
+    ui.sendBtn.classList.toggle("work-pulse", busy || bgActive);
     ui.sendBtn.textContent = deep ? "Deep Work…" : busy ? "Working…" : "Send";
+    const bgLine = bgActive ? `⚙ ${bg.length} background ${bg.length === 1 ? "task" : "tasks"} running` + (bg.some((t) => t.description) ? ": " + bg.map((t) => t.description).filter(Boolean).join(", ") : "") : "";
     ui.sendBtn.title = deep
       ? "Claude finished the visible turn but is still doing background work — more output is expected. Sending now will be held until it finishes."
-      : busy ? "Claude is still working this turn — sending now will be held until it finishes." : "";
+      : busy ? "Claude is still working this turn — sending now will be held until it finishes."
+      : bgActive ? (bgLine + " — the chat is free, so you can keep talking; this runs on its own.")
+      : "";
+    if (ui.bgBadge) { ui.bgBadge.hidden = !bgActive || busy; ui.bgBadge.textContent = bgActive ? `⚙ ${bg.length} background` : ""; ui.bgBadge.title = bgLine; }
     ui.promptEl.disabled = !!p.readonly;
     ui.sendBtn.disabled = !!p.readonly;
     ui.attachBtn.disabled = !!p.readonly;
@@ -3394,8 +3413,8 @@ function viewWorkspace() {
       // every pane's selector is repainted so a newly-available model shows up everywhere at once,
       // not just in whichever pane happened to ask.
       if (Array.isArray(data.models) && data.models.length) { st.models = data.models; for (const p of st.panes) paintPane(p); }
-      if (Array.isArray(data.sessions)) { setLiveSessions(data.sessions); for (const s of data.sessions) for (const p of panesOf(s.sessionKey)) { p.status = s.status || p.status; if (s.mode) p.mode = s.mode; if (s.usage) p.usage = s.usage; paintPane(p); } }
-      if (data.session) { upsertLiveSession(data.session); for (const p of panesOf(data.session.sessionKey)) { Object.assign(p, { status: data.session.status ?? p.status, mode: data.session.mode ?? p.mode, usage: data.session.usage ?? p.usage }); paintPane(p); } }
+      if (Array.isArray(data.sessions)) { setLiveSessions(data.sessions); for (const s of data.sessions) for (const p of panesOf(s.sessionKey)) { p.status = s.status || p.status; if (s.mode) p.mode = s.mode; if (s.usage) p.usage = s.usage; if (s.background) p._background = s.background; paintPane(p); } }
+      if (data.session) { upsertLiveSession(data.session); for (const p of panesOf(data.session.sessionKey)) { Object.assign(p, { status: data.session.status ?? p.status, mode: data.session.mode ?? p.mode, usage: data.session.usage ?? p.usage }); if (data.session.background) p._background = data.session.background; paintPane(p); } }
       // NOTE: the server's own defaultMode is deliberately NOT mirrored here. Every pane sends
       // its mode with each prompt, so the toolbar picker is a local "mode for new panes"
       // preference — echoing the server's would clobber it on every list refresh.
@@ -3568,6 +3587,13 @@ function viewWorkspace() {
           logActivity(p, STATUS_TEXT[data.status] || ("● " + data.status));
           schedulePaint(p); drainQueue(p); continue;
         }
+        // Agent-spawned BACKGROUND work (a workflow, a backgrounded task) — runs independently of
+        // the chat turn, so it's NOT transcript content and must NOT be pushed as such. It's the
+        // one signal that hidden work is happening even while the chat sits idle/free (see
+        // claudeSession.mjs). `background` REPLACES the live set; taskStarted/taskDone just narrate.
+        if (data.kind === "background") { p._background = data.tasks || []; schedulePaint(p); continue; }
+        if (data.kind === "taskStarted") { if (!data.skipTranscript) logActivity(p, "⚙ Background " + (data.workflowName ? `workflow “${data.workflowName}”` : "task") + " started" + (data.description ? " — " + data.description : ""), "ws-act-ok"); continue; }
+        if (data.kind === "taskDone") { if (!data.skipTranscript) logActivity(p, (data.status === "completed" ? "✓" : "⚠") + " Background task " + data.status + (data.summary ? " — " + data.summary : ""), data.status === "completed" ? "ws-act-ok" : "ws-act-err"); continue; }
         // A user turn echoed by the server: this pane sent it (clear the pending buffer) or a
         // shared pane in another terminal did (render it so both windows show the same thread).
         if (data.kind === "user" && data.by && data.by === CONN.id) { p._pendingText = null; p._pendingImages = null; }
