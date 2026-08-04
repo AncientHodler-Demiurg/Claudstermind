@@ -117,9 +117,13 @@ function sendFile(res, filePath, root, onMissing = null) {
     }
     const ext = extname(abs);
     const headers = { "content-type": MIME[ext] || "application/octet-stream" };
-    // App-shell assets must never be served stale — a deploy has to be visible on reload
-    // without a hard-refresh. no-cache = the browser may store but must revalidate first.
-    if (ext === ".html" || ext === ".js" || ext === ".css") headers["cache-control"] = "no-cache";
+    // App-shell assets must never be served stale — a deploy has to be visible on reload without a
+    // hard-refresh. `no-store` (not the weaker `no-cache`) is deliberate: `no-cache` without a
+    // validator (ETag/Last-Modified) was served STALE by mobile browsers / the installed PWA — the
+    // whole "it looks like the old desktop layout on my phone" report. `no-store` = the browser may
+    // not keep a copy at all, so every load is fresh. (Offline still works via the service worker's
+    // own cache; this only governs the browser's HTTP cache.)
+    if (ext === ".html" || ext === ".js" || ext === ".css") headers["cache-control"] = "no-store";
     res.writeHead(200, headers);
     res.end(data);
   });

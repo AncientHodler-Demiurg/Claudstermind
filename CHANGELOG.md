@@ -4,6 +4,32 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.13.2] - 2026-08-04
+
+### Fixed
+- **"On my phone it looks like a zoomed-out desktop, not an app."** The server was serving the
+  right (responsive) files — the phone / installed PWA was showing a **stale cached** shell from
+  before the mobile work, so it laid out at desktop width and the browser shrank-to-fit (hence the
+  zoom and the cut-off left edge). Root cause + fixes:
+  - Shell assets (html/js/css) now go out `cache-control: no-store` instead of the weaker `no-cache`
+    — a validator-less `no-cache` was being kept and served stale by mobile browsers. `no-store`
+    means the browser can't hold a copy at all; every load is fresh.
+  - The service worker is bumped (drops any old cached shell on activate) and now fetches the shell
+    with the HTTP cache **bypassed** (`cache: "reload"`), so it can never hand back a stale build
+    either. It stays network-first and offline-capable.
+  - Added an overflow guard (`html/body { overflow-x: hidden }` + `text-size-adjust: 100%`) so no
+    stray wide element can trigger the browser's shrink-to-fit; legit horizontal scrollers (matrix,
+    heatmap, tab strips) keep their own scroll boxes.
+  - The viewport now locks zoom (`maximum-scale=1, user-scalable=no`) for a native-app feel — you
+    don't pinch-zoom an installed app.
+  - Verified at a 390px phone viewport: single-column layout, header stays pinned on scroll, no
+    horizontal overflow, zoom locked.
+
+### Note — clearing the stale install
+- Because the old version was cached ON YOUR PHONE, this deploy needs a one-time nudge to take hold
+  there: fully close and reopen the installed app a couple of times, OR uninstall + reinstall it (or
+  clear the site's data in the browser). After that, `no-store` keeps it fresh automatically.
+
 ## [0.13.1] - 2026-08-04
 
 ### Fixed

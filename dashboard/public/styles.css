@@ -16,6 +16,12 @@
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
+/* Never let a stray wide element push the page past the viewport (which on a phone triggers the
+   browser's "shrink to fit" — the zoomed-out desktop look). Legit horizontal scrollers (the matrix,
+   the heatmap, tab strips) have their OWN overflow container, so they're unaffected.
+   `-webkit-text-size-adjust: 100%` stops mobile browsers auto-inflating text. */
+html { overflow-x: hidden; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body { overflow-x: hidden; max-width: 100%; }
 /* Flex column so the page always fills the viewport (background + footer sink to the bottom on
    short views) and grows past it on long ones. */
 body {

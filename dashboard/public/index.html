@@ -2,10 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <!-- viewport-fit=cover so content can extend under a notch; the app then pads with the
-       env(safe-area-inset-*) values (see styles.css). maximum-scale left unset so pinch-zoom
-       stays available (accessibility). -->
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <!-- App-like on a phone: pinned to the device width, no pinch/shrink zoom (you don't zoom a
+       native app), content allowed under the notch (padded via env(safe-area-inset-*) in CSS). -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <title>Claudstermind — Master Map</title>
   <link rel="stylesheet" href="/styles.css" />
   <!-- Claudstermind brain mark — the generated blue circuit-brain logo (transparent). -->

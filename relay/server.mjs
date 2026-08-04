@@ -56,9 +56,9 @@ function serveStatic(res, path, publicDir, onMissing = null) {
     }
     const ext = extname(abs);
     const headers = { "content-type": MIME[ext] || "application/octet-stream" };
-    // App-shell assets must never be served stale — a deploy has to be visible on reload
-    // without a hard-refresh. no-cache = the browser may store but must revalidate first.
-    if (ext === ".html" || ext === ".js" || ext === ".css") headers["cache-control"] = "no-cache";
+    // no-store (not no-cache): a validator-less no-cache was served STALE by mobile browsers / the
+    // installed PWA (the "old desktop layout on my phone" report). no-store = never kept, always fresh.
+    if (ext === ".html" || ext === ".js" || ext === ".css") headers["cache-control"] = "no-store";
     res.writeHead(200, headers);
     res.end(data);
   });
