@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.13.3] - 2026-08-04
+
+### Fixed
+- **The mobile layout didn't engage on large / low-DPI Android phones** — they report a CSS
+  viewport width around 800px even though they're physically phone-sized, and the breakpoint was
+  760px, so those devices got the *desktop* workspace (sidebar + pane side by side, header pills
+  showing) instead of the tab layout. That's also why typing still zoomed (a small desktop input)
+  and the signed-in email overflowed the header. The mobile breakpoint is raised to **900px** (CSS
+  media queries + the JS `matchMedia`), and the now-redundant old 720px workspace rule removed.
+- **The signed-in email no longer overflows the header on a phone** — the "Signed in as" words and
+  the role chip are dropped on mobile and the name/email truncates with an ellipsis.
+- **Extra guard against zoom-on-type**: all text fields (compose box, search) are 16px on mobile,
+  and the compose box is a touch taller so it reads as a proper input. Verified at 810px: tab
+  layout engages, header fits, no overflow on any route.
+
 ## [0.13.2] - 2026-08-04
 
 ### Fixed

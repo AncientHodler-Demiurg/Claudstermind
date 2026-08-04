@@ -168,7 +168,9 @@ function renderIdentity() {
   if (!ME.authenticated) { host.replaceChildren(el("a", { class: "ph-btn --primary --sm", href: "/auth/login" }, ["Login with AncientHub"])); return; }
   const isAncient = (ME.roles || []).includes("ancient");
   const nameB = el("b", {}); nameB.textContent = ME.name || ME.sub || "signed in";
-  host.replaceChildren(el("span", { class: "ph-id-name" }, ["Signed in as ", nameB]), roleBadge(isAncient ? "ancient" : ((ME.roles || [])[0] || "member")), adminLink(isAncient), el("a", { class: "ph-btn --ghost --sm", href: "/auth/logout" }, ["Log out"]));
+  // The "Signed in as" prefix is wrapped so mobile CSS can drop it (and truncate the name) to keep
+  // a long email from overflowing the header — see the mobile block in styles.css.
+  host.replaceChildren(el("span", { class: "ph-id-name" }, [el("span", { class: "ph-id-prefix" }, ["Signed in as "]), nameB]), roleBadge(isAncient ? "ancient" : ((ME.roles || [])[0] || "member")), adminLink(isAncient), el("a", { class: "ph-btn --ghost --sm ph-logout", href: "/auth/logout" }, ["Log out"]));
 }
 function renderHeader() {
   const phSections = $("#phSections"), phSubnav = $("#phSubnav"), phL2 = $("#phL2"), phBack = $("#phBack"), phAction = $("#phAction");
@@ -3011,7 +3013,9 @@ function viewWorkspace() {
   }
 
   // ---- mobile: tabs + drawer (Phase 2) --------------------------------------------
-  const WS_MOBILE_MQ = window.matchMedia ? window.matchMedia("(max-width: 760px)") : { matches: false, addEventListener() {} };
+  // 900px, not 760: many large / low-DPI Android phones report a CSS viewport width around 800px
+  // even though they're physically phone-sized, so a 760 cutoff left them on the desktop layout.
+  const WS_MOBILE_MQ = window.matchMedia ? window.matchMedia("(max-width: 900px)") : { matches: false, addEventListener() {} };
   function openDrawer() { root.classList.add("ws-drawer-open"); }
   function closeDrawer() { root.classList.remove("ws-drawer-open"); }
   // One chat box at a time on a phone: a tab per pane (status dot + short label + close), a menu
