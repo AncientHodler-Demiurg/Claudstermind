@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.13.0] - 2026-08-04
+
+### Added
+- **Mobile Phase 2: the workspace is a tab strip on a phone, not a grid.** Below 760px the pane grid
+  gives way to one chat box at a time with a tab strip across the top — a tab per chat box (status
+  dot + repo label + ×), a ＋ to add one, and a ☰ that opens the repos/history **sidebar as a
+  slide-in drawer** (tap the dimmed backdrop or the conversation you open to dismiss it). Only the
+  active chat box renders and it fills the screen, so there's no more long vertical scroll through
+  stacked panes. Desktop is unchanged (the grid + layout picker are exactly as before). Verified at
+  a 390px viewport: add/switch/close tabs, drawer open/close, and one-pane-visible all work.
+
 ## [0.12.0] - 2026-08-04
 
 ### Added

@@ -2094,6 +2094,11 @@ function viewWorkspace() {
   const root = el("div", { class: "ws-root" }, []);
   const bridgeNote = el("div", { class: "hint" }, ["Connecting to the work machine…"]);
   const grid = el("div", { class: "ws-grid" }, []);
+  // Mobile (Phase 2): the grid gives way to a TAB strip — one chat box visible at a time, switch by
+  // tapping a tab — and the sidebar (repos/history) becomes a slide-in drawer. Both are hidden on
+  // desktop via CSS; renderMobileTabs()/syncMobile() below drive them.
+  const mobileTabs = el("div", { class: "ws-mtabs" }, []);
+  const sideBackdrop = el("div", { class: "ws-side-backdrop" }, []);
   const sideList = el("div", { class: "ws-side-list" }, []);
   const histList = el("div", { class: "ws-hist" }, []);
   const usageEl = el("span", { class: "ws-usage-total" }, ["—"]);
@@ -2140,6 +2145,7 @@ function viewWorkspace() {
   // When a pane picks a repo, ask what's already live on it — so a second terminal learns "this
   // is also open elsewhere" and can decide to share or (Phase 5) branch a new worktree.
   function onRepoChosen(p) {
+    if (st.isMobile) { renderMobileTabs(); closeDrawer(); }   // reflect the new tab label; a repo pick is "done with the drawer"
     if (!p.repo) return;
     wsPost("control", { action: "workspacesOn", args: { repo: p.repo } });
   }
@@ -2991,6 +2997,7 @@ function viewWorkspace() {
       renderTranscriptInto(ui, p, tailExtras);
     }
     if (wasNearBottom) ui.transcriptEl.scrollTop = ui.transcriptEl.scrollHeight;
+    syncMobileTabDots();   // keep the mobile tab's status dot in step (cheap; no-op on desktop)
   }
 
   function setActive(id) {
@@ -2998,9 +3005,71 @@ function viewWorkspace() {
     st.activeId = id;
     for (const p of st.panes) paneUI.get(p.id)?.root.classList.toggle("on", p.id === id);
     renderSidebar();
+    if (st.isMobile) renderMobileTabs();
     saveLayout();
     reportAttach();   // presence follows the active pane's workspace
   }
+
+  // ---- mobile: tabs + drawer (Phase 2) --------------------------------------------
+  const WS_MOBILE_MQ = window.matchMedia ? window.matchMedia("(max-width: 760px)") : { matches: false, addEventListener() {} };
+  function openDrawer() { root.classList.add("ws-drawer-open"); }
+  function closeDrawer() { root.classList.remove("ws-drawer-open"); }
+  // One chat box at a time on a phone: a tab per pane (status dot + short label + close), a menu
+  // button that opens the repos/history drawer, and a "＋" to add a chat box. CSS shows only the
+  // active pane; this strip is how you move between them.
+  function renderMobileTabs() {
+    const menuBtn = el("button", { class: "ws-mtab-menu", title: "Repositories & history" }, ["☰"]);
+    menuBtn.addEventListener("click", openDrawer);
+    const tabs = st.panes.map((p) => {
+      const label = p.repo ? shortRepo(p.repo) + (p.worktree && p.worktree !== "main" ? "@" + p.worktree : "") : "New chat";
+      const busy = paneBusy(p);
+      const dotCls = "ws-mtab-dot" + (busy ? " busy" : "") + (p.status === "deepwork" ? " deep" : "");
+      const kids = [el("span", { class: dotCls }, []), el("span", { class: "ws-mtab-lbl" }, [label])];
+      if (st.panes.length > 1) {
+        const x = el("span", { class: "ws-mtab-x", title: "Close this chat box" }, ["×"]);
+        x.addEventListener("click", (e) => { e.stopPropagation(); removePaneMobile(p); });
+        kids.push(x);
+      }
+      const t = el("button", { class: "ws-mtab" + (p.id === st.activeId ? " on" : ""), "data-pid": p.id }, kids);
+      t.addEventListener("click", () => setActive(p.id));
+      return t;
+    });
+    const addBtn = el("button", { class: "ws-mtab-add", title: "New chat box" }, ["＋"]);
+    addBtn.addEventListener("click", addPaneMobile);
+    mobileTabs.replaceChildren(menuBtn, el("div", { class: "ws-mtabs-scroll" }, tabs), addBtn);
+  }
+  function addPaneMobile() {
+    const p = newPane(); st.panes.push(p);
+    st.cols = 1; st.rows = st.panes.length;   // on a phone the grid is a flat 1×N — one pane per "tab"
+    st.activeId = p.id;
+    rebuildGrid(); renderLayoutPicker(); renderMobileTabs(); saveLayout(); reportAttach();
+  }
+  function removePaneMobile(p) {
+    if (st.panes.length <= 1) { clearPane(p); renderMobileTabs(); return; }   // last one: reset, don't remove
+    if (paneBusy(p) && !window.confirm("Claude is still working here. Close this chat box and let it finish in the background? The reply is saved — reopen the conversation anytime.")) return;
+    endSessions([p.sessionKey]);
+    st.panes = st.panes.filter((x) => x !== p);
+    st.cols = 1; st.rows = st.panes.length;
+    if (!st.panes.some((x) => x.id === st.activeId)) st.activeId = st.panes[0].id;
+    rebuildGrid(); renderLayoutPicker(); renderMobileTabs(); saveLayout(); reportAttach();
+  }
+  // Cheap per-paint update of the tab status dots (busy/deepwork) + active highlight WITHOUT
+  // rebuilding the whole strip — so streaming doesn't thrash the tab DOM (or reset its scroll).
+  function syncMobileTabDots() {
+    if (!st.isMobile) return;
+    for (const t of mobileTabs.querySelectorAll(".ws-mtab")) {
+      const p = st.panes.find((x) => x.id === t.dataset.pid); if (!p) continue;
+      const dot = t.querySelector(".ws-mtab-dot"); if (dot) { const busy = paneBusy(p); dot.classList.toggle("busy", busy); dot.classList.toggle("deep", p.status === "deepwork"); }
+      t.classList.toggle("on", p.id === st.activeId);
+    }
+  }
+  function syncMobile() {
+    st.isMobile = !!WS_MOBILE_MQ.matches;
+    root.classList.toggle("ws-mobile", st.isMobile);
+    if (st.isMobile) renderMobileTabs(); else closeDrawer();
+  }
+  WS_MOBILE_MQ.addEventListener("change", syncMobile);
+  sideBackdrop.addEventListener("click", closeDrawer);
 
   function rebuildGrid() {
     grid.dataset.cols = String(st.cols);
@@ -3341,6 +3410,7 @@ function viewWorkspace() {
     const p = activePane(); if (!p) { note("Open a pane first."); return; }
     beginPendingOpen(sessionKey, p, mode);
     wsPost("control", { action: "open", args: { sessionKey } });
+    if (st.isMobile) closeDrawer();   // opening a conversation is "done with the drawer"
   }
 
   // ---- SSE handling --------------------------------------------------------------
@@ -3853,14 +3923,20 @@ function viewWorkspace() {
       el("span", { class: "ws-spacer" }, []),
       liveStatsEl, usageEl, usageLimitsEl, newFolderBtn, newRepoBtn,
     ]),
+    mobileTabs,
     presenceBar,
     bridgeNote,
     el("div", { class: "ws-body" }, [
-      el("aside", { class: "ws-side" }, [modeToggle, sideList, el("div", { class: "ws-side-sep" }, []), histList]),
+      sideBackdrop,
+      el("aside", { class: "ws-side" }, [
+        (() => { const c = el("button", { class: "ws-drawer-close", title: "Close" }, ["✕ Close"]); c.addEventListener("click", closeDrawer); return c; })(),
+        modeToggle, sideList, el("div", { class: "ws-side-sep" }, []), histList,
+      ]),
       grid,
     ]),
     permHost,
   );
+  syncMobile();   // apply the phone layout immediately if we loaded narrow
   return root;
 }
 
