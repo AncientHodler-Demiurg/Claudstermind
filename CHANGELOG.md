@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.13.1] - 2026-08-04
+
+### Fixed
+- **Mobile Phase 3: per-page polish.** Walked every page at a 390px phone viewport and fixed the
+  remaining cramped spots: the Org×Role **matrix table** now scrolls horizontally inside its own box
+  instead of stretching the whole page pannable (its sticky header pins to the top on mobile); the
+  **LocalHost aggregator** strip wraps its title + action buttons onto their own rows instead of
+  clipping "Open standalone" off the right edge; and the **Overview/Activity stat cards** show
+  two-up on a phone (short numbers, so a long list isn't an endless single-column scroll). Verified:
+  no horizontal page overflow on any route (Overview, Map + all sub-views, Activity, Pipeline, Git,
+  Brain, Workspace, LocalHost). The commit-heatmap already scrolled in its own box and was left as-is.
+
 ## [0.13.0] - 2026-08-04
 
 ### Added

@@ -4488,7 +4488,9 @@ function viewMatrix() {
     body.append(tr);
   }
   table.append(body);
-  return el("div", {}, [orgModeToggle(), el("div", { class: "hint" }, ["Every repo placed by its Pantheonic role (row) and organisation (column). Automatons + Constructors cluster in AncientPantheon under the 'shared machines' model."]), table]);
+  // Wrap the (wide) table in a horizontal-scroll box so on a phone the TABLE scrolls sideways
+  // rather than stretching the whole page pannable — matches the heatmap's own `overflow-x:auto`.
+  return el("div", {}, [orgModeToggle(), el("div", { class: "hint" }, ["Every repo placed by its Pantheonic role (row) and organisation (column). Automatons + Constructors cluster in AncientPantheon under the 'shared machines' model."]), el("div", { class: "matrix-wrap" }, [table])]);
 }
 
 /* ---------- dependency graph (SVG) ---------- */
