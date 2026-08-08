@@ -21,3 +21,7 @@ test("before the scheduled hour ⇒ not due yet", () => {
 test("already ran today ⇒ not due (idempotent — one backup per day)", () => {
   assert.equal(isBackupDue({ enabled: true, hour: 3, lastRunDate: "2026-07-15" }, at(23), "2026-07-15"), false);
 });
+
+test("keepLast defaults to 7 (retention: keep a week of archives)", () => {
+  assert.equal(BACKUP_DEFAULTS.keepLast, 7);
+});

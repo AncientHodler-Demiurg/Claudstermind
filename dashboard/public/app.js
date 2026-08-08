@@ -4030,10 +4030,12 @@ function viewOps() {
     const browseBtn = el("button", { class: "ghost", title: "Pick the folder on the work machine's disk — avoids typing/pasting a path by hand" }, ["📁 Browse…"]);
     const hour = el("input", { type: "number", id: "bkHour", min: "0", max: "23", value: String(c.hour ?? 3),
       style: "width:56px;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:5px 7px" });
+    const keep = el("input", { type: "number", id: "bkKeep", min: "1", max: "3650", value: String(c.keepLast ?? 7),
+      style: "width:56px;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:5px 7px" });
     const saveBtn = el("button", { class: "ghost" }, ["Save settings"]);
 
     async function save(patch) {
-      const body = { location: loc.value, hour: Number(hour.value), enabled: toggle.checked, ...patch };
+      const body = { location: loc.value, hour: Number(hour.value), keepLast: Number(keep.value), enabled: toggle.checked, ...patch };
       const r = await (await fetch("/api/backup/config", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
       if (!r.ok) { out.style.display = "block"; out.textContent = "Could not save backup settings: " + (r.message || r.reason || "error"); }
       loadSched();
@@ -4059,6 +4061,7 @@ function viewOps() {
         el("label", { style: "display:inline-flex;align-items:center;gap:6px;font-size:13px" }, [toggle, "Enabled"]),
         el("div", { style: "display:flex;align-items:center;gap:6px;flex:1;min-width:220px" }, [el("span", { class: "was" }, ["location"]), loc, browseBtn]),
         el("div", { style: "display:flex;align-items:center;gap:6px" }, [el("span", { class: "was" }, ["hour"]), hour, el("span", { class: "was" }, [":00"])]),
+        el("div", { style: "display:flex;align-items:center;gap:6px", title: "Retention: how many of the newest archives to keep when you press “Prune” (below). Older ones are deleted." }, [el("span", { class: "was" }, ["keep last"]), keep, el("span", { class: "was" }, ["backups"])]),
         saveBtn,
       ]),
       el("div", { style: "font-size:12px" }, stateBits),
@@ -4135,6 +4138,40 @@ function viewOps() {
     }
   }
 
+  // Retention: keep the newest N (the "keep last" setting), delete the rest. Confirms with
+  // the exact count first — this permanently removes .tar files.
+  async function pruneBackups(btn) {
+    let cfg; try { cfg = (await (await fetch("/api/backup/config")).json()).config || {}; } catch { cfg = {}; }
+    const keepLast = cfg.keepLast || 7;
+    let list; try { list = await (await fetch("/api/backups")).json(); } catch { list = { archives: [] }; }
+    const total = (list.archives || []).length;
+    const toDelete = Math.max(0, total - keepLast);
+    out.style.display = "block";
+    if (toDelete === 0) { out.textContent = `Nothing to prune — ${total} archive(s) present, keeping last ${keepLast}.`; return; }
+    if (!window.confirm(`Prune backups?\n\nKeep the ${keepLast} newest, delete the ${toDelete} older archive(s). This permanently removes those .tar files and cannot be undone.`)) return;
+    btn.disabled = true; const old = btn.textContent; btn.textContent = "… pruning";
+    try {
+      const r = await (await fetch("/api/backup/prune", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ keepLast }) })).json();
+      out.textContent = r.ok ? `🧹 Pruned ${r.deleted.length} archive(s), freed ${human(r.freedBytes)}. ${r.remaining} kept.` : "❌ Prune failed: " + (r.message || r.reason || "error");
+    } catch (e) { out.textContent = "❌ Prune error: " + e; }
+    btn.textContent = old; btn.disabled = false;
+    refreshArchives();
+  }
+
+  // Delete ONE archive (the per-row 🗑). Locks every archive button while it runs so a
+  // delete and a restore can't race over the same folder.
+  async function deleteBackup(a) {
+    if (!window.confirm(`Delete this backup?\n\n${a.file}\n${a.date} · ${human(a.bytes)}\n\nThis permanently removes the .tar file and cannot be undone.`)) return;
+    const all = [...archiveBox.querySelectorAll("button"), backupBtn]; all.forEach((b) => (b.disabled = true));
+    out.style.display = "block";
+    try {
+      const r = await (await fetch(`/api/backup/delete?id=${encodeURIComponent(a.id)}`, { method: "POST" })).json();
+      out.textContent = r.ok ? `🗑 Deleted ${a.file}, freed ${human(r.freedBytes)}.` : "❌ Delete failed: " + (r.message || r.reason || "error");
+    } catch (e) { out.textContent = "❌ Delete error: " + e; }
+    all.forEach((b) => (b.disabled = false));
+    refreshArchives();
+  }
+
   // Signature of the last render, so the 4s poll only touches the DOM when the folder
   // actually changed. Re-rendering unconditionally would flicker the table and yank
   // focus out of it mid-click.
@@ -4157,7 +4194,10 @@ function viewOps() {
       return;
     }
     archiveBox.replaceChildren(
-      el("div", { class: "hint" }, [`${d.archives.length} archive(s) · ${human(d.totalBytes)} total · ${d.root}`]),
+      el("div", { style: "display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px" }, [
+        el("span", { class: "hint", style: "margin:0" }, [`${d.archives.length} archive(s) · ${human(d.totalBytes)} total · ${d.root}`]),
+        (() => { const b = el("button", { class: "ghost", title: "Keep the newest N archives (the “keep last” setting above) and delete the rest" }, ["🧹 Prune old backups"]); b.addEventListener("click", () => pruneBackups(b)); return b; })(),
+      ]),
       el("table", { class: "pkgtable" }, [
         el("thead", {}, [el("tr", {}, ["Date", "Id", "Size", "Written", ""].map((h) => el("th", {}, [h])))]),
         el("tbody", {}, d.archives.map((a, i) => el("tr", {}, [
@@ -4169,6 +4209,7 @@ function viewOps() {
             // No verified record ⇒ we cannot vouch that tar finished writing it.
             a.unverified ? el("span", { style: "color:#fbbf24", title: "No verified backup record — this file was not written and checked by this dashboard. It may be incomplete." }, ["⚠ unverified "]) : "",
             el("button", { class: "ghost", onclick: (e) => restore(a, e.currentTarget) }, ["↩ Restore"]),
+            el("button", { class: "ghost", title: "Delete this archive permanently", style: "color:#f87171", onclick: () => deleteBackup(a) }, ["🗑 Delete"]),
           ]),
         ]))),
       ]),

@@ -806,8 +806,13 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
   .ws-mtab-add, .ws-mtab-menu { flex: 0 0 auto; min-width: 38px; min-height: 38px; display: inline-flex; align-items: center; justify-content: center;
     background: var(--chip); border: 1px solid var(--line); color: var(--ink); border-radius: 9px; font-size: 18px; cursor: pointer; }
 
-  /* Only the active chat box is shown; the rest are just tabs. It fills most of the screen. */
-  .ws-grid { grid-template-columns: 1fr; }
+  /* Only the active chat box is shown; the rest are just tabs. It fills most of the screen.
+     CRITICAL: collapse the grid to ONE row too. The desktop template keeps `--ws-rows` explicit
+     tracks (e.g. 2 for a 1×2 layout); in ws-full mode those tracks split the fixed grid height
+     evenly, so the single visible pane got only 1/N of the screen and its compose box + controls
+     overflowed past `.ws-pane { overflow:hidden }` and vanished — the pane was unusable. One track
+     = the visible pane owns the full height. */
+  .ws-grid { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
   .ws-grid > .ws-pane:not(.on) { display: none; }
   .ws-pane { min-height: calc(100vh - 210px); }
   .ws-transcript { max-height: none; flex: 1; }

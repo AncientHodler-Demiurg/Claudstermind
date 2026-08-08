@@ -22,7 +22,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { join, extname, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readActivity, readLastBackup } from "../orchestrator/activity.mjs";
-import { listArchives } from "../orchestrator/archives.mjs";
+import { listArchives, pruneArchives, deleteArchive } from "../orchestrator/archives.mjs";
 import { readBackupConfig, writeBackupConfig, isBackupDue, browseDir } from "../orchestrator/backupConfig.mjs";
 import { readCascade } from "../lib/cascade.mjs";
 import { allReposGitStatus, repoGitStatus } from "../lib/gitStatus.mjs";
@@ -847,6 +847,25 @@ const handler = async (req, res) => {
   // ---- backups: the dated archives at the configured location ----
   if (path === "/api/backups") {
     return sendJSON(res, 200, listArchives(readBackupConfig().location));
+  }
+
+  // ---- backup retention: keep the newest N, delete the rest (local-only mutation) ----
+  if (req.method === "POST" && path === "/api/backup/prune") {
+    if (!sameOrigin(req)) return sendJSON(res, 403, { ok: false, reason: "cross-origin" });
+    if (!who.localActionsAvailable) return sendJSON(res, 403, { ok: false, reason: "local-only", message: "Pruning backups is local-only." });
+    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only" });
+    const cfg = readBackupConfig();
+    const body = await readBody(req).catch(() => ({}));
+    const keepLast = Number.isInteger(body?.keepLast) && body.keepLast >= 1 ? body.keepLast : cfg.keepLast;
+    return sendJSON(res, 200, pruneArchives(cfg.location, keepLast));
+  }
+
+  // ---- backup delete: remove ONE archive by id (local-only mutation) ----
+  if (req.method === "POST" && path === "/api/backup/delete") {
+    if (!sameOrigin(req)) return sendJSON(res, 403, { ok: false, reason: "cross-origin" });
+    if (!who.localActionsAvailable) return sendJSON(res, 403, { ok: false, reason: "local-only", message: "Deleting backups is local-only." });
+    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only" });
+    return sendJSON(res, 200, deleteArchive(url.searchParams.get("id"), readBackupConfig().location));
   }
 
   // ---- backup config: the daily-backup toggle, location, schedule + state ----

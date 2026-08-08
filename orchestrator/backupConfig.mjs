@@ -15,6 +15,8 @@ const DEFAULTS = {
   enabled: false,               // the toggle — daily backup off until the user turns it on
   location: defaultBackupRoot(), // where archives are written (platform default, user-editable)
   hour: 3,                       // local hour-of-day to run the daily backup (0–23)
+  keepLast: 7,                   // retention: how many newest archives to keep when pruning
+
   lastRunDate: null,             // "YYYY-MM-DD" of the last successful auto-run (idempotency)
   lastResult: null,              // the last auto-run's result payload (for the UI)
 };
@@ -32,6 +34,7 @@ export function writeBackupConfig(patch) {
   if (typeof patch.enabled === "boolean") next.enabled = patch.enabled;
   if (typeof patch.location === "string" && patch.location.trim()) next.location = patch.location.trim();
   if (Number.isInteger(patch.hour) && patch.hour >= 0 && patch.hour <= 23) next.hour = patch.hour;
+  if (Number.isInteger(patch.keepLast) && patch.keepLast >= 1) next.keepLast = Math.min(patch.keepLast, 3650);
   if ("lastRunDate" in patch) next.lastRunDate = patch.lastRunDate;
   if ("lastResult" in patch) next.lastResult = patch.lastResult;
   writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2));

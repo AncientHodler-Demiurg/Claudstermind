@@ -4,7 +4,7 @@
 // one list. The registry is a CONVENIENCE, not the truth — the truth is the .tar
 // files on X:. listArchives() reconciles the two, so an archive deleted by hand on
 // the drive disappears from the list, and one restored from elsewhere still shows up.
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join, dirname, posix } from "node:path";
 import { homedir } from "node:os";
 import { ACTIVITY_DIR, ensureDir } from "./activity.mjs";
@@ -73,7 +73,11 @@ export function recordArchive(entry) {
  * platform-injectable so the logic is testable off its host OS.
  */
 export function describeMissingRoot(root, platform = process.platform) {
-  if (platform === "win32") {
+  // A drive-letter path (X:\...) is a Windows location regardless of the HOST os: on a Linux
+  // host, dirname() would otherwise read it as one relative segment whose parent is "." (which
+  // always exists), wrongly reporting an unmounted Windows drive as "no archives yet".
+  const isDrivePath = /^[A-Za-z]:[\\/]/.test(root);
+  if (platform === "win32" || isDrivePath) {
     const drive = root.slice(0, 3);                     // "X:\"
     return existsSync(drive)
       ? { available: true, root, archives: [], totalBytes: 0, message: `No archives yet — ${root} will be created by the first backup.` }
@@ -109,4 +113,55 @@ export function listArchives(root = BACKUP_ROOT) {
 
 export function findArchive(id, root = BACKUP_ROOT) {
   return listArchives(root).archives.find((a) => a.id === id) || null;
+}
+
+/**
+ * Drop entries from the registry's memory. The .tar files themselves are removed by the
+ * caller; this only forgets what we remembered ABOUT them. Best-effort and idempotent:
+ * only writes when something actually changed, so pruning ids that were never in the
+ * registry (e.g. hand-copied archives, or a unit test using a throwaway root) leaves the
+ * real registry untouched.
+ */
+function forgetArchives(ids) {
+  const set = new Set(ids);
+  const reg = readRegistry();
+  const before = reg.archives.length;
+  reg.archives = reg.archives.filter((a) => !set.has(a.id));
+  if (reg.archives.length !== before) { ensureDir(); writeFileSync(REGISTRY, JSON.stringify(reg, null, 2)); }
+}
+
+/** Delete ONE archive by id — its .tar on disk AND its registry entry. */
+export function deleteArchive(id, root = BACKUP_ROOT) {
+  const a = findArchive(id, root);
+  if (!a) return { ok: false, message: `No archive with id ${id} at ${root}.`, deleted: [], freedBytes: 0 };
+  try { unlinkSync(a.path); }
+  catch (e) { return { ok: false, message: `Could not delete ${a.file}: ${e.message}`, deleted: [], freedBytes: 0 }; }
+  forgetArchives([a.id]);
+  return { ok: true, deleted: [{ id: a.id, file: a.file, bytes: a.bytes }], freedBytes: a.bytes };
+}
+
+/**
+ * Retention: KEEP the newest `keepLast` archives, delete the rest (both the .tar on disk
+ * and the registry entry). "Newest" is by the same mtime order listArchives() already
+ * sorts by, so it matches exactly what the Ops table shows top-to-bottom.
+ *
+ * keepLast is clamped to >= 1 — pruning to zero would wipe every backup, which is never
+ * what a retention policy means (that's a manual per-archive delete, not "keep last N").
+ * A single failed unlink is skipped, not fatal: the file simply reappears in the next
+ * listing rather than aborting the whole prune.
+ */
+export function pruneArchives(root = BACKUP_ROOT, keepLast = 7) {
+  const keep = Math.max(1, Math.floor(Number(keepLast) || 1));
+  const listing = listArchives(root);
+  if (!listing.available) return { ok: false, message: listing.message, keepLast: keep, kept: 0, deleted: [], freedBytes: 0, remaining: 0 };
+  const archives = listing.archives;                 // already newest-first
+  const doomed = archives.slice(keep);
+  const deleted = [];
+  let freedBytes = 0;
+  for (const a of doomed) {
+    try { unlinkSync(a.path); deleted.push({ id: a.id, file: a.file, bytes: a.bytes }); freedBytes += a.bytes; }
+    catch { /* leave it — it'll still show next listing rather than blowing up the prune */ }
+  }
+  if (deleted.length) forgetArchives(deleted.map((d) => d.id));
+  return { ok: true, keepLast: keep, kept: archives.length - deleted.length, deleted, freedBytes, remaining: archives.length - deleted.length };
 }

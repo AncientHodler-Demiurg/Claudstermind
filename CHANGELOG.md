@@ -4,6 +4,26 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.15.0] - 2026-08-08
+
+### Fixed
+- **Mobile workspace was unusable — the compose box vanished.** In the phone's one-pane-at-a-time
+  tab layout, only the active chat box is shown, but the grid still reserved a row for every pane in
+  the saved layout (a 1×2 layout kept 2 rows). In the fixed-height workspace those rows split the
+  screen evenly, so the single visible pane got only half (or a third) of the height and its input +
+  controls overflowed past the pane's clipped edge and disappeared — you literally couldn't type or
+  send. The mobile grid now collapses to a single full-height row so the active pane owns the whole
+  screen. (Also fixes a latent cross-platform bug: an unmounted Windows drive path was mis-reported
+  as "no archives yet" when the dashboard runs on Linux.)
+
+### Added
+- **Backup retention / pruning.** A new **keep last N** setting (default **7**) in Ops → backup
+  settings, plus a **🧹 Prune old backups** button that keeps the N newest archives and deletes the
+  rest — and a per-archive **🗑 Delete** for removing a single one. The archive list already shows how
+  many backups exist and their total size; pruning confirms the exact count before deleting and
+  reports the space freed. Backups accumulated one full ~2 GB tar per day with no cleanup; this caps
+  the local footprint. Retention actions are local-only (same as backup/restore).
+
 ## [0.14.0] - 2026-08-04
 
 ### Added
