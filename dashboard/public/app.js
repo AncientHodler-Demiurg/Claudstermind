@@ -2514,10 +2514,19 @@ function viewWorkspace() {
     // text instead. On a normal desktop the row cap is far smaller than 40vh, so nothing changes.
     const rowCap = lineHeight * WS_PROMPT_MAX_ROWS + extra;
     const maxHeight = Math.min(rowCap, Math.round((window.innerHeight || 900) * 0.4));
+    const minFloor = lineHeight * WS_PROMPT_MIN_ROWS + extra;
     el.style.height = "auto";   // collapse first — scrollHeight only shrinks correctly measured from a fresh baseline
     const needed = el.scrollHeight;
-    el.style.height = Math.min(needed, maxHeight) + "px";
-    el.style.overflowY = needed > maxHeight ? "auto" : "hidden";
+    if (needed <= minFloor) {
+      // Empty / short: clear the inline height so CSS takes over — on mobile that lets the box
+      // stretch to fill the button column's height (a big, inviting typing area) instead of being
+      // pinned to a fixed inline pixel value that leaves an awkward gap next to the round buttons.
+      el.style.height = "";
+      el.style.overflowY = "hidden";
+    } else {
+      el.style.height = Math.min(needed, maxHeight) + "px";
+      el.style.overflowY = needed > maxHeight ? "auto" : "hidden";
+    }
   }
   // "roughly 3 MB" per design — measured on the ENCODED (base64) string, since that's what
   // actually rides the WS control frame; base64 chars ≈ bytes (ASCII), so string length is a
@@ -2708,7 +2717,11 @@ function viewWorkspace() {
     imgPreviewWrap.hidden = true;
     const imgErr = el("div", { class: "ws-img-err" }, []);
     imgErr.hidden = true;
-    const composeRow = el("div", { class: "ws-compose" }, [attachBtn, imgFileInput, promptEl, stopBtn, sendBtn]);
+    // Actions grouped in their own wrapper: a horizontal cluster on desktop, but on mobile a
+    // VERTICAL column of round icon buttons (attach / stop / send) beside a full-width text box —
+    // WhatsApp-style — so the typing area isn't squeezed to nothing when Stop and Send both show.
+    const composeBtns = el("div", { class: "ws-compose-btns" }, [attachBtn, stopBtn, sendBtn]);
+    const composeRow = el("div", { class: "ws-compose" }, [imgFileInput, promptEl, composeBtns]);
     const composeExtras = el("div", { class: "ws-compose-extras" }, [imgPreviewWrap, imgErr]);
     // A slim, ALWAYS-visible identity readout — plain text, not a control — so which
     // repo@worktree this pane is actually showing is never in doubt regardless of scroll

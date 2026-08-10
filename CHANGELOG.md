@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.15.2] - 2026-08-10
+
+### Changed
+- **Mobile compose row redesigned (WhatsApp-style).** The attach / stop / send buttons used to sit in
+  one horizontal row with the text box, so when **Stop** and **Send** both appeared the typing area
+  was crushed to a sliver. The buttons now stack as a **vertical column of round icon buttons**
+  (📎 attach · ■ stop · ➤ send) beside a **full-width text box** that fills the rest of the row — the
+  typing area is maximized and no longer collapses when a turn is working. The compose box also
+  stretches to a comfortable height when empty instead of being pinned to a fixed pixel value.
+  Desktop keeps its existing horizontal button layout.
+
 ## [0.15.1] - 2026-08-10
 
 ### Fixed
