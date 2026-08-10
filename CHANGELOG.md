@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.18.0] - 2026-08-10
+
+### Added
+- **Pact IDE — StoicSyntax syntax coloring (Phase 1b).** `.pact` / `.repl` files in the Pact viewer
+  are now syntax-highlighted by a custom, StoicSyntax-aware highlighter — the differentiator: **the
+  function prefix is the contract, so identifiers are colored by their prefix band.** Unprotected
+  reads/compute get cool colors (`UC_`/`UCK_` teal, `UR_`/`URC_`/`URD_`/`URDC_` cyan, `UDC_` yellow,
+  `UEV_` amber, `CAP_` gold); protected state-changers get warm/red (`C_` green-client, `XI_`/`XE_`/
+  `XB_` orange, `A_` salmon, `W_`/`WI_`/`WU_`/`WW_` red). Prefixes resolve at segment boundaries so
+  `IC|UDC_…`, `URC|KDA-PID_CLAD`, and cap-name shapes (`SWP|A_…`, `SWP|C>…`) all color correctly.
+  Plus the usual tokens (`;;` section bars, strings, numbers, `:type` annotations, `::` module refs,
+  keywords/def-forms, colored bracket kinds). A compact **band legend** above the code teaches the
+  color language. Single-pass tokenizer (HTML-escaped, injection-safe), verified on real Ouronet
+  modules; 6 tests. No bundler — the highlighter is a standalone classic script.
+
 ## [0.17.0] - 2026-08-10
 
 ### Added

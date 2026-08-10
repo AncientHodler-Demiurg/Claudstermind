@@ -163,10 +163,16 @@ Top‑level dirs (all under `/home/ancientbox/ClaudeWS/Claudstermind/`):
 - `dashboard/public/styles.css` — `.pact-ide` 3-zone layout (tree | editor 75% | right 25% split chat/terminal), mobile stacks + scrolls.
 
 **Immediate next steps (in order):**
-1. **StoicSyntax highlighter** — a *single-pass, tested* tokenizer (escape → tokenize → spans; no multi-regex-over-HTML). Color by prefix band (`UC_/UCK_/UR_/URD_/URC_/URDC_/UDC_/UEV_/CAP_` unprotected; `A_/C_/XI_/XE_/XB_/W_/WI_/WU_/WW_` protected), plus `;;` comments, strings, numbers, keywords (`module/defun/defcap/defschema/deftable/let/...`), section bars, cap-name shapes (`MOD|C>…`). Replace `renderPactCode()`'s plain-text body. Palette can borrow OuronetUI `pact-theme.ts`.
+1. ~~**StoicSyntax highlighter**~~ ✅ **DONE (v0.18.0)** — see progress log below.
 2. **Markdown rendering** for `.md` files (lightweight renderer; the repo is doc-heavy).
 3. **Multi-pane tabbed editor** — 2 vertical levels × up to 3 boxes = up to 6, each with its own tabs.
 4. **`.repl` terminal runner** — backend spawns `pact <file>.repl` (binary at `/home/ancientbox/.local/bin/pact`, v5.4) and streams stdout/stderr live (reuse the SSE pattern the Workspace/deploy logs already use); render into the right-column terminal zone.
 5. **Phase 2** — multi-tab chat wired to the existing agent runtime (`agent/`+`orchestrator/`); per-tab history; continuous write-back to a `brain/OuronetPact/` (MANIFEST lists it as known-but-unlinked); seed with `StoicSyntax.md` + Pact 5 docs.
+
+### 2026-08-10 — v0.18.0 — Phase 1b: StoicSyntax highlighter
+- **`dashboard/public/pact-highlight.js`** (classic script → `window.pactHighlight` / `pactClassifyWord` / `pactBandLegend`; loaded in `index.html` *before* app.js). Single-pass tokenizer, HTML-escaped/injection-safe. Colors by StoicSyntax prefix band at segment boundaries (`^` or after `| . : >`) so `IC|UDC_…`, `URC|KDA-PID_CLAD`, `SWP|A_…`, cap arrows `|C>` all resolve. Bands: compute/read/ctor/enforce/cap (cool/gold) vs client/orch/admin/write (warm/red). Plus `;;` section bars, strings, numbers, `:type`, `::`, keywords/def-forms, bracket kinds.
+- **`lib/pactHighlight.test.mjs`** (6 tests) — evals the browser script with a fake `window` (no bundler, no dup). Verified on real `0_Sample/Empty.pact`: `C_RotateKadena`→client, `A_UpdateLiquidBoost`→admin, `UC_*`→compute, `URC_*`→read, no single-letter-band false positives.
+- **`app.js`** `renderPactCode()` uses the highlighter for `.pact`/`.repl` (plain text otherwise); a **band legend** strip renders above the code. **`styles.css`** `.pk-*` token colors (VS Code Dark+ base) + `.pact-legend`.
+- **Testing note for next agent:** the highlighter is a pure function; keep it that way. To test browser-global classic scripts in Node without a bundler, read the file and `new Function("window", src)(win)` — the pattern used here.
 
 **Open questions still unanswered (§7):** nav-grouping confirm (move Mirror/Localhost in?), tree side (defaulted left), pane-split UX (splitters vs fixed thirds), brain linkage path.

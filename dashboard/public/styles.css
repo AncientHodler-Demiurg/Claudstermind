@@ -940,7 +940,45 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 .pact-tab.--active { color: var(--ink); border-bottom: 2px solid var(--accent); }
 .pact-editor-path { font-size: 10.5px; color: var(--ink-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pact-editor-scroll { flex: 1; min-height: 0; overflow: auto; }
-.pact-code { margin: 0; padding: 12px 14px; font: 12.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre; tab-size: 2; }
+.pact-code { margin: 0; padding: 12px 14px; font: 12.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre; tab-size: 2; color: #d2d3d4; }
+
+/* StoicSyntax token colors (VS Code Dark+ base; StoicSyntax prefix BANDS carry the meaning —
+   unprotected reads/compute cool, protected state-changers warm/red). */
+.pact-code .pk-comment { color: #6a9955; font-style: italic; }
+.pact-code .pk-section { color: #c8a15a; font-weight: 600; }
+.pact-code .pk-string  { color: #ce9178; }
+.pact-code .pk-number  { color: #b5cea8; }
+.pact-code .pk-bool    { color: #569cd6; }
+.pact-code .pk-keyword { color: #c586c0; }
+.pact-code .pk-def     { color: #c586c0; font-weight: 700; }
+.pact-code .pk-type    { color: #4ec9b0; }
+.pact-code .pk-paren   { color: #ffd700; }
+.pact-code .pk-sq      { color: #da70d6; }
+.pact-code .pk-brace   { color: #179fff; }
+.pact-code .pk-op      { color: #56b6c2; }
+/* StoicSyntax bands */
+.pact-code .pk-compute { color: #4ec9b0; }
+.pact-code .pk-read    { color: #4fb6e0; }
+.pact-code .pk-ctor    { color: #dcdcaa; }
+.pact-code .pk-enforce { color: #e5c07b; }
+.pact-code .pk-cap     { color: #e6c200; font-weight: 600; }
+.pact-code .pk-client  { color: #98c379; }
+.pact-code .pk-orch    { color: #e5a663; }
+.pact-code .pk-admin   { color: #e06c75; font-weight: 600; }
+.pact-code .pk-write   { color: #ef5350; font-weight: 600; }
+
+/* Band legend — a compact strip between the editor header and the code, teaching the color language. */
+.pact-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 6px 12px; border-bottom: 1px solid var(--line);
+  background: var(--panel); font-size: 10.5px; }
+.pact-legend-item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.pact-legend-item code { font: 700 11px ui-monospace, monospace; }
+.pact-legend-desc { color: var(--ink-mute); }
+/* Reuse the token colors on the legend's <code> tags. */
+.pact-legend .pk-compute { color: #4ec9b0; } .pact-legend .pk-read { color: #4fb6e0; }
+.pact-legend .pk-ctor { color: #dcdcaa; } .pact-legend .pk-enforce { color: #e5c07b; }
+.pact-legend .pk-cap { color: #e6c200; } .pact-legend .pk-client { color: #98c379; }
+.pact-legend .pk-orch { color: #e5a663; } .pact-legend .pk-admin { color: #e06c75; }
+.pact-legend .pk-write { color: #ef5350; }
 
 .pact-right { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 .pact-chat, .pact-term { flex: 1; min-height: 0; display: flex; flex-direction: column;

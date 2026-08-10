@@ -1989,8 +1989,20 @@ function pactFileIcon(name) {
   if (n.endsWith(".yaml") || n.endsWith(".yml")) return "⚙";
   return "•";
 }
-// Phase 1a viewer: plain monospace text. The StoicSyntax highlighter replaces this next increment.
-function renderPactCode(pre, content) { pre.textContent = content; }
+// Pact/.repl files get StoicSyntax coloring (window.pactHighlight, loaded before app.js); everything
+// else renders as plain monospace text. Falls back to plain text if the highlighter isn't present.
+function renderPactCode(pre, content, rel) {
+  const ext = (rel || "").toLowerCase();
+  const isPact = ext.endsWith(".pact") || ext.endsWith(".repl");
+  if (isPact && typeof window.pactHighlight === "function") pre.innerHTML = window.pactHighlight(content);
+  else pre.textContent = content;
+}
+// A compact strip that teaches the band colors — "the prefix is the contract" made visible.
+function pactLegend() {
+  const legend = (window.pactBandLegend || []);
+  return el("div", { class: "pact-legend" }, legend.map(([cls, tag, desc]) =>
+    el("span", { class: "pact-legend-item", title: desc }, [el("code", { class: cls }, [tag]), el("span", { class: "pact-legend-desc" }, [desc])])));
+}
 
 async function loadPactDir(rel, container, editorEl) {
   let d;
@@ -2036,6 +2048,10 @@ async function openPactFile(rel, editorEl, row) {
   const pre = el("pre", { class: "pact-code" });
   renderPactCode(pre, d.content, rel);
   scroll.replaceChildren(pre);
+  const ext = rel.toLowerCase();
+  if ((ext.endsWith(".pact") || ext.endsWith(".repl")) && window.pactBandLegend) {
+    editorEl.insertBefore(pactLegend(), scroll);   // teach the band colors, between header and code
+  }
 }
 function viewPact() {
   const editorEl = el("div", { class: "pact-editor" }, [el("div", { class: "pact-editor-empty hint" }, ["Select a file from the tree to view it."])]);
