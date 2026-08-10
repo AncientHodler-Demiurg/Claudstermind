@@ -2078,12 +2078,18 @@ async function openPactFile(rel, editorEl, row) {
   catch { d = { ok: false, error: "unreachable" }; }
   const scroll = editorEl.querySelector(".pact-editor-scroll");
   if (!d.ok) { scroll.replaceChildren(el("div", { class: "hint", style: "padding:10px;color:#f87171" }, ["⚠ " + (d.error || "error") + (d.tooLarge ? ` (${Math.round((d.size || 0) / 1e6)} MB)` : "")])); return; }
-  const pre = el("pre", { class: "pact-code" });
-  renderPactCode(pre, d.content, rel);
-  scroll.replaceChildren(pre);
   const ext = rel.toLowerCase();
-  if ((ext.endsWith(".pact") || ext.endsWith(".repl")) && window.pactBandLegend) {
-    editorEl.insertBefore(pactLegend(), scroll);   // teach the band colors, between header and code
+  if (ext.endsWith(".md") && typeof window.mdRender === "function") {
+    const mdBox = el("div", { class: "pact-md" });
+    mdBox.innerHTML = window.mdRender(d.content);   // renderer HTML-escapes source + whitelists links
+    scroll.replaceChildren(mdBox);
+  } else {
+    const pre = el("pre", { class: "pact-code" });
+    renderPactCode(pre, d.content, rel);
+    scroll.replaceChildren(pre);
+    if ((ext.endsWith(".pact") || ext.endsWith(".repl")) && window.pactBandLegend) {
+      editorEl.insertBefore(pactLegend(), scroll);   // teach the band colors, between header and code
+    }
   }
 }
 function viewPact() {

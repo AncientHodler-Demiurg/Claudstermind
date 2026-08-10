@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.20.0] - 2026-08-10
+
+### Added
+- **Pact IDE — Markdown rendering (Phase 1d).** `.md` files (the Ouronet repo is doc-heavy) now
+  render as formatted HTML instead of raw text — headings, bold/italic, inline + fenced code, lists,
+  blockquotes, links, rules. Minimal safe renderer (`md-mini.js` → `window.mdRender`): every source
+  line is HTML-escaped before formatting, code fences are never treated as markup, and link URLs are
+  whitelisted (`http(s)`/relative/anchor/mailto — `javascript:` dropped). 5 tests.
+
 ## [0.19.0] - 2026-08-10
 
 ### Added
