@@ -4,6 +4,31 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.0.0] - 2026-08-10
+
+### Added
+- **Pact IDE — Phase 2: agentic multi-tab chat + brain write-back. Completes the Pact IDE → 1.0.0.**
+  The IDE's right-column chat is now a **live agentic chat scoped to the Ouronet Pact repo**, built by
+  **reusing the proven workspace session backend** (no parallel engine): each chat tab is a real Claude
+  session created via `POST /api/workspace/prompt` with `repo=OuroborosNetwork/_onchain/Ouronet`, so the
+  agent runs in the repo's cwd — it can read, write Pact, and run `.repl` tests, exactly like the Core
+  cockpit, just embedded in the IDE. Streamed back over `/api/workspace/stream` and routed by session key.
+  - **Multi-tab**, each its own conversation (＋ new, × close), status dots, a **permission-mode selector**
+    (defaults to **Bypass** for uninterrupted agentic coding — switchable), and inline **Allow/Deny** for
+    tool prompts in stricter modes.
+  - **StoicSyntax-primed:** each session's first message is prefixed with a concise StoicSyntax + Pact-5
+    orientation so the agent writes in-discipline.
+  - **Brain write-back:** a **📌 brain** button on any reply appends it (dated) to `brain/OuronetPact/LEARNINGS.md`
+    via `POST /api/pact/brain/append` (local-only + execute-gated) — the pact brain compounds. 1 test.
+  - Assistant replies render as Markdown; sessions are real workspace conversations (saved, visible in
+    Core's history). The chat works over the relay too (prompts tunnel to the work machine).
+
+### The 1.0.0 milestone — the Pact IDE is complete
+Workspace › **Pact** is now a full Pact development environment: file tree · StoicSyntax syntax coloring ·
+Markdown rendering · up-to-6-box tabbed editor · live `.repl` terminal runner · agentic multi-tab chat ·
+a learning pact brain — built entirely within Claudstermind's no-build frontend, 24 new tests across the
+Pact modules.
+
 ## [0.21.0] - 2026-08-10
 
 ### Added

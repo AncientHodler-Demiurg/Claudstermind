@@ -483,6 +483,7 @@ function render() {
   if (VIEW !== "git" && GIT_TIMER) { clearInterval(GIT_TIMER); GIT_TIMER = null; }
   if (VIEW !== "localhost" && LH_TIMER) { clearInterval(LH_TIMER); LH_TIMER = null; }
   if (VIEW !== "pact" && typeof PACT_RUN_ES !== "undefined" && PACT_RUN_ES) { try { PACT_RUN_ES.close(); } catch {} PACT_RUN_ES = null; }
+  if (VIEW !== "pact" && typeof PACT_CHAT !== "undefined" && PACT_CHAT) { pactChatStop(); }
   document.body.classList.toggle("ws-full", VIEW === "workspace" || VIEW === "pact");   // full-height cockpit views
   if (VIEW === "cascade") v.replaceChildren(viewCascade());
   else if (VIEW === "activity") v.replaceChildren(viewActivity());
@@ -2158,14 +2159,165 @@ async function pactEdOpen(path, row) {
   else { tab.error = (d.error || "error") + (d.tooLarge ? ` (${Math.round((d.size || 0) / 1e6)} MB)` : ""); }
   if (g.active === path) pactEdRenderGroup(g);
 }
+// ---- Pact chat (Zone B top): agentic, multi-tab AI chat scoped to the Ouronet Pact repo. Reuses
+// the PROVEN workspace session backend — each tab is a real Claude session (POST /api/workspace/prompt
+// with repo=Ouronet) streamed back over /api/workspace/stream and routed here by sessionKey. So the
+// agent runs in the repo cwd (writes Pact, runs REPLs) exactly like the Core cockpit, just embedded.
+const PACT_REPO = "OuroborosNetwork/_onchain/Ouronet";
+const PACT_CHAT_PREAMBLE = "[Pact IDE context] You're in the Ouronet Pact repo — StoicSyntax discipline: the function prefix IS the contract. Unprotected: UC_/UCK_ (compute), UR_/URD_/URC_/URDC_ (reads), UDC_ (object ctors), UEV_ (enforce), CAP_ (capabilities). Protected: A_ (admin), C_ (client recipe), XI_/XE_/XB_ (orchestration), W_/WI_/WU_/WW_ (persistence writes). Run tests with `pact <file>.repl` (Pact 5.4). Keep new code in this discipline.";
+let PACT_CHAT = null;   // { host, tabs:[t], activeId, seq, es, mode, conn }
+                        // t = { id, name, key, msgs:[{role|kind,text,tools}], live, status, started, perm, bodyEl }
+function pactChatInit(host) {
+  PACT_CHAT = { host, tabs: [], activeId: null, seq: 0, es: null, mode: "bypassPermissions", conn: connIdentity() };
+  pactChatOpenStream();
+  pactChatNewTab();
+}
+function pactChatStop() { if (PACT_CHAT && PACT_CHAT.es) { try { PACT_CHAT.es.close(); } catch {} PACT_CHAT.es = null; } }
+function pactChatActive() { return PACT_CHAT && PACT_CHAT.tabs.find((t) => t.id === PACT_CHAT.activeId); }
+function pactChatByKey(key) { return PACT_CHAT && PACT_CHAT.tabs.find((t) => t.key === key); }
+function pactChatNewTab() {
+  if (!PACT_CHAT) return;
+  const id = ++PACT_CHAT.seq;
+  PACT_CHAT.tabs.push({ id, name: "Chat " + id, key: wsUuid(), msgs: [], live: "", status: "idle", started: false, perm: null });
+  PACT_CHAT.activeId = id;
+  pactChatRender();
+}
+function pactChatCloseTab(id) {
+  const t = PACT_CHAT.tabs.find((x) => x.id === id);
+  if (t && t.key) wsPost("control", { action: "delete", args: { sessionKeys: [t.key] } });   // let its session finish + save
+  PACT_CHAT.tabs = PACT_CHAT.tabs.filter((x) => x.id !== id);
+  if (!PACT_CHAT.tabs.length) { pactChatNewTab(); return; }
+  if (PACT_CHAT.activeId === id) PACT_CHAT.activeId = PACT_CHAT.tabs[0].id;
+  pactChatRender();
+}
+function pactChatOpenStream() {
+  pactChatStop();
+  const q = "?conn=" + encodeURIComponent(PACT_CHAT.conn.id) + "&label=" + encodeURIComponent(PACT_CHAT.conn.label);
+  let es; try { es = new EventSource("/api/workspace/stream" + q); } catch { return; }
+  PACT_CHAT.es = es;
+  es.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } pactChatRoute(m); };
+}
+function pactChatRoute({ kind, sessionKey, data }) {
+  if (!PACT_CHAT) return;
+  if (kind === "heartbeat" || kind === "presence") return;
+  const t = sessionKey ? pactChatByKey(sessionKey) : null;
+  if (!t) return;
+  if (kind === "state") { if (data && data.session && data.session.status) { t.status = data.session.status; pactChatPaint(t); } return; }
+  if (kind === "permission") { t.perm = { requestId: data.requestId, tool: data.tool || data.name || data.title || "a tool" }; t.status = "awaiting-permission"; pactChatPaint(t); return; }
+  if (kind !== "event") return;
+  const d = data || {};
+  switch (d.kind) {
+    case "user": if (!(d.by && d.by === PACT_CHAT.conn.id)) { t.msgs.push({ role: "user", text: d.text || "" }); pactChatPaint(t); } return;
+    case "assistant_delta": t.live = (t.live || "") + (d.text || ""); pactChatPaintLive(t); return;
+    case "assistant": t.live = ""; t.msgs.push({ role: "assistant", text: d.text || "" }); pactChatPaint(t); return;
+    case "tool_use": t.live = ""; t.msgs.push({ kind: "tool_use", tools: d.tools || [] }); pactChatPaint(t); return;
+    case "result": t.live = ""; t.status = "idle"; pactChatPaint(t); return;
+    case "error": t.live = ""; t.status = "idle"; t.msgs.push({ kind: "error", text: d.text || d.message || "error" }); pactChatPaint(t); return;
+    case "status": t.status = d.status; pactChatPaint(t); return;
+    case "interrupted": t.status = "idle"; t.msgs.push({ kind: "note", text: "■ interrupted" }); pactChatPaint(t); return;
+    default: return;
+  }
+}
+function pactChatSend(t) {
+  if (!PACT_CHAT || !t) return;
+  const ta = PACT_CHAT.host.querySelector(".pc-input");
+  const text = (ta ? ta.value : "").trim();
+  if (!text) return;
+  let payload = text;
+  if (!t.started) { t.started = true; payload = PACT_CHAT_PREAMBLE + "\n\n" + text; }   // orient the agent on the first message
+  t.msgs.push({ role: "user", text });
+  t.status = "thinking"; t.live = "";
+  if (ta) { ta.value = ""; ta.style.height = ""; }
+  pactChatPaint(t);
+  wsPost("prompt", { sessionKey: t.key, repo: PACT_REPO, worktree: "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id });
+}
+function pactChatDecide(t, decision) {
+  if (!t || !t.perm) return;
+  wsPost("permission", { requestId: t.perm.requestId, decision });
+  t.perm = null; t.status = decision === "allow" ? "thinking" : "idle";
+  pactChatPaint(t);
+}
+async function pactChatToBrain(text, btn) {
+  const old = btn.textContent; btn.textContent = "…";
+  try { const r = await (await fetch("/api/pact/brain/append", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) })).json(); btn.textContent = r.ok ? "✓ saved" : "✗"; }
+  catch { btn.textContent = "✗"; }
+  setTimeout(() => { btn.textContent = old; }, 1600);
+}
+function pactChatMsgNode(m) {
+  if (m.role === "user") return el("div", { class: "pc-msg pc-user" }, [m.text]);
+  if (m.role === "assistant") {
+    const body = el("div", { class: "pc-asst-body" });
+    if (typeof window.mdRender === "function") body.innerHTML = window.mdRender(m.text); else body.textContent = m.text;
+    const save = el("button", { class: "pc-brain", title: "Save this reply to the pact brain (LEARNINGS.md)" }, ["📌 brain"]);
+    save.addEventListener("click", () => pactChatToBrain(m.text, save));
+    return el("div", { class: "pc-msg pc-asst" }, [body, save]);
+  }
+  if (m.kind === "tool_use") return el("div", { class: "pc-tool" }, ["⚙ " + ((m.tools || []).map((x) => x.name).join(", ") || "tool")]);
+  if (m.kind === "error") return el("div", { class: "pc-err" }, ["⚠ " + m.text]);
+  if (m.kind === "note") return el("div", { class: "pc-note" }, [m.text]);
+  return el("div", {}, []);
+}
+function pactChatPaint(t) {
+  if (!PACT_CHAT || t.id !== PACT_CHAT.activeId) return;
+  const scroll = PACT_CHAT.host.querySelector(".pc-scroll");
+  const compose = PACT_CHAT.host.querySelector(".pc-compose");
+  if (!scroll) { pactChatRender(); return; }
+  const nodes = t.msgs.map(pactChatMsgNode);
+  if (t.perm) {
+    const bar = el("div", { class: "pc-perm" }, [
+      el("span", {}, ["⏸ Allow " + t.perm.tool + "?"]), el("span", { class: "ws-spacer" }, []),
+      (() => { const b = el("button", { class: "pc-allow" }, ["Allow"]); b.addEventListener("click", () => pactChatDecide(t, "allow")); return b; })(),
+      (() => { const b = el("button", { class: "pc-deny" }, ["Deny"]); b.addEventListener("click", () => pactChatDecide(t, "deny")); return b; })(),
+    ]);
+    nodes.push(bar);
+  }
+  if (t.live) nodes.push(el("div", { class: "pc-msg pc-asst pc-live" }, [el("div", { class: "pc-asst-body" }, [t.live])]));
+  else if (t.status === "thinking" || t.status === "deepwork") nodes.push(el("div", { class: "pc-think" }, [t.status === "deepwork" ? "🔴 still producing…" : "● thinking…"]));
+  scroll.replaceChildren(...(nodes.length ? nodes : [el("div", { class: "hint", style: "padding:10px" }, ["Ask the agent to explore, write, or test Pact in the Ouronet repo."])]));
+  scroll.scrollTop = scroll.scrollHeight;
+  if (compose) { const send = compose.querySelector(".pc-send"); if (send) send.disabled = false; }
+}
+function pactChatPaintLive(t) {
+  if (!PACT_CHAT || t.id !== PACT_CHAT.activeId) return;
+  const scroll = PACT_CHAT.host.querySelector(".pc-scroll"); if (!scroll) return;
+  let live = scroll.querySelector(".pc-live .pc-asst-body");
+  if (!live) { pactChatPaint(t); return; }
+  live.textContent = t.live;
+  scroll.scrollTop = scroll.scrollHeight;
+}
+function pactChatRender() {
+  if (!PACT_CHAT) return;
+  const host = PACT_CHAT.host;
+  const tabs = PACT_CHAT.tabs.map((t) => {
+    const x = el("span", { class: "pc-tab-x", title: "Close chat" }, ["×"]);
+    x.addEventListener("click", (e) => { e.stopPropagation(); pactChatCloseTab(t.id); });
+    const dot = el("span", { class: "pc-tab-dot" + (t.status === "thinking" || t.status === "deepwork" ? " busy" : "") });
+    const tab = el("div", { class: "pc-tab" + (t.id === PACT_CHAT.activeId ? " --active" : "") }, [dot, el("span", { class: "pc-tab-name" }, [t.name]), x]);
+    tab.addEventListener("click", () => { PACT_CHAT.activeId = t.id; pactChatRender(); });
+    return tab;
+  });
+  const add = el("button", { class: "pact-ed-ico", title: "New Pact chat" }, ["＋"]);
+  add.addEventListener("click", () => pactChatNewTab());
+  const modeSel = el("select", { class: "wsel wsel-sm pc-mode", title: "Permission mode for these Pact sessions" },
+    WS_MODES.map((m) => el("option", { value: m.id }, [m.short])));
+  modeSel.value = PACT_CHAT.mode;
+  modeSel.addEventListener("change", () => { PACT_CHAT.mode = modeSel.value; });
+  const head = el("div", { class: "pact-zone-hd pc-head" }, [el("div", { class: "pc-tabs" }, tabs), add, el("span", { class: "ws-spacer" }, []), modeSel]);
+  const scroll = el("div", { class: "pc-scroll" }, []);
+  const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (Enter to send)" });
+  const send = el("button", { class: "pc-send" }, ["Send"]);
+  const active = pactChatActive();
+  send.addEventListener("click", () => pactChatSend(active));
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); pactChatSend(pactChatActive()); } });
+  const compose = el("div", { class: "pc-compose" }, [input, send]);
+  host.replaceChildren(head, scroll, compose);
+  if (active) pactChatPaint(active);
+}
 function viewPact() {
   const editorEl = el("div", { class: "pact-editor" });
   const treeBody = el("div", { class: "pact-tree-body" }, [el("div", { class: "hint", style: "padding:6px 8px" }, ["Loading tree…"])]);
   const treeEl = el("aside", { class: "pact-tree" }, [el("div", { class: "pact-tree-hd" }, ["📁 Ouronet (Pact)"]), treeBody]);
-  const chatEl = el("div", { class: "pact-chat" }, [
-    el("div", { class: "pact-zone-hd" }, ["💬 Pact chat"]),
-    el("div", { class: "hint", style: "padding:10px" }, ["Multi-tab AI chat about the Pact repo, each with its own history — feeding a learning ", el("b", {}, ["pact brain"]), ". Phase 2."]),
-  ]);
+  const chatEl = el("div", { class: "pact-chat" }, []);   // filled by pactChatInit() below
   const termOut = el("pre", { class: "pact-terminal" }, ["Open a .repl file and press ▶ Run to stream it here.\n"]);
   const termClear = el("button", { class: "pact-term-clear", title: "Clear the terminal" }, ["clear"]);
   termClear.addEventListener("click", () => termOut.replaceChildren());
@@ -2177,6 +2329,7 @@ function viewPact() {
   const workEl = el("div", { class: "pact-work" }, [editorEl, rightEl]);
   const root = el("div", { class: "pact-ide" }, [treeEl, workEl]);
   pactEdInit(editorEl);
+  pactChatInit(chatEl);
   loadPactDir("", treeBody);
   return root;
 }
