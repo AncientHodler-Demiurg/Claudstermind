@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.15.1] - 2026-08-10
+
+### Fixed
+- **Mobile: the Send button disappeared as you typed a longer message.** In the fixed-height phone
+  pane, the transcript was pinned at a 220px minimum, so a multi-line compose box grew downward and
+  pushed the Send button past the pane's clipped edge and off-screen — you couldn't send. The
+  transcript now yields its space (`min-height:0`) so the compose row and Send stay visible, and the
+  compose box is capped at ~40% of the viewport height (scrolling the text beyond that) so it can
+  never eat the whole pane. Desktop is unaffected (its row cap is well under 40vh).
+
 ## [0.15.0] - 2026-08-08
 
 ### Fixed

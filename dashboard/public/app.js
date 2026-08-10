@@ -2508,7 +2508,12 @@ function viewWorkspace() {
     const cs = getComputedStyle(el);
     const lineHeight = parseFloat(cs.lineHeight) || 18;
     const extra = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
-    const maxHeight = lineHeight * WS_PROMPT_MAX_ROWS + extra;
+    // Cap at WS_PROMPT_MAX_ROWS lines — but never let the box grow past ~40% of the viewport
+    // height. On a phone, 10 lines could otherwise push the Send button (bottom of the compose
+    // row) out of the fixed-height pane and off-screen; this keeps it visible and scrolls the
+    // text instead. On a normal desktop the row cap is far smaller than 40vh, so nothing changes.
+    const rowCap = lineHeight * WS_PROMPT_MAX_ROWS + extra;
+    const maxHeight = Math.min(rowCap, Math.round((window.innerHeight || 900) * 0.4));
     el.style.height = "auto";   // collapse first — scrollHeight only shrinks correctly measured from a fresh baseline
     const needed = el.scrollHeight;
     el.style.height = Math.min(needed, maxHeight) + "px";

@@ -815,7 +815,14 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
   .ws-grid { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
   .ws-grid > .ws-pane:not(.on) { display: none; }
   .ws-pane { min-height: calc(100vh - 210px); }
-  .ws-transcript { max-height: none; flex: 1; }
+  /* min-height:0 lets the transcript SHRINK when the compose box grows (the base rule pins it at
+     220px). Without this, a multi-line message inside the fixed-height pane pushed the compose row
+     — and the Send button at its bottom — past the pane's clipped edge and off-screen. Now the
+     transcript yields its space so Send always stays in view. */
+  .ws-transcript { max-height: none; flex: 1; min-height: 0; }
+  /* Keep the compose row (and its Send button) from ever being clipped: it holds its natural height
+     and the transcript above it absorbs the shrink. */
+  .ws-compose { flex: 0 0 auto; }
 
   /* The repos/history sidebar as an off-canvas drawer, opened by the ☰ tab-strip button. */
   .ws-body { position: relative; }
