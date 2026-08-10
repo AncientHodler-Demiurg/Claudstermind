@@ -1,0 +1,44 @@
+{
+  "name": "stoicsyntax-pact",
+  "displayName": "StoicSyntax Pact",
+  "version": "0.1.0",
+  "description": "Prefix-aware syntax coloring for Kadena Pact written in the StoicSyntax discipline — the function prefix is the contract. Ships a TextMate grammar (VS Code / Cursor) plus a framework-agnostic tokenizer.",
+  "publisher": "ancientpantheon",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "keywords": ["pact", "kadena", "stoicsyntax", "syntax-highlighting", "textmate", "tokenizer", "ouronet"],
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages"],
+  "main": "./src/tokenizer.mjs",
+  "exports": {
+    ".": "./src/tokenizer.mjs",
+    "./grammar": "./syntaxes/stoicsyntax-pact.tmLanguage.json"
+  },
+  "files": ["src", "syntaxes", "language-configuration.json", "README.md"],
+  "contributes": {
+    "languages": [
+      { "id": "pact", "aliases": ["Pact", "StoicSyntax Pact"], "extensions": [".pact", ".repl"], "configuration": "./language-configuration.json" }
+    ],
+    "grammars": [
+      { "language": "pact", "scopeName": "source.pact.stoic", "path": "./syntaxes/stoicsyntax-pact.tmLanguage.json" }
+    ],
+    "configurationDefaults": {
+      "editor.tokenColorCustomizations": {
+        "textMateRules": [
+          { "scope": "stoic.band.compute", "settings": { "foreground": "#4ec9b0" } },
+          { "scope": "stoic.band.read", "settings": { "foreground": "#4fb6e0" } },
+          { "scope": "stoic.band.ctor", "settings": { "foreground": "#dcdcaa" } },
+          { "scope": "stoic.band.enforce", "settings": { "foreground": "#e5c07b" } },
+          { "scope": "stoic.band.cap", "settings": { "foreground": "#e6c200", "fontStyle": "bold" } },
+          { "scope": "stoic.band.client", "settings": { "foreground": "#98c379" } },
+          { "scope": "stoic.band.orch", "settings": { "foreground": "#e5a663" } },
+          { "scope": "stoic.band.admin", "settings": { "foreground": "#e06c75", "fontStyle": "bold" } },
+          { "scope": "stoic.band.write", "settings": { "foreground": "#ef5350", "fontStyle": "bold" } },
+          { "scope": "comment.line.section.stoic", "settings": { "foreground": "#c8a15a", "fontStyle": "bold" } }
+        ]
+      }
+    }
+  },
+  "repository": { "type": "git", "url": "https://github.com/AncientHodler-Demiurg/Claudstermind", "directory": "packages/stoicsyntax-pact" }
+}

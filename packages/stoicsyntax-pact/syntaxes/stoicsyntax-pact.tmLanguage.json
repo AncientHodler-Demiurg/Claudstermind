@@ -1,0 +1,64 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "StoicSyntax Pact",
+  "scopeName": "source.pact.stoic",
+  "fileTypes": ["pact", "repl"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#defs" },
+    { "include": "#keywords" },
+    { "include": "#bands" },
+    { "include": "#types" },
+    { "include": "#accessor" },
+    { "include": "#numbers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.section.stoic", "match": ";;.*$" },
+        { "name": "comment.line.semicolon.pact", "match": ";.*$" }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.pact",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [{ "name": "constant.character.escape.pact", "match": "\\\\." }]
+    },
+    "numbers": {
+      "name": "constant.numeric.pact",
+      "match": "(?<![\\w.-])-?\\d+(\\.\\d+)?"
+    },
+    "defs": {
+      "name": "storage.type.def.pact",
+      "match": "\\b(module|interface|defun|defcap|defconst|defschema|deftable|defpact|defproperty)\\b"
+    },
+    "keywords": {
+      "name": "keyword.control.pact",
+      "match": "\\b(let\\*?|if|cond|lambda|and|or|not|bind|at|step|step-with-rollback|enforce|enforce-one|enforce-guard|enforce-keyset|with-capability|require-capability|compose-capability|install-capability|emit-event|with-read|with-default-read|read|write|insert|update|select|keys|read-msg|map|fold|filter|zip|format|namespace|use|implements|create-table|read-keyset|true|false|begin-tx|commit-tx|rollback-tx|env-data|env-keys|env-sigs|env-chain-data|env-gas|env-gasmodel|load|expect|expect-failure|expect-that|print|typecheck|verify|continue-pact)\\b"
+    },
+    "types": {
+      "name": "entity.name.type.pact",
+      "match": "(?<=:)[A-Za-z][\\w.-]*"
+    },
+    "accessor": {
+      "name": "punctuation.accessor.pact",
+      "match": "::"
+    },
+    "bands": {
+      "comment": "StoicSyntax prefix bands — the prefix is the contract. A lazy qualifier group lets a prefix be recognized after a module/band segment (IC|UDC_, URC|KDA-PID_CLAD) or a cap-arrow (SWP|A_, SWP|C>). Cool = unprotected, warm/red = protected.",
+      "patterns": [
+        { "match": "(?<![\\w|.>-])((?:[\\w-]+[|.])*?)((?:WI|WU|WW|W)[_>][\\w|<>.-]*)", "captures": { "1": { "name": "punctuation.namespace.stoic" }, "2": { "name": "stoic.band.write" } } },
+        { "match": "(?<![\\w|.>-])((?:[\\w-]+[|.])*?)(A[_>][\\w|<>.-]*)", "captures": { "1": { "name": "punctuation.namespace.stoic" }, "2": { "name": "stoic.band.admin" } } },
+        { "match": "(?<![\\w|.>-])((?:[\\w-]+[|.])*?)((?:XI|XE|XB)[_>][\\w|<>.-]*)", "captures": { "1": { "name": "punctuation.namespace.stoic" }, "2": { "name": "stoic.band.orch" } } },
+        { "match": "(?<![\\w|.>-])((?:[\\w-]+[|.])*?)(CAP[_>|][\\w|<>.-]*)", "captures": { "1": { "name": "punctuation.namespace.stoic" }, "2": { "name": "stoic.band.cap" } } },
+        { "match": "(?<![\\w|.>-])((?:[\\w-]+[|.])*?)(C[_>][\\w|<>.-]*)", "captures": { "1": { "name": "punctuation.namespace.stoic" }, "2": { "name": "stoic.band.client" } } },
+        { "match": "(?<![\\w|.>-])((?:[\\w-]+[|.])*?)(UEV[_>|][\\w|<>.-]*)", "captures": { "1": { "name": "punctuation.namespace.stoic" }, "2": { "name": "stoic.band.enforce" } } },
+        { "match": "(?<![\\w|.>-])((?:[\\w-]+[|.])*?)(UDC[_>|][\\w|<>.-]*)", "captures": { "1": { "name": "punctuation.namespace.stoic" }, "2": { "name": "stoic.band.ctor" } } },
+        { "match": "(?<![\\w|.>-])((?:[\\w-]+[|.])*?)((?:URDC|URD|URC|UR)[_>|][\\w|<>.-]*)", "captures": { "1": { "name": "punctuation.namespace.stoic" }, "2": { "name": "stoic.band.read" } } },
+        { "match": "(?<![\\w|.>-])((?:[\\w-]+[|.])*?)((?:UCK|UC)[_>|][\\w|<>.-]*)", "captures": { "1": { "name": "punctuation.namespace.stoic" }, "2": { "name": "stoic.band.compute" } } }
+      ]
+    }
+  }
+}
