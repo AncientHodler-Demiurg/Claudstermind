@@ -859,7 +859,11 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
   /* Reserve room so scrolling pages (and the footer) clear the fixed bar. The full-height Workspace
      instead shrinks by the bar height so its compose row sits just above it, never under it. */
   body:not(.ws-full) { padding-bottom: var(--cm-tabbar-h); }
-  body.ws-full { height: calc(100dvh - var(--cm-tabbar-h)); }
+  /* min-height:0 is REQUIRED here: the base `body { min-height: 100% }` (full viewport) otherwise
+     wins over this reduced height, so the workspace never actually shrank and the fixed bar clipped
+     the compose row + Send button. Pinning both height and min-height makes the workspace end exactly
+     above the bar. */
+  body.ws-full { height: calc(100vh - var(--cm-tabbar-h)); height: calc(100dvh - var(--cm-tabbar-h)); min-height: 0; }
 
   .ph-tabbar {
     display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 80;

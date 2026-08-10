@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.16.1] - 2026-08-10
+
+### Fixed
+- **Mobile bottom tab bar clipped the Workspace compose box + Send button.** The workspace was meant
+  to shrink by the bar's height, but `body`'s `min-height: 100%` (full viewport) overrode the reduced
+  height, so the workspace still filled the whole screen and the fixed bar sat on top of the compose
+  row. Pinning `min-height: 0` (with a `100vh`→`100dvh` fallback) makes the workspace end exactly
+  above the bar, so the text box and Send button are fully visible.
+
 ## [0.16.0] - 2026-08-10
 
 ### Changed
