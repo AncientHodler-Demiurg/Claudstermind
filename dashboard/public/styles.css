@@ -983,7 +983,20 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 .pact-right { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 .pact-chat, .pact-term { flex: 1; min-height: 0; display: flex; flex-direction: column;
   background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-.pact-zone-hd { padding: 8px 10px; font-weight: 700; font-size: 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.pact-zone-hd { display: flex; align-items: center; gap: 8px; padding: 8px 10px; font-weight: 700; font-size: 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+
+/* Editor Run button (.repl files) + the live REPL terminal. */
+.pact-run-btn { flex: 0 0 auto; padding: 3px 12px; border-radius: 7px; font-size: 12px; font-weight: 700; cursor: pointer;
+  background: #34d399; border: 1px solid #34d399; color: #05271b; }
+.pact-run-btn:hover { filter: brightness(1.06); }
+.pact-term-clear { flex: 0 0 auto; padding: 2px 8px; border-radius: 6px; font-size: 10.5px; cursor: pointer;
+  background: var(--chip); border: 1px solid var(--line); color: var(--ink-dim); }
+.pact-term-clear:hover { color: var(--ink); }
+.pact-terminal { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 8px 10px; white-space: pre-wrap; word-break: break-word;
+  font: 11.5px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: #cbd5e1; background: #0b0f14; }
+.pact-terminal .pt-cmd { color: #34d399; font-weight: 700; }
+.pact-terminal .pt-err { color: #f87171; }
+.pact-terminal .pt-ok  { color: #34d399; }
 
 /* Phone: an IDE can't be three columns — stack the zones and scroll the whole view. */
 @media (max-width: 900px) {

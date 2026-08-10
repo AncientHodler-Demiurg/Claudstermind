@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.19.0] - 2026-08-10
+
+### Added
+- **Pact IDE — live `.repl` terminal runner (Phase 1c).** Open a `.repl` file and a **▶ Run** button
+  appears in the editor header; clicking it spawns `pact <file>.repl` on the work machine and streams
+  **stdout/stderr live** into the right-column terminal (stderr in red, exit code + duration at the
+  end) — so you can watch a run error, get fixed, and re-run. Backend is an SSE endpoint
+  (`/api/pact/run`), local-only + execute-gated, confined to the repo, `.repl` only, with a 120 s
+  runtime cap and process kill on disconnect. Pact binary auto-resolved (`$PACT_BIN` → `~/.local/bin/pact`
+  → PATH). Pure spec builder is unit-tested (3 tests). (Streams on the local dashboard; remote-over-relay
+  run comes with the bridge protocol later.)
+
 ## [0.18.0] - 2026-08-10
 
 ### Added

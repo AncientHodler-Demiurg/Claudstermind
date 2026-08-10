@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import { readActivity, readLastBackup } from "../orchestrator/activity.mjs";
 import { listArchives, pruneArchives, deleteArchive } from "../orchestrator/archives.mjs";
 import { listDir as pactListDir, readTextFile as pactReadFile, pactRoot as resolvePactRoot } from "../lib/pactFs.mjs";
+import { pactRunSpec } from "../lib/pactRun.mjs";
 import { readBackupConfig, writeBackupConfig, isBackupDue, browseDir } from "../orchestrator/backupConfig.mjs";
 import { readCascade } from "../lib/cascade.mjs";
 import { allReposGitStatus, repoGitStatus } from "../lib/gitStatus.mjs";
@@ -860,6 +861,33 @@ const handler = async (req, res) => {
   if (path === "/api/pact/file") {
     if (!who.canRead) return sendJSON(res, 403, { ok: false, reason: "read-only" });
     return sendJSON(res, 200, pactReadFile(resolvePactRoot(MASTER_ROOT), url.searchParams.get("path") || ""));
+  }
+  // ---- Pact IDE: run a .repl and stream stdout/stderr live (SSE). Local-only + canExecute (it
+  // spawns a process); confined to the repo, .repl only. Works on the local dashboard (the relay
+  // doesn't tunnel arbitrary SSE — remote run lands with the bridge protocol later). ----
+  if (path === "/api/pact/run" && req.method === "GET") {
+    if (!who.localActionsAvailable) return sendJSON(res, 403, { ok: false, reason: "local-only", message: "Running REPLs is local-only." });
+    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Execute permission required." });
+    const spec = pactRunSpec(resolvePactRoot(MASTER_ROOT), url.searchParams.get("path") || "");
+    if (!spec.ok) return sendJSON(res, 400, spec);
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
+    const send = (ev, data) => { try { res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ } };
+    send("start", { file: spec.file, bin: spec.bin });
+    let child;
+    try { child = spawn(spec.bin, spec.args, { cwd: spec.cwd, windowsHide: true }); }
+    catch (e) { send("fail", { message: e.message }); return res.end(); }
+    const t0 = Date.now();
+    child.stdout.on("data", (b) => send("out", { chunk: b.toString() }));
+    child.stderr.on("data", (b) => send("err", { chunk: b.toString() }));
+    let done = false;
+    const finish = (ev, data) => { if (done) return; done = true; clearTimeout(cap); clearInterval(hb); send(ev, data); res.end(); };
+    child.on("close", (code) => finish("exit", { code, ms: Date.now() - t0 }));
+    child.on("error", (e) => finish("fail", { message: e.message }));   // "fail" not "error" — SSE `event:error` collides with EventSource's native error
+    // Hard cap so a hung REPL can't stream forever.
+    const cap = setTimeout(() => { try { child.kill("SIGKILL"); } catch {} send("err", { chunk: "\n[killed: 120s runtime cap]\n" }); }, 120000); cap.unref?.();
+    const hb = setInterval(() => { try { res.write(": keep-alive\n\n"); } catch {} }, 25000); hb.unref?.();
+    req.on("close", () => { clearInterval(hb); clearTimeout(cap); try { child.kill("SIGKILL"); } catch {} });
+    return;
   }
 
   // ---- backup retention: keep the newest N, delete the rest (local-only mutation) ----

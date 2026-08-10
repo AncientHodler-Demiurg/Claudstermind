@@ -482,6 +482,7 @@ function render() {
   if (!(VIEW === "admin" && ADMIN_SECTION === "deploy") && RESTART_ES) { try { RESTART_ES.close(); } catch {} RESTART_ES = null; }
   if (VIEW !== "git" && GIT_TIMER) { clearInterval(GIT_TIMER); GIT_TIMER = null; }
   if (VIEW !== "localhost" && LH_TIMER) { clearInterval(LH_TIMER); LH_TIMER = null; }
+  if (VIEW !== "pact" && typeof PACT_RUN_ES !== "undefined" && PACT_RUN_ES) { try { PACT_RUN_ES.close(); } catch {} PACT_RUN_ES = null; }
   document.body.classList.toggle("ws-full", VIEW === "workspace" || VIEW === "pact");   // full-height cockpit views
   if (VIEW === "cascade") v.replaceChildren(viewCascade());
   else if (VIEW === "activity") v.replaceChildren(viewActivity());
@@ -2032,12 +2033,44 @@ function pactNode(it, editorEl) {
   row.addEventListener("click", () => openPactFile(it.path, editorEl, row));
   return row;
 }
+// ---- Pact .repl terminal runner: stream `pact <file>.repl` over SSE into the right-column terminal.
+let PACT_RUN_ES = null;
+function pactTermEl() { return document.querySelector(".pact-terminal"); }
+function pactTermAppend(text, cls) {
+  const t = pactTermEl(); if (!t) return;
+  t.appendChild(el("span", cls ? { class: cls } : {}, [text]));
+  t.scrollTop = t.scrollHeight;
+}
+function pactStopRun() { if (PACT_RUN_ES) { try { PACT_RUN_ES.close(); } catch {} PACT_RUN_ES = null; } }
+function pactRunRepl(rel) {
+  const t = pactTermEl(); if (!t) return;
+  pactStopRun();
+  t.replaceChildren();
+  pactTermAppend("❯ pact " + rel.split("/").pop() + "\n", "pt-cmd");
+  let es;
+  try { es = new EventSource("/api/pact/run?path=" + encodeURIComponent(rel)); }
+  catch { pactTermAppend("[cannot start run]\n", "pt-err"); return; }
+  PACT_RUN_ES = es;
+  es.addEventListener("out", (e) => pactTermAppend(JSON.parse(e.data).chunk));
+  es.addEventListener("err", (e) => pactTermAppend(JSON.parse(e.data).chunk, "pt-err"));
+  es.addEventListener("exit", (e) => { const d = JSON.parse(e.data); pactTermAppend("\n[exit " + d.code + " · " + d.ms + " ms]\n", d.code === 0 ? "pt-ok" : "pt-err"); pactStopRun(); });
+  es.addEventListener("fail", (e) => { pactTermAppend("\n[error: " + (JSON.parse(e.data).message || "spawn failed") + "]\n", "pt-err"); pactStopRun(); });
+  // Native connection error (server end / drop). Guarded so a clean exit doesn't print a spurious line.
+  es.addEventListener("error", () => { if (PACT_RUN_ES) { pactTermAppend("\n[disconnected]\n", "pt-err"); pactStopRun(); } });
+}
 async function openPactFile(rel, editorEl, row) {
   if (editorEl._activeRow) editorEl._activeRow.classList.remove("--active");
   if (row) { row.classList.add("--active"); editorEl._activeRow = row; }
   const name = rel.split("/").pop();
+  const isRepl = rel.toLowerCase().endsWith(".repl");
+  const hd = [el("span", { class: "pact-tab --active" }, [name]), el("span", { class: "pact-editor-path" }, [rel]), el("span", { class: "ws-spacer" }, [])];
+  if (isRepl) {
+    const runBtn = el("button", { class: "pact-run-btn", title: "Run this .repl (pact <file>) and stream the output to the terminal" }, ["▶ Run"]);
+    runBtn.addEventListener("click", () => pactRunRepl(rel));
+    hd.push(runBtn);
+  }
   editorEl.replaceChildren(
-    el("div", { class: "pact-editor-hd" }, [el("span", { class: "pact-tab --active" }, [name]), el("span", { class: "pact-editor-path" }, [rel])]),
+    el("div", { class: "pact-editor-hd" }, hd),
     el("div", { class: "pact-editor-scroll" }, [el("div", { class: "hint", style: "padding:10px" }, ["Loading…"])]),
   );
   let d;
@@ -2061,9 +2094,12 @@ function viewPact() {
     el("div", { class: "pact-zone-hd" }, ["💬 Pact chat"]),
     el("div", { class: "hint", style: "padding:10px" }, ["Multi-tab AI chat about the Pact repo, each with its own history — feeding a learning ", el("b", {}, ["pact brain"]), ". Phase 2."]),
   ]);
+  const termOut = el("pre", { class: "pact-terminal" }, ["Open a .repl file and press ▶ Run to stream it here.\n"]);
+  const termClear = el("button", { class: "pact-term-clear", title: "Clear the terminal" }, ["clear"]);
+  termClear.addEventListener("click", () => termOut.replaceChildren());
   const termEl = el("div", { class: "pact-term" }, [
-    el("div", { class: "pact-zone-hd" }, ["❯ REPL terminal"]),
-    el("div", { class: "hint", style: "padding:10px" }, ["Live ", el("code", {}, ["pact <file>.repl"]), " runs stream here so you can watch the agent iterate. Phase 2."]),
+    el("div", { class: "pact-zone-hd" }, ["❯ REPL terminal", el("span", { class: "ws-spacer" }, []), termClear]),
+    termOut,
   ]);
   const rightEl = el("div", { class: "pact-right" }, [chatEl, termEl]);
   const workEl = el("div", { class: "pact-work" }, [editorEl, rightEl]);
