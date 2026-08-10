@@ -1,9 +1,12 @@
 # Pact Language Reference (indexed)
 
-> A condensed, accurate index of Kadena **Pact 5**, compiled from `kda-chain.org/docs/pact-5/*`, the
-> Kadena reference, and the canonical `kadena-io/pact` docs (2026-08). This is durable knowledge for
-> the Pact IDE's agent — read it before writing or reviewing Pact. StoicSyntax discipline (LEARNINGS.md)
-> layers ON TOP of this: raw Pact here, the prefix contract there.
+> A condensed, accurate index of Kadena **Pact 5**, compiled from `kda-chain.org/docs/pact-5/*` and the
+> Kadena docs, then **cross-checked against the Pact 5 SOURCE** (`kadena-io/pact-5`:
+> `pact/Pact/Core/Builtin.hs` = the builtin registry, `pact/Pact/Core/Syntax/LexUtils.hs` = the lexer).
+> **Where the source and the docs disagree, the source wins** — the docs still describe Pact-4 features
+> that Pact 5 dropped (most notably formal verification / `@model`; see that section). This is durable
+> knowledge for the Pact IDE's agent — read it before writing or reviewing Pact. StoicSyntax discipline
+> (LEARNINGS.md) layers ON TOP of this: raw Pact here, the prefix contract there.
 
 ## What Pact is
 
@@ -49,8 +52,12 @@ Literals: `"str"` · `'symbol` (unique-id string, e.g. keyset ref / table name) 
 
 ## Metadata
 
-`@doc "…"` (a bare string in the meta slot is shorthand) · `@model [ (property …) (invariant …) ]` ·
-`@managed [param manager-fn]` (or bare `@managed` = single-use) · `@event` (emit on acquire).
+The lexer recognizes exactly four annotations (`LexUtils.hs`): `@doc`, `@managed`, `@event`, `@model`.
+- `@doc "…"` (a bare string in the meta slot is shorthand for it).
+- `@managed [param manager-fn]` (or bare `@managed` = single-use) — managed capability.
+- `@event` — emit an event on acquire.
+- `@model [ … ]` — **still parses (it's a lexer token) but is INERT in Pact 5** (no verifier consumes it;
+  see Formal verification below). Harmless to write; does nothing.
 
 ## Core concepts
 
@@ -62,7 +69,16 @@ Literals: `"str"` · `'symbol` (unique-id string, e.g. keyset ref / table name) 
 - **defpact:** ordered steps, each its own tx. `yield`/`resume` pass data (cross-chain consumes an SPV proof). Continuation (`cont`) txs advance a pact by id+step, no code resubmitted.
 - **Execution:** tx types `exec` (atomic) and `cont`. Ed25519 signatures, scoped to a `clist` of capabilities. `publicMeta`: chainId, sender (gas payer), gasLimit, gasPrice, ttl, creationTime. The built-in `coin` contract is the KDA ledger (`transfer`, `transfer-crosschain` defpact, gas). Marmalade = token/NFT standard on Pact (ecosystem, not core).
 
-## Built-in functions (by category — the full set)
+## Built-in functions (by category)
+
+> The authoritative, complete list is the coloring keyword set (sourced from `Builtin.hs`). Source-only
+> natives the docs omitted include: `round-prec`/`ceiling-prec`/`floor-prec`, `str-to-int-base`,
+> `read-msg-default`, `read-with-fields`, `select-with-fields`, `sort-object`, `define-read-keyset`,
+> `enforce-pact-version-range`, `enumerate-step`, `continue-pact-with-rollback` (+ yield variants),
+> `yield-to-chain`, `hash-poseidon`, `load-with-env`, `reset-pact-state`, `begin-named-tx`. Doc-listed
+> names that are NOT in the Pact 5 core registry (avoid): `verify`, `create-user-guard`, `keys-all`/
+> `keys-any`/`keys-2` (these are keyset predicate *names*, not natives), several `env-*` (`env-gasprice`,
+> `env-gasrate`), `mock-spv`, `with-applied-env`, `format-address`, `bench`.
 
 **General:** acquire-module-admin, at, base64-decode, base64-encode, chain-data, compose, concat, constantly, contains, continue, define-namespace, describe-namespace, distinct, drop, do, enumerate, filter, fold, format, hash, hash-keccak256, identity, if, int-to-str, is-charset, length, list-modules, make-list, map, namespace, negate, pact-id, pact-version, poseidon-hash-hack-a-chain, read-decimal, read-integer, read-keyset, read-msg, read-string, remove, resume, reverse, round, show, sort, static-redeploy, str-to-int, str-to-list, take, try, tx-hash, typeof, where, yield, zip.
 
@@ -92,18 +108,25 @@ Run: **`pact my-test.repl`** (no arg → interactive `pact>`; `--trace`/`-t` for
 - **Assert:** expect, expect-failure, expect-that, print.
 - **Analysis:** typecheck, verify. **Caps/keys/SPV:** test-capability, sig-keyset, format-address, mock-spv, load, with-applied-env, bench.
 
-## Formal verification (property checking)
+## Formal verification — REMOVED in Pact 5 (source-verified)
 
-Compiles Pact to SMT and discharges with **Z3**; a violation → counterexample, else proved for all inputs.
-Attach via `@model [ (property …) (invariant …) ]`: **properties** on `defun` (per-function guarantees over
-all paths); **invariants** on `defschema` (hold on every DB write, inductively). `defproperty` names reusable
-properties. Canonical: `(defproperty conserves-mass (= (column-delta accounts 'balance) 0.0))`. Building
-blocks: `column-delta`, `cell-delta`, `row-write-count`, `authorized-by`, `row-enforced`. `(typecheck 'm)`
-is the prerequisite; `(verify 'm)` typechecks then proves all `@model` claims (calls inlined).
+**Pact 4 had** an SMT/Z3 property checker: `@model` properties on `defun`, `invariant`s on `defschema`,
+`defproperty`, `column-delta`/`conserves-mass`, and `(verify 'module)`. **Pact 5 does NOT** — the
+`kadena-io/pact-5` source has **no** `Analyze`/`Property`/`SBV`/`SMT`/`Invariant`/`Model` module, and
+neither `defproperty`, `verify`, nor `invariant` is a builtin or a lexer keyword. `@model` still lexes
+(so it won't be a parse error) but nothing runs it — it is **inert**. So: **do not rely on property
+checking / formal verification in Pact 5.** Verify behavior with `.repl` tests (`expect`, `expect-failure`,
+`expect-that`) and catch type errors with `(typecheck 'module)` — which IS still present (a REPL builtin).
+(Ouronet code accordingly does not use `@model`/invariants.)
 
 ## Pact 5 vs 4
 
-Pact 5 is a core rewrite with **semantic equivalence** to 4 (drop-in; some latent errors now surface at
-compile time). Notable: **`let` == `let*`** (no difference, same gas); ~8× smaller storage, ~2–3× faster;
-new/better LSP + debugging. REPL and property systems carry over unchanged. (Ouronet's REPLs target 5.4;
-Pact 4.11 fails on keyset-outside-namespace ordering — always run 5.x.)
+Pact 5 is a core rewrite (`pact-core`) with **semantic equivalence** to 4 for normal code (drop-in; some
+latent errors now surface at compile time). Source-verified differences:
+- **Formal verification is GONE** — no property checker; `@model` inert, `defproperty`/`verify`/`invariant`
+  removed (see that section). This is the big one, and the clearest example of docs lagging the source.
+- **`let` == `let*`** (no difference, same gas).
+- The builtin registry gained precision/field/rollback variants (see the catalog note) and dropped some
+  Pact-4 natives (e.g. `create-user-guard`, `verify`).
+- ~8× smaller storage, ~2–3× faster; new/better LSP + debugging.
+- (Ouronet's REPLs target 5.4; Pact 4.11 fails on keyset-outside-namespace ordering — always run 5.x.)

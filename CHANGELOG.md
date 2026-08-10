@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.0.2] - 2026-08-11
+
+### Changed
+- **Pact coloring + brain reference re-grounded on the Pact 5 SOURCE, not the docs.** Pulled the real
+  builtin registry (`kadena-io/pact-5` → `Pact/Core/Builtin.hs`) and lexer (`Syntax/LexUtils.hs`) and
+  corrected all three coloring surfaces + `brain/OuronetPact/PACT-REFERENCE.md` to source truth — because
+  docs deprecate silently. The headline finding: **formal verification is GONE in Pact 5** — there's no
+  Analyze/Property/SBV module; `@model` still lexes but is inert; `defproperty`, `verify`, and schema
+  `invariant`s are removed (dropped from coloring — `defproperty` no longer a def-form). Added source-only
+  natives the docs omitted (`round-prec`/`ceiling-prec`/`floor-prec`, `str-to-int-base`, `read-with-fields`,
+  `select-with-fields`, `sort-object`, `define-read-keyset`, `enforce-pact-version-range`,
+  `continue-pact-with-rollback`, `yield-to-chain`, `hash-poseidon`, `env-stackframe`, …); removed names not
+  in Pact 5's core registry (`verify`, `create-user-guard`, `try`, `keys-all`/`keys-any`/`keys-2`, several `env-*`).
+
 ## [1.0.1] - 2026-08-11
 
 ### Added

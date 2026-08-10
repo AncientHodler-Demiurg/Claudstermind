@@ -1,7 +1,7 @@
 {
   "name": "stoicsyntax-pact",
   "displayName": "StoicSyntax Pact",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Prefix-aware syntax coloring for Kadena Pact written in the StoicSyntax discipline — the function prefix is the contract. Ships a TextMate grammar (VS Code / Cursor) plus a framework-agnostic tokenizer.",
   "publisher": "ancientpantheon",
   "license": "MIT",

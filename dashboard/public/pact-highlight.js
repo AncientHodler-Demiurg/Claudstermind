@@ -13,42 +13,43 @@
 (function (root) {
   "use strict";
 
-  // The full Pact 5 builtin + special-form set (indexed from kda-chain.org/docs/pact-5, 2026-08).
-  // Kept in sync with packages/stoicsyntax-pact/src/tokenizer.mjs (the canonical source).
+  // Pact 5 builtins + special forms, SOURCED from kadena-io/pact-5 (Pact/Core/Builtin.hs) — source, not
+  // docs (no `verify`/`create-user-guard`/`try`; formal verification is gone). Mirrors the canonical
+  // packages/stoicsyntax-pact/src/tokenizer.mjs; see brain/OuronetPact/PACT-REFERENCE.md.
   var KEYWORDS = new Set([
-    "let", "let*", "lambda", "cond", "if", "bind", "do", "step", "step-with-rollback",
-    "enforce", "enforce-one", "enforce-guard", "enforce-keyset", "enforce-pact-version", "enforce-verifier",
-    "with-capability", "require-capability", "compose-capability", "install-capability", "emit-event",
-    "namespace", "use", "implements", "bless", "continue", "resume", "yield",
-    "acquire-module-admin", "at", "base64-decode", "base64-encode", "chain-data", "compose", "concat",
-    "constantly", "contains", "define-namespace", "describe-namespace", "distinct", "drop", "enumerate",
-    "filter", "fold", "format", "hash", "hash-keccak256", "identity", "int-to-str", "is-charset", "length",
-    "list-modules", "make-list", "map", "negate", "pact-id", "pact-version", "poseidon-hash-hack-a-chain",
-    "read-decimal", "read-integer", "read-keyset", "read-msg", "read-string", "remove", "reverse", "round",
-    "show", "sort", "static-redeploy", "str-to-int", "str-to-list", "take", "try", "tx-hash", "typeof",
-    "where", "zip",
-    "create-table", "describe-keyset", "describe-module", "describe-table", "fold-db", "insert", "keys",
-    "read", "select", "update", "with-default-read", "with-read", "write", "txlog", "keylog",
+    "let", "let*", "lambda", "and", "or", "enforce", "enforce-one", "with-capability", "step",
+    "step-with-rollback", "use", "implements", "bless",
+    "abs", "acquire-module-admin", "add-time", "and?", "at", "base64-decode", "base64-encode",
+    "begin-named-tx", "begin-tx", "bind", "ceiling", "ceiling-prec", "chain-data", "commit-tx", "compose",
+    "compose-capability", "concat", "cond", "contains", "continue", "continue-pact",
+    "continue-pact-rollback-yield", "continue-pact-rollback-yield-object", "continue-pact-with-rollback",
     "create-capability-guard", "create-capability-pact-guard", "create-module-guard", "create-pact-guard",
-    "create-principal", "create-user-guard", "is-principal", "keyset-ref-guard", "typeof-principal",
-    "validate-principal", "create-principal-namespace", "define-keyset", "keys-2", "keys-all", "keys-any",
-    "abs", "ceiling", "floor", "dec", "exp", "ln", "log", "mod", "sqrt", "and", "or", "not", "xor", "shift",
-    "and?", "or?", "not?",
-    "add-time", "days", "diff-time", "format-time", "hours", "minutes", "parse-time", "time",
-    "begin-tx", "commit-tx", "rollback-tx", "continue-pact", "pact-state", "env-data", "env-keys",
-    "env-sigs", "env-chain-data", "env-hash", "env-namespace-policy", "env-entity", "env-events",
-    "env-exec-config", "env-dynref", "env-enable-repl-natives", "env-simulate-onchain", "env-gas",
-    "env-gaslimit", "env-gasmodel", "env-gasprice", "env-gasrate", "env-gaslog", "env-milligas",
-    "env-set-milligas", "env-set-debug-flag", "env-module-admin", "env-verifiers",
-    "expect", "expect-failure", "expect-that", "print", "typecheck", "verify", "test-capability",
-    "sig-keyset", "format-address", "mock-spv", "load", "with-applied-env", "bench",
-    "hyperlane-decode-token-message", "hyperlane-encode-token-message", "hyperlane-message-id",
-    "verify-spv", "pairing-check", "point-add", "scalar-mult",
-    "CHARSET_ASCII", "CHARSET_LATIN1",
+    "create-principal", "create-table", "days", "dec", "define-keyset", "define-namespace",
+    "define-read-keyset", "describe-keyset", "describe-module", "describe-namespace", "describe-table",
+    "diff-time", "distinct", "drop", "emit-event", "enforce-guard", "enforce-keyset", "enforce-pact-version",
+    "enforce-pact-version-range", "enforce-verifier", "enumerate", "enumerate-step", "env-ask-gasmodel",
+    "env-chain-data", "env-data", "env-enable-repl-natives", "env-events", "env-exec-config", "env-gas",
+    "env-gaslimit", "env-gaslog", "env-gasmodel", "env-hash", "env-keys", "env-milligas", "env-module-admin",
+    "env-namespace-policy", "env-set-debug-flag", "env-set-gas", "env-set-milligas", "env-sigs",
+    "env-stackframe", "env-verifiers", "exp", "expect", "expect-failure", "expect-failure-match",
+    "expect-that", "filter", "floor", "floor-prec", "fold", "fold-db", "format", "format-time", "hash",
+    "hash-keccak256", "hash-poseidon", "hours", "hyperlane-decode-token-message",
+    "hyperlane-encode-token-message", "hyperlane-message-id", "identity", "if", "insert",
+    "install-capability", "int-to-str", "is-charset", "is-principal", "keys", "keyset-ref-guard", "length",
+    "list-modules", "ln", "load", "load-with-env", "log", "make-list", "map", "minutes", "mod", "namespace",
+    "negate", "not", "or?", "pact-id", "pact-state", "pact-version", "pairing-check", "parse-time",
+    "point-add", "poseidon-hash-hack-a-chain", "print", "read", "read-decimal", "read-integer",
+    "read-keyset", "read-msg", "read-msg-default", "read-string", "read-with-fields", "remove",
+    "require-capability", "reset-pact-state", "resume", "reverse", "rollback-tx", "round", "round-prec",
+    "scalar-mult", "select", "select-with-fields", "shift", "show", "sig-keyset", "sort", "sort-object",
+    "sqrt", "static-redeploy", "str-to-int", "str-to-int-base", "str-to-list", "take", "test-capability",
+    "time", "tx-hash", "typecheck", "typeof", "typeof-principal", "update", "validate-principal",
+    "verify-spv", "where", "with-default-read", "with-read", "write", "xor", "yield", "yield-to-chain",
+    "zip",
   ]);
-  // def-forms — same hue as keywords but bold, so declarations stand out.
+  // def-forms per the Pact 5 lexer — NB: no `defproperty` (property system removed in Pact 5).
   var DEFS = new Set([
-    "module", "interface", "defun", "defcap", "defconst", "defschema", "deftable", "defpact", "defproperty",
+    "module", "interface", "defun", "defcap", "defconst", "defschema", "deftable", "defpact",
   ]);
 
   // Prefix → band class. Order matters (specific/single-letter handled with a strict [_>] boundary so
