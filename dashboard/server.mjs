@@ -23,6 +23,7 @@ import { join, extname, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readActivity, readLastBackup } from "../orchestrator/activity.mjs";
 import { listArchives, pruneArchives, deleteArchive } from "../orchestrator/archives.mjs";
+import { listDir as pactListDir, readTextFile as pactReadFile, pactRoot as resolvePactRoot } from "../lib/pactFs.mjs";
 import { readBackupConfig, writeBackupConfig, isBackupDue, browseDir } from "../orchestrator/backupConfig.mjs";
 import { readCascade } from "../lib/cascade.mjs";
 import { allReposGitStatus, repoGitStatus } from "../lib/gitStatus.mjs";
@@ -847,6 +848,18 @@ const handler = async (req, res) => {
   // ---- backups: the dated archives at the configured location ----
   if (path === "/api/backups") {
     return sendJSON(res, 200, listArchives(readBackupConfig().location));
+  }
+
+  // ---- Pact IDE: read-only folder tree + file viewer, confined to the Ouronet Pact repo ----
+  // Reads only (editing is a later, gated phase). canRead gate — the live site already requires
+  // login + a role for that; pactFs itself refuses any path that escapes the repo root.
+  if (path === "/api/pact/tree") {
+    if (!who.canRead) return sendJSON(res, 403, { ok: false, reason: "read-only" });
+    return sendJSON(res, 200, pactListDir(resolvePactRoot(MASTER_ROOT), url.searchParams.get("dir") || ""));
+  }
+  if (path === "/api/pact/file") {
+    if (!who.canRead) return sendJSON(res, 403, { ok: false, reason: "read-only" });
+    return sendJSON(res, 200, pactReadFile(resolvePactRoot(MASTER_ROOT), url.searchParams.get("path") || ""));
   }
 
   // ---- backup retention: keep the newest N, delete the rest (local-only mutation) ----

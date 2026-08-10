@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.17.0] - 2026-08-10
+
+### Added
+- **Pact IDE — Workspace › Pact (Phase 1a).** A new **Pact** sub-tab under Workspace (alongside a new
+  **Core** sub-tab = today's cockpit), the start of a full Pact development IDE whose folder tree
+  points at the Ouronet Pact repo. This first slice ships: the tier-2 nav wiring; a read-only backend
+  fs API confined to the Ouronet repo (`/api/pact/tree`, `/api/pact/file` — path-traversal-proof,
+  skips `.git`/`node_modules`, refuses binaries + >2 MB files); and the **3-zone IDE shell** — a
+  lazy-loading file tree (left), a file viewer (center, ~75%), and a right column (~25%) with
+  placeholders for the Phase-2 multi-tab AI chat (top) and live `.repl` terminal runner (bottom).
+  File viewing is plain monospace for now. *Next: StoicSyntax syntax coloring, markdown rendering,
+  multi-pane tabs, the live terminal runner, then Phase 2 chat + "pact brain".* (Mirror & Localhost
+  stay top-level for now — folding them under Workspace is a one-line follow-up once confirmed.)
+
 ## [0.16.1] - 2026-08-10
 
 ### Fixed

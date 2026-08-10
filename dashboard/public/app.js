@@ -120,7 +120,10 @@ const SECTIONS = [
     { id: "git", label: "Git state", icon: "🌿", short: "Git", view: "git" },
   ] },
   { id: "brain", label: "Brain", icon: "🧠", view: "brain" },
-  { id: "workspace", label: "Workspace", icon: "💬", view: "workspace", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local") },
+  { id: "workspace", label: "Workspace", icon: "💬", view: "workspace", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local"), subs: [
+    { id: "core", label: "Core", icon: "💬", short: "Core", view: "workspace" },
+    { id: "pact", label: "Pact", icon: "⬡", short: "Pact", view: "pact" },
+  ] },
   { id: "mirror", label: "Mirror", icon: "🪞", view: "mirror", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local") },
   { id: "localhost", label: "LocalHost", icon: "🌐", view: "localhost", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local") },
 ];
@@ -479,7 +482,7 @@ function render() {
   if (!(VIEW === "admin" && ADMIN_SECTION === "deploy") && RESTART_ES) { try { RESTART_ES.close(); } catch {} RESTART_ES = null; }
   if (VIEW !== "git" && GIT_TIMER) { clearInterval(GIT_TIMER); GIT_TIMER = null; }
   if (VIEW !== "localhost" && LH_TIMER) { clearInterval(LH_TIMER); LH_TIMER = null; }
-  document.body.classList.toggle("ws-full", VIEW === "workspace");   // Workspace breaks out to full width
+  document.body.classList.toggle("ws-full", VIEW === "workspace" || VIEW === "pact");   // full-height cockpit views
   if (VIEW === "cascade") v.replaceChildren(viewCascade());
   else if (VIEW === "activity") v.replaceChildren(viewActivity());
   else if (VIEW === "git") v.replaceChildren(viewGit());
@@ -492,6 +495,7 @@ function render() {
   else if (VIEW === "ops") v.replaceChildren(viewOps());
   else if (VIEW === "relay") v.replaceChildren(viewRelay());
   else if (VIEW === "workspace") v.replaceChildren(viewWorkspace());
+  else if (VIEW === "pact") v.replaceChildren(viewPact());
   else if (VIEW === "brain") v.replaceChildren(viewBrain());
   else if (VIEW === "tree") v.replaceChildren(viewTree());
   else if (VIEW === "admin") v.replaceChildren(viewAdmin(ADMIN_SECTION));
@@ -1968,6 +1972,89 @@ const WS_MODES = [
 ];
 const WS_MODE_IDS = new Set(WS_MODES.map((m) => m.id));
 const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(v) || lo)));
+
+/* ---------- Pact IDE (Workspace › Pact) ----------
+   A Pact development workspace, structured as an IDE, whose folder tree points at the Ouronet Pact
+   repo on disk (read via /api/pact/*). Three zones: a left file tree, a center editor (Zone A, ~75%),
+   and a right column (Zone B, ~25%) split into an AI-chat top and a REPL-terminal bottom.
+   Phase 1a (here): nav + 3-zone shell + a real lazy folder tree + plain-text file viewer.
+   Next: StoicSyntax syntax coloring, markdown rendering, multi-pane tabs, and the live `.repl`
+   terminal runner; then Phase 2 wires the chat tabs + "pact brain". */
+function pactFileIcon(name) {
+  const n = name.toLowerCase();
+  if (n.endsWith(".pact")) return "⬡";
+  if (n.endsWith(".repl")) return "▶";
+  if (n.endsWith(".md")) return "📄";
+  if (n.endsWith(".json")) return "🔧";
+  if (n.endsWith(".yaml") || n.endsWith(".yml")) return "⚙";
+  return "•";
+}
+// Phase 1a viewer: plain monospace text. The StoicSyntax highlighter replaces this next increment.
+function renderPactCode(pre, content) { pre.textContent = content; }
+
+async function loadPactDir(rel, container, editorEl) {
+  let d;
+  try { d = await (await fetch("/api/pact/tree?dir=" + encodeURIComponent(rel))).json(); }
+  catch { container.replaceChildren(el("div", { class: "hint" }, ["Tree unavailable."])); return; }
+  if (!d.ok) { container.replaceChildren(el("div", { class: "hint" }, [d.error || "error"])); return; }
+  if (!d.items.length) { container.replaceChildren(el("div", { class: "hint", style: "padding:4px 8px" }, ["(empty)"])); return; }
+  container.replaceChildren(...d.items.map((it) => pactNode(it, editorEl)));
+}
+function pactNode(it, editorEl) {
+  if (it.type === "dir") {
+    const kids = el("div", { class: "pact-node-kids" }); kids.hidden = true;
+    let loaded = false;
+    const chev = el("span", { class: "pact-chev" }, ["▸"]);
+    const row = el("div", { class: "pact-node pact-dir" }, [chev, el("span", { class: "pact-node-ic" }, ["📁"]), el("span", { class: "pact-node-name" }, [it.name])]);
+    row.addEventListener("click", async () => {
+      const opening = kids.hidden;
+      kids.hidden = !opening;
+      chev.textContent = opening ? "▾" : "▸";
+      if (opening && !loaded) { loaded = true; await loadPactDir(it.path, kids, editorEl); }
+    });
+    return el("div", { class: "pact-node-wrap" }, [row, kids]);
+  }
+  const row = el("div", { class: "pact-node pact-file", title: it.path }, [
+    el("span", { class: "pact-chev" }, [""]), el("span", { class: "pact-node-ic" }, [pactFileIcon(it.name)]), el("span", { class: "pact-node-name" }, [it.name]),
+  ]);
+  row.addEventListener("click", () => openPactFile(it.path, editorEl, row));
+  return row;
+}
+async function openPactFile(rel, editorEl, row) {
+  if (editorEl._activeRow) editorEl._activeRow.classList.remove("--active");
+  if (row) { row.classList.add("--active"); editorEl._activeRow = row; }
+  const name = rel.split("/").pop();
+  editorEl.replaceChildren(
+    el("div", { class: "pact-editor-hd" }, [el("span", { class: "pact-tab --active" }, [name]), el("span", { class: "pact-editor-path" }, [rel])]),
+    el("div", { class: "pact-editor-scroll" }, [el("div", { class: "hint", style: "padding:10px" }, ["Loading…"])]),
+  );
+  let d;
+  try { d = await (await fetch("/api/pact/file?path=" + encodeURIComponent(rel))).json(); }
+  catch { d = { ok: false, error: "unreachable" }; }
+  const scroll = editorEl.querySelector(".pact-editor-scroll");
+  if (!d.ok) { scroll.replaceChildren(el("div", { class: "hint", style: "padding:10px;color:#f87171" }, ["⚠ " + (d.error || "error") + (d.tooLarge ? ` (${Math.round((d.size || 0) / 1e6)} MB)` : "")])); return; }
+  const pre = el("pre", { class: "pact-code" });
+  renderPactCode(pre, d.content, rel);
+  scroll.replaceChildren(pre);
+}
+function viewPact() {
+  const editorEl = el("div", { class: "pact-editor" }, [el("div", { class: "pact-editor-empty hint" }, ["Select a file from the tree to view it."])]);
+  const treeBody = el("div", { class: "pact-tree-body" }, [el("div", { class: "hint", style: "padding:6px 8px" }, ["Loading tree…"])]);
+  const treeEl = el("aside", { class: "pact-tree" }, [el("div", { class: "pact-tree-hd" }, ["📁 Ouronet (Pact)"]), treeBody]);
+  const chatEl = el("div", { class: "pact-chat" }, [
+    el("div", { class: "pact-zone-hd" }, ["💬 Pact chat"]),
+    el("div", { class: "hint", style: "padding:10px" }, ["Multi-tab AI chat about the Pact repo, each with its own history — feeding a learning ", el("b", {}, ["pact brain"]), ". Phase 2."]),
+  ]);
+  const termEl = el("div", { class: "pact-term" }, [
+    el("div", { class: "pact-zone-hd" }, ["❯ REPL terminal"]),
+    el("div", { class: "hint", style: "padding:10px" }, ["Live ", el("code", {}, ["pact <file>.repl"]), " runs stream here so you can watch the agent iterate. Phase 2."]),
+  ]);
+  const rightEl = el("div", { class: "pact-right" }, [chatEl, termEl]);
+  const workEl = el("div", { class: "pact-work" }, [editorEl, rightEl]);
+  const root = el("div", { class: "pact-ide" }, [treeEl, workEl]);
+  loadPactDir("", treeBody, editorEl);
+  return root;
+}
 
 function viewWorkspace() {
   // The workspace runs on the local dashboard (direct, this machine) and on the online relay
