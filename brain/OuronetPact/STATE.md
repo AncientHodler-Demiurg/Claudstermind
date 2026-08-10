@@ -8,6 +8,15 @@ _As of 2026-08-10._
 - Pact **5.4** at `/home/ancientbox/.local/bin/pact` (on PATH). Verified: `Stage00_Sanboxes.repl` → `Load successful`, exit 0.
 - Repo at `OuroborosNetwork/_onchain/Ouronet/`, on `main`, up to date.
 
+## Upstream (IMPORTANT — ecosystem shift, 2026-08)
+- **Kadena the company ARCHIVED its core repos** (read-only): `kadena-io/pact-5` (2025-10-20) and
+  `kadena-io/chainweb-node` (2025-11-22). The **living upstream is now the community org `kda-community`**
+  (active forks: `kda-community/pact-5`, `kda-community/chainweb-node`). "Follow Kadena" = track `kda-community`.
+- **Local observation clone:** `~/ClaudeWS/_upstream/pact-5` (shallow, `kda-community/pact-5`) — the
+  source of truth for the builtin registry + lexer that `packages/stoicsyntax-pact` derives from. Read-only.
+- **Posture (solo dev):** track, don't fork. Pin to reviewed tags; upgrade deliberately; app layer
+  (Ouronet contracts, StoicSyntax, tooling) is the moat, not the L1/language.
+
 ## Claudstermind Pact IDE (Workspace › Pact) — Phase 1 COMPLETE
 The dashboard now has a working Pact development IDE:
 - **File tree** rooted at the Ouronet repo (read-only backend `/api/pact/tree`, `/api/pact/file`, repo-confined, traversal-proof).
