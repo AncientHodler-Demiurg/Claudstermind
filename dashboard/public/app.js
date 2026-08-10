@@ -103,24 +103,26 @@ function repoCard(r, { stripe, branch, sublines = [], muted = false, extra = [] 
 
 /* ---------- Pantheonic navigation: Tier-1 sections, Tier-2 sub-views, and the admin space ----------
    The URL hash is the source of truth (§3.7). `#section`, `#section/sub`, and `#admin[/section]`. */
+// `icon` (emoji, dependency-free) + `short` drive the mobile bottom tab bar / tier-2 drawer, where
+// an icon + micro-label replaces the wide text buttons; desktop still renders the full text labels.
 const SECTIONS = [
-  { id: "overview", label: "Overview", view: "overview" },
-  { id: "map", label: "Map", subs: [
-    { id: "tree", label: "Tree", view: "tree" },
-    { id: "matrix", label: "Org × Role", view: "matrix" },
-    { id: "graph", label: "Dependency graph", view: "graph" },
-    { id: "movements", label: "Movements", view: "movements" },
-    { id: "packages", label: "Packages", view: "packages" },
+  { id: "overview", label: "Overview", icon: "🏠", view: "overview" },
+  { id: "map", label: "Map", icon: "🗺", subs: [
+    { id: "tree", label: "Tree", icon: "🌳", short: "Tree", view: "tree" },
+    { id: "matrix", label: "Org × Role", icon: "▦", short: "Roles", view: "matrix" },
+    { id: "graph", label: "Dependency graph", icon: "🕸", short: "Graph", view: "graph" },
+    { id: "movements", label: "Movements", icon: "🔁", short: "Moves", view: "movements" },
+    { id: "packages", label: "Packages", icon: "📦", short: "Packages", view: "packages" },
   ] },
-  { id: "activity", label: "Activity", view: "activity" },
-  { id: "pipeline", label: "Pipeline", subs: [
-    { id: "cascade", label: "Cascade", view: "cascade" },
-    { id: "git", label: "Git state", view: "git" },
+  { id: "activity", label: "Activity", icon: "📈", view: "activity" },
+  { id: "pipeline", label: "Pipeline", icon: "🔀", subs: [
+    { id: "cascade", label: "Cascade", icon: "🌊", short: "Cascade", view: "cascade" },
+    { id: "git", label: "Git state", icon: "🌿", short: "Git", view: "git" },
   ] },
-  { id: "brain", label: "Brain", view: "brain" },
-  { id: "workspace", label: "Workspace", view: "workspace", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local") },
-  { id: "mirror", label: "Mirror", view: "mirror", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local") },
-  { id: "localhost", label: "LocalHost", view: "localhost", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local") },
+  { id: "brain", label: "Brain", icon: "🧠", view: "brain" },
+  { id: "workspace", label: "Workspace", icon: "💬", view: "workspace", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local") },
+  { id: "mirror", label: "Mirror", icon: "🪞", view: "mirror", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local") },
+  { id: "localhost", label: "LocalHost", icon: "🌐", view: "localhost", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local") },
 ];
 const ADMIN_SECTIONS = [
   { id: "deploy", icon: "🚀", label: "Deploy & Version", enabled: true },
@@ -196,6 +198,68 @@ function renderHeader() {
   renderIdentity();
   renderConnBanner();
   renderLinkPill();
+  renderMobileNav();
+}
+
+// Mobile navigation (phone only; CSS hides it ≥901px) — ported from OuronetUI's mobile rehaul:
+//   • Tier-1 sections become a FIXED BOTTOM TAB BAR of icon + micro-label cells (thumb-reachable,
+//     all visible at once — no more a horizontally-scrolling text row with the last item cut off).
+//   • Tier-2 sub-views become a transient DRAWER that pops UP from the bar when you tap a section
+//     that has sub-views; an outside tap or picking a sub closes it, so it never permanently eats
+//     vertical space. The old top tier-1/tier-2 rows (.ph-l2/.ph-l3) are hidden on mobile.
+let _mnav = null;          // cached { backdrop, drawer, bar } shell, built once
+let _mnavOpen = null;      // id of the tier-1 section whose tier-2 drawer is currently open (or null)
+function renderMobileNav() {
+  if (!_mnav) {
+    const backdrop = el("div", { class: "ph-tabbar-backdrop" });
+    backdrop.addEventListener("click", () => { _mnavOpen = null; renderMobileNav(); });
+    const drawer = el("div", { class: "ph-tabdrawer" });
+    const bar = el("nav", { class: "ph-tabbar", "aria-label": "Sections" });
+    document.body.append(backdrop, drawer, bar);
+    _mnav = { backdrop, drawer, bar };
+  }
+  const { backdrop, drawer, bar } = _mnav;
+  const secs = SECTIONS.filter((s) => !s.gate || s.gate());
+  // If the open section got gated away (e.g. mode change), forget it so nothing renders stale.
+  if (_mnavOpen && !secs.some((s) => s.id === _mnavOpen)) _mnavOpen = null;
+
+  // Tier-1 tab bar
+  bar.replaceChildren(...secs.map((s) => {
+    const active = !ROUTE.admin && ROUTE.section === s.id;
+    const hasSubs = !!(s.subs && s.subs.length);
+    const isOpen = _mnavOpen === s.id;
+    const cell = el("button", { class: "ph-tab" + (active ? " --active" : "") + (isOpen ? " --open" : ""), title: s.label, type: "button" }, [
+      el("span", { class: "ph-tab-ic" }, [s.icon || "•"]),
+      el("span", { class: "ph-tab-lbl" }, [s.label]),
+    ]);
+    cell.addEventListener("click", () => {
+      // A section WITH sub-views toggles its drawer (pick a sub to navigate); a leaf navigates
+      // directly and closes any open drawer.
+      if (hasSubs) { _mnavOpen = isOpen ? null : s.id; renderMobileNav(); }
+      else { _mnavOpen = null; location.hash = "#" + s.id; }
+    });
+    return cell;
+  }));
+
+  // Tier-2 drawer for the open section
+  const openSec = _mnavOpen ? secs.find((s) => s.id === _mnavOpen) : null;
+  const subs = (openSec && openSec.subs) ? openSec.subs : [];
+  const shown = subs.length > 0;
+  if (shown) {
+    const activeSub = (!ROUTE.admin && ROUTE.section === openSec.id) ? (ROUTE.sub || subs[0].id) : null;
+    drawer.replaceChildren(el("div", { class: "ph-tabdrawer-grid" }, subs.map((sub) => {
+      const cell = el("button", { class: "ph-tabsub" + (activeSub === sub.id ? " --active" : ""), title: sub.label, type: "button" }, [
+        el("span", { class: "ph-tab-ic" }, [sub.icon || "•"]),
+        el("span", { class: "ph-tabsub-lbl" }, [sub.short || sub.label]),
+      ]);
+      cell.addEventListener("click", () => { _mnavOpen = null; location.hash = `#${openSec.id}/${sub.id}`; });
+      return cell;
+    })));
+  } else {
+    drawer.replaceChildren();
+  }
+  drawer.classList.toggle("--shown", shown);
+  backdrop.classList.toggle("--shown", shown);
 }
 
 async function boot() {

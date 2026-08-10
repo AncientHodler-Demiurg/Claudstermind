@@ -750,14 +750,10 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
   .ph-identity .role-badge { display: none; }
   .ph-logout { padding: 4px 8px; }
 
-  /* Section nav + subnav: swipe horizontally instead of wrapping into a tall stack. */
-  .ph-l2 { height: 44px; gap: 6px; }
-  .ph-sections { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
-  .ph-sections::-webkit-scrollbar { display: none; }
-  .ph-l3 { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-  .ph-l3::-webkit-scrollbar { display: none; }
-  .ph-btn { flex: 0 0 auto; min-height: 38px; }   /* don't shrink nav buttons — let them scroll; bigger tap target */
-  .ph-action { flex: 0 0 auto; }
+  /* Tier-1 + tier-2 nav MOVE to the fixed bottom tab bar (.ph-tabbar, below) — reclaim these two
+     top rows entirely instead of the old horizontally-scrolling text strip that cut off the last
+     section and wasted vertical space. */
+  .ph-l2, .ph-l3 { display: none; }
 
   /* Page body: tighter side padding, room for the notch + home-indicator. */
   main { padding: 12px max(12px, env(safe-area-inset-right)) calc(40px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
@@ -857,8 +853,54 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
   .ws-drawer-open .ws-side-backdrop { opacity: 1; pointer-events: auto; }
   .ws-drawer-close { display: block; width: 100%; margin-bottom: 8px; padding: 9px; background: var(--chip);
     border: 1px solid var(--line); color: var(--ink); border-radius: 9px; font-size: 13px; cursor: pointer; }
+
+  /* ===== Mobile bottom navigation (tier-1 tab bar + tier-2 drawer) ===== */
+  body { --cm-tabbar-h: calc(56px + env(safe-area-inset-bottom)); }
+  /* Reserve room so scrolling pages (and the footer) clear the fixed bar. The full-height Workspace
+     instead shrinks by the bar height so its compose row sits just above it, never under it. */
+  body:not(.ws-full) { padding-bottom: var(--cm-tabbar-h); }
+  body.ws-full { height: calc(100dvh - var(--cm-tabbar-h)); }
+
+  .ph-tabbar {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 80;
+    background: color-mix(in srgb, var(--panel) 94%, transparent);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border-top: 1px solid var(--line);
+    padding-bottom: env(safe-area-inset-bottom); }
+  .ph-tab {
+    flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: 7px 2px 6px; background: transparent; border: none; color: var(--ink-dim); cursor: pointer;
+    position: relative; -webkit-tap-highlight-color: transparent; }
+  .ph-tab.--active, .ph-tab.--open { color: var(--accent); }
+  .ph-tab.--active::before { content: ""; position: absolute; top: 0; left: 24%; right: 24%; height: 2px;
+    border-radius: 999px; background: var(--accent); }
+  .ph-tab-ic { font-size: 19px; line-height: 1; }
+  .ph-tab-lbl { font-size: 9px; font-weight: 600; letter-spacing: -.2px; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .ph-tabbar-backdrop { display: none; }
+  .ph-tabbar-backdrop.--shown { display: block; position: fixed; inset: 0; z-index: 79; background: transparent; }
+
+  .ph-tabdrawer { display: none; }
+  .ph-tabdrawer.--shown { display: block; position: fixed; left: 0; right: 0; bottom: var(--cm-tabbar-h);
+    z-index: 81; padding: 6px 8px 8px; animation: cmDrawerUp .16s ease; }
+  .ph-tabdrawer-grid { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px;
+    background: color-mix(in srgb, var(--panel) 97%, transparent); backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px); border: 1px solid var(--line); border-radius: 12px; padding: 6px;
+    box-shadow: 0 -10px 26px rgba(0,0,0,.4); }
+  .ph-tabsub { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0;
+    padding: 7px 2px; background: transparent; border: none; border-radius: 8px; color: var(--ink-dim);
+    cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .ph-tabsub.--active { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .ph-tabsub-lbl { font-size: 9px; font-weight: 600; text-align: center; line-height: 1.15; }
+  @keyframes cmDrawerUp { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 }
-@media (prefers-reduced-motion: reduce) { .ws-side { transition: none; } .ws-side-backdrop { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .ws-side { transition: none; } .ws-side-backdrop { transition: none; } .ph-tabdrawer.--shown { animation: none; } }
+
+/* Bottom nav exists only for the phone layout. Hidden on desktop via a width-scoped rule (NOT a
+   plain rule, which — sitting after the mobile block with equal specificity — would win and hide it
+   on mobile too). Same pattern as .ws-mtabs above. */
+@media (min-width: 901px) { .ph-tabbar, .ph-tabdrawer, .ph-tabbar-backdrop { display: none !important; } }
 
 /* Hidden on desktop — these only exist for the phone layout above. Scoped to desktop width (not a
    plain rule) so it can't override the mobile block, which sits earlier and has equal specificity. */

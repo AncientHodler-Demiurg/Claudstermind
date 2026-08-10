@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.16.0] - 2026-08-10
+
+### Changed
+- **Mobile navigation rehaul (ported from OuronetUI's mobile-first phase 1).** The tier-1 sections
+  (Overview / Map / Activity / Pipeline / Brain / Workspace / Mirror / LocalHost) used to sit in a
+  horizontally-scrolling row of text buttons that cut off the last item and burned two header rows
+  of vertical space. They now live in a **fixed bottom tab bar** of **icon + micro-label** cells —
+  all visible at once, thumb-reachable. Sections that have sub-views (Map, Pipeline) open a
+  **transient tier-2 drawer** that pops up from the bar; an outside tap or picking a sub-view closes
+  it, so it never permanently eats space. The two old top nav rows (`.ph-l2` / `.ph-l3`) are hidden
+  on mobile, reclaiming that height for content. The full-height Workspace shrinks by the bar height
+  so its compose row stays just above it. Desktop is unchanged (full text nav rows as before).
+
 ## [0.15.2] - 2026-08-10
 
 ### Changed
