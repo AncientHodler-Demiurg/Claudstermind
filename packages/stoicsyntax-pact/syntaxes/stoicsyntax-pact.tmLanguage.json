@@ -7,8 +7,8 @@
     { "include": "#comments" },
     { "include": "#strings" },
     { "include": "#defs" },
-    { "include": "#keywords" },
     { "include": "#bands" },
+    { "include": "#keywords" },
     { "include": "#types" },
     { "include": "#accessor" },
     { "include": "#numbers" }
@@ -35,8 +35,9 @@
       "match": "\\b(module|interface|defun|defcap|defconst|defschema|deftable|defpact|defproperty)\\b"
     },
     "keywords": {
+      "comment": "Full Pact 5 builtin + special-form set. Boundaries exclude identifier/qualifier chars so a keyword never matches inside a qualified or StoicSyntax name.",
       "name": "keyword.control.pact",
-      "match": "\\b(let\\*?|if|cond|lambda|and|or|not|bind|at|step|step-with-rollback|enforce|enforce-one|enforce-guard|enforce-keyset|with-capability|require-capability|compose-capability|install-capability|emit-event|with-read|with-default-read|read|write|insert|update|select|keys|read-msg|map|fold|filter|zip|format|namespace|use|implements|create-table|read-keyset|true|false|begin-tx|commit-tx|rollback-tx|env-data|env-keys|env-sigs|env-chain-data|env-gas|env-gasmodel|load|expect|expect-failure|expect-that|print|typecheck|verify|continue-pact)\\b"
+      "match": "(?<![\\w?<>|.:\\-])(let\\*?|lambda|cond|if|bind|do|step-with-rollback|step|enforce-pact-version|enforce-verifier|enforce-one|enforce-guard|enforce-keyset|enforce|with-capability|with-default-read|with-read|with-applied-env|require-capability|compose-capability|install-capability|emit-event|namespace|use|implements|bless|continue-pact|continue|resume|yield|acquire-module-admin|at|base64-decode|base64-encode|chain-data|compose|concat|constantly|contains|define-namespace|define-keyset|describe-namespace|describe-keyset|describe-module|describe-table|distinct|drop|enumerate|filter|fold-db|fold|format-time|format-address|format|hash-keccak256|hash|identity|int-to-str|is-charset|length|list-modules|make-list|map|negate|pact-id|pact-version|pact-state|poseidon-hash-hack-a-chain|read-decimal|read-integer|read-keyset|read-msg|read-string|read|remove|reverse|round|show|sort|static-redeploy|str-to-int|str-to-list|take|try|tx-hash|typeof|where|zip|create-table|create-capability-pact-guard|create-capability-guard|create-module-guard|create-pact-guard|create-principal-namespace|create-principal|create-user-guard|insert|keys-2|keys-all|keys-any|keys|select|update|write|txlog|keylog|is-principal|keyset-ref-guard|typeof-principal|validate-principal|abs|ceiling|floor|dec|exp|ln|log|mod|sqrt|and\\?|or\\?|not\\?|and|or|not|xor|shift|add-time|days|diff-time|hours|minutes|parse-time|time|begin-tx|commit-tx|rollback-tx|env-data|env-keys|env-sigs|env-chain-data|env-hash|env-namespace-policy|env-entity|env-events|env-exec-config|env-dynref|env-enable-repl-natives|env-simulate-onchain|env-gaslimit|env-gasmodel|env-gasprice|env-gasrate|env-gaslog|env-gas|env-milligas|env-set-milligas|env-set-debug-flag|env-module-admin|env-verifiers|expect-failure|expect-that|expect|print|typecheck|verify|test-capability|sig-keyset|mock-spv|load|bench|hyperlane-decode-token-message|hyperlane-encode-token-message|hyperlane-message-id|verify-spv|pairing-check|point-add|scalar-mult|CHARSET_ASCII|CHARSET_LATIN1)(?![\\w?<>|.:\\-])"
     },
     "types": {
       "name": "entity.name.type.pact",

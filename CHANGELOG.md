@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.0.1] - 2026-08-11
+
+### Added
+- **Indexed the full Pact language reference into the pact brain.** Fanned out four researchers over
+  `kda-chain.org/docs/pact-5` and the canonical Kadena docs (builtins, syntax & keywords, core concepts,
+  REPL, formal verification) and synthesized `brain/OuronetPact/PACT-REFERENCE.md` — a dense, accurate
+  Pact 5 reference the agentic chat reads before writing or reviewing Pact.
+
+### Changed
+- **Sharpened Pact coloring with the complete builtin catalog (~150 functions).** The full Pact 5
+  builtin + special-form set now colors as keywords across all three surfaces: the dashboard highlighter
+  (`pact-highlight.js`), the `stoicsyntax-pact` tokenizer, and the TextMate grammar. The grammar now also
+  orders StoicSyntax prefix bands ahead of keywords, so qualified/prefixed names color by band correctly.
+
 ## [1.0.0] - 2026-08-10
 
 ### Added

@@ -10,18 +10,46 @@
 // resolves inside qualified names (`IC|UDC_…`, `URC|KDA-PID_CLAD`) and cap-name shapes (`SWP|A_…`,
 // `SWP|C>…`).
 
+// The full Pact 5 builtin + special-form set (indexed from kda-chain.org/docs/pact-5, 2026-08).
 export const KEYWORDS = new Set([
-  "let", "let*", "if", "cond", "lambda", "and", "or", "not", "bind", "at", "step", "step-with-rollback",
-  "enforce", "enforce-one", "enforce-guard", "enforce-keyset", "keyset-ref-guard", "create-user-guard",
+  // special forms & statements
+  "let", "let*", "lambda", "cond", "if", "bind", "do", "step", "step-with-rollback",
+  "enforce", "enforce-one", "enforce-guard", "enforce-keyset", "enforce-pact-version", "enforce-verifier",
   "with-capability", "require-capability", "compose-capability", "install-capability", "emit-event",
-  "with-read", "with-default-read", "read", "write", "insert", "update", "select", "keys", "read-msg",
-  "map", "fold", "filter", "zip", "reverse", "sort", "distinct", "where", "identity", "constantly",
-  "format", "length", "take", "drop", "make-list", "enumerate", "contains", "yield", "resume",
-  "namespace", "use", "implements", "create-table", "describe-table", "chain-data", "read-keyset",
-  "true", "false",
-  "begin-tx", "commit-tx", "rollback-tx", "env-data", "env-keys", "env-sigs", "env-chain-data",
-  "env-gas", "env-gasmodel", "env-gaslimit", "env-namespace-policy", "load", "expect", "expect-failure",
-  "expect-that", "print", "typecheck", "verify", "continue-pact", "pact-state", "sig-keyset",
+  "namespace", "use", "implements", "bless", "continue", "resume", "yield",
+  // general
+  "acquire-module-admin", "at", "base64-decode", "base64-encode", "chain-data", "compose", "concat",
+  "constantly", "contains", "define-namespace", "describe-namespace", "distinct", "drop", "enumerate",
+  "filter", "fold", "format", "hash", "hash-keccak256", "identity", "int-to-str", "is-charset", "length",
+  "list-modules", "make-list", "map", "negate", "pact-id", "pact-version", "poseidon-hash-hack-a-chain",
+  "read-decimal", "read-integer", "read-keyset", "read-msg", "read-string", "remove", "reverse", "round",
+  "show", "sort", "static-redeploy", "str-to-int", "str-to-list", "take", "try", "tx-hash", "typeof",
+  "where", "zip",
+  // database
+  "create-table", "describe-keyset", "describe-module", "describe-table", "fold-db", "insert", "keys",
+  "read", "select", "update", "with-default-read", "with-read", "write", "txlog", "keylog",
+  // guards & keysets
+  "create-capability-guard", "create-capability-pact-guard", "create-module-guard", "create-pact-guard",
+  "create-principal", "create-user-guard", "is-principal", "keyset-ref-guard", "typeof-principal",
+  "validate-principal", "create-principal-namespace", "define-keyset", "keys-2", "keys-all", "keys-any",
+  // operators (word forms)
+  "abs", "ceiling", "floor", "dec", "exp", "ln", "log", "mod", "sqrt", "and", "or", "not", "xor", "shift",
+  "and?", "or?", "not?",
+  // time
+  "add-time", "days", "diff-time", "format-time", "hours", "minutes", "parse-time", "time",
+  // REPL-only
+  "begin-tx", "commit-tx", "rollback-tx", "continue-pact", "pact-state", "env-data", "env-keys",
+  "env-sigs", "env-chain-data", "env-hash", "env-namespace-policy", "env-entity", "env-events",
+  "env-exec-config", "env-dynref", "env-enable-repl-natives", "env-simulate-onchain", "env-gas",
+  "env-gaslimit", "env-gasmodel", "env-gasprice", "env-gasrate", "env-gaslog", "env-milligas",
+  "env-set-milligas", "env-set-debug-flag", "env-module-admin", "env-verifiers",
+  "expect", "expect-failure", "expect-that", "print", "typecheck", "verify", "test-capability",
+  "sig-keyset", "format-address", "mock-spv", "load", "with-applied-env", "bench",
+  // specialized
+  "hyperlane-decode-token-message", "hyperlane-encode-token-message", "hyperlane-message-id",
+  "verify-spv", "pairing-check", "point-add", "scalar-mult",
+  // constants
+  "CHARSET_ASCII", "CHARSET_LATIN1",
 ]);
 export const DEFS = new Set([
   "module", "interface", "defun", "defcap", "defconst", "defschema", "deftable", "defpact", "defproperty",
