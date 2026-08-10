@@ -2005,15 +2005,15 @@ function pactLegend() {
     el("span", { class: "pact-legend-item", title: desc }, [el("code", { class: cls }, [tag]), el("span", { class: "pact-legend-desc" }, [desc])])));
 }
 
-async function loadPactDir(rel, container, editorEl) {
+async function loadPactDir(rel, container) {
   let d;
   try { d = await (await fetch("/api/pact/tree?dir=" + encodeURIComponent(rel))).json(); }
   catch { container.replaceChildren(el("div", { class: "hint" }, ["Tree unavailable."])); return; }
   if (!d.ok) { container.replaceChildren(el("div", { class: "hint" }, [d.error || "error"])); return; }
   if (!d.items.length) { container.replaceChildren(el("div", { class: "hint", style: "padding:4px 8px" }, ["(empty)"])); return; }
-  container.replaceChildren(...d.items.map((it) => pactNode(it, editorEl)));
+  container.replaceChildren(...d.items.map((it) => pactNode(it)));
 }
-function pactNode(it, editorEl) {
+function pactNode(it) {
   if (it.type === "dir") {
     const kids = el("div", { class: "pact-node-kids" }); kids.hidden = true;
     let loaded = false;
@@ -2023,14 +2023,14 @@ function pactNode(it, editorEl) {
       const opening = kids.hidden;
       kids.hidden = !opening;
       chev.textContent = opening ? "▾" : "▸";
-      if (opening && !loaded) { loaded = true; await loadPactDir(it.path, kids, editorEl); }
+      if (opening && !loaded) { loaded = true; await loadPactDir(it.path, kids); }
     });
     return el("div", { class: "pact-node-wrap" }, [row, kids]);
   }
   const row = el("div", { class: "pact-node pact-file", title: it.path }, [
     el("span", { class: "pact-chev" }, [""]), el("span", { class: "pact-node-ic" }, [pactFileIcon(it.name)]), el("span", { class: "pact-node-name" }, [it.name]),
   ]);
-  row.addEventListener("click", () => openPactFile(it.path, editorEl, row));
+  row.addEventListener("click", () => pactEdOpen(it.path, row));
   return row;
 }
 // ---- Pact .repl terminal runner: stream `pact <file>.repl` over SSE into the right-column terminal.
@@ -2058,42 +2058,108 @@ function pactRunRepl(rel) {
   // Native connection error (server end / drop). Guarded so a clean exit doesn't print a spurious line.
   es.addEventListener("error", () => { if (PACT_RUN_ES) { pactTermAppend("\n[disconnected]\n", "pt-err"); pactStopRun(); } });
 }
-async function openPactFile(rel, editorEl, row) {
-  if (editorEl._activeRow) editorEl._activeRow.classList.remove("--active");
-  if (row) { row.classList.add("--active"); editorEl._activeRow = row; }
-  const name = rel.split("/").pop();
-  const isRepl = rel.toLowerCase().endsWith(".repl");
-  const hd = [el("span", { class: "pact-tab --active" }, [name]), el("span", { class: "pact-editor-path" }, [rel]), el("span", { class: "ws-spacer" }, [])];
-  if (isRepl) {
-    const runBtn = el("button", { class: "pact-run-btn", title: "Run this .repl (pact <file>) and stream the output to the terminal" }, ["▶ Run"]);
-    runBtn.addEventListener("click", () => pactRunRepl(rel));
-    hd.push(runBtn);
+// ---- Multi-group tabbed editor (Zone A). Up to 6 boxes, each with its own tabs; the tree opens a
+// file into the ACTIVE box; ⊞ splits (adds a box), × closes it. Content is fetched once per tab and
+// cached, so switching tabs is instant. Files render per type: .pact/.repl → StoicSyntax coloring,
+// .md → markdown, else plain monospace.
+let PACT_ED = null;   // { host, groups:[group], activeId, seq }; group = { id, tabs:[{path,name,loaded,content,error}], active }
+function pactEdInit(host) { PACT_ED = { host, groups: [], activeId: null, seq: 0 }; pactEdAddGroup(); }
+function pactEdAddGroup() {
+  if (!PACT_ED || PACT_ED.groups.length >= 6) return;
+  PACT_ED.groups.push({ id: ++PACT_ED.seq, tabs: [], active: null });
+  PACT_ED.activeId = PACT_ED.seq;
+  pactEdLayout();
+}
+function pactEdCloseGroup(id) {
+  if (!PACT_ED || PACT_ED.groups.length <= 1) return;
+  PACT_ED.groups = PACT_ED.groups.filter((g) => g.id !== id);
+  if (PACT_ED.activeId === id) PACT_ED.activeId = PACT_ED.groups[0].id;
+  pactEdLayout();
+}
+function pactEdCloseTab(g, path) {
+  const i = g.tabs.findIndex((t) => t.path === path); if (i < 0) return;
+  g.tabs.splice(i, 1);
+  if (g.active === path) g.active = g.tabs.length ? g.tabs[Math.max(0, i - 1)].path : null;
+  pactEdRenderGroup(g);
+}
+function pactEdLayout() {
+  const host = PACT_ED.host, n = PACT_ED.groups.length;
+  host.style.setProperty("--pact-ed-cols", [1, 1, 2, 3, 2, 3, 3][n] || 3);
+  host.replaceChildren(...PACT_ED.groups.map((g) => {
+    g.tabsEl = el("div", { class: "pact-ed-hd" });
+    g.bodyEl = el("div", { class: "pact-ed-body" });
+    g.el = el("div", { class: "pact-ed-group" + (g.id === PACT_ED.activeId ? " --active" : "") }, [g.tabsEl, g.bodyEl]);
+    g.el.addEventListener("mousedown", () => {
+      if (PACT_ED.activeId !== g.id) { PACT_ED.activeId = g.id; for (const gg of PACT_ED.groups) gg.el.classList.toggle("--active", gg.id === PACT_ED.activeId); }
+    });
+    return g.el;
+  }));
+  for (const g of PACT_ED.groups) pactEdRenderGroup(g);
+}
+function pactEdRenderGroup(g) {
+  const tabs = g.tabs.map((tb) => {
+    const x = el("span", { class: "pact-tab2-x", title: "Close tab" }, ["×"]);
+    x.addEventListener("click", (e) => { e.stopPropagation(); pactEdCloseTab(g, tb.path); });
+    const tab = el("div", { class: "pact-tab2" + (tb.path === g.active ? " --active" : ""), title: tb.path }, [
+      el("span", { class: "pact-tab2-ic" }, [pactFileIcon(tb.name)]), el("span", { class: "pact-tab2-name" }, [tb.name]), x,
+    ]);
+    tab.addEventListener("click", () => { PACT_ED.activeId = g.id; g.active = tb.path; pactEdLayout(); });
+    return tab;
+  });
+  const active = g.tabs.find((t) => t.path === g.active);
+  const actions = [];
+  if (active && active.name.toLowerCase().endsWith(".repl")) {
+    const run = el("button", { class: "pact-run-btn", title: "Run this .repl and stream the output" }, ["▶ Run"]);
+    run.addEventListener("click", (e) => { e.stopPropagation(); pactRunRepl(active.path); });
+    actions.push(run);
   }
-  editorEl.replaceChildren(
-    el("div", { class: "pact-editor-hd" }, hd),
-    el("div", { class: "pact-editor-scroll" }, [el("div", { class: "hint", style: "padding:10px" }, ["Loading…"])]),
-  );
-  let d;
-  try { d = await (await fetch("/api/pact/file?path=" + encodeURIComponent(rel))).json(); }
-  catch { d = { ok: false, error: "unreachable" }; }
-  const scroll = editorEl.querySelector(".pact-editor-scroll");
-  if (!d.ok) { scroll.replaceChildren(el("div", { class: "hint", style: "padding:10px;color:#f87171" }, ["⚠ " + (d.error || "error") + (d.tooLarge ? ` (${Math.round((d.size || 0) / 1e6)} MB)` : "")])); return; }
-  const ext = rel.toLowerCase();
+  const split = el("button", { class: "pact-ed-ico", title: "Split — open another editor box (up to 6)" }, ["⊞"]);
+  split.addEventListener("click", (e) => { e.stopPropagation(); pactEdAddGroup(); });
+  actions.push(split);
+  if (PACT_ED.groups.length > 1) {
+    const closeG = el("button", { class: "pact-ed-ico", title: "Close this editor box" }, ["×"]);
+    closeG.addEventListener("click", (e) => { e.stopPropagation(); pactEdCloseGroup(g.id); });
+    actions.push(closeG);
+  }
+  g.tabsEl.replaceChildren(el("div", { class: "pact-tabs2" }, tabs), el("span", { class: "ws-spacer" }, []), ...actions);
+  pactEdRenderBody(g, active);
+}
+function pactEdRenderBody(g, tab) {
+  if (!tab) { g.bodyEl.replaceChildren(el("div", { class: "pact-editor-empty hint" }, ["Empty box — pick a file from the tree."])); return; }
+  if (tab.error) { g.bodyEl.replaceChildren(el("div", { class: "hint", style: "padding:10px;color:#f87171" }, ["⚠ " + tab.error])); return; }
+  if (!tab.loaded) { g.bodyEl.replaceChildren(el("div", { class: "hint", style: "padding:10px" }, ["Loading…"])); return; }
+  const ext = tab.path.toLowerCase();
   if (ext.endsWith(".md") && typeof window.mdRender === "function") {
-    const mdBox = el("div", { class: "pact-md" });
-    mdBox.innerHTML = window.mdRender(d.content);   // renderer HTML-escapes source + whitelists links
-    scroll.replaceChildren(mdBox);
+    const md = el("div", { class: "pact-md" }); md.innerHTML = window.mdRender(tab.content);
+    g.bodyEl.replaceChildren(el("div", { class: "pact-editor-scroll" }, [md]));
   } else {
-    const pre = el("pre", { class: "pact-code" });
-    renderPactCode(pre, d.content, rel);
-    scroll.replaceChildren(pre);
-    if ((ext.endsWith(".pact") || ext.endsWith(".repl")) && window.pactBandLegend) {
-      editorEl.insertBefore(pactLegend(), scroll);   // teach the band colors, between header and code
-    }
+    const pre = el("pre", { class: "pact-code" }); renderPactCode(pre, tab.content, tab.path);
+    const kids = [];
+    if ((ext.endsWith(".pact") || ext.endsWith(".repl")) && window.pactBandLegend) kids.push(pactLegend());
+    kids.push(el("div", { class: "pact-editor-scroll" }, [pre]));
+    g.bodyEl.replaceChildren(...kids);
   }
 }
+async function pactEdOpen(path, row) {
+  if (!PACT_ED) return;
+  document.querySelectorAll(".pact-file.--active").forEach((e) => e.classList.remove("--active"));
+  if (row) row.classList.add("--active");
+  const g = PACT_ED.groups.find((x) => x.id === PACT_ED.activeId) || PACT_ED.groups[0];
+  PACT_ED.activeId = g.id;
+  let tab = g.tabs.find((t) => t.path === path);
+  if (!tab) { tab = { path, name: path.split("/").pop(), loaded: false, content: "", error: null }; g.tabs.push(tab); }
+  g.active = path;
+  pactEdLayout();
+  if (tab.loaded || tab.error) return;
+  let d;
+  try { d = await (await fetch("/api/pact/file?path=" + encodeURIComponent(path))).json(); }
+  catch { d = { ok: false, error: "unreachable" }; }
+  if (d.ok) { tab.content = d.content; tab.loaded = true; }
+  else { tab.error = (d.error || "error") + (d.tooLarge ? ` (${Math.round((d.size || 0) / 1e6)} MB)` : ""); }
+  if (g.active === path) pactEdRenderGroup(g);
+}
 function viewPact() {
-  const editorEl = el("div", { class: "pact-editor" }, [el("div", { class: "pact-editor-empty hint" }, ["Select a file from the tree to view it."])]);
+  const editorEl = el("div", { class: "pact-editor" });
   const treeBody = el("div", { class: "pact-tree-body" }, [el("div", { class: "hint", style: "padding:6px 8px" }, ["Loading tree…"])]);
   const treeEl = el("aside", { class: "pact-tree" }, [el("div", { class: "pact-tree-hd" }, ["📁 Ouronet (Pact)"]), treeBody]);
   const chatEl = el("div", { class: "pact-chat" }, [
@@ -2110,7 +2176,8 @@ function viewPact() {
   const rightEl = el("div", { class: "pact-right" }, [chatEl, termEl]);
   const workEl = el("div", { class: "pact-work" }, [editorEl, rightEl]);
   const root = el("div", { class: "pact-ide" }, [treeEl, workEl]);
-  loadPactDir("", treeBody, editorEl);
+  pactEdInit(editorEl);
+  loadPactDir("", treeBody);
   return root;
 }
 

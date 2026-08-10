@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [0.21.0] - 2026-08-10
+
+### Added
+- **Pact IDE — multi-pane tabbed editor (Phase 1e).** The editor (Zone A) is now a grid of up to **6
+  editor boxes**, each with its **own tabs**. Clicking a file in the tree opens it as a tab in the
+  **active box**; **⊞ split** adds another box (arranged 1→6 in a responsive grid), **×** closes a box
+  or a tab. Per-tab content is fetched once and cached, so switching tabs is instant; each box renders
+  its active file by type (StoicSyntax-colored `.pact`/`.repl`, rendered `.md`, or plain), and a
+  `.repl` box shows its own **▶ Run**. On a phone the boxes stack to one column.
+
 ## [0.20.0] - 2026-08-10
 
 ### Added

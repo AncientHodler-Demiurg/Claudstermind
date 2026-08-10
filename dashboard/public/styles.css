@@ -932,13 +932,27 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 .pact-node-kids { margin-left: 12px; }
 
 .pact-work { flex: 1; min-width: 0; display: flex; gap: 10px; }
-.pact-editor { flex: 3 1 0; min-width: 0; display: flex; flex-direction: column;
+/* Zone A = a grid of editor boxes (1–6). --pact-ed-cols is set by pactEdLayout(). */
+.pact-editor { flex: 3 1 0; min-width: 0; min-height: 0; display: grid; gap: 8px;
+  grid-template-columns: repeat(var(--pact-ed-cols, 1), minmax(0, 1fr)); }
+.pact-ed-group { display: flex; flex-direction: column; min-width: 0; min-height: 0;
   background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.pact-ed-group.--active { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); }
+.pact-ed-hd { display: flex; align-items: center; gap: 6px; padding: 4px 6px; min-height: 34px;
+  border-bottom: 1px solid var(--line); background: var(--panel); }
+.pact-tabs2 { display: flex; gap: 3px; overflow-x: auto; scrollbar-width: none; min-width: 0; }
+.pact-tabs2::-webkit-scrollbar { display: none; }
+.pact-tab2 { display: inline-flex; align-items: center; gap: 5px; padding: 4px 4px 4px 8px; border-radius: 7px;
+  background: var(--chip); color: var(--ink-dim); font-size: 11.5px; cursor: pointer; white-space: nowrap; flex: 0 0 auto; }
+.pact-tab2.--active { color: var(--ink); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.pact-tab2-name { overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+.pact-tab2-x { color: var(--ink-mute); font-size: 14px; line-height: 1; padding: 0 3px; border-radius: 4px; }
+.pact-tab2-x:hover { color: var(--ink); background: var(--line); }
+.pact-ed-ico { flex: 0 0 auto; padding: 2px 8px; border-radius: 6px; background: var(--chip);
+  border: 1px solid var(--line); color: var(--ink-dim); font-size: 13px; cursor: pointer; }
+.pact-ed-ico:hover { color: var(--ink); }
+.pact-ed-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .pact-editor-empty { padding: 16px; }
-.pact-editor-hd { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--panel); }
-.pact-tab { font-size: 12px; font-weight: 600; padding: 4px 9px; border-radius: 7px 7px 0 0; background: var(--chip); flex: 0 0 auto; }
-.pact-tab.--active { color: var(--ink); border-bottom: 2px solid var(--accent); }
-.pact-editor-path { font-size: 10.5px; color: var(--ink-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pact-editor-scroll { flex: 1; min-height: 0; overflow: auto; }
 .pact-code { margin: 0; padding: 12px 14px; font: 12.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre; tab-size: 2; color: #d2d3d4; }
 
@@ -1019,7 +1033,7 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
   .pact-ide { flex-direction: column; overflow-y: auto; gap: 8px; }
   .pact-tree { flex: 0 0 auto; width: auto; max-height: 38vh; }
   .pact-work { flex: 0 0 auto; flex-direction: column; gap: 8px; }
-  .pact-editor { flex: 0 0 auto; min-height: 55vh; }
+  .pact-editor { flex: 0 0 auto; min-height: 55vh; grid-template-columns: 1fr; }   /* split boxes stack on a phone */
   .pact-right { flex: 0 0 auto; }
   .pact-chat, .pact-term { flex: 0 0 auto; min-height: 140px; }
 }
