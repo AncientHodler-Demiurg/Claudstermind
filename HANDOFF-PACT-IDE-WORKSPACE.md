@@ -162,12 +162,17 @@ Top‑level dirs (all under `/home/ancientbox/ClaudeWS/Claudstermind/`):
 - `dashboard/public/app.js` — `SECTIONS` Workspace now has `subs:[Core, Pact]`; `viewPact()` + tree/file helpers; `ws-full` now also true for `VIEW==="pact"`.
 - `dashboard/public/styles.css` — `.pact-ide` 3-zone layout (tree | editor 75% | right 25% split chat/terminal), mobile stacks + scrolls.
 
-**Immediate next steps (in order):**
-1. ~~**StoicSyntax highlighter**~~ ✅ **DONE (v0.18.0)** — see progress log below.
-2. **Markdown rendering** for `.md` files (lightweight renderer; the repo is doc-heavy).
-3. **Multi-pane tabbed editor** — 2 vertical levels × up to 3 boxes = up to 6, each with its own tabs.
-4. **`.repl` terminal runner** — backend spawns `pact <file>.repl` (binary at `/home/ancientbox/.local/bin/pact`, v5.4) and streams stdout/stderr live (reuse the SSE pattern the Workspace/deploy logs already use); render into the right-column terminal zone.
-5. **Phase 2** — multi-tab chat wired to the existing agent runtime (`agent/`+`orchestrator/`); per-tab history; continuous write-back to a `brain/OuronetPact/` (MANIFEST lists it as known-but-unlinked); seed with `StoicSyntax.md` + Pact 5 docs.
+**Remaining after Phase 1 (all of Phase 1 is now DONE — see log):**
+- **Phase 2** — multi-tab AI chat in the IDE right column (agentic coders: write Pact + run REPLs + iterate, each tab its own history, parallel); continuous write-back to `brain/OuronetPact/` (now SEEDED, see below). **Recommended build:** reuse the existing workspace agent runtime — `agent/` + `orchestrator/` + the `ClaudeSession`/WS_IN·WS_OUT protocol that the Core cockpit already uses — scoped to the Ouronet repo, embedded in `.pact-chat`, writing learnings back to the seeded brain. Don't rebuild the session layer; wrap it.
+- Editor polish: drag tabs between boxes, resizable splitters; remote (relay) `.repl` runner via the bridge protocol (Phase 1's runner is local-dashboard only).
+
+### 2026-08-10 — v0.19.0–0.21.0 + brain seed — Phase 1 COMPLETE
+- **v0.19.0 — `.repl` terminal runner.** `lib/pactRun.mjs` (pure spec: repo-confined, `.repl` only, resolves the pact bin) + `lib/pactRun.test.mjs`. Server SSE `GET /api/pact/run` (local-only + canExecute, spawns `pact <file>`, streams `out`/`err`/`exit`/`fail` events, 120 s cap, killed on disconnect; the server event is `fail` not `error` to avoid EventSource's native-error collision). Frontend: ▶ Run in a `.repl` box streams into `.pact-terminal`.
+- **v0.20.0 — Markdown.** `dashboard/public/md-mini.js` → `window.mdRender` (classic script, eval-tested in `lib/mdMini.test.mjs`). HTML-escapes source first; code fences never formatted; link URLs whitelisted. `.md` files render formatted.
+- **v0.21.0 — Multi-pane tabbed editor.** `PACT_ED` group model in app.js: up to 6 boxes in a CSS grid (`--pact-ed-cols`), each with its own tab strip; tree opens into the active box; ⊞ split, × close tab/box; per-tab content cached. Renders by type (highlight / markdown / plain); `.repl` box has its own ▶ Run.
+- **Brain seeded:** `brain/OuronetPact/` — `ONBOARDING.md`, `LEARNINGS.md` (full StoicSyntax prefix taxonomy + IDE color language + Pact 5 gotchas), `STATE.md`. This is the write-back target for Phase 2's chat.
+
+**Testing note:** browser classic scripts (`pact-highlight.js`, `md-mini.js`) are Node-tested by `new Function("window", src)(win)` — no bundler. Keep them pure.
 
 ### 2026-08-10 — v0.18.0 — Phase 1b: StoicSyntax highlighter
 - **`dashboard/public/pact-highlight.js`** (classic script → `window.pactHighlight` / `pactClassifyWord` / `pactBandLegend`; loaded in `index.html` *before* app.js). Single-pass tokenizer, HTML-escaped/injection-safe. Colors by StoicSyntax prefix band at segment boundaries (`^` or after `| . : >`) so `IC|UDC_…`, `URC|KDA-PID_CLAD`, `SWP|A_…`, cap arrows `|C>` all resolve. Bands: compute/read/ctor/enforce/cap (cool/gold) vs client/orch/admin/write (warm/red). Plus `;;` section bars, strings, numbers, `:type`, `::`, keywords/def-forms, bracket kinds.
