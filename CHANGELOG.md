@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.30] - 2026-08-12
+
+### Added
+- **Relay-bridge parity with the survivable session daemon.** When `SESSIOND_SOCK` is set the web's
+  `WORKSPACE` is a `SessiondClient` talking to the always-up `sessiond` daemon, and `createBridge`
+  already receives that same client (`workspace: WORKSPACE`) — so REMOTE (relay-tunnel) agents ride
+  the daemon too and survive an ordinary web deploy, not just local browser sessions. No production
+  change was needed: the bridge's entire workspace surface (`addSink`/`removeSink`/`handleIn`/
+  `transcriptDir`, with `send` supplied as the client's first sink) is implemented by `SessiondClient`.
+  Added an end-to-end parity test — a real bridge over a real relay, handed a real `SessiondClient`
+  over a real loopback unix socket to a real `sessiond` — proving a REMOTE prompt drives the daemon
+  and the daemon's event flows back out the tunnel (and to the local sink).
+
 ## [1.1.29] - 2026-08-12
 
 ### Added

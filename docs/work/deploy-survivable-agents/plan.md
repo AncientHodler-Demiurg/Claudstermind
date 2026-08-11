@@ -37,5 +37,9 @@ CHANGELOG top entry, push to main. Never restart the live service.
 - [x] T4.4 Wire the guard: daemon-affecting deploy + agents busy → custom warn/confirm or block.
 
 ## Wave 5 — Bridge parity + review
-- [ ] T5.1 Hand the SessiondClient to `createBridge({ workspace })` when the flag is on; remote parity.
+- [x] T5.1 Hand the SessiondClient to `createBridge({ workspace })` when the flag is on; remote parity.
+      No-op-plus-proof: server.mjs already passes `workspace: WORKSPACE` (the selected engine — the
+      SessiondClient when the flag is on), and the bridge's full surface (addSink/removeSink/handleIn/
+      transcriptDir + send-as-first-sink) is already implemented by SessiondClient. Added an end-to-end
+      parity test (real bridge → real relay → real SessiondClient → real sessiond over a loopback socket).
 - [ ] T5.2 Full review pass (lenses + adversarial validation + fix loop to clean).

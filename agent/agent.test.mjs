@@ -9,6 +9,8 @@ import { createBridge } from "./agent.mjs";
 import { FRAME } from "../lib/protocol.mjs";
 import { WorkspaceManager } from "../lib/workspace.mjs";
 import { appendTurn, workspaceId } from "../lib/workspaceStore.mjs";
+import { SessiondClient } from "../lib/sessiondClient.mjs";
+import { createSessiond } from "../sessiond/sessiond.mjs";
 
 const DEVICE = "device-secret-at-least-32-chars-long!!";
 
@@ -442,4 +444,78 @@ test("Finding 2 — bridge restart against the same shared WorkspaceManager remo
   assert.equal(shared._sinks.size, baseline, "after the second stop(), the sink count returns to baseline again — no leak across repeated restarts");
 
   rmSync(fx.root, { recursive: true, force: true });
+});
+
+// ---- T5.1: relay-bridge parity against the sessiond daemon (deploy-survivable agents, Wave 5) ----
+// When SESSIOND_SOCK is set, dashboard/server.mjs's WORKSPACE is a SessiondClient (not the in-process
+// WorkspaceManager) and that SAME client is handed to createBridge({ workspace }) — server.mjs's
+// `workspace: WORKSPACE`. This proves the REMOTE (relay-tunnel) path survives a web deploy too: a
+// prompt arriving down the tunnel is driven into the always-up daemon through the client, and the
+// daemon's resulting event flows back out the tunnel. End-to-end over a REAL loopback unix socket
+// (real sessiond + real SessiondClient) + a real ws relay — no mocks between the bridge and the daemon.
+test("T5.1 — a REMOTE prompt drives the sessiond daemon through the SessiondClient and the daemon's event flows back out the tunnel", async (t) => {
+  const sockPath = join(tmpdir(), `sessiond-bridge-parity-${process.pid}-${Date.now()}.sock`);
+  // A stub engine standing in for the daemon-owned WorkspaceManager: on _prompt it echoes an `event`
+  // to its sinks, exactly what the real manager's send() does when it accepts a turn — that echo is
+  // what the daemon fans out to subscribers.
+  const sinks = new Set();
+  const engine = {
+    addSink(fn) { sinks.add(fn); },
+    removeSink(fn) { sinks.delete(fn); },
+    sessions: new Map(),
+    sessionSummary: (s) => s,
+    _prompt(sessionKey, data) {
+      for (const fn of sinks) fn("event", sessionKey, { kind: "assistant", text: "reply: " + data.text });
+    },
+  };
+  const daemon = createSessiond({ workspace: engine, socketPath: sockPath });
+  await new Promise((res, rej) => { daemon.server.on("listening", res); daemon.server.on("error", rej); });
+
+  // The web's REAL SessiondClient — the same class server.mjs hands to createBridge as WORKSPACE when
+  // the flag is on. Its `send` sink is the tunnel-independent local broadcast (SSE in production).
+  const localEvents = [];
+  const client = new SessiondClient({
+    socketPath: sockPath,
+    send: (kind, sessionKey, data) => localEvents.push({ kind, sessionKey, data }),
+    minBackoffMs: 5, maxBackoffMs: 20, requestTimeoutMs: 1000,
+  });
+  const up = await client.probe();
+  assert.equal(up, true, "the client connects + subscribes to the live daemon");
+
+  // A real relay + the real bridge, handed the SessiondClient as its workspace (exactly server.mjs's
+  // `workspace: WORKSPACE`). The bridge subscribes via addSink and prompts via handleIn — the full
+  // surface it uses — all of which the client implements over IPC.
+  const { wss, url } = await stubRelay();
+  let sockRef = null;
+  const wsOutFrames = [];
+  wss.on("connection", (sock) => {
+    sockRef = sock;
+    sock.on("message", (raw) => {
+      const f = JSON.parse(raw.toString());
+      if (f.t === FRAME.HELLO) sock.send(JSON.stringify({ t: FRAME.WELCOME }));
+      else if (f.t === FRAME.WS_OUT) wsOutFrames.push(f);
+    });
+  });
+  const bridge = createBridge({
+    url, deviceSecret: DEVICE, allowInsecure: true, snapshotIntervalMs: 60_000,
+    workspace: client, buildSnapshot: async () => ({}), log: () => {},
+  }).start();
+  t.after(() => { bridge.stop(); wss.close(); client.close(); try { daemon.server.close(); } catch {} });
+  await new Promise((r) => setTimeout(r, 150));   // HELLO/WELCOME settle
+
+  // A genuine REMOTE prompt down the tunnel (the relay's own WS_IN path — proof of remote interest,
+  // so the tunnel-sink gate lets this session's events cross). The bridge forwards it through the
+  // client → the daemon → the stub engine, whose echoed event fans back out to the subscribed client
+  // → the bridge's tunnel sink relays it up as WS_OUT.
+  sockRef.send(JSON.stringify({ t: FRAME.WS_IN, kind: "prompt", sessionKey: "repoA@main", data: { repo: "repoA", text: "hello" } }));
+  await new Promise((r) => setTimeout(r, 250));
+
+  assert.ok(
+    wsOutFrames.some((f) => f.kind === "event" && f.sessionKey === "repoA@main" && f.data?.kind === "assistant"),
+    "the daemon-owned engine's event flowed back out the relay tunnel — REMOTE parity holds through the SessiondClient",
+  );
+  assert.ok(
+    localEvents.some((e) => e.kind === "event" && e.data?.kind === "assistant"),
+    "the same event ALSO reached the client's own send sink (local broadcast), not only the tunnel",
+  );
 });
