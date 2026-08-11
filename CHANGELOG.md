@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.23] - 2026-08-12
+
+### Added
+- **Web can use the session daemon, behind a fallback (`dashboard/server.mjs`).** A single selection
+  point (`selectWorkspace`) now chooses the engine the web drives: when `SESSIOND_SOCK` is set AND
+  the `sessiond` daemon actually answers a probe, `WORKSPACE` becomes a `SessiondClient` (built with
+  the SAME `send` sink + paths the in-process manager gets, so the SSE `/api/workspace/stream`
+  fan-out, the image route, and the browser endpoints are all unchanged); otherwise it falls back to
+  the in-process `new WorkspaceManager(...)` exactly as before. A flag that is set-but-unreachable,
+  or a client that throws on construction, logs and falls back — never crashes. **With the flag unset
+  (the live app today — `SESSIOND_SOCK` is not set on the service, and the daemon unit is not
+  installed) the code path is literally the previous synchronous in-process construction, byte-for-
+  byte: `selectWorkspace` is not even called and no daemon client is constructed.** So this wave
+  changes nothing about the running app until the daemon is installed and the env var is set.
+
 ## [1.1.22] - 2026-08-12
 
 ### Added

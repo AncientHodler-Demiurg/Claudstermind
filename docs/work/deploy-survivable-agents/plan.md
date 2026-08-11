@@ -18,8 +18,10 @@ CHANGELOG top entry, push to main. Never restart the live service.
       prompt/permission/stop/control, the `send` sink, addSink/removeSink, transcriptDir) over IPC;
       auto-reconnect + resubscribe + snapshot catch-up. Also extended `sessiond` to handle the
       permission/stop request frames. Tests against a stub socket (reconnect, event relay, snapshot).
-- [ ] T2.2 Wire `dashboard/server.mjs`: when `SESSIOND_SOCK` is set+reachable use SessiondClient, else
+- [x] T2.2 Wire `dashboard/server.mjs`: when `SESSIOND_SOCK` is set+reachable use SessiondClient, else
       in-process WorkspaceManager (today). Browser endpoints unchanged. Test the selection + fallback.
+      Selection is `selectWorkspace` (exported, injectable seams); flag-unset path is byte-identical
+      (no await, no client constructed) so the live app is unaffected until the daemon is installed.
 
 ## Wave 3 — Deploy plan + guard logic (pure)
 - [ ] T3.1 `lib/deployPlan.mjs` — from changed files + unit defs → `{restarts:[...], daemonAffected}`.

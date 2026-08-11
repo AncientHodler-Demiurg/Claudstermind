@@ -37,6 +37,7 @@ import { readBrain, scanPackages, cachedActivity } from "../lib/snapshot.mjs";
 import { executeCommand } from "../lib/commands.mjs";
 import { createBridge } from "../agent/agent.mjs";
 import { WorkspaceManager } from "../lib/workspace.mjs";
+import { SessiondClient } from "../lib/sessiondClient.mjs";
 import * as store from "../lib/workspaceStore.mjs";
 import { readVersion } from "../lib/version.mjs";
 import { runDeploy } from "../lib/deploy.mjs";
@@ -306,12 +307,49 @@ function localListRepos() {
     return (map.repos || []).map((r) => ({ name: r.name, localPath: r.localPath, org: r.org?.target || r.org?.current || null })).filter((r) => r.localPath);
   } catch { return []; }
 }
+// ---- Session engine selection (deploy-survivable agents, Wave 2) ----
+// The engine the web drives is EITHER the in-process WorkspaceManager (today's behavior, the one
+// that dies with the web process on a deploy) OR — only when `SESSIOND_SOCK` is set AND the always-
+// up `sessiond` daemon actually answers — a SessiondClient that forwards to that daemon, so an
+// ordinary web deploy no longer interrupts running agents. This is deliberately gated behind a
+// fallback: a flag that's unset, or set-but-unreachable, runs the exact in-process path as before,
+// so the running app can never regress just because the env var is (or isn't) present. Every seam
+// is injectable so dashboard/server.test.mjs proves all three branches without opening a socket.
+export async function selectWorkspace({ env = process.env, makeInProcess, makeClient, log = console } = {}) {
+  if (!env.SESSIOND_SOCK) return makeInProcess();     // no flag → today's in-process engine, unchanged
+  let client = null;
+  try {
+    client = makeClient();
+    if (await client.probe()) {
+      log.log?.(`  Session engine: sessiond daemon at ${env.SESSIOND_SOCK} (SESSIOND_SOCK) — agents survive a web restart`);
+      return client;
+    }
+    log.warn?.(`  Session engine: SESSIOND_SOCK=${env.SESSIOND_SOCK} set but the daemon is unreachable — falling back to the in-process engine`);
+  } catch (e) {
+    log.warn?.(`  Session engine: sessiond client init failed (${e && e.message || e}) — falling back to the in-process engine`);
+  }
+  try { client?.close?.(); } catch {}
+  return makeInProcess();
+}
+
 if (!OIDC) {
-  WORKSPACE = new WorkspaceManager({
+  // The single output sink both engines are built with — a WS_OUT frame broadcast to every local
+  // SSE subscriber. Identical to the historical inline closure; named so the client shares it verbatim.
+  const wsSend = (kind, sessionKey, data) => wsBroadcast(JSON.stringify({ kind, sessionKey, data }));
+  const makeInProcess = () => new WorkspaceManager({
     root: MASTER_ROOT, secretsDir: SECRETS_DIR, listRepos: localListRepos,
     model: process.env.CLAUDE_WORKSPACE_MODEL || undefined,
-    send: (kind, sessionKey, data) => wsBroadcast(JSON.stringify({ kind, sessionKey, data })),
+    send: wsSend,
   });
+  // The `await` is reached ONLY when SESSIOND_SOCK is set; with it unset (the live app today, and
+  // every test) this is the plain synchronous in-process construction — byte-for-byte as before.
+  WORKSPACE = process.env.SESSIOND_SOCK
+    ? await selectWorkspace({
+        env: process.env,
+        makeInProcess,
+        makeClient: () => new SessiondClient({ socketPath: process.env.SESSIOND_SOCK, root: MASTER_ROOT, send: wsSend }),
+      })
+    : makeInProcess();
 }
 
 // ---- Deploy pipeline state (ships THIS repo to the live box; see lib/deploy.mjs) ----

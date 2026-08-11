@@ -14,7 +14,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { WebSocketServer } from "ws";
-import { readBody, PayloadTooLargeError, bridgeEnabled, runSelfRestart, startSelfRestart, subscribeRestartLog, LOCAL_ONLY, bootLocalSubsystems, randomScratchPort, PORT } from "./server.mjs";
+import { readBody, PayloadTooLargeError, bridgeEnabled, runSelfRestart, startSelfRestart, subscribeRestartLog, LOCAL_ONLY, bootLocalSubsystems, randomScratchPort, PORT, selectWorkspace } from "./server.mjs";
 import { createBridge } from "../agent/agent.mjs";
 import { FRAME } from "../lib/protocol.mjs";
 
@@ -417,4 +417,65 @@ test("runSelfRestart's default scratch port (no override supplied) is never the 
   });
   assert.ok(Number.isInteger(capturedScratchPort), "preflightStepsFn should have received a numeric scratchPort");
   assert.notEqual(capturedScratchPort, PORT, "the candidate's own scratch port must never equal the resolved real dashboard PORT");
+});
+
+// ---- Session engine selection (deploy-survivable agents, Wave 2 T2.2) ----
+// selectWorkspace decides between the in-process WorkspaceManager (today) and a SessiondClient,
+// gated behind SESSIOND_SOCK + reachability. These prove all three branches with injected seams
+// (no real socket, no real WorkspaceManager) — the critical property being that a flag that's unset
+// or unreachable runs the exact in-process path, so the live app never regresses.
+
+test("selectWorkspace: SESSIOND_SOCK unset → in-process engine, client never even constructed", async () => {
+  let madeClient = false;
+  const inproc = { kind: "in-process" };
+  const ws = await selectWorkspace({
+    env: {},                                   // no SESSIOND_SOCK
+    makeInProcess: () => inproc,
+    makeClient: () => { madeClient = true; return {}; },
+    log: {},
+  });
+  assert.equal(ws, inproc);
+  assert.equal(madeClient, false, "the daemon client must not be constructed when the flag is unset");
+});
+
+test("selectWorkspace: SESSIOND_SOCK set + daemon reachable → the SessiondClient", async () => {
+  const client = { probe: async () => true, close() { throw new Error("must not close a live client"); } };
+  let madeInProcess = false;
+  const logs = [];
+  const ws = await selectWorkspace({
+    env: { SESSIOND_SOCK: "/run/x.sock" },
+    makeInProcess: () => { madeInProcess = true; return { kind: "in-process" }; },
+    makeClient: () => client,
+    log: { log: (m) => logs.push(m), warn: (m) => logs.push(m) },
+  });
+  assert.equal(ws, client, "a reachable daemon must yield the client");
+  assert.equal(madeInProcess, false, "must not build the in-process engine when the daemon answers");
+  assert.ok(logs.some((l) => /sessiond daemon/.test(l)), "logs that it is using the daemon");
+});
+
+test("selectWorkspace: SESSIOND_SOCK set but daemon UNREACHABLE → in-process fallback + client closed", async () => {
+  let closed = false;
+  const client = { probe: async () => false, close() { closed = true; } };
+  const inproc = { kind: "in-process" };
+  const logs = [];
+  const ws = await selectWorkspace({
+    env: { SESSIOND_SOCK: "/run/x.sock" },
+    makeInProcess: () => inproc,
+    makeClient: () => client,
+    log: { log: (m) => logs.push(m), warn: (m) => logs.push(m) },
+  });
+  assert.equal(ws, inproc, "an unreachable daemon must fall back to the in-process engine");
+  assert.equal(closed, true, "the probed-but-unreachable client must be closed, not leaked");
+  assert.ok(logs.some((l) => /unreachable/.test(l)), "warns that it fell back");
+});
+
+test("selectWorkspace: a throwing client constructor still falls back to in-process (never crashes)", async () => {
+  const inproc = { kind: "in-process" };
+  const ws = await selectWorkspace({
+    env: { SESSIOND_SOCK: "/run/x.sock" },
+    makeInProcess: () => inproc,
+    makeClient: () => { throw new Error("boom"); },
+    log: { log() {}, warn() {} },
+  });
+  assert.equal(ws, inproc, "a client that throws on construction must not take down engine selection");
 });
