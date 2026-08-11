@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.0] - 2026-08-11
+
+### Added
+- **Pact IDE — editable files + Save All + autosave (UI points 2 + 4).** Opened files are now editable:
+  each box renders a transparent `<textarea>` over the syntax-highlighted `<pre>` (StoicSyntax coloring
+  is kept), with `Tab`→2-spaces and `Ctrl/⌘-S`. Per-tab **dirty tracking** (a dot on changed tabs), a
+  global **Save All** toolbar button (disabled when clean, shows the dirty count when not), and
+  **debounced autosave** 1.5s after typing stops. Markdown keeps its rendered preview with an ✎/👁 edit
+  toggle. Backend: `writeTextFile(root, rel, content)` in `lib/pactFs.mjs` (repo-confined + size guard,
+  with a test), `POST /api/pact/file` in the dashboard (same-origin + local-only + canExecute), and it is
+  **tunneled through the relay** (`pactWrite` in the bridge, a POST forward in the relay) so remote save
+  works on brain.ancientholdings.eu exactly like the tree/file reads.
+
 ## [1.0.9] - 2026-08-11
 
 ### Changed

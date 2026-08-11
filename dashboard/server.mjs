@@ -23,7 +23,7 @@ import { join, extname, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readActivity, readLastBackup } from "../orchestrator/activity.mjs";
 import { listArchives, pruneArchives, deleteArchive } from "../orchestrator/archives.mjs";
-import { listDir as pactListDir, readTextFile as pactReadFile, pactRoot as resolvePactRoot, appendBrainNote } from "../lib/pactFs.mjs";
+import { listDir as pactListDir, readTextFile as pactReadFile, writeTextFile as pactWriteFile, pactRoot as resolvePactRoot, appendBrainNote } from "../lib/pactFs.mjs";
 import { pactRunSpec } from "../lib/pactRun.mjs";
 import { readBackupConfig, writeBackupConfig, isBackupDue, browseDir } from "../orchestrator/backupConfig.mjs";
 import { readCascade } from "../lib/cascade.mjs";
@@ -858,9 +858,18 @@ const handler = async (req, res) => {
     if (!who.canRead) return sendJSON(res, 403, { ok: false, reason: "read-only" });
     return sendJSON(res, 200, pactListDir(resolvePactRoot(MASTER_ROOT), url.searchParams.get("dir") || ""));
   }
-  if (path === "/api/pact/file") {
+  if (path === "/api/pact/file" && req.method === "GET") {
     if (!who.canRead) return sendJSON(res, 403, { ok: false, reason: "read-only" });
     return sendJSON(res, 200, pactReadFile(resolvePactRoot(MASTER_ROOT), url.searchParams.get("path") || ""));
+  }
+  // ---- Pact IDE: SAVE a file back to disk (the editor's Save All / autosave). Local-only + canExecute
+  // + repo-confined (pactFs refuses any escape). Tunneled through the relay as `pactWrite`. ----
+  if (path === "/api/pact/file" && req.method === "POST") {
+    if (!sameOrigin(req)) return sendJSON(res, 403, { ok: false, reason: "cross-origin" });
+    if (!who.localActionsAvailable) return sendJSON(res, 403, { ok: false, reason: "local-only", message: "Saving Pact files is local-only." });
+    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Execute permission required." });
+    const b = await readBody(req);
+    return sendJSON(res, 200, pactWriteFile(resolvePactRoot(MASTER_ROOT), b.path || "", b.content || ""));
   }
   // ---- Pact IDE: continuous write-back — append a note to the pact brain (brain/OuronetPact). ----
   if (path === "/api/pact/brain/append" && req.method === "POST") {

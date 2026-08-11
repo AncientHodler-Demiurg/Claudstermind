@@ -375,6 +375,16 @@ export function createRelay(opts = {}) {
       return sendJSON(res, 200, r || { ok: false, error: "no reply from the work machine" });
     }
 
+    // ---- remote Pact IDE: SAVE a file, forwarded down the tunnel (`pactWrite`). Ancient-only; the
+    // bridge writes it repo-confined on the work machine. Mirrors the tree/file read forward above. ----
+    if (req.method === "POST" && path === "/api/pact/file") {
+      if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The Pact workspace is ancient-only." });
+      if (!link.connected) return sendJSON(res, 503, { ok: false, error: "Local Claudstermind is not connected." });
+      const body = await readBody(req);
+      const r = await link.relay("pactWrite", { path: body.path || "", content: body.content || "" }, 15_000);
+      return sendJSON(res, 200, r || { ok: false, error: "no reply from the work machine" });
+    }
+
     // ---- remote workspace: serve an attached prompt image (ancient-only) ----
     // Same shape as the local dashboard's own /api/workspace/image, forwarded down the tunnel as
     // a one-shot COMMAND/RESULT (agent/agent.mjs's "workspaceImage") — a single image fetch has

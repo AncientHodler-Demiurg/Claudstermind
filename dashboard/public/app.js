@@ -2169,9 +2169,11 @@ function pactEdRenderGroup(g) {
     const x = el("span", { class: "pact-tab2-x", title: "Close tab" }, ["×"]);
     x.addEventListener("click", (e) => { e.stopPropagation(); pactEdCloseTab(g, tb.path); });
     const ext = (tb.name.split(".").pop() || "").toLowerCase();
-    const tab = el("div", { class: "pact-tab2 pk-t-" + ext + (tb.path === g.active ? " --active" : ""), title: tb.path }, [
+    const tab = el("div", { class: "pact-tab2 pk-t-" + ext + (tb.path === g.active ? " --active" : "") + (tb.dirty ? " --dirty" : ""), title: tb.path }, [
+      el("span", { class: "pact-tab2-dot", title: "Unsaved changes" }, []),
       el("span", { class: "pact-tab2-ic" }, [pactFileIcon(tb.name)]), el("span", { class: "pact-tab2-name" }, [tb.name]), x,
     ]);
+    tb._tabEl = tab;
     tab.addEventListener("click", () => { PACT_ED.activeId = g.id; g.active = tb.path; pactEdLayout(); });
     return tab;
   });
@@ -2181,6 +2183,11 @@ function pactEdRenderGroup(g) {
     const run = el("button", { class: "pact-run-btn", title: "Run this .repl and stream the output" }, ["▶ Run"]);
     run.addEventListener("click", (e) => { e.stopPropagation(); pactRunRepl(active.path); });
     actions.push(run);
+  }
+  if (active && active.name.toLowerCase().endsWith(".md")) {
+    const md = el("button", { class: "pact-ed-ico", title: active.editing ? "Preview the rendered markdown" : "Edit the raw markdown" }, [active.editing ? "👁" : "✎"]);
+    md.addEventListener("click", (e) => { e.stopPropagation(); active.editing = !active.editing; pactEdRenderGroup(g); });
+    actions.push(md);
   }
   const fMinus = el("button", { class: "pact-ed-ico", title: "Smaller font (this box)" }, ["A-"]);
   const fPlus = el("button", { class: "pact-ed-ico", title: "Bigger font (this box)" }, ["A+"]);
@@ -2203,16 +2210,92 @@ function pactEdRenderBody(g, tab) {
   if (tab.error) { g.bodyEl.replaceChildren(el("div", { class: "hint", style: "padding:10px;color:#f87171" }, ["⚠ " + tab.error])); return; }
   if (!tab.loaded) { g.bodyEl.replaceChildren(el("div", { class: "hint", style: "padding:10px" }, ["Loading…"])); return; }
   const ext = tab.path.toLowerCase();
-  if (ext.endsWith(".md") && typeof window.mdRender === "function") {
+  // Markdown renders as a preview by default; ✎ toggles a raw editor (tab.editing).
+  if (ext.endsWith(".md") && !tab.editing && typeof window.mdRender === "function") {
     const md = el("div", { class: "pact-md" }); md.innerHTML = window.mdRender(tab.content);
     g.bodyEl.replaceChildren(el("div", { class: "pact-editor-scroll" }, [md]));
-  } else {
-    const pre = el("pre", { class: "pact-code" }); if (g.fontPx) pre.style.fontSize = g.fontPx + "px"; renderPactCode(pre, tab.content, tab.path);
-    const kids = [];
-    if ((ext.endsWith(".pact") || ext.endsWith(".repl")) && window.pactBandLegend) kids.push(pactLegend());
-    kids.push(el("div", { class: "pact-editor-scroll" }, [pre]));
-    g.bodyEl.replaceChildren(...kids);
+    return;
   }
+  // Editable overlay: a transparent <textarea> over a syntax-highlighted <pre> that scrolls with it.
+  // The pre keeps StoicSyntax coloring (point 2 kept the highlight view); the textarea takes the typing.
+  const kids = [];
+  if ((ext.endsWith(".pact") || ext.endsWith(".repl")) && window.pactBandLegend) kids.push(pactLegend());
+  const hl = el("pre", { class: "pact-code pact-edit-hl", "aria-hidden": "true" }, []);
+  const ta = el("textarea", { class: "pact-edit", spellcheck: "false", wrap: "off" });
+  ta.value = tab.content;
+  if (g.fontPx) { hl.style.fontSize = g.fontPx + "px"; ta.style.fontSize = g.fontPx + "px"; }
+  const paint = () => renderPactCode(hl, ta.value, tab.path);
+  const syncScroll = () => { hl.scrollTop = ta.scrollTop; hl.scrollLeft = ta.scrollLeft; };
+  paint();
+  ta.addEventListener("input", () => { tab.content = ta.value; paint(); syncScroll(); pactEdMarkDirty(g, tab); });
+  ta.addEventListener("scroll", syncScroll);
+  ta.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) { e.preventDefault(); pactEdSaveAll(); return; }
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const s = ta.selectionStart, en = ta.selectionEnd;
+      ta.value = ta.value.slice(0, s) + "  " + ta.value.slice(en);
+      ta.selectionStart = ta.selectionEnd = s + 2;
+      tab.content = ta.value; paint(); pactEdMarkDirty(g, tab);
+    }
+  });
+  kids.push(el("div", { class: "pact-edit-wrap" }, [hl, ta]));
+  g.bodyEl.replaceChildren(...kids);
+  requestAnimationFrame(syncScroll);
+}
+// ---- Save state: per-tab dirty (content ≠ last saved), a global Save-All button, debounced autosave.
+function pactEdAnyDirty() { return !!(PACT_ED && PACT_ED.groups.some((g) => g.tabs.some((t) => t.dirty))); }
+function pactEdDirtyCount() { return PACT_ED ? PACT_ED.groups.reduce((a, g) => a + g.tabs.filter((t) => t.dirty).length, 0) : 0; }
+function pactEdUpdateSaveBar() {
+  if (!PACT_ED || !PACT_ED.saveBtn) return;
+  const n = pactEdDirtyCount();
+  PACT_ED.saveBtn.disabled = n === 0;
+  PACT_ED.saveBtn.textContent = n ? `💾 Save All (${n})` : "💾 Saved";
+}
+function pactEdSaveStatus(text, isErr) {
+  if (!PACT_ED || !PACT_ED.saveStatus) return;
+  PACT_ED.saveStatus.textContent = text || "";
+  PACT_ED.saveStatus.classList.toggle("--err", !!isErr);
+  if (PACT_ED._statusT) clearTimeout(PACT_ED._statusT);
+  if (text && !isErr) PACT_ED._statusT = setTimeout(() => { if (PACT_ED && PACT_ED.saveStatus) PACT_ED.saveStatus.textContent = ""; }, 2600);
+}
+function pactEdMarkDirty(g, tab) {
+  tab.dirty = tab.content !== tab.saved;
+  if (tab._tabEl) tab._tabEl.classList.toggle("--dirty", tab.dirty);   // surgical — don't rebuild the body (would drop focus)
+  pactEdUpdateSaveBar();
+  pactEdScheduleAutosave(tab);
+}
+function pactEdScheduleAutosave(tab) {
+  if (tab._saveTimer) { clearTimeout(tab._saveTimer); tab._saveTimer = null; }
+  if (!tab.dirty) return;
+  tab._saveTimer = setTimeout(() => { tab._saveTimer = null; pactEdSaveTab(tab); }, 1500);
+}
+async function pactEdSaveTab(tab) {
+  if (!tab || !tab.dirty || tab._saving) return;
+  tab._saving = true;
+  const snapshot = tab.content;
+  let d;
+  try { d = await (await fetch("/api/pact/file", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: tab.path, content: snapshot }) })).json(); }
+  catch { d = { ok: false, error: "unreachable" }; }
+  tab._saving = false;
+  if (d.ok) {
+    tab.saved = snapshot;
+    tab.dirty = tab.content !== tab.saved;   // may have kept typing during the request
+    if (tab._tabEl) tab._tabEl.classList.toggle("--dirty", tab.dirty);
+    if (!tab.dirty) pactEdSaveStatus("✓ saved " + tab.name, false); else pactEdScheduleAutosave(tab);
+  } else {
+    pactEdSaveStatus("⚠ " + (d.message || d.error || "save failed"), true);
+  }
+  pactEdUpdateSaveBar();
+}
+async function pactEdSaveAll() {
+  if (!PACT_ED) return;
+  const dirty = [];
+  for (const g of PACT_ED.groups) for (const t of g.tabs) if (t.dirty) { if (t._saveTimer) { clearTimeout(t._saveTimer); t._saveTimer = null; } dirty.push(t); }
+  if (!dirty.length) return;
+  pactEdSaveStatus("saving " + dirty.length + " file" + (dirty.length > 1 ? "s" : "") + "…", false);
+  for (const t of dirty) await pactEdSaveTab(t);
+  if (!pactEdAnyDirty()) pactEdSaveStatus("✓ all saved", false);
 }
 async function pactEdOpen(path, row) {
   if (!PACT_ED) return;
@@ -2221,14 +2304,14 @@ async function pactEdOpen(path, row) {
   const g = PACT_ED.groups.find((x) => x.id === PACT_ED.activeId) || PACT_ED.groups[0];
   PACT_ED.activeId = g.id;
   let tab = g.tabs.find((t) => t.path === path);
-  if (!tab) { tab = { path, name: path.split("/").pop(), loaded: false, content: "", error: null }; g.tabs.push(tab); }
+  if (!tab) { tab = { path, name: path.split("/").pop(), loaded: false, content: "", saved: "", dirty: false, error: null }; g.tabs.push(tab); }
   g.active = path;
   pactEdLayout();
   if (tab.loaded || tab.error) return;
   let d;
   try { d = await (await fetch("/api/pact/file?path=" + encodeURIComponent(path))).json(); }
   catch { d = { ok: false, error: "unreachable" }; }
-  if (d.ok) { tab.content = d.content; tab.loaded = true; }
+  if (d.ok) { tab.content = d.content; tab.saved = d.content; tab.dirty = false; tab.loaded = true; }
   else { tab.error = (d.error || "error") + (d.tooLarge ? ` (${Math.round((d.size || 0) / 1e6)} MB)` : ""); }
   if (g.active === path) pactEdRenderGroup(g);
 }
@@ -2411,9 +2494,17 @@ function viewPact() {
     termOut,
   ]);
   const rightEl = el("div", { class: "pact-right" }, [chatEl, termEl]);
-  const workEl = el("div", { class: "pact-work" }, [editorEl, rightEl]);
+  const saveBtn = el("button", { class: "pact-save-all", title: "Save every changed file (Ctrl/⌘-S). Files also autosave 1.5s after you stop typing." }, ["💾 Saved"]);
+  saveBtn.disabled = true;
+  saveBtn.addEventListener("click", () => pactEdSaveAll());
+  const saveStatus = el("span", { class: "pact-save-status" }, []);
+  const toolbar = el("div", { class: "pact-ed-toolbar" }, [saveBtn, saveStatus, el("span", { class: "ws-spacer" }, []),
+    el("span", { class: "pact-save-hint" }, ["autosaves 1.5s after you stop typing"])]);
+  const editorWrap = el("div", { class: "pact-editor-wrap" }, [toolbar, editorEl]);
+  const workEl = el("div", { class: "pact-work" }, [editorWrap, rightEl]);
   const root = el("div", { class: "pact-ide" }, [treeEl, workEl]);
   pactEdInit(editorEl);
+  PACT_ED.saveBtn = saveBtn; PACT_ED.saveStatus = saveStatus; pactEdUpdateSaveBar();
   pactChatInit(chatEl);
   loadPactDir("", treeBody);
   return root;
