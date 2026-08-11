@@ -8,6 +8,7 @@ import { WebSocketServer } from "ws";
 import { createBridge } from "./agent.mjs";
 import { FRAME } from "../lib/protocol.mjs";
 import { WorkspaceManager } from "../lib/workspace.mjs";
+import { appendTurn, workspaceId } from "../lib/workspaceStore.mjs";
 
 const DEVICE = "device-secret-at-least-32-chars-long!!";
 
@@ -264,6 +265,57 @@ test("Finding 1 — a session that starts local-only and later gets a genuine re
 
   assert.ok(wsOutFrames.some((f) => f.sessionKey === "later-remote-key" && f.kind === "event" && f.data?.kind === "busy"),
     "once a genuine remote prompt touches this sessionKey, its events (even a busy refusal) must reach the tunnel");
+});
+
+test("a RESUMED (adopted) saved-session key opens the remote gate: its rehydrate transcript AND the resumed turn's assistant/result all reach the tunnel", async (t) => {
+  // Reproduces the Pact chat "Resume" path over the tunnel. A saved session exists on disk; the
+  // remote adopts its OWN id as the tab key, rehydrates via a `control sessionOpen`, then sends a
+  // prompt on that same adopted key carrying `resume` (the real SDK id). Regression guard for the
+  // "resumed tab streams thinking… forever, answers never render" report: the adopted key must open
+  // the same gate a freshly-minted key does, so the resumed turn's live output crosses the wire.
+  const fx = workspaceFixture();
+  const transcriptDir = join(fx.root, ".claude", "workspace");
+  const wid = workspaceId("repo", "main");
+  const ADOPTED = "9b41003b-adopted-key";           // the saved session's own id = the resumed tab's key
+  const REAL = "ad269259-real-sdk-id";              // the real SDK id `resume` continues
+  appendTurn(transcriptDir, wid, ADOPTED, { role: "user", text: "original question", at: 1, workspaceId: wid, realSessionId: REAL });
+  appendTurn(transcriptDir, wid, ADOPTED, { role: "assistant", text: "original answer", at: 2, workspaceId: wid, realSessionId: REAL });
+
+  const shared = new WorkspaceManager({
+    root: fx.root, secretsDir: fx.secretsDir, transcriptDir, sdkQuery: mockQuery(),
+    listRepos: () => [{ name: "repo", localPath: "repo" }], send: () => {},
+  });
+  const { wss, url } = await stubRelay();
+  let sockRef = null;
+  const wsOutFrames = [];
+  wss.on("connection", (sock) => {
+    sockRef = sock;
+    sock.on("message", (raw) => {
+      const f = JSON.parse(raw.toString());
+      if (f.t === FRAME.HELLO) sock.send(JSON.stringify({ t: FRAME.WELCOME }));
+      else if (f.t === FRAME.WS_OUT) wsOutFrames.push(f);
+    });
+  });
+  const bridge = createBridge({ url, deviceSecret: DEVICE, allowInsecure: true, snapshotIntervalMs: 60_000, workspace: shared, buildSnapshot: async () => ({}), log: () => {} }).start();
+  t.after(() => { bridge.stop(); wss.close(); rmSync(fx.root, { recursive: true, force: true }); });
+  await new Promise((r) => setTimeout(r, 150));
+
+  // 1) Rehydrate the saved transcript (a workspace-read reply — never gated). Note the sessionOpen
+  //    control frame carries NO sessionKey, exactly as the client sends it.
+  sockRef.send(JSON.stringify({ t: FRAME.WS_IN, kind: "control", sessionKey: null, data: { action: "sessionOpen", args: { repo: "repo", worktree: "main", sessionId: ADOPTED } } }));
+  await new Promise((r) => setTimeout(r, 150));
+  const transcriptFrame = wsOutFrames.find((f) => f.kind === "transcript" && f.sessionKey === ADOPTED);
+  assert.ok(transcriptFrame, "the rehydrate transcript must reach the tunnel keyed by the adopted session id");
+  assert.equal((transcriptFrame.data.transcript || []).length, 2, "the saved 2-turn transcript must ride back for display");
+
+  // 2) The resumed turn: a genuine WS_IN prompt on the ADOPTED key, carrying `resume`. This is the
+  //    remote-interest signal — the adopted key must now open the gate exactly like any other.
+  sockRef.send(JSON.stringify({ t: FRAME.WS_IN, kind: "prompt", sessionKey: ADOPTED, data: { repo: "repo", worktree: "main", text: "continue please", mode: "bypassPermissions", by: "remote-user", resume: REAL } }));
+  await new Promise((r) => setTimeout(r, 250));
+
+  const eventKinds = wsOutFrames.filter((f) => f.kind === "event" && f.sessionKey === ADOPTED).map((f) => f.data?.kind);
+  assert.ok(eventKinds.includes("assistant"), `the resumed turn's assistant reply must cross the tunnel for the adopted key: ${eventKinds}`);
+  assert.ok(eventKinds.includes("result"), `the resumed turn's result (which flips the tab off "thinking") must cross the tunnel: ${eventKinds}`);
 });
 
 test("a relay-forwarded 'restart' WS_IN frame runs the bridge's injected restart pipeline (mirrors 'deploy') and streams its log/done back up the tunnel", async (t) => {

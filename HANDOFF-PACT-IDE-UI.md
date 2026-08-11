@@ -72,6 +72,22 @@
   counts USER turns (this file has 1 — the rest are assistant/tool), not the 75 total messages. There
   is also a second Pact session on disk keyed by the workspace id itself (`…Ouronet@main`, 4 turns)
   which also lists in history.
+- ✅ **P5 — resume/restore render fixes** (v1.1.8). Fixed two FRONTEND gaps in P3/P4's resume+history:
+  (1) reload left restored chats empty — `pactRestoreChat` now rehydrates each keyed tab via the same
+  `sessionOpen`→`_pendingOpen` path Resume uses (also reconnects the live stream, since the tab key IS
+  the session key); a missing session's "could not be opened" reply is swallowed (empty tab, no crash).
+  (2) A rehydrate that round-tripped in AFTER live turn events could wipe the just-streamed answer and
+  reset status — the `transcript` handler now only adopts the saved baseline when it isn't shorter than
+  the tab's current msgs, and never yanks a mid-turn tab off "thinking". Added a `busy` case in
+  `pactChatRoute` so a second prompt refused by the single-writer turn lock flips off "thinking…" +
+  notes to resend (was: spins forever). **Root-cause finding:** the remote tunnel gate
+  (`agent/agent.mjs` `remoteTouched`/`GATED_KINDS`) is NOT the bug — a resumed/adopted `sessionKey`
+  opens it exactly like a fresh key (the relay forwards `/api/workspace/prompt` as a genuine WS_IN
+  `prompt` frame). Empirically proven + locked in by a new `agent/agent.test.mjs` regression test
+  (drives sessionOpen rehydrate + a resumed prompt over a stub relay socket; asserts the transcript,
+  assistant, and result all cross the tunnel for the adopted key). NO tunnel/security change was made.
+  STILL NEEDS a live-browser check: confirm a Resume then a live prompt renders the answer in-tab on
+  both localhost and the live site, and that a reload restores full history.
 
 **Backend facts for P2–P4 (verified):**
 - Every Pact chat prompt goes out as `wsPost("prompt", {sessionKey:t.key, repo:PACT_REPO, worktree:"main", …})`.

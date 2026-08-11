@@ -4,6 +4,29 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.8] - 2026-08-11
+
+### Fixed
+- **Pact IDE — resumed/restored chats now show their history and stream live answers.** Two
+  frontend gaps in the just-shipped chat resume/history feature (v1.1.6–1.1.7):
+  - **Reload left every restored chat empty.** `pactRestoreChat` rebuilt each tab with `msgs:[]`
+    and never re-pulled its transcript, so after a page reload a restored chat showed nothing even
+    though its full conversation was safe on disk. Restore now rehydrates each keyed tab (the same
+    `sessionOpen` → `_pendingOpen` correlation Resume uses); because the tab's key IS its session
+    key, this also reconnects the live stream. A tab whose session no longer exists just stays
+    empty (its "could not be opened" reply is swallowed — no crash, no scary error bubble).
+  - **A racing rehydrate could wipe live answers / spin "thinking… forever".** The `transcript`
+    rehydrate handler unconditionally replaced `msgs` and reset status to idle — so a rehydrate that
+    round-tripped in *after* a live turn's events could erase the just-streamed answer. It now only
+    adopts the saved baseline when it isn't shorter than what the tab already shows, and never yanks
+    a mid-turn tab back to idle. A `busy` refusal (a second prompt sent before the current reply
+    lands) is now handled too — it flips the tab off the optimistic "thinking…" and notes to resend,
+    instead of spinning forever on a prompt the single-writer turn lock never accepted.
+- Verified the remote tunnel gate (`agent/agent.mjs`) is NOT at fault: a resumed/adopted `sessionKey`
+  opens the gate exactly like a fresh one (its rehydrate transcript and the resumed turn's
+  assistant/result all cross the wire), so no security-sensitive tunnel change was needed. Locked in
+  by a new `agent/agent.test.mjs` regression test driving the full resume-over-tunnel path.
+
 ## [1.1.7] - 2026-08-11
 
 ### Added

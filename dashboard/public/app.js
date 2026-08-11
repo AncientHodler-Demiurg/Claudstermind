@@ -2538,6 +2538,19 @@ function pactRestoreChat(ch) {
   const ai = Number.isInteger(ch.activeIndex) && ch.activeIndex >= 0 && ch.activeIndex < PACT_CHAT.tabs.length ? ch.activeIndex : 0;
   PACT_CHAT.activeId = PACT_CHAT.tabs[ai].id;
   pactChatRender();
+  // Rehydrate every restored tab's transcript from disk (a reload otherwise leaves each tab EMPTY
+  // even though its conversation is safely saved). Same mechanism a Resume uses: correlate the
+  // returned `transcript` frame (keyed by the session's own id) to THIS tab via `_pendingOpen`, and
+  // — since the tab's key IS its session key — reconnecting the live stream is automatic (the one
+  // EventSource opened in pactChatInit routes future events here by key). A tab whose session no
+  // longer exists on disk just gets a "could not be opened" reply, swallowed below, so it stays
+  // empty rather than crashing (guarded in pactChatRoute's error path via `_pendingOpen`).
+  PACT_CHAT._pendingOpen = PACT_CHAT._pendingOpen || {};
+  for (const t of PACT_CHAT.tabs) {
+    if (!t.key) continue;
+    PACT_CHAT._pendingOpen[t.key] = t.id;
+    wsPost("control", { action: "sessionOpen", args: { repo: PACT_REPO, worktree: "main", sessionId: t.key } });
+  }
 }
 function pactRestoreCollapse(mode) {
   const right = document.querySelector(".pact-right"); if (!right) return;
@@ -2740,7 +2753,20 @@ function pactChatRoute({ kind, sessionKey, data }) {
   if (kind === "transcript") {
     const targetId = PACT_CHAT._pendingOpen ? PACT_CHAT._pendingOpen[sessionKey] : undefined;
     const tt = targetId != null ? PACT_CHAT.tabs.find((x) => x.id === targetId) : (sessionKey ? pactChatByKey(sessionKey) : null);
-    if (tt) { tt.msgs = pactTranscriptToMsgs(data && data.transcript); tt.status = "idle"; tt._forceBottom = true; if (data && data.sessionId && !tt.resume) tt.resume = data.sessionId; pactChatPaint(tt); }
+    if (tt) {
+      const incoming = pactTranscriptToMsgs(data && data.transcript);
+      // Adopt the saved baseline as the tab's history — but NEVER wipe out a live/just-sent turn that
+      // a race delivered before this (round-tripped) rehydrate landed. A rehydrate reads only what is
+      // durably persisted, so it can legitimately be SHORTER than what the tab already shows live;
+      // clobbering in that case is exactly what "the resumed tab shows the old transcript but the new
+      // answers vanish" looks like. Only replace when we aren't losing content.
+      if (incoming.length >= tt.msgs.length) tt.msgs = incoming;
+      // Likewise don't yank a mid-turn tab back to idle — a live turn in flight owns the status.
+      if (tt.status !== "thinking" && tt.status !== "deepwork" && tt.status !== "awaiting-permission") tt.status = "idle";
+      tt._forceBottom = true;
+      if (data && data.sessionId && !tt.resume) tt.resume = data.sessionId;
+      pactChatPaint(tt);
+    }
     if (PACT_CHAT._pendingOpen) delete PACT_CHAT._pendingOpen[sessionKey];
     return;
   }
@@ -2756,7 +2782,17 @@ function pactChatRoute({ kind, sessionKey, data }) {
     case "assistant": t.live = ""; t.msgs.push({ role: "assistant", text: d.text || "" }); pactChatPaint(t); return;
     case "tool_use": t.live = ""; t.msgs.push({ kind: "tool_use", tools: d.tools || [] }); pactChatPaint(t); return;
     case "result": t.live = ""; t.status = "idle"; pactChatPaint(t); pactEdCheckAgentEdits(); return;
-    case "error": t.live = ""; t.status = "idle"; t.msgs.push({ kind: "error", text: d.text || d.message || "error" }); pactChatPaint(t); return;
+    // A second prompt sent while this session is still finishing its current turn is refused with
+    // `busy` (see lib/workspace.mjs's single-writer turn lock). Flip off the optimistic "thinking…"
+    // this tab set on send — otherwise the tab spins forever on a prompt the backend never accepted —
+    // and note it so the user knows to resend once the current reply lands.
+    case "busy": t.live = ""; t.status = "idle"; t.msgs.push({ kind: "note", text: "⏳ Busy finishing the current reply — resend once it lands." }); pactChatPaint(t); return;
+    case "error":
+      // A "could not be opened" reply to a rehydrate/resume in flight (the session no longer exists on
+      // disk) must leave the tab quietly empty, not push a scary error bubble into a freshly-restored
+      // tab. Any OTHER error (a real turn failure) still surfaces normally.
+      if (PACT_CHAT._pendingOpen && sessionKey && PACT_CHAT._pendingOpen[sessionKey] != null) { delete PACT_CHAT._pendingOpen[sessionKey]; t.live = ""; t.status = "idle"; pactChatPaint(t); return; }
+      t.live = ""; t.status = "idle"; t.msgs.push({ kind: "error", text: d.text || d.message || "error" }); pactChatPaint(t); return;
     case "status": t.status = d.status; pactChatPaint(t); return;
     case "interrupted": t.status = "idle"; t.msgs.push({ kind: "note", text: "■ interrupted" }); pactChatPaint(t); return;
     default: return;
