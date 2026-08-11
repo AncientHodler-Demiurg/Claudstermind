@@ -2716,15 +2716,27 @@ function pactHistDelete(r) {
 }
 // Grow the compose textarea to fit its content, up to 80% of the chat box height; beyond that it
 // scrolls internally. Called on input, on draft restore, and after send (which resets it).
-function pactChatAutosize(ta) {
+let PACT_AS_RAF = 0, PACT_AS_TA = null;
+function pactChatAutosize(ta, now) {
   if (!ta) return;
+  // Coalesce to ONE resize per animation frame, OFF the keystroke path. Doing it synchronously in the
+  // input handler forced a full layout flush (measuring .pact-chat + height:auto→scrollHeight) BEFORE
+  // the typed character could paint — cheap on the light Core page, but laggy on the heavy Pact page
+  // (editor grid of highlighted files + long message list). Deferring lets the character paint first.
+  if (!now) {
+    PACT_AS_TA = ta;
+    if (PACT_AS_RAF) return;
+    PACT_AS_RAF = (window.requestAnimationFrame || ((fn) => setTimeout(fn, 16)))(() => { PACT_AS_RAF = 0; pactChatAutosize(PACT_AS_TA, true); });
+    return;
+  }
   const box = ta.closest(".pact-chat");
   const avail = (box && box.clientHeight) || (ta.closest(".pact-right")?.clientHeight) || Math.round(window.innerHeight * 0.6);
   const cap = Math.max(72, Math.round(avail * 0.8));
   ta.style.maxHeight = cap + "px";
   ta.style.height = "auto";                                  // measure the true content height from a clean baseline
-  ta.style.height = Math.min(ta.scrollHeight, cap) + "px";
-  ta.style.overflowY = ta.scrollHeight > cap ? "auto" : "hidden";
+  const sh = ta.scrollHeight;
+  ta.style.height = Math.min(sh, cap) + "px";
+  ta.style.overflowY = sh > cap ? "auto" : "hidden";
 }
 function pactChatInit(host) {
   PACT_CHAT = { host, tabs: [], activeId: null, seq: 0, es: null, mode: "bypassPermissions", conn: connIdentity() };

@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.12] - 2026-08-11
+
+### Fixed
+- **Typing lag in the Pact agent chat box.** The compose textarea auto-resize ran synchronously on
+  every keystroke, forcing a full layout flush (measuring the chat box + `height:auto`→`scrollHeight`)
+  before the typed character could paint — cheap on the light Core page, but laggy on the heavier Pact
+  page (editor grid of syntax-highlighted files + a long message list). The resize is now coalesced to
+  one `requestAnimationFrame` off the keystroke path, so characters paint immediately.
+
 ## [1.1.11] - 2026-08-11
 
 ### Fixed
