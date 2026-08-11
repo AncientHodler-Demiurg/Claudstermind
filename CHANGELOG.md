@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.2] - 2026-08-11
+
+### Added
+- **Pact IDE — collapsible right-zone panes.** A ▾ toggle in each header of the right column
+  (chat + REPL) collapses that pane to just its title bar so the other fills the whole area —
+  collapse the REPL for a full-height chat, or collapse the chat for a full-height REPL. The two
+  are mutually exclusive; collapsing one expands the other.
+
 ## [1.1.1] - 2026-08-11
 
 ### Added

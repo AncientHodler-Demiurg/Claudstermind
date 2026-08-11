@@ -2398,6 +2398,21 @@ const PACT_REPO = "OuroborosNetwork/_onchain/Ouronet";
 const PACT_CHAT_PREAMBLE = "[Pact IDE — auto-skill] You are working in the Ouronet Pact repo (your cwd). BEFORE anything else, read `OuronetInformational/SKILL.md` — it is the single load hook: it gives the load order, the StoicSyntax discipline (`StoicSyntax.md` + `ouronet/conventions/*`), the Pact 5 language layer (`pact5/`), the fast-recall rules, and the active-learning protocol. Follow its load order and become fully skilled from those files (they are the canonical authority). Use `OuronetInformational/MODULE-INDEX.md` for a one-glance map of every module (schemas/tables/public C_/A_/X entrypoints). Before writing code in any module, find it in the index then SCAN that module's `.pact` + its interface + its `.repl` tests to learn its real schemas/tables/prefixes/caps, and imitate sibling patterns — e.g. \"an info function for module X\" means mirror how the codebase exposes `UR_`/`INFO-` readers for X's schema (grep for the pattern rather than guessing). Run tests with `pact <file>.repl` (Pact 5.4); namespace `ouronet-ns`. Keep all code in the StoicSyntax discipline. When I correct you (\"do X instead of Y\"), capture it per SKILL.md's active-learning protocol (a dated `memories/` note + fold durable rules into the matching doc).";
 let PACT_CHAT = null;   // { host, tabs:[t], activeId, seq, es, mode, conn }
                         // t = { id, name, key, msgs:[{role|kind,text,tools}], live, status, started, perm, bodyEl }
+// Collapse one right-zone pane (chat / REPL) so the other fills the whole column. Mutually
+// exclusive — collapsing one un-collapses the other. State lives as a class on `.pact-right`.
+function pactSyncCollapseBtns() {
+  const right = document.querySelector(".pact-right"); if (!right) return;
+  const chatC = right.classList.contains("pr-chat-collapsed");
+  const termC = right.classList.contains("pr-term-collapsed");
+  right.querySelectorAll(".pcx-chat").forEach((b) => { b.textContent = chatC ? "▸" : "▾"; b.title = chatC ? "Expand the chat" : "Collapse the chat — give the REPL the whole area"; });
+  right.querySelectorAll(".pcx-term").forEach((b) => { b.textContent = termC ? "▸" : "▾"; b.title = termC ? "Expand the REPL" : "Collapse the REPL — give the chat the whole area"; });
+}
+function pactToggleCollapse(pane) {
+  const right = document.querySelector(".pact-right"); if (!right) return;
+  if (pane === "chat") { if (right.classList.toggle("pr-chat-collapsed")) right.classList.remove("pr-term-collapsed"); }
+  else { if (right.classList.toggle("pr-term-collapsed")) right.classList.remove("pr-chat-collapsed"); }
+  pactSyncCollapseBtns();
+}
 function pactChatInit(host) {
   PACT_CHAT = { host, tabs: [], activeId: null, seq: 0, es: null, mode: "bypassPermissions", conn: connIdentity() };
   pactChatOpenStream();
@@ -2533,7 +2548,9 @@ function pactChatRender() {
     WS_MODES.map((m) => el("option", { value: m.id }, [m.short])));
   modeSel.value = PACT_CHAT.mode;
   modeSel.addEventListener("change", () => { PACT_CHAT.mode = modeSel.value; });
-  const head = el("div", { class: "pact-zone-hd pc-head" }, [el("div", { class: "pc-tabs" }, tabs), add, el("span", { class: "ws-spacer" }, []), modeSel]);
+  const chatCollapse = el("button", { class: "pact-ed-ico pact-collapse pcx-chat" }, ["▾"]);
+  chatCollapse.addEventListener("click", () => pactToggleCollapse("chat"));
+  const head = el("div", { class: "pact-zone-hd pc-head" }, [el("div", { class: "pc-tabs" }, tabs), add, el("span", { class: "ws-spacer" }, []), modeSel, chatCollapse]);
   const scroll = el("div", { class: "pc-scroll" }, []);
   const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (Enter to send)" });
   const send = el("button", { class: "pc-send" }, ["Send"]);
@@ -2542,6 +2559,7 @@ function pactChatRender() {
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); pactChatSend(pactChatActive()); } });
   const compose = el("div", { class: "pc-compose" }, [input, send]);
   host.replaceChildren(head, scroll, compose);
+  pactSyncCollapseBtns();
   if (active) pactChatPaint(active);
 }
 function viewPact() {
@@ -2564,8 +2582,10 @@ function viewPact() {
   const termOut = el("pre", { class: "pact-terminal" }, ["Open a .repl file and press ▶ Run to stream it here.\n"]);
   const termClear = el("button", { class: "pact-term-clear", title: "Clear the terminal" }, ["clear"]);
   termClear.addEventListener("click", () => termOut.replaceChildren());
+  const termCollapse = el("button", { class: "pact-ed-ico pact-collapse pcx-term" }, ["▾"]);
+  termCollapse.addEventListener("click", () => pactToggleCollapse("term"));
   const termEl = el("div", { class: "pact-term" }, [
-    el("div", { class: "pact-zone-hd" }, ["❯ REPL terminal", el("span", { class: "ws-spacer" }, []), termClear]),
+    el("div", { class: "pact-zone-hd" }, ["❯ REPL terminal", el("span", { class: "ws-spacer" }, []), termClear, termCollapse]),
     termOut,
   ]);
   const rightEl = el("div", { class: "pact-right" }, [chatEl, termEl]);
