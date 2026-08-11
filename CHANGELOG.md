@@ -4,6 +4,13 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.0.7] - 2026-08-11
+
+### Added
+- **Pact IDE — color-coded editor tabs by file type (UI point 8).** Each editor tab now carries a
+  type-colored left accent + name tint — `.pact` gold, `.repl` green, `.md` blue, `.json`/`.yaml` amber,
+  `.txt` slate — so you know at a glance what's open. First slice of the editor rework.
+
 ## [1.0.6] - 2026-08-11
 
 ### Added

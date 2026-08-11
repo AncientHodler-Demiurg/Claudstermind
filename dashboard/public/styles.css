@@ -945,6 +945,17 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 .pact-tab2 { display: inline-flex; align-items: center; gap: 5px; padding: 4px 4px 4px 8px; border-radius: 7px;
   background: var(--chip); color: var(--ink-dim); font-size: 11.5px; cursor: pointer; white-space: nowrap; flex: 0 0 auto; }
 .pact-tab2.--active { color: var(--ink); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+/* Color-code tabs by file type — know at a glance what you have open (left accent + name tint). */
+.pact-tab2 { border-left: 3px solid transparent; }
+.pact-tab2.pk-t-pact { border-left-color: #ceac5f; }   .pact-tab2.pk-t-pact .pact-tab2-name { color: #d7ba7d; }
+.pact-tab2.pk-t-repl { border-left-color: #34d399; }   .pact-tab2.pk-t-repl .pact-tab2-name { color: #6ee7b7; }
+.pact-tab2.pk-t-md   { border-left-color: #4fb6e0; }   .pact-tab2.pk-t-md   .pact-tab2-name { color: #7fc9ea; }
+.pact-tab2.pk-t-json { border-left-color: #e5c07b; }   .pact-tab2.pk-t-json .pact-tab2-name { color: #e5c07b; }
+.pact-tab2.pk-t-yaml, .pact-tab2.pk-t-yml { border-left-color: #e5a663; }
+.pact-tab2.pk-t-txt  { border-left-color: #94a3b8; }
+.pact-tab2.--active.pk-t-pact .pact-tab2-name,
+.pact-tab2.--active.pk-t-repl .pact-tab2-name,
+.pact-tab2.--active.pk-t-md .pact-tab2-name { color: var(--ink); }
 .pact-tab2-name { overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
 .pact-tab2-x { color: var(--ink-mute); font-size: 14px; line-height: 1; padding: 0 3px; border-radius: 4px; }
 .pact-tab2-x:hover { color: var(--ink); background: var(--line); }

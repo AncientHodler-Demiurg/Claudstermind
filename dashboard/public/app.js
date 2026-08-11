@@ -2101,7 +2101,8 @@ function pactEdRenderGroup(g) {
   const tabs = g.tabs.map((tb) => {
     const x = el("span", { class: "pact-tab2-x", title: "Close tab" }, ["×"]);
     x.addEventListener("click", (e) => { e.stopPropagation(); pactEdCloseTab(g, tb.path); });
-    const tab = el("div", { class: "pact-tab2" + (tb.path === g.active ? " --active" : ""), title: tb.path }, [
+    const ext = (tb.name.split(".").pop() || "").toLowerCase();
+    const tab = el("div", { class: "pact-tab2 pk-t-" + ext + (tb.path === g.active ? " --active" : ""), title: tb.path }, [
       el("span", { class: "pact-tab2-ic" }, [pactFileIcon(tb.name)]), el("span", { class: "pact-tab2-name" }, [tb.name]), x,
     ]);
     tab.addEventListener("click", () => { PACT_ED.activeId = g.id; g.active = tb.path; pactEdLayout(); });
