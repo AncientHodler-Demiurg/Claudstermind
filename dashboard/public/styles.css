@@ -1102,10 +1102,12 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pd-badge { font: 700 11px ui-monospace, monospace; padding: 1px 7px; border-radius: 6px; }
 .pd-badge-add { color: #6ee7b7; background: rgba(52, 211, 153, .18); }
 .pd-badge-del { color: #fca5a5; background: rgba(239, 83, 80, .18); }
-.pact-diff-view { margin: 0; padding: 8px 0; font: 12.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; tab-size: 2; color: #d2d3d4; }
-.pact-diff-row { display: flex; }
-.pact-diff-row .pd-sign { flex: 0 0 24px; text-align: center; color: var(--ink-dim); user-select: none; }
-.pact-diff-row .pd-text { flex: 1; min-width: 0; white-space: pre; padding-right: 12px; }
+/* inline-block view + block rows sized to content (white-space:pre) so a row's background spans the
+   FULL line width — the whole line tints, not just the part that fits the viewport when scrolled. */
+.pact-diff-view { margin: 0; padding: 8px 0; font: 12.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; tab-size: 2; color: #d2d3d4; display: inline-block; min-width: 100%; box-sizing: border-box; }
+.pact-diff-row { display: block; white-space: pre; }
+.pact-diff-row .pd-sign { display: inline-block; width: 24px; text-align: center; color: var(--ink-dim); user-select: none; }
+.pact-diff-row .pd-text { padding-right: 12px; }
 .pd-add { background: rgba(52, 211, 153, .16); }
 .pd-add .pd-sign { color: #34d399; }
 .pd-del { background: rgba(239, 83, 80, .15); }

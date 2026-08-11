@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.32] - 2026-08-12
+
+### Fixed
+- **Agent-edit diff view: syntax coloring and full-line highlight.** The diff view rendered every line
+  as plain text (StoicSyntax coloring was dropped) and tinted only the part of a line that fit the
+  viewport. Diff rows are now syntax-highlighted per line, and the green/red background spans the whole
+  line width even when the line is longer than the viewport (inline-block view + block rows sized to
+  content), matching Cursor/GitHub-style diffs.
+
 ## [1.1.31] - 2026-08-12
 
 ### Fixed

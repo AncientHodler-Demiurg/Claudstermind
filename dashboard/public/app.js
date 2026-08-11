@@ -2485,10 +2485,17 @@ function pactEdRenderBody(g, tab) {
   if (tab.agentDiff) {
     const view = el("div", { class: "pact-diff-view" });
     if (g.fontPx) view.style.fontSize = g.fontPx + "px";
-    view.append(...tab.agentDiff.rows.map((r) => el("div", { class: "pact-diff-row " + (r.type === "add" ? "pd-add" : r.type === "del" ? "pd-del" : "pd-same") }, [
-      el("span", { class: "pd-sign" }, [r.type === "add" ? "+" : r.type === "del" ? "−" : " "]),
-      el("span", { class: "pd-text" }, [r.text === "" ? " " : r.text]),
-    ])));
+    const diffIsPact = ext.endsWith(".pact") || ext.endsWith(".repl");
+    view.append(...tab.agentDiff.rows.map((r) => {
+      const row = el("div", { class: "pact-diff-row " + (r.type === "add" ? "pd-add" : r.type === "del" ? "pd-del" : "pd-same") });
+      const text = el("span", { class: "pd-text" });
+      // Keep StoicSyntax coloring in the diff (it was dropped before — rows showed as plain text). Per-line
+      // highlight is fine: diff rows are interleaved old/new, not one contiguous file.
+      if (diffIsPact && typeof window.pactHighlight === "function") text.innerHTML = window.pactHighlight(r.text === "" ? " " : r.text);
+      else text.textContent = r.text === "" ? " " : r.text;
+      row.append(el("span", { class: "pd-sign" }, [r.type === "add" ? "+" : r.type === "del" ? "−" : " "]), text);
+      return row;
+    }));
     const dkids = [];
     if ((ext.endsWith(".pact") || ext.endsWith(".repl")) && window.pactBandLegend) dkids.push(pactLegend());
     dkids.push(el("div", { class: "pact-diff-hd" }, [el("span", { class: "pd-badge pd-badge-add" }, ["+" + tab.agentDiff.add]), el("span", { class: "pd-badge pd-badge-del" }, ["−" + tab.agentDiff.del]), el("span", { class: "hint", style: "margin-left:8px" }, ["agent edit — Keep All to accept + resume editing"])]));
