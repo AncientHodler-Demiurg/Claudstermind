@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.24] - 2026-08-12
+
+### Added
+- **Deploy classification (`lib/deployPlan.mjs`, pure).** `deployPlan(changedFiles)` decides what a
+  deploy would restart from the files it ships: web-only (`restarts: ["web"]`, agents keep running in
+  the always-up daemon) vs daemon-inclusive (`restarts: ["web","sessiond"]`, running agents are
+  interrupted). The daemon-owned paths are an exported constant `DAEMON_PATHS` — `sessiond/` plus the
+  session engine + transport modules (`lib/workspace.mjs`, `lib/claudeSession.mjs`,
+  `lib/sessionIpc.mjs`, `lib/sessiondClient.mjs`). Paths normalize (`./`, backslashes, leading `/`)
+  and match by exact file or dir prefix, so `lib/workspaceStore.mjs` never false-matches
+  `lib/workspace.mjs`. Fully unit-tested; nothing wired into the running app yet.
+
 ## [1.1.23] - 2026-08-12
 
 ### Added

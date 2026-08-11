@@ -24,7 +24,7 @@ CHANGELOG top entry, push to main. Never restart the live service.
       (no await, no client constructed) so the live app is unaffected until the daemon is installed.
 
 ## Wave 3 — Deploy plan + guard logic (pure)
-- [ ] T3.1 `lib/deployPlan.mjs` — from changed files + unit defs → `{restarts:[...], daemonAffected}`.
+- [x] T3.1 `lib/deployPlan.mjs` — from changed files + unit defs → `{restarts:[...], daemonAffected}`.
       Tests: web-only vs daemon-inclusive classification.
 - [ ] T3.2 Busy-state query — "are any sessions mid-turn/unsettled?" from live session summaries. Tests.
 
