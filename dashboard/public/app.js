@@ -2268,6 +2268,7 @@ function pactEdRenderGroup(g) {
   pactEdRenderBody(g, active);
 }
 function pactEdRenderBody(g, tab) {
+  g._findCtx = null;   // cleared here; only the editable overlay branch below re-arms it (retargets/hides the find bar)
   if (!tab) { g.bodyEl.replaceChildren(el("div", { class: "pact-editor-empty hint" }, ["Empty box — pick a file from the tree."])); return; }
   if (tab.error) { g.bodyEl.replaceChildren(el("div", { class: "hint", style: "padding:10px;color:#f87171" }, ["⚠ " + tab.error])); return; }
   if (!tab.loaded) { g.bodyEl.replaceChildren(el("div", { class: "hint", style: "padding:10px" }, ["Loading…"])); return; }
@@ -2308,6 +2309,8 @@ function pactEdRenderBody(g, tab) {
   ta.addEventListener("scroll", syncScroll);
   ta.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) { e.preventDefault(); pactEdSaveAll(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) { e.preventDefault(); pactEdOpenFind(g, false); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "h" || e.key === "H")) { e.preventDefault(); pactEdOpenFind(g, true); return; }
     if (e.key === "Tab") {
       e.preventDefault();
       const s = ta.selectionStart, en = ta.selectionEnd;
@@ -2316,8 +2319,11 @@ function pactEdRenderBody(g, tab) {
       tab.content = ta.value; paint(); pactEdMarkDirty(g, tab);
     }
   });
-  kids.push(el("div", { class: "pact-edit-wrap" }, [hl, ta]));
+  const wrap = el("div", { class: "pact-edit-wrap" }, [hl, ta]);
+  kids.push(wrap);
   g.bodyEl.replaceChildren(...kids);
+  g._findCtx = { wrap, ta, hl, tab, paint, syncScroll };   // find/replace targets the active tab's live textarea
+  if (g.find && g.find.open) { g.find._bar = null; pactEdMountFindBar(g); }   // re-mount (retarget) after a tab/font re-render
   requestAnimationFrame(syncScroll);
 }
 // ---- Save state: per-tab dirty (content ≠ last saved), a global Save-All button, debounced autosave.
@@ -2380,6 +2386,216 @@ async function pactEdSaveAll() {
   pactEdSaveStatus("saving " + dirty.length + " file" + (dirty.length > 1 ? "s" : "") + "…", false);
   for (const t of dirty) await pactEdSaveTab(t);
   if (!pactEdAnyDirty()) pactEdSaveStatus("✓ all saved", false);
+}
+
+// ===== PACT FIND/REPLACE — within-file find + find-and-replace for the active editor box. =====
+// Pure helpers (DOM-free, side-effect-free; also unit-tested via lib/pactFind.test.mjs). opts:
+//   { cs: case-sensitive, ww: whole-word, re: treat term as a RegExp }.
+// pactBuildFindRe → { re } | { bad:true }; pactFindMatches → [{start,end}] | null (bad pattern).
+function pactBuildFindRe(term, opts) {
+  opts = opts || {};
+  if (!term) return { re: null };
+  let src = opts.re ? term : term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (opts.ww) src = "\\b(?:" + src + ")\\b";
+  try { return { re: new RegExp(src, "g" + (opts.cs ? "" : "i")) }; }
+  catch { return { bad: true }; }
+}
+function pactFindMatches(text, term, opts) {
+  if (!term) return [];
+  const built = pactBuildFindRe(term, opts);
+  if (built.bad) return null;
+  const re = built.re, out = [];
+  re.lastIndex = 0;
+  let m, guard = 0;
+  while ((m = re.exec(text)) !== null) {
+    out.push({ start: m.index, end: m.index + m[0].length });
+    if (m.index === re.lastIndex) re.lastIndex++;   // zero-width match (e.g. empty regex): step forward
+    if (++guard > 200000) break;
+  }
+  return out;
+}
+function pactReplaceOne(text, match, term, replStr, opts) {
+  if (!match) return text;
+  let rep;
+  if (opts && opts.re) {
+    const built = pactBuildFindRe(term, opts);
+    if (built.bad) return null;
+    // Re-run on just the matched slice with a non-global clone so $1/$& group refs expand.
+    rep = text.slice(match.start, match.end).replace(new RegExp(built.re.source, built.re.flags.replace("g", "")), replStr);
+  } else rep = String(replStr);
+  return text.slice(0, match.start) + rep + text.slice(match.end);
+}
+function pactReplaceAll(text, term, replStr, opts) {
+  const matches = pactFindMatches(text, term, opts);
+  if (matches === null) return null;
+  if (!matches.length) return { text, count: 0 };
+  const built = pactBuildFindRe(term, opts);
+  const repl = opts && opts.re ? replStr : String(replStr).replace(/\$/g, "$$$$");   // literal mode: keep $ literal
+  return { text: text.replace(built.re, repl), count: matches.length };
+}
+// ===== end PACT FIND/REPLACE pure helpers =====
+
+function pactEdFindState(g) {
+  if (!g.find) g.find = { open: false, term: "", repl: "", cs: false, ww: false, re: false, showRepl: false, matches: [], idx: -1 };
+  return g.find;
+}
+// Ctrl/⌘-F (Ctrl-H for replace). No-op when the active tab isn't an editable overlay (markdown preview,
+// agent diff, empty, loading — no _findCtx). Seeds the query from the current textarea selection.
+function pactEdOpenFind(g, withReplace) {
+  const ctx = g._findCtx;
+  const active = g.tabs.find((t) => t.path === g.active);
+  if (!ctx || !active || !active.loaded || active.agentDiff) return;
+  const f = pactEdFindState(g);
+  f.open = true;
+  if (withReplace) f.showRepl = true;
+  const sel = ctx.ta.value.slice(ctx.ta.selectionStart, ctx.ta.selectionEnd);
+  if (sel && sel.length < 200 && !/\n/.test(sel)) f.term = sel;
+  f._bar = null;
+  pactEdMountFindBar(g);
+  if (f._input) { f._input.focus(); f._input.select(); }
+}
+function pactEdCloseFind(g) {
+  const f = g.find; if (!f) return;
+  f.open = false;
+  if (f._bar && f._bar.parentNode) f._bar.parentNode.removeChild(f._bar);
+  f._bar = f._input = f._replIn = f._count = null;
+  if (g._findCtx && g._findCtx.ta) g._findCtx.ta.focus();
+}
+function pactEdMountFindBar(g) {
+  const ctx = g._findCtx, f = g.find;
+  if (!ctx || !f || !f.open) return;
+  if (f._bar && f._bar.parentNode === ctx.wrap) { pactEdFindRefresh(g, false); return; }
+
+  const input = el("input", { class: "pact-find-in", type: "text", placeholder: "Find", spellcheck: "false" });
+  input.value = f.term || "";
+  const count = el("span", { class: "pact-find-count" }, [""]);
+  const prevB = el("button", { class: "pact-find-nav", title: "Previous match (Shift-Enter / ↑)" }, ["↑"]);
+  const nextB = el("button", { class: "pact-find-nav", title: "Next match (Enter / ↓)" }, ["↓"]);
+  const mkTog = (label, title, key) => {
+    const b = el("button", { class: "pact-find-tog" + (f[key] ? " --on" : ""), title }, [label]);
+    b.addEventListener("mousedown", (e) => e.preventDefault());   // keep focus in the field
+    b.addEventListener("click", () => { f[key] = !f[key]; b.classList.toggle("--on", f[key]); f.idx = 0; pactEdFindRefresh(g, false); input.focus(); });
+    return b;
+  };
+  const expand = el("button", { class: "pact-find-expand" + (f.showRepl ? " --on" : ""), title: "Toggle replace" }, [f.showRepl ? "▾" : "▸"]);
+  expand.addEventListener("mousedown", (e) => e.preventDefault());
+  const closeB = el("button", { class: "pact-find-x", title: "Close (Esc)" }, ["×"]);
+  closeB.addEventListener("mousedown", (e) => e.preventDefault());
+  closeB.addEventListener("click", () => pactEdCloseFind(g));
+  const findRow = el("div", { class: "pact-find-row" }, [
+    expand, input, count, prevB, nextB,
+    mkTog("Aa", "Match case", "cs"), mkTog("ab", "Whole word", "ww"), mkTog(".*", "Regex", "re"),
+    closeB,
+  ]);
+
+  const replIn = el("input", { class: "pact-find-in", type: "text", placeholder: "Replace", spellcheck: "false" });
+  replIn.value = f.repl || "";
+  const repOne = el("button", { class: "pact-find-rep", title: "Replace this match" }, ["Replace"]);
+  const repAll = el("button", { class: "pact-find-rep", title: "Replace all matches" }, ["All"]);
+  const replRow = el("div", { class: "pact-find-row pact-find-replrow" }, [
+    el("span", { class: "pact-find-spacer" }, []), replIn, repOne, repAll,
+  ]);
+  replRow.style.display = f.showRepl ? "" : "none";
+
+  input.addEventListener("input", () => { f.term = input.value; f.idx = 0; pactEdFindRefresh(g, false); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); pactEdFindStep(g, e.shiftKey ? -1 : 1); }
+    else if (e.key === "Escape") { e.preventDefault(); pactEdCloseFind(g); }
+    else if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) { e.preventDefault(); input.select(); }
+  });
+  replIn.addEventListener("input", () => { f.repl = replIn.value; });
+  replIn.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); pactEdFindReplaceOne(g); }
+    else if (e.key === "Escape") { e.preventDefault(); pactEdCloseFind(g); }
+  });
+  prevB.addEventListener("mousedown", (e) => e.preventDefault());
+  nextB.addEventListener("mousedown", (e) => e.preventDefault());
+  prevB.addEventListener("click", () => { pactEdFindStep(g, -1); input.focus(); });
+  nextB.addEventListener("click", () => { pactEdFindStep(g, 1); input.focus(); });
+  repOne.addEventListener("mousedown", (e) => e.preventDefault());
+  repAll.addEventListener("mousedown", (e) => e.preventDefault());
+  repOne.addEventListener("click", () => pactEdFindReplaceOne(g));
+  repAll.addEventListener("click", () => pactEdFindReplaceAll(g));
+  expand.addEventListener("click", () => {
+    f.showRepl = !f.showRepl;
+    replRow.style.display = f.showRepl ? "" : "none";
+    expand.textContent = f.showRepl ? "▾" : "▸";
+    expand.classList.toggle("--on", f.showRepl);
+    input.focus();
+  });
+
+  const bar = el("div", { class: "pact-find-bar" }, [findRow, replRow]);
+  f._bar = bar; f._input = input; f._replIn = replIn; f._count = count;
+  ctx.wrap.appendChild(bar);
+  pactEdFindRefresh(g, false);
+}
+function pactEdFindRefresh(g, doSelect) {
+  const f = g.find, ctx = g._findCtx;
+  if (!f || !ctx || !f._input) return;
+  const res = pactFindMatches(ctx.ta.value, f.term, { cs: f.cs, ww: f.ww, re: f.re });
+  f._input.classList.toggle("--bad", res === null);
+  if (res === null) { f.matches = []; f.idx = -1; f._count.textContent = "bad pattern"; return; }
+  f.matches = res;
+  if (!f.term) { f.idx = -1; f._count.textContent = ""; return; }
+  if (!res.length) { f.idx = -1; f._count.textContent = "No results"; return; }
+  if (f.idx < 0 || f.idx >= res.length) f.idx = 0;
+  f._count.textContent = (f.idx + 1) + "/" + res.length;
+  if (doSelect) pactEdFindSelect(g);
+}
+function pactEdFindStep(g, dir) {
+  const f = g.find;
+  if (!f) return;
+  pactEdFindRefresh(g, false);
+  if (!f.matches.length) return;
+  f.idx = ((f.idx < 0 ? 0 : f.idx) + dir + f.matches.length) % f.matches.length;
+  f._count.textContent = (f.idx + 1) + "/" + f.matches.length;
+  pactEdFindSelect(g);
+}
+function pactEdFindSelect(g) {
+  const f = g.find, ctx = g._findCtx;
+  const m = f.matches[f.idx];
+  if (!m || !ctx) return;
+  const ta = ctx.ta;
+  ta.setSelectionRange(m.start, m.end);   // highlights via the transparent textarea's ::selection
+  const before = ta.value.slice(0, m.start);
+  const line = before.length - before.replace(/\n/g, "").length;   // newlines before the match = line index
+  const lh = parseFloat(getComputedStyle(ta).lineHeight) || (g.fontPx || 12.5) * 1.55;
+  const target = line * lh;
+  if (target < ta.scrollTop || target > ta.scrollTop + ta.clientHeight - lh * 2) {
+    ta.scrollTop = Math.max(0, target - ta.clientHeight / 2);
+  }
+  ctx.syncScroll();   // keep the highlight <pre> aligned
+}
+function pactEdFindReplaceOne(g) {
+  const f = g.find, ctx = g._findCtx;
+  if (!f || !ctx) return;
+  pactEdFindRefresh(g, false);
+  if (!f.matches.length || f.idx < 0) { pactEdFindStep(g, 1); return; }
+  const ta = ctx.ta, tab = ctx.tab, m = f.matches[f.idx];
+  const next = pactReplaceOne(ta.value, m, f.term, f.repl, { cs: f.cs, ww: f.ww, re: f.re });
+  if (next === null) return;
+  ta.value = next;
+  tab.content = next;
+  ctx.paint();
+  pactEdMarkDirty(g, tab);   // SAME dirty + autosave path a keystroke uses → Save All lights up, autosave fires
+  pactEdFindRefresh(g, false);
+  if (f.matches.length) { if (f.idx >= f.matches.length) f.idx = 0; f._count.textContent = (f.idx + 1) + "/" + f.matches.length; pactEdFindSelect(g); }
+}
+function pactEdFindReplaceAll(g) {
+  const f = g.find, ctx = g._findCtx;
+  if (!f || !ctx) return;
+  const ta = ctx.ta, tab = ctx.tab;
+  const out = pactReplaceAll(ta.value, f.term, f.repl, { cs: f.cs, ww: f.ww, re: f.re });
+  if (out === null) { pactEdFindRefresh(g, false); return; }
+  if (!out.count) { pactEdFindRefresh(g, false); return; }
+  ta.value = out.text;
+  tab.content = out.text;
+  ctx.paint();
+  pactEdMarkDirty(g, tab);
+  f.idx = -1;
+  pactEdFindRefresh(g, false);
+  f._count.textContent = "Replaced " + out.count;
+  if (f._input) f._input.focus();
 }
 // ---- Agent-edit diffs (point 3): the Pact chat agent writes files on disk. After each chat turn we
 // re-read every open, non-dirty file; if the agent changed it, the box switches to a Cursor-style diff

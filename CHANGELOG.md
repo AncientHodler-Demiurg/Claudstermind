@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.14] - 2026-08-11
+
+### Added
+- **Find + find-and-replace in the Pact code editor.** Press Ctrl/⌘-F (or Ctrl-H for replace) with focus
+  in an editor box to open a compact find bar docked top-right of that box. Find has next (Enter / ↓) and
+  prev (Shift-Enter / ↑), a live match count ("3/12" / "No results"), and Aa (case), ab (whole-word) and
+  .* (regex) toggles; a bad regex shows an inert "bad pattern" state instead of throwing. The selected
+  match is highlighted via the textarea's own selection and scrolled to the middle. Replace adds a second
+  row with Replace (current) and All buttons; both update the tab, mark it dirty, and run the exact same
+  autosave/Save-All path a keystroke does, keeping the syntax highlight in sync. Operates on the active
+  tab of the active box; switching tabs/boxes retargets or hides the bar. Repo-wide search is out of scope.
+
 ## [1.1.13] - 2026-08-11
 
 ### Fixed

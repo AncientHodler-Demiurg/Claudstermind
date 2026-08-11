@@ -27,6 +27,20 @@
   `writeTextFile` + `POST /api/pact/file` + relay `pactWrite` tunnel) (v1.1.0).
 - ✅ U4 = #3 (agent-edit diff view: green added / red removed lines + Keep All) (v1.1.1) — **solid
   partial**, see the U4 notes below for the scoped remainder.
+- ✅ **U5 — in-file find + find-and-replace** (v1.1.14). Ctrl/⌘-F (Ctrl-H = replace) with focus in an
+  editor box opens a compact `.pact-find-bar` docked top-right inside `.pact-edit-wrap`. Find: text
+  field, next (Enter/↓) / prev (Shift-Enter/↑), live count ("3/12" / "No results"), and **Aa** (case),
+  **ab** (whole-word), **.\*** (regex) toggles; a bad regex shows an inert "bad pattern" state (never
+  throws). The current match is selected via the textarea's `setSelectionRange` + scrolled to mid-view;
+  focus stays in the find field so Enter cycles. Replace: second row (toggled by the ▸/▾ button, or
+  opened directly with Ctrl-H) with a Replace field + **Replace** (current) / **All** buttons — both
+  set `ta.value` + `tab.content`, re-`paint()` the highlight, and call `pactEdMarkDirty` (the SAME
+  keystroke path → Save All lights up, autosave persists). Operates on the **active tab of the active
+  box** via `g._findCtx` (rebuilt in `pactEdRenderBody`); switching tabs/boxes retargets or hides the
+  bar. Pure helpers `pactBuildFindRe`/`pactFindMatches`/`pactReplaceOne`/`pactReplaceAll` (sentinel-
+  marked block in app.js) are DOM-free and unit-tested by `lib/pactFind.test.mjs` (12 tests). **Repo-
+  wide / cross-file search is OUT of scope** — a possible follow-up (would mirror the pactTree tunnel
+  with a server-side grep). Files: `dashboard/public/app.js`, `styles.css`, `lib/pactFind.test.mjs`.
 
 ## IDE state preservation + chat history/resume (P1–P4)
 > Goal: the Pact workspace reopens exactly where you left off (open files, editor boxes, chat tabs,
