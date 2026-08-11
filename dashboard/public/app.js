@@ -3028,11 +3028,21 @@ function pactChatRoute({ kind, sessionKey, data }) {
     if (tt) {
       const incoming = pactTranscriptToMsgs(data && data.transcript);
       // Adopt the saved baseline as the tab's history — but NEVER wipe out a live/just-sent turn that
-      // a race delivered before this (round-tripped) rehydrate landed. A rehydrate reads only what is
-      // durably persisted, so it can legitimately be SHORTER than what the tab already shows live;
-      // clobbering in that case is exactly what "the resumed tab shows the old transcript but the new
-      // answers vanish" looks like. Only replace when we aren't losing content.
-      if (incoming.length >= tt.msgs.length) tt.msgs = incoming;
+      // a race delivered before this (round-tripped) rehydrate landed. When this frame answers OUR OWN
+      // open request (`targetId` set — the tab was FRESH/empty when we asked), anything now in `tt.msgs`
+      // was added SINCE the open: a prompt the user just sent and/or its streaming reply. Prepend the
+      // history baseline and keep that live tail, so "I sent a prompt right after opening and my
+      // message vanished (only the answer showed)" can't happen. For an unsolicited refresh, fall back
+      // to the safe length guard (a rehydrate reads only persisted turns, so it can be legitimately
+      // shorter than what's live — clobbering there is what made resumed answers disappear).
+      if (targetId != null) {
+        let tail = tt.msgs;
+        // If a slow rehydrate raced PAST our send, the user turn may be at the end of `incoming` AND
+        // the start of the local tail — drop the duplicate so the prompt shows exactly once.
+        const lastIn = incoming[incoming.length - 1];
+        if (lastIn && tail[0] && lastIn.role === tail[0].role && (lastIn.text || "") === (tail[0].text || "")) tail = tail.slice(1);
+        tt.msgs = incoming.concat(tail);
+      } else if (incoming.length >= tt.msgs.length) tt.msgs = incoming;
       // Likewise don't yank a mid-turn tab back to idle — a live turn in flight owns the status.
       if (tt.status !== "thinking" && tt.status !== "deepwork" && tt.status !== "awaiting-permission") tt.status = "idle";
       tt._forceBottom = true;

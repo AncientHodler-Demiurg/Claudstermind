@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.16] - 2026-08-11
+
+### Fixed
+- **Your just-sent prompt vanished from a resumed Pact chat (only the answer showed).** On restore a
+  chat tab starts empty and fetches its history; if you sent a prompt before that (round-tripped)
+  rehydrate landed, the handler replaced the tab with the fetched history — dropping your just-sent
+  message, while the streamed reply appeared on top. The rehydrate now recognises when it's answering
+  our own open request and prepends the history *baseline* while keeping the live tail (your prompt +
+  its streaming reply), with a dedup guard against the reverse race. Your message shows exactly once.
+
 ## [1.1.15] - 2026-08-11
 
 ### Fixed
