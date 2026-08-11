@@ -324,6 +324,7 @@ body.ws-full .ws-side { max-height: none; height: 100%; }
 body.ws-full .ws-grid { height: 100%; min-height: 0; }
 body.ws-full .ws-pane { height: 100%; min-height: 0; }
 body.ws-full .ws-transcript { max-height: none; flex: 1; }
+body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 
 .ws-root { display: flex; flex-direction: column; gap: 10px; }
 .ws-toolbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
@@ -500,6 +501,26 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 
 .ws-transcript { flex: 1; background: transparent; padding: 11px 12px; min-height: 220px; max-height: 60vh;
   overflow-y: auto; display: flex; flex-direction: column; gap: 8px; font-size: 13px; line-height: 1.5; }
+/* Stick-to-bottom wrapper (attachStickController): a thin relative box placed exactly where a scroll
+   container sat, so the "↓ New output" pill can float over the viewport instead of scrolling away
+   with the content. The scroll element fills the wrapper; the wrapper carries its old flex sizing. */
+.stick-wrap { position: relative; display: flex; flex-direction: column; min-width: 0; }
+.stick-wrap-ws { flex: 1; min-height: 220px; max-height: 60vh; }
+.stick-wrap-ws > .ws-transcript { flex: 1; min-height: 0; max-height: none; }
+.stick-wrap-pc { flex: 1; min-height: 0; }
+.stick-wrap-pc > .pc-scroll { flex: 1; min-height: 0; }
+/* The floating pill: hidden while the reader is pinned to the tail; shown + blinking when new output
+   arrived while they were scrolled up. Bottom-right of the wrapper, so it sits above any compose row. */
+.stick-pill { position: absolute; right: 12px; bottom: 12px; z-index: 5; display: none; align-items: center; gap: 5px;
+  padding: 5px 11px; border-radius: 999px; cursor: pointer; font-size: 12px; font-weight: 600; line-height: 1;
+  background: var(--accent); color: #fff; border: 1px solid var(--accent); box-shadow: 0 3px 10px rgba(0, 0, 0, .35); }
+.stick-pill.--show { display: inline-flex; animation: stickPulse 1.15s ease-in-out infinite; }
+.stick-pill:hover { filter: brightness(1.08); }
+@keyframes stickPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 3px 10px rgba(0, 0, 0, .35); }
+  50% { opacity: .55; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) { .stick-pill.--show { animation: none; } }
 /* Per-turn wrapper for the incremental renderer (renderTranscriptInto): generates no box of its
    own (`display:contents`), so its child lines participate in the transcript's flat flex column
    (row gap, per-line align-self) exactly as if they were direct children — the wrapper is only a
@@ -837,6 +858,7 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
      — and the Send button at its bottom — past the pane's clipped edge and off-screen. Now the
      transcript yields its space so Send always stays in view. */
   .ws-transcript { max-height: none; flex: 1; min-height: 0; }
+  .stick-wrap-ws { max-height: none; flex: 1; min-height: 0; }
   /* Keep the compose row (and its Send button) from ever being clipped: it holds its natural height
      and the transcript above it absorbs the shrink. */
   .ws-compose { flex: 0 0 auto; }
@@ -1064,7 +1086,7 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 /* Collapse a pane to just its header bar so the sibling fills the column. */
 .pact-collapse { flex: 0 0 auto; }
 .pact-right.pr-chat-collapsed .pact-chat { flex: 0 0 auto; }
-.pact-right.pr-chat-collapsed .pc-scroll, .pact-right.pr-chat-collapsed .pc-compose { display: none; }
+.pact-right.pr-chat-collapsed .stick-wrap-pc, .pact-right.pr-chat-collapsed .pc-compose { display: none; }
 .pact-right.pr-chat-collapsed .pact-chat .pact-zone-hd { border-bottom: 0; }
 .pact-right.pr-term-collapsed .pact-term { flex: 0 0 auto; }
 .pact-right.pr-term-collapsed .pact-terminal { display: none; }

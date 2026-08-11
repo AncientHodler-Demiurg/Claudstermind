@@ -1975,6 +1975,54 @@ const WS_MODES = [
 const WS_MODE_IDS = new Set(WS_MODES.map((m) => m.id));
 const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(v) || lo)));
 
+// ---- stick-to-bottom controller (shared by the workspace transcript AND the Pact chat) ----
+// "Read at your own pace": new output only auto-scrolls while the reader is already at the bottom.
+// Scroll up and you keep your spot instead of being yanked down mid-stream; a blinking "↓ New
+// output" pill then appears to say more has arrived. Click it — or scroll back to the bottom by
+// hand — to resume following the tail. ONE helper, two call sites, so the logic isn't duplicated:
+// the workspace transcript (paintPane / scheduleLiveRender) and the Pact chat (pactChatPaint /
+// pactChatPaintLive). The pill floats bottom-right of a thin relative wrapper placed exactly where
+// the scroll container sat, so it never scrolls away with the content and stays above the compose row.
+// Usage: sample() reads live scroll position (call it BEFORE a replaceChildren, while scrollTop is
+// still meaningful); apply(stick) acts after the DOM changed — follow the tail, or reveal the pill.
+function attachStickController(scrollEl, opts = {}) {
+  if (scrollEl._stick) return scrollEl._stick;                 // idempotent — safe to call every render
+  const wrap = el("div", { class: "stick-wrap" + (opts.wrapClass ? " " + opts.wrapClass : "") });
+  const parent = scrollEl.parentNode;
+  if (parent) parent.insertBefore(wrap, scrollEl);
+  wrap.appendChild(scrollEl);
+  const pill = el("button", { class: "stick-pill", type: "button", title: "Jump to the latest output" }, ["↓ New output"]);
+  wrap.appendChild(pill);
+  const atBottom = () => (scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight) < WS_SCROLL_NEAR_BOTTOM_PX;
+  const ctrl = {
+    pinned: true, scrollEl, wrap, pill,
+    // Read the live position. Call BEFORE replacing/growing content, when scrollTop still reflects
+    // where the reader actually is — the answer is "were they following the tail a moment ago?".
+    sample() { this.pinned = atBottom(); return this.pinned; },
+    // Act on that decision once the DOM has changed: follow the tail, or reveal the pulsing pill.
+    apply(stick) {
+      if (stick) { scrollEl.scrollTop = scrollEl.scrollHeight; this.pinned = true; pill.classList.remove("--show"); }
+      else { this.pinned = false; pill.classList.add("--show"); }
+    },
+    // Force back to the tail and re-pin (pill click, or a just-sent message).
+    pin() { this.pinned = true; scrollEl.scrollTop = scrollEl.scrollHeight; pill.classList.remove("--show"); },
+  };
+  let raf = 0;
+  scrollEl.addEventListener("scroll", () => {
+    if (raf) return;
+    raf = (window.requestAnimationFrame || ((fn) => setTimeout(fn, 16)))(() => {
+      raf = 0;
+      // Reaching the bottom by hand re-pins and dismisses the pill; scrolling up just unpins
+      // (the pill only turns ON when new output lands via apply(), not merely on scroll-up).
+      if (atBottom()) { ctrl.pinned = true; pill.classList.remove("--show"); }
+      else ctrl.pinned = false;
+    });
+  }, { passive: true });
+  pill.addEventListener("click", () => ctrl.pin());
+  scrollEl._stick = ctrl;
+  return ctrl;
+}
+
 /* ---------- Pact IDE (Workspace › Pact) ----------
    A Pact development workspace, structured as an IDE, whose folder tree points at the Ouronet Pact
    repo on disk (read via /api/pact/*). Three zones: a left file tree, a center editor (Zone A, ~75%),
@@ -2474,6 +2522,7 @@ function pactChatSend(t) {
   t.msgs.push({ role: "user", text });
   t.status = "thinking"; t.live = "";
   if (ta) { ta.value = ""; ta.style.height = ""; }
+  t._forceBottom = true;   // your own just-sent message lands at the bottom + re-pins, even if you'd scrolled up
   pactChatPaint(t);
   wsPost("prompt", { sessionKey: t.key, repo: PACT_REPO, worktree: "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id });
 }
@@ -2519,8 +2568,14 @@ function pactChatPaint(t) {
   }
   if (t.live) nodes.push(el("div", { class: "pc-msg pc-asst pc-live" }, [el("div", { class: "pc-asst-body" }, [t.live])]));
   else if (t.status === "thinking" || t.status === "deepwork") nodes.push(el("div", { class: "pc-think" }, [t.status === "deepwork" ? "🔴 still producing…" : "● thinking…"]));
+  // "Read at your own pace" through the shared controller. This render REPLACES all children, so the
+  // pinned-ness must be measured BEFORE replaceChildren (afterwards scrollTop is meaningless); a
+  // just-sent message forces the tail via t._forceBottom.
+  const stick = attachStickController(scroll, { wrapClass: "stick-wrap-pc" });
+  const force = t._forceBottom; t._forceBottom = false;
+  const wasNearBottom = force || stick.sample();
   scroll.replaceChildren(...(nodes.length ? nodes : [el("div", { class: "hint", style: "padding:10px" }, ["Ask the agent to explore, write, or test Pact in the Ouronet repo."])]));
-  scroll.scrollTop = scroll.scrollHeight;
+  stick.apply(wasNearBottom);
   if (compose) { const send = compose.querySelector(".pc-send"); if (send) send.disabled = false; }
 }
 function pactChatPaintLive(t) {
@@ -2528,8 +2583,10 @@ function pactChatPaintLive(t) {
   const scroll = PACT_CHAT.host.querySelector(".pc-scroll"); if (!scroll) return;
   let live = scroll.querySelector(".pc-live .pc-asst-body");
   if (!live) { pactChatPaint(t); return; }
+  const stick = attachStickController(scroll, { wrapClass: "stick-wrap-pc" });
+  const wasNearBottom = stick.sample();   // measure before the live text grows the node
   live.textContent = t.live;
-  scroll.scrollTop = scroll.scrollHeight;
+  stick.apply(wasNearBottom);
 }
 function pactChatRender() {
   if (!PACT_CHAT) return;
@@ -2559,6 +2616,7 @@ function pactChatRender() {
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); pactChatSend(pactChatActive()); } });
   const compose = el("div", { class: "pc-compose" }, [input, send]);
   host.replaceChildren(head, scroll, compose);
+  attachStickController(scroll, { wrapClass: "stick-wrap-pc" });   // wrap now so the pill exists from the first paint
   pactSyncCollapseBtns();
   if (active) pactChatPaint(active);
 }
@@ -3535,7 +3593,11 @@ function viewWorkspace() {
     // _txRef/_turnCache/_domLead back the incremental transcript renderer (renderTranscriptInto):
     // the transcript array last rendered, a cache of finalized-turn container nodes, and the
     // leading (show-earlier button + finalized) nodes currently in the DOM (untouched-prefix fast path).
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, stopBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
+    // "Read at your own pace" for the transcript: wrap it in the shared stick-to-bottom controller
+    // (pill + blink + near-bottom follow). transcriptEl is already a child of paneRoot here, so the
+    // controller can insert its relative wrapper in place around it.
+    const stick = attachStickController(transcriptEl, { wrapClass: "stick-wrap-ws" });
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, stick, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, stopBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
     return paneRoot;
   }
 
@@ -3606,8 +3668,11 @@ function viewWorkspace() {
       ui._liveRAF = 0;
       const t = ui.transcriptEl; if (!t || !ui._liveNode) return;
       const text = liveTail(p._liveText);
+      // Was the reader at the tail BEFORE this frame's text grew the node? Sample first, then apply
+      // through the shared controller so a reader scrolled up keeps their spot (and sees the pill).
+      const wasNearBottom = ui.stick ? ui.stick.sample() : (t.scrollHeight - t.scrollTop - t.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX);
       if (ui._liveTextNode) ui._liveTextNode.nodeValue = text; else ui._liveNode.textContent = text;
-      if (t.scrollHeight - t.scrollTop - t.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX) t.scrollTop = t.scrollHeight;
+      if (ui.stick) ui.stick.apply(wasNearBottom); else if (wasNearBottom) t.scrollTop = t.scrollHeight;
     });
   }
 
@@ -3694,7 +3759,10 @@ function viewWorkspace() {
     // A freshly (re)opened conversation should land at the bottom (latest message), even though
     // the pane wasn't scrolled there before — a one-shot flag set where the transcript is replaced.
     const forceBottom = !!p._scrollBottomNext; p._scrollBottomNext = false;
-    const wasNearBottom = forceBottom || (ui.transcriptEl.scrollHeight - ui.transcriptEl.scrollTop - ui.transcriptEl.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX);
+    // Sample the "were they following the tail?" state BEFORE the transcript is re-rendered below.
+    // forceBottom (a fresh open/resume, or a just-sent message) overrides it — that lands at the
+    // bottom and re-pins, as expected.
+    const wasNearBottom = forceBottom || (ui.stick ? ui.stick.sample() : (ui.transcriptEl.scrollHeight - ui.transcriptEl.scrollTop - ui.transcriptEl.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX));
     const hasQueue = p._queue && p._queue.length;
     if (!p.transcript.length && !p._liveText && !hasQueue) {
       ui.transcriptEl.replaceChildren(el("div", { class: "hint" }, [p.repo ? "Send a message — Claude runs in " + shortRepo(p.repo) + " on your machine." : "Pick a repository (dropdown, or the sidebar) to start."]));
@@ -3728,7 +3796,7 @@ function viewWorkspace() {
       }
       renderTranscriptInto(ui, p, tailExtras);
     }
-    if (wasNearBottom) ui.transcriptEl.scrollTop = ui.transcriptEl.scrollHeight;
+    if (ui.stick) ui.stick.apply(wasNearBottom); else if (wasNearBottom) ui.transcriptEl.scrollTop = ui.transcriptEl.scrollHeight;
     syncMobileTabDots();   // keep the mobile tab's status dot in step (cheap; no-op on desktop)
   }
 

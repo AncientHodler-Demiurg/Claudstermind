@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.3] - 2026-08-11
+
+### Added
+- **"Read at your own pace" scroll — workspace transcript + Pact chat.** While an agent streams
+  output, the view no longer yanks you back to the bottom when you've scrolled up to read. A shared
+  stick-to-bottom controller (`attachStickController`) now wraps both scroll containers
+  (`.ws-transcript` and `.pc-scroll`): it follows the tail only while you're already near the bottom
+  (reusing the existing 48px near-bottom threshold), and otherwise leaves your reading spot alone.
+  A floating **"↓ New output" pill** appears bottom-right and **blinks** when new output arrived
+  while you were scrolled up; clicking it — or scrolling back to the bottom by hand — re-pins and
+  resumes normal follow-the-tail. Sending a message (either side) still forces to the bottom. This
+  replaces the Pact chat's previous unconditional scroll-to-bottom on every render.
+
 ## [1.1.2] - 2026-08-11
 
 ### Added
