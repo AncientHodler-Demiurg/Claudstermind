@@ -1932,6 +1932,14 @@ const wsUuid = () => (crypto.randomUUID ? crypto.randomUUID() : "s-" + Date.now(
 // The workspace id a pane attaches to: repo + worktree. TWO terminals selecting the same repo
 // (and worktree) derive the SAME key, so they drive — and watch — the one shared conversation.
 const wsWorkspaceId = (repo, worktree) => (repo ? repo + "@" + (worktree || "main") : null);
+// A reloaded/reopened transcript has per-turn `workspaceId` stripped by the server, but the user
+// message renderer needs it to build the /api/workspace/image URL — without it, an image-bearing
+// prompt reloads looking like it had no attachments. Stamp it back from the frame-level id (the
+// images themselves were always saved server-side; this only restores the field the renderer reads).
+function wsBackfillTurnWorkspace(transcript, wid) {
+  if (Array.isArray(transcript) && wid) for (const m of transcript) if (m && (m.images || m.image) && !m.workspaceId) m.workspaceId = wid;
+  return Array.isArray(transcript) ? transcript : [];
+}
 // This browser's stable identity for presence — kept across reloads so a refresh doesn't read as
 // a new terminal. A human label (editable) rides along so the roster is legible.
 const WS_CONN_KEY = "cm.conn.v1";
@@ -4639,7 +4647,7 @@ function viewWorkspace() {
         clearTimeout(req.timer);
         const p = st.panes.find((x) => x.id === req.paneId); if (!p) continue;   // its pane was trimmed away
         if ((p._gen || 0) !== req.gen) continue;   // this pane has moved on since the request — discard, don't apply
-        p.transcript = data.transcript || [];
+        p.transcript = wsBackfillTurnWorkspace(data.transcript || [], data.workspaceId || wsWorkspaceId(data.repo || p.repo, data.worktree || p.worktree));
         p._expandedGroups = new Set();   // a freshly-(re)opened transcript has no expand state yet
         p._showAllTurns = false;         // a (re)opened conversation starts capped to recent turns
         p._scrollBottomNext = true;      // …and lands at the bottom (latest), not scrolled up
@@ -4734,7 +4742,7 @@ function viewWorkspace() {
       // whole reason a resync was requested in the first place.
       if (data.kind === "resync") {
         for (const p of targets) {
-          if (Array.isArray(data.transcript)) p.transcript = data.transcript;
+          if (Array.isArray(data.transcript)) p.transcript = wsBackfillTurnWorkspace(data.transcript, data.workspaceId || wsWorkspaceId(p.repo, p.worktree));
           if (data.status) p.status = data.status;
           if (data.usage) p.usage = data.usage;
           if (data.mode) p.mode = data.mode;

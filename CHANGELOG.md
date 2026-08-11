@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.11] - 2026-08-11
+
+### Fixed
+- **Workspace prompts with attached images lost their thumbnails on reload.** The images were always
+  saved server-side and stayed attached to the persisted turn, but the server strips the per-turn
+  `workspaceId` when serving a reloaded/reopened transcript — and the user-message renderer needs that
+  field to build the image URL, so a reloaded image prompt looked like it had no attachments. The
+  client now backfills `workspaceId` onto image-bearing turns from the frame-level id on ingest, so
+  attachments render again after a refresh (purely a display fix — no image data was ever lost).
+
 ## [1.1.10] - 2026-08-11
 
 ### Fixed
