@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.15] - 2026-08-11
+
+### Fixed
+- **Pact chat draft lost when leaving and returning to the workspace.** State was persisted on an
+  800ms debounce, but leaving the Pact view (e.g. clicking the Core workspace) tore it down with a
+  `clearTimeout` that *cancelled* the pending save — so a prompt typed in the last 0.8s was silently
+  discarded, and on return the older saved state (no draft) was restored. State is now flushed
+  immediately (no debounce) when leaving the Pact view, when a message is sent, and on page unload
+  (via a keepalive request), so an in-progress prompt is never lost.
+
 ## [1.1.14] - 2026-08-11
 
 ### Added

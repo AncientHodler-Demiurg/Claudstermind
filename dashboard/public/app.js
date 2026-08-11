@@ -2691,13 +2691,23 @@ let PACT_CHAT_NAMES = {};
 // A debounced (~800ms) snapshot of the whole IDE layout, PUT to the shared store. No-op until a
 // restore has completed (or a fresh view is ready), so a burst of layout changes coalesces into one
 // write. A read-only remote viewer's PUT is refused server-side (403) and simply ignored here.
+function pactStatePut(state, keepalive) {
+  fetch("/api/pact/ide-state", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state }), keepalive: !!keepalive }).catch(() => {});
+}
 function pactStateSave() {
   if (!PACT_STATE_READY || !PACT_ED || !PACT_CHAT) return;
   clearTimeout(PACT_STATE_TIMER);
   PACT_STATE_TIMER = setTimeout(() => {
-    const state = pactStateSnapshot(); if (!state) return;
-    fetch("/api/pact/ide-state", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state }) }).catch(() => {});
+    const state = pactStateSnapshot(); if (state) pactStatePut(state);
   }, 800);
+}
+// Persist the current layout+drafts IMMEDIATELY (no debounce). Used when leaving the Pact view, on
+// send, and on page unload — so a draft typed in the last 800ms (previously cancelled by the teardown's
+// clearTimeout) is never lost. `keepalive` lets the request survive a page unload.
+function pactStateFlush(keepalive) {
+  if (!PACT_ED || !PACT_CHAT) return;
+  clearTimeout(PACT_STATE_TIMER);
+  const state = pactStateSnapshot(); if (state) pactStatePut(state, keepalive);
 }
 // The opaque blob the store persists: open file paths per editor box (+ active/font/weights), chat
 // tab identity (key/name/draft/order/active), right-zone collapse, and the chat-name map. NEVER file
@@ -2957,12 +2967,19 @@ function pactChatAutosize(ta, now) {
   ta.style.height = Math.min(sh, cap) + "px";
   ta.style.overflowY = sh > cap ? "auto" : "hidden";
 }
+let PACT_UNLOAD_HOOKED = false;
 function pactChatInit(host) {
   PACT_CHAT = { host, tabs: [], activeId: null, seq: 0, es: null, mode: "bypassPermissions", conn: connIdentity() };
+  // Flush the draft/layout on a page refresh or close too (keepalive lets the PUT outlive the page),
+  // so a prompt typed right before reloading isn't lost. Registered once.
+  if (!PACT_UNLOAD_HOOKED) { PACT_UNLOAD_HOOKED = true; window.addEventListener("pagehide", () => { if (PACT_STATE_READY) pactStateFlush(true); }); }
   pactChatOpenStream();
   pactChatNewTab();
 }
 function pactChatStop() {
+  // Persist the live draft/layout NOW before tearing down — otherwise the clearTimeout below cancels a
+  // pending debounced save and a prompt typed in the last 800ms is silently lost on the way out.
+  if (PACT_STATE_READY) pactStateFlush();
   PACT_STATE_READY = false; clearTimeout(PACT_STATE_TIMER);   // leaving Pact — stop persisting a torn-down layout
   if (PACT_CHAT && PACT_CHAT.es) { try { PACT_CHAT.es.close(); } catch {} PACT_CHAT.es = null; }
 }
@@ -3072,7 +3089,7 @@ function pactChatSend(t) {
   if (ta) { ta.value = ""; ta.style.height = ""; ta.style.overflowY = "hidden"; pactChatAutosize(ta); }
   t.draft = "";   // the draft was just sent — clear it so a reload doesn't resurrect it
   pactChatRender();   // reflect a fresh auto-name on the tab (also re-paints the active conversation)
-  pactStateSave();
+  pactStateFlush();   // persist the just-sent tab/key IMMEDIATELY so it's restorable even if you navigate away at once
   t._forceBottom = true;   // your own just-sent message lands at the bottom + re-pins, even if you'd scrolled up
   pactChatPaint(t);
   // `resume` continues a specific saved session with full SDK context — set when this tab was opened
