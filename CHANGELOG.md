@@ -4,6 +4,13 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.9] - 2026-08-11
+
+### Changed
+- **Pact chat compose box auto-grows.** The message textarea now expands with what you type — up to
+  80% of the chat box height — then scrolls internally, instead of being pinned to one line. Sizes to
+  a restored draft on load and resets after send.
+
 ## [1.1.8] - 2026-08-11
 
 ### Fixed

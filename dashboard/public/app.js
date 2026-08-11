@@ -2706,6 +2706,18 @@ function pactHistDelete(r) {
   delete PACT_CHAT_NAMES[r.sessionId];
   pactChatRenderHistory(); pactStateSave();
 }
+// Grow the compose textarea to fit its content, up to 80% of the chat box height; beyond that it
+// scrolls internally. Called on input, on draft restore, and after send (which resets it).
+function pactChatAutosize(ta) {
+  if (!ta) return;
+  const box = ta.closest(".pact-chat");
+  const avail = (box && box.clientHeight) || (ta.closest(".pact-right")?.clientHeight) || Math.round(window.innerHeight * 0.6);
+  const cap = Math.max(72, Math.round(avail * 0.8));
+  ta.style.maxHeight = cap + "px";
+  ta.style.height = "auto";                                  // measure the true content height from a clean baseline
+  ta.style.height = Math.min(ta.scrollHeight, cap) + "px";
+  ta.style.overflowY = ta.scrollHeight > cap ? "auto" : "hidden";
+}
 function pactChatInit(host) {
   PACT_CHAT = { host, tabs: [], activeId: null, seq: 0, es: null, mode: "bypassPermissions", conn: connIdentity() };
   pactChatOpenStream();
@@ -2814,7 +2826,7 @@ function pactChatSend(t) {
   }
   t.msgs.push({ role: "user", text });
   t.status = "thinking"; t.live = "";
-  if (ta) { ta.value = ""; ta.style.height = ""; }
+  if (ta) { ta.value = ""; ta.style.height = ""; ta.style.overflowY = "hidden"; pactChatAutosize(ta); }
   t.draft = "";   // the draft was just sent — clear it so a reload doesn't resurrect it
   pactChatRender();   // reflect a fresh auto-name on the tab (also re-paints the active conversation)
   pactStateSave();
@@ -2918,10 +2930,11 @@ function pactChatRender() {
   if (active) input.value = active.draft || "";   // restore this tab's saved compose draft
   send.addEventListener("click", () => pactChatSend(active));
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); pactChatSend(pactChatActive()); } });
-  input.addEventListener("input", () => { const a = pactChatActive(); if (a) { a.draft = input.value; pactStateSave(); } });
+  input.addEventListener("input", () => { pactChatAutosize(input); const a = pactChatActive(); if (a) { a.draft = input.value; pactStateSave(); } });
   const compose = el("div", { class: "pc-compose" }, [input, send]);
   host.replaceChildren(head, scroll, compose);
   attachStickController(scroll, { wrapClass: "stick-wrap-pc" });   // wrap now so the pill exists from the first paint
+  requestAnimationFrame(() => pactChatAutosize(input));   // size to any restored draft once the pane has real layout
   pactSyncCollapseBtns();
   if (active) pactChatPaint(active);
 }
