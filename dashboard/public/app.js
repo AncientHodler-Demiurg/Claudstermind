@@ -2749,7 +2749,11 @@ function pactChatCloseTab(id) {
 }
 function pactChatOpenStream() {
   pactChatStop();
-  const q = "?conn=" + encodeURIComponent(PACT_CHAT.conn.id) + "&label=" + encodeURIComponent(PACT_CHAT.conn.label);
+  // Use a subscriber id DISTINCT from the Core workspace stream (which registers under the bare conn
+  // id). The server keys WS_SUBS by conn id, so sharing it let this stream's close handler evict the
+  // Core stream's freshly-registered entry (same key) when switching views — starving the Core
+  // workspace of live events until a manual refresh. The ":pact" suffix keeps the two independent.
+  const q = "?conn=" + encodeURIComponent(PACT_CHAT.conn.id + ":pact") + "&label=" + encodeURIComponent(PACT_CHAT.conn.label + " (pact)");
   let es; try { es = new EventSource("/api/workspace/stream" + q); } catch { return; }
   PACT_CHAT.es = es;
   es.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } pactChatRoute(m); };

@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.10] - 2026-08-11
+
+### Fixed
+- **Core workspace live streaming stalled when the Pact workspace had been opened.** Both the Core
+  workspace and the Pact chat opened their SSE to `/api/workspace/stream` under the *same* stable
+  connection id, and the server keys subscribers by that id — so the Pact stream's close handler could
+  evict the Core stream's subscriber entry when switching views, and Core responses only appeared after
+  a manual refresh. The Pact chat stream now registers under a distinct `:pact` subscriber id, so the
+  two streams never evict each other.
+
 ## [1.1.9] - 2026-08-11
 
 ### Changed
