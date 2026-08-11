@@ -26,7 +26,7 @@ CHANGELOG top entry, push to main. Never restart the live service.
 ## Wave 3 — Deploy plan + guard logic (pure)
 - [x] T3.1 `lib/deployPlan.mjs` — from changed files + unit defs → `{restarts:[...], daemonAffected}`.
       Tests: web-only vs daemon-inclusive classification.
-- [ ] T3.2 Busy-state query — "are any sessions mid-turn/unsettled?" from live session summaries. Tests.
+- [x] T3.2 Busy-state query — "are any sessions mid-turn/unsettled?" from live session summaries. Tests.
 
 ## Wave 4 — Deploy panel UX
 - [ ] T4.1 Running-process list + "what this deploy restarts" banner in the deploy admin section (server

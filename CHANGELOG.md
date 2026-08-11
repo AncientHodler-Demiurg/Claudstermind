@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.25] - 2026-08-12
+
+### Added
+- **Busy-state helper (`lib/deployPlan.mjs`).** `anyBusy(sessionSummaries)` → `{ busy, count }` over
+  live session summaries, where "busy/unsettled" = `thinking` / `deepwork` / `awaiting-permission` —
+  the exported `BUSY_STATUSES` mirror the web client's `WS_BUSY_STATUSES` / `paneBusy` so the
+  deploy guard and the workspace UI agree on what "still working" means. Accepts an array or any
+  iterable (e.g. a `Map.values()`), ignores malformed/null entries. Pure + unit-tested.
+
 ## [1.1.24] - 2026-08-12
 
 ### Added
