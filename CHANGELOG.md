@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.34] - 2026-08-12
+
+### Changed
+- **Deploy admin: two tabs + terminator split.** The Deploy & Version section is now split into two
+  tabs. "Deploy & Reload" is a two-column, equal-width split — Reload on the LEFT, Deploy on the RIGHT —
+  where each column is self-contained: its action card (version + button + "what this restarts" banner),
+  then its progress checker, then an always-visible black terminal streaming that action's raw log (the
+  old collapsible "Full log" is now the pane). Columns stack on screens ≤900px. "Running locally" holds
+  the process list (see the next entry).
+
 ## [1.1.33] - 2026-08-12
 
 ### Fixed

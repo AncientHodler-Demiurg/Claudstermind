@@ -903,10 +903,12 @@ const RESTART_PHASES = [
 
 function viewDeploy() {
   const root = el("div", { class: "deploy-wrap" }, []);
-  // Wraps/contains both targets below it — visually the one number a Reload OR a Deploy each
-  // converge on, per the admin-panel refinement this replaces the old side-by-side Live/Pending
-  // cards with.
-  const pendingBanner = el("div", { class: "deploy-pending" }, [el("div", { class: "hint" }, ["Loading version state…"])]);
+  // The deploy admin is a "terminator-style" split: Reload on the LEFT, Deploy on the RIGHT, each a
+  // self-contained column (action card → progress checker → its own black terminal). These boxes are
+  // filled by refresh()/refreshProcesses() below; the split + tabs are assembled at the very end.
+  const pendingHd = el("div", { class: "deploy-pending-hd" }, [el("div", { class: "hint" }, ["Loading version state…"])]);
+  const reloadCardBox = el("div", { class: "deploy-cardbox" }, [el("div", { class: "hint" }, ["Loading…"])]);
+  const deployCardBox = el("div", { class: "deploy-cardbox" }, [el("div", { class: "hint" }, ["Loading…"])]);
   const term = el("pre", { class: "deploy-term" }, ["(no deploy run yet)"]);
   const actions = el("div", { class: "deploy-actions" }, []);
   const note = el("div", { class: "hint" }, []);
@@ -916,6 +918,12 @@ function viewDeploy() {
   // running) vs also-the-agent-engine (agents interrupted). `LAST_PROC` caches the last fetch so
   // the deploy guard can read it, but the guard also re-fetches at click time so it's never stale.
   const restartBanner = el("div", { class: "deploy-restart-banner" }, [el("div", { class: "hint" }, ["Checking what this deploy restarts…"])]);
+  // Reload's own "what this restarts" banner — a reload always interrupts local agents, so it's a
+  // fixed statement (unlike Deploy's, which depends on the changed files' plan).
+  const reloadBanner = el("div", { class: "deploy-restart-banner --warn" }, [
+    el("div", { class: "deploy-restart-hd" }, ["⚠ What a Reload restarts"]),
+    el("div", { class: "deploy-restart-txt" }, ["Reload restarts this local dashboard process to pick up on-disk code. Agents running on this machine are interrupted."]),
+  ]);
   const procBox = el("div", { class: "deploy-proc" }, [el("div", { class: "hint" }, ["Loading running processes…"])]);
   let LAST_PROC = null;
 
@@ -1109,25 +1117,29 @@ function viewDeploy() {
     canRestart = !remote || st.localConnected;
     refreshRestartBtn();
 
-    pendingBanner.replaceChildren(
+    pendingHd.replaceChildren(
       el("div", { class: "deploy-card-t" }, ["Pending — what Reload or Deploy would produce"]),
       el("div", { class: "deploy-ver-lg" }, [pending ? "v" + pending.version : "—"]),
       el("div", { class: "deploy-sha" }, [verLine(pending)]),
-      el("div", { class: "deploy-targets" }, [
-        el("div", { class: "deploy-card" + (localStale ? " stale" : pending ? " ok" : "") }, [
-          el("div", { class: "deploy-card-t" }, [remote ? "Local host · the work machine" : "Local host · this machine"]),
-          el("div", { class: "deploy-ver" }, [localRunning ? "v" + localRunning.version : "—"]),
-          el("div", { class: "deploy-sha" }, [remote && !st.localConnected ? "offline" : verLine(localRunning)]),
-          localStale ? el("div", { class: "deploy-stale-note" }, ["⚠ running code is behind Pending — Reload to pick it up"]) : "",
-          el("div", { class: "deploy-actions-row" }, [rActions, rNote]),
-        ]),
-        el("div", { class: "deploy-card" + (live ? (same ? " ok" : " stale") : "") }, [
-          el("div", { class: "deploy-card-t" }, ["Live container · brain.ancientholdings.eu"]),
-          el("div", { class: "deploy-ver" }, [live ? "v" + live.version : "—"]),
-          el("div", { class: "deploy-sha" }, [verLine(live)]),
-          live && !same ? el("div", { class: "deploy-stale-note" }, ["⚠ behind Pending — Deploy to update"]) : "",
-          el("div", { class: "deploy-actions-row" }, [actions, note]),
-        ]),
+    );
+    // LEFT column card — Reload: the local host's own on-disk vs. running code.
+    reloadCardBox.replaceChildren(
+      el("div", { class: "deploy-card" + (localStale ? " stale" : pending ? " ok" : "") }, [
+        el("div", { class: "deploy-card-t" }, [remote ? "Local host · the work machine" : "Local host · this machine"]),
+        el("div", { class: "deploy-ver" }, [localRunning ? "v" + localRunning.version : "—"]),
+        el("div", { class: "deploy-sha" }, [remote && !st.localConnected ? "offline" : verLine(localRunning)]),
+        localStale ? el("div", { class: "deploy-stale-note" }, ["⚠ running code is behind Pending — Reload to pick it up"]) : "",
+        el("div", { class: "deploy-actions-row" }, [rActions, rNote]),
+      ]),
+    );
+    // RIGHT column card — Deploy: the live container vs. Pending.
+    deployCardBox.replaceChildren(
+      el("div", { class: "deploy-card" + (live ? (same ? " ok" : " stale") : "") }, [
+        el("div", { class: "deploy-card-t" }, ["Live container · brain.ancientholdings.eu"]),
+        el("div", { class: "deploy-ver" }, [live ? "v" + live.version : "—"]),
+        el("div", { class: "deploy-sha" }, [verLine(live)]),
+        live && !same ? el("div", { class: "deploy-stale-note" }, ["⚠ behind Pending — Deploy to update"]) : "",
+        el("div", { class: "deploy-actions-row" }, [actions, note]),
       ]),
     );
   }
@@ -1147,19 +1159,53 @@ function viewDeploy() {
     if (!canRestart) rActions.append(el("span", { class: "hint" }, ["  (the work machine is offline)"]));
   }
 
+  // ── Tab A "Deploy & Reload" — the terminator split. Each column is self-contained: action card →
+  // its "what this restarts" banner → its progress checker → its always-visible black terminal. ──
+  const reloadCol = el("div", { class: "deploy-col" }, [
+    el("div", { class: "deploy-col-hd" }, ["⟳ Reload — local host"]),
+    reloadCardBox,
+    reloadBanner,
+    restartProgress.wrap,
+    el("div", { class: "deploy-term-hd" }, ["Reload log"]),
+    rterm,
+  ]);
+  const deployCol = el("div", { class: "deploy-col" }, [
+    el("div", { class: "deploy-col-hd" }, ["🚀 Deploy — live container"]),
+    deployCardBox,
+    restartBanner,
+    deployProgress.wrap,
+    el("div", { class: "deploy-term-hd" }, ["Deploy log"]),
+    term,
+  ]);
+  const tabDeploy = el("div", { class: "deploy-tabpanel" }, [
+    pendingHd,
+    el("div", { class: "deploy-split" }, [reloadCol, deployCol]),
+  ]);
+  // ── Tab B "Running locally" — the process list, moved out of the deploy columns (filled by
+  // refreshProcesses, which partitions running vs. dormant). ──
+  const tabProcs = el("div", { class: "deploy-tabpanel", hidden: "" }, [procBox]);
+
+  const tabs = [
+    { id: "deploy", label: "Deploy & Reload", panel: tabDeploy },
+    { id: "procs", label: "Running locally", panel: tabProcs },
+  ];
+  const tabBtns = {};
+  function showTab(id) {
+    for (const t of tabs) { t.panel.hidden = t.id !== id; tabBtns[t.id].className = "deploy-tab" + (t.id === id ? " on" : ""); }
+  }
+  const tabbar = el("div", { class: "deploy-tabbar" }, tabs.map((t) => {
+    const b = el("button", { class: "deploy-tab", onclick: () => showTab(t.id) }, [t.label]);
+    tabBtns[t.id] = b; return b;
+  }));
+
   root.replaceChildren(
     el("h2", { class: "deploy-h" }, ["Deploy & Version"]),
     el("div", { class: "hint" }, ["The version + changelog are cut by the agent when a change is built (Pantheonic §10). Reload picks up the local host's own on-disk code; Deploy ships it to the live container."]),
-    pendingBanner,
-    restartBanner,
-    procBox,
-    el("h3", { style: "margin:14px 0 4px" }, ["Deploy progress"]),
-    deployProgress.wrap,
-    el("details", { class: "deploy-logwrap" }, [el("summary", {}, ["Full deploy log"]), term]),
-    el("h3", { style: "margin:14px 0 4px" }, ["Reload progress"]),
-    restartProgress.wrap,
-    el("details", { class: "deploy-logwrap" }, [el("summary", {}, ["Full reload log"]), rterm]),
+    tabbar,
+    tabDeploy,
+    tabProcs,
   );
+  showTab("deploy");
   refresh();
   refreshProcesses();
   return root;
