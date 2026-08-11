@@ -46,6 +46,8 @@ import { readClaudeToken } from "../lib/workspace.mjs";
 import { cleanClaudeEnv } from "../lib/claudeSession.mjs";
 import { nextVersion, changelogEntry, insertChangelog } from "../lib/release.mjs";
 import { preflightSteps, runPreflight, restartCommand, killInFlightCandidate } from "../lib/selfRestart.mjs";
+import { deployPlan, deployBannerText, anyBusy } from "../lib/deployPlan.mjs";
+import { sessiondProcess, webProcess, localhostProcesses, changedFilesFromGit } from "../lib/deployProcesses.mjs";
 import { writeFileSync } from "node:fs";
 import { readRelayConfig, writeRelayConfig, readDeviceSecret, saveDeviceSecret } from "../lib/relayConfig.mjs";
 import { createAggregator, registryProjects, mirrorablePorts } from "../lib/localhost.mjs";
@@ -366,6 +368,75 @@ function startDeploy() {
     .finally(() => { DEPLOY.running = false; });
   return { ok: true, started: true, version: v.version };
 }
+// ---- Deploy admin: "what's running + what THIS deploy restarts" (deploy-survivable agents W4) ----
+// Gathers the live processes relevant to a deploy — the web process (us), the claudstermind-sessiond
+// daemon (via systemctl, else a pgrep fallback, else "not installed"), and the aggregator's managed
+// localhost apps — plus the deployPlan over the files this deploy would ship and the human banner
+// stating exactly what will restart. Every probe degrades gracefully: no systemd, no daemon, and no
+// aggregator are all normal, non-error outcomes. Pure parsing/shaping lives in lib/deployProcesses.mjs
+// + lib/deployPlan.mjs (unit-tested); this only does the I/O and hands their output to those.
+const SESSIOND_UNIT = "claudstermind-sessiond";
+function probeSessiond() {
+  // `systemctl show` prints LoadState/ActiveState/SubState and exits 0 even for a missing unit
+  // (LoadState=not-found), so it's the cleanest single probe. If systemctl itself is absent
+  // (spawn error / ENOENT) fall back to pgrep; if that's absent too, report unknown.
+  try {
+    const r = spawnSync("systemctl", ["show", SESSIOND_UNIT, "-p", "LoadState", "-p", "ActiveState", "-p", "SubState"],
+      { encoding: "utf8", timeout: 3000 });
+    if (!r.error && r.stdout && /LoadState=/.test(r.stdout)) return sessiondProcess({ systemctlOk: true, show: r.stdout });
+  } catch { /* systemctl unavailable — fall through to pgrep */ }
+  let pgrepRunning = null;
+  try {
+    const g = spawnSync("pgrep", ["-f", "sessiond/sessiond.mjs"], { encoding: "utf8", timeout: 3000 });
+    if (!g.error) pgrepRunning = (g.stdout || "").trim().length > 0;
+  } catch { /* pgrep unavailable too */ }
+  return sessiondProcess({ systemctlOk: false, pgrepRunning });
+}
+/** Files this deploy would ship: prefer a diff against the LIVE build's commit; fall back to the
+ *  working tree. `liveSha` is the live container's short gitSha (from /api/version), or null. */
+function deployChangedFiles(liveSha) {
+  let diffOut = null;
+  if (liveSha && /^[0-9a-f]{6,40}$/i.test(liveSha)) {
+    const d = spawnSync("git", ["diff", "--name-only", `${liveSha}..HEAD`], { cwd: CM_ROOT, encoding: "utf8", timeout: 5000 });
+    if (!d.error && d.status === 0) diffOut = d.stdout || "";
+  }
+  let porcelainOut = "";
+  const s = spawnSync("git", ["status", "--porcelain"], { cwd: CM_ROOT, encoding: "utf8", timeout: 5000 });
+  if (!s.error) porcelainOut = s.stdout || "";
+  return changedFilesFromGit({ diffOut, porcelainOut });
+}
+/** The live session summaries the engine holds right now — whichever engine the web drives.
+ *  In-process WorkspaceManager exposes its `sessions` Map + `sessionSummary`; the SessiondClient
+ *  answers an async `snapshot()`. Returns [] on any absence/failure so the guard degrades safely. */
+async function workspaceSummaries() {
+  try {
+    if (!WORKSPACE) return [];
+    if (typeof WORKSPACE.snapshot === "function") return await WORKSPACE.snapshot();
+    if (WORKSPACE.sessions && typeof WORKSPACE.sessionSummary === "function") {
+      return [...WORKSPACE.sessions.values()].map((s) => WORKSPACE.sessionSummary(s));
+    }
+  } catch { /* engine unreachable — treat as no live sessions */ }
+  return [];
+}
+async function gatherDeployProcesses(liveSha) {
+  const sessiond = probeSessiond();
+  let apps = [];
+  try {
+    const s = await AGG.status();
+    let live = null;
+    if (s.running) { const r = await AGG.api("/api/status"); if (r.ok) live = r.data?.projects ?? null; }
+    apps = localhostProcesses(registryProjects(MASTER_ROOT), s.running ? live : null);
+  } catch { apps = []; }
+  const processes = [webProcess({ version: readVersion().version }), sessiond, ...apps];
+  const changedFiles = deployChangedFiles(liveSha);
+  const daemonInstalled = sessiond.status !== "not-installed" && sessiond.status !== "unknown";
+  const plan = deployPlan(changedFiles, { daemonInstalled });
+  // The guard's authoritative busy count — computed at request time from the engine's own snapshot,
+  // so it can't be bypassed with a stale client view. Web-only deploys never warn (client-side).
+  const busy = anyBusy(await workspaceSummaries());
+  return { ok: true, processes, changedFiles, plan, banner: deployBannerText(plan), busy };
+}
+
 // ---- Self-restart safety (dashboard-self-restart-safety): never touch the live process until a
 // sandboxed candidate proves it would come back up. See lib/selfRestart.mjs for the pure
 // preflightSteps/runPreflight/restartCommand this wraps, and the design's Wave 2 note for why
@@ -706,6 +777,17 @@ const handler = async (req, res) => {
   }
   if (path === "/api/deploy" && req.method === "POST") {   // gated above (sameOrigin + canExecute + local-only)
     return sendJSON(res, 200, startDeploy());
+  }
+  // Live process list + what-this-deploy-restarts plan/banner. Gated like the other admin execute
+  // routes (canExecute — ancient on the live site, open locally); degrades gracefully with no
+  // systemd/daemon/aggregator present.
+  if (path === "/api/admin/processes" && req.method === "GET") {
+    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The ancient role is required to view deploy processes." });
+    res.setHeader("cache-control", "no-store");
+    let liveSha = null;
+    try { const live = await (await fetch("https://brain.ancientholdings.eu/api/version", { signal: AbortSignal.timeout(3000) })).json(); liveSha = live?.gitSha || null; } catch { /* live unreachable — diff falls back to the working tree */ }
+    try { return sendJSON(res, 200, await gatherDeployProcesses(liveSha)); }
+    catch (e) { return sendJSON(res, 200, { ok: false, message: String(e && e.message || e), processes: [], changedFiles: [], plan: deployPlan([]), banner: deployBannerText(deployPlan([])) }); }
   }
   // ---- self-restart safety: pre-flight + gated restart trigger (see lib/selfRestart.mjs) ----
   if (path === "/api/dashboard/restart/stream" && req.method === "GET") {

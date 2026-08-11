@@ -29,7 +29,7 @@ CHANGELOG top entry, push to main. Never restart the live service.
 - [x] T3.2 Busy-state query — "are any sessions mid-turn/unsettled?" from live session summaries. Tests.
 
 ## Wave 4 — Deploy panel UX
-- [ ] T4.1 Running-process list + "what this deploy restarts" banner in the deploy admin section (server
+- [x] T4.1 Running-process list + "what this deploy restarts" banner in the deploy admin section (server
       endpoint listing web/sessiond/localhost-apps + client render).
 - [ ] T4.2 StoaExplorer-style streamed progress view (study ~/ClaudeWS/StoaChain/seers/StoaExplorer,
       read-only) in Claudstermind's deploy panel.

@@ -800,6 +800,46 @@ function viewDeploy() {
   const actions = el("div", { class: "deploy-actions" }, []);
   const note = el("div", { class: "hint" }, []);
 
+  // "What this deploy restarts" banner + the live process list (deploy-survivable agents W4). The
+  // banner mirrors the server's deployPlan over the pending changed files: web-only (agents keep
+  // running) vs also-the-agent-engine (agents interrupted). `LAST_PROC` caches the last fetch so
+  // the deploy guard can read it, but the guard also re-fetches at click time so it's never stale.
+  const restartBanner = el("div", { class: "deploy-restart-banner" }, [el("div", { class: "hint" }, ["Checking what this deploy restarts…"])]);
+  const procBox = el("div", { class: "deploy-proc" }, [el("div", { class: "hint" }, ["Loading running processes…"])]);
+  let LAST_PROC = null;
+
+  const PROC_ICON = { running: "●", stopped: "◐", "not-installed": "○", unknown: "◌" };
+  async function refreshProcesses() {
+    let d = {};
+    try { d = await (await fetch("/api/admin/processes", { cache: "no-store" })).json(); } catch { d = { ok: false }; }
+    LAST_PROC = d;
+    const b = d.banner || { tone: "safe", text: "Deploy impact unknown — the process list couldn't be read." };
+    restartBanner.className = "deploy-restart-banner " + (b.tone === "warn" ? "--warn" : "--safe");
+    const restarts = (d.plan && d.plan.restarts) || ["web"];
+    restartBanner.replaceChildren(
+      el("div", { class: "deploy-restart-hd" }, [(b.tone === "warn" ? "⚠ " : "✓ ") + "What this deploy restarts"]),
+      el("div", { class: "deploy-restart-txt" }, [b.text]),
+      el("div", { class: "deploy-restart-meta" }, [
+        "Restarts: " + restarts.join(" + "),
+        d.changedFiles ? el("span", {}, ["  ·  " + d.changedFiles.length + " changed file(s)"]) : "",
+        d.busy && d.busy.count ? el("span", { class: "deploy-restart-busy" }, ["  ·  " + d.busy.count + " agent(s) working"]) : "",
+      ]),
+    );
+    const procs = d.processes || [];
+    const rows = procs.map((p) => el("div", { class: "deploy-proc-row" }, [
+      el("span", { class: "deploy-proc-dot --" + (p.status || "unknown") }, [PROC_ICON[p.status] || "◌"]),
+      el("div", { class: "deploy-proc-main" }, [
+        el("span", { class: "deploy-proc-name" }, [p.name || p.key]),
+        el("span", { class: "deploy-proc-role" }, [p.role || ""]),
+      ]),
+      el("span", { class: "deploy-proc-detail" }, [p.detail || p.status || ""]),
+    ]));
+    procBox.replaceChildren(
+      el("div", { class: "deploy-card-t" }, ["Running on this machine"]),
+      ...(rows.length ? rows : [el("div", { class: "hint" }, [d.ok === false ? "Process list unavailable." : "No processes reported."])]),
+    );
+  }
+
   // Self-restart safety: a sandboxed pre-flight, then (only on ok:true) the real restart —
   // gated identically to Deploy above (same canDeploy/canRestart condition) rather than a
   // new auth path, and reusing this same log-terminal rendering (openLogStream) rather than
@@ -943,10 +983,13 @@ function viewDeploy() {
     el("h2", { class: "deploy-h" }, ["Deploy & Version"]),
     el("div", { class: "hint" }, ["The version + changelog are cut by the agent when a change is built (Pantheonic §10). Reload picks up the local host's own on-disk code; Deploy ships it to the live container."]),
     pendingBanner,
+    restartBanner,
+    procBox,
     el("h3", { style: "margin:14px 0 4px" }, ["Deploy log"]), term,
     el("h3", { style: "margin:14px 0 4px" }, ["Reload log"]), rterm,
   );
   refresh();
+  refreshProcesses();
   return root;
 }
 // A tiny POST helper for the admin (deploy/release) endpoints.

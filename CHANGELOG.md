@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.26] - 2026-08-12
+
+### Added
+- **Deploy panel: live process list + "what this deploy restarts" banner.** A new gated endpoint
+  `GET /api/admin/processes` (ancient on the live site, open locally — same `canExecute` gate as the
+  other admin execute routes) reports the processes relevant to a deploy: the web process (always us),
+  the `claudstermind-sessiond` daemon, and the aggregator's managed localhost apps — plus the
+  `deployPlan` over the files this deploy would ship and a human banner (`deployBannerText`) stating
+  exactly what restarts (web-only ⇒ agents keep running, vs also the agent engine ⇒ agents
+  interrupted). The deploy admin panel renders both. Everything degrades gracefully: the sessiond unit
+  is probed via `systemctl show` (falling back to `pgrep`, then to "not installed" — the live box
+  today), and no systemd / no daemon / no aggregator are all normal, non-error outcomes. Pure
+  parsing/shaping is unit-tested in `lib/deployProcesses.mjs`; the banner text in `lib/deployPlan.mjs`.
+
 ## [1.1.25] - 2026-08-12
 
 ### Added

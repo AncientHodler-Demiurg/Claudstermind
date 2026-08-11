@@ -701,6 +701,34 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .deploy-term { background: #05070f; color: #cdd6f4; border: 1px solid var(--line); border-radius: 10px;
   padding: 12px 14px; font: 12px/1.5 ui-monospace, monospace; max-height: 340px; overflow: auto;
   white-space: pre-wrap; word-break: break-word; margin: 0; }
+
+/* ---- Deploy: "what this deploy restarts" banner + live process list (deploy-survivable agents) ---- */
+.deploy-restart-banner { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px;
+  background: var(--panel); border-left-width: 3px; }
+.deploy-restart-banner.--safe { border-left-color: #34d399; }
+.deploy-restart-banner.--warn { border-left-color: #f59e0b;
+  background: color-mix(in srgb, #f59e0b 8%, var(--panel)); }
+.deploy-restart-hd { font-size: 12px; font-weight: 700; letter-spacing: .02em; }
+.deploy-restart-banner.--safe .deploy-restart-hd { color: #34d399; }
+.deploy-restart-banner.--warn .deploy-restart-hd { color: #f59e0b; }
+.deploy-restart-txt { font-size: 13px; color: var(--ink); margin-top: 4px; }
+.deploy-restart-meta { font-size: 11px; color: var(--ink-mute); margin-top: 6px; font-family: ui-monospace, monospace; }
+.deploy-restart-busy { color: #f59e0b; font-weight: 700; }
+
+.deploy-proc { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 2px; }
+.deploy-proc-row { display: flex; align-items: center; gap: 10px; padding: 6px 2px; }
+.deploy-proc-row + .deploy-proc-row { border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
+.deploy-proc-dot { flex: none; width: 16px; text-align: center; font-size: 13px; line-height: 1; }
+.deploy-proc-dot.--running { color: #34d399; }
+.deploy-proc-dot.--stopped { color: #f59e0b; }
+.deploy-proc-dot.--not-installed { color: var(--ink-mute); }
+.deploy-proc-dot.--unknown { color: var(--ink-mute); }
+.deploy-proc-main { display: flex; flex-direction: column; min-width: 0; }
+.deploy-proc-name { font-size: 13px; color: var(--ink); font-weight: 600; }
+.deploy-proc-role { font-size: 11px; color: var(--ink-mute); }
+.deploy-proc-detail { margin-left: auto; font-size: 11px; color: var(--ink-mute); font-family: ui-monospace, monospace;
+  text-align: right; white-space: nowrap; }
 .ws-databadge { font-size: 9.5px; color: var(--ink-mute); font-family: ui-monospace, monospace; white-space: nowrap; margin-left: auto; }
 .ws-side-item .ws-databadge { margin-left: auto; }
 .ws-orggroup-hd { cursor: pointer; user-select: none; }
