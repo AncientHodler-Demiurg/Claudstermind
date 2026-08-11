@@ -364,6 +364,17 @@ export function createRelay(opts = {}) {
       return;
     }
 
+    // ---- remote Pact IDE: tree + file reads, forwarded down the tunnel (the Ouronet repo lives on
+    // the work machine, so the relay can't answer locally — one-shot COMMAND/RESULT via the bridge) ----
+    if (req.method === "GET" && (path === "/api/pact/tree" || path === "/api/pact/file")) {
+      if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The Pact workspace is ancient-only." });
+      if (!link.connected) return sendJSON(res, 503, { ok: false, error: "Local Claudstermind is not connected." });
+      const type = path === "/api/pact/tree" ? "pactTree" : "pactFile";
+      const args = type === "pactTree" ? { dir: url.searchParams.get("dir") || "" } : { path: url.searchParams.get("path") || "" };
+      const r = await link.relay(type, args, 15_000);
+      return sendJSON(res, 200, r || { ok: false, error: "no reply from the work machine" });
+    }
+
     // ---- remote workspace: serve an attached prompt image (ancient-only) ----
     // Same shape as the local dashboard's own /api/workspace/image, forwarded down the tunnel as
     // a one-shot COMMAND/RESULT (agent/agent.mjs's "workspaceImage") — a single image fetch has

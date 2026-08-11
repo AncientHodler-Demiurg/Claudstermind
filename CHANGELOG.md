@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.0.4] - 2026-08-11
+
+### Fixed
+- **Pact tree/file now work on the remote relay ("Tree unavailable" fix).** The Ouronet repo lives on
+  the work machine, so the relay had no `/api/pact/*` route and the IDE showed "Tree unavailable" on
+  brain.ancientholdings.eu (it worked on localhost). The relay now **forwards `/api/pact/tree` and
+  `/api/pact/file` down the tunnel** (one-shot COMMAND/RESULT via the bridge, ancient-only, repo-confined
+  by pactFs), and the bridge answers from the local repo. (The `.repl` run streamer stays local-only for
+  now — SSE isn't tunneled via COMMAND/RESULT; remote run lands with the bridge streaming protocol later.)
+
 ## [1.0.3] - 2026-08-11
 
 ### Changed
