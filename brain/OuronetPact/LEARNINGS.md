@@ -40,3 +40,16 @@ admin=salmon · **write=red** (persistence = loudest). Cool = unprotected, warm/
 - The `.repl` pipeline is staged: `Stage00_Sanboxes` (bootstrap) → `Stage00a_StoaTests` → `Stage01` →
   `Stage02`; `Z.repl` runs them in order. `Stage00_Sanboxes.repl` is the fast known-good smoke test.
 - Iterate loop (what the IDE terminal is for): write code → run the `.repl` → read the error → fix → re-run.
+- Ouronet tests use namespace **`ouronet-ns`** (not `free`); integration tests in `REPL/Stage_*`, scratch in `REPL/Kursan/`.
+
+## Deep-learned house rules (2026-08-11 — see STOICSYNTAX/PATTERNS/PACT5/ARCHITECTURE)
+
+- **No `use`, no `MODULE.fun`** — cross-module = `(ref-X:module{Iface} X)` + `::`; resolves at load (target must pre-exist).
+- **No `@managed` caps in-house** — composed capability **bands** bottoming at `(defcap SECURE () true)`; writers `(require-capability (SECURE))`.
+- **No foreign caps** (compose/with/require only home caps); trust = registered guards + `(UEV_IMC)` (the FIRST statement of a cross-module mutator, never `enforce`-wrapped).
+- **All validation in the master `defcap`/`UEV_`** — `C_`/`XI_`/`XE_`/`W_` carry no `enforce`. `C_` body only wires: `UEV_IMC → with-capability → XI_`.
+- **`and` is binary** — 3+ → `(fold (and) true […])`. **No `URD_`/`URDC_`/`(keys …)`/`select` on the execution path** (measured ~800× gas blowup; use an aggregate table + `UR_` point reads).
+- **Body order:** all enforce → all bare ref → home → caps (`compose-capability` last). `W_` = one persistence op, last, nothing after.
+- **Types:** objects match schema exactly (all fields, no extras); `int/int` truncates (force `dec`); **no recursion** (use `fold`/`map`); `let`==`let*`; read-only reentrancy on modref callbacks; **formal verification / `@model` is GONE in Pact 5**.
+- Gas budgets seen: Pythia flush ≈103 (insert)/185 (update)/217 (seal) gas per day-entry; batch cap 1000; ~2M ceiling ≈9,234 seals.
+- **Verified live:** a StoicSyntax-shaped `DEMO` module (`C_`→master cap→`XI_`→`WW_`) loads + passes on Pact 5.4 (skeleton in PATTERNS.md).

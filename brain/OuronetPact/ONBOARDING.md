@@ -36,9 +36,20 @@ Pact **4.11 fails** on `init-phase-01-ns.repl:37` — *"Cannot define a keyset o
 Pact **5.4 is correct** for this codebase. If a REPL errors on keyset/namespace ordering, check you're
 on 5.x, not 4.x.
 
-## The discipline: StoicSyntax (read LEARNINGS.md for the full taxonomy)
+## The discipline: StoicSyntax — the prefix is the contract
 
-Function names are **prefixed, and the prefix is the contract** — it declares whether the function is
-unprotected (pure compute / reads / constructors) or protected (admin / orchestration / persistence
-writes). The Pact IDE colors identifiers **by their prefix band** so the contract is visible at a
-glance. Learn the prefixes before writing or reviewing Pact here.
+Function names are **prefixed, and the prefix is the contract** — unprotected (compute/reads/ctors) vs
+protected (admin/orchestration/persistence). The Pact IDE colors by prefix band so the contract is
+visible. Learn the prefixes before writing or reviewing Pact here.
+
+## The brain (read in this order to write Pact)
+
+This project's knowledge was learned from the StoicSyntax spec, the Ouronet code + `OuronetInformational/`,
+your existing skills, and the Pact 5 source — then verified with a live `pact 5.4` run. Docs:
+1. **`SKILL-write-stoic-pact.md`** — the operating guide + pre-flight checklist + test recipe. Start here to author.
+2. **`STOICSYNTAX.md`** — the full discipline (prefix contract, section/body order, bands, W/X rules, IMC spine, read discipline, anti-patterns).
+3. **`PATTERNS.md`** — real house-style idioms + a verified minimal skeleton + `.repl` anatomy.
+4. **`PACT5.md`** — Pact 5 semantics + type system (capability mechanics, DB rules, objects/numbers, footguns).
+5. **`PACT-REFERENCE.md`** — the source-verified builtin/syntax catalog.
+6. **`ARCHITECTURE.md`** — Ouronet module families + the Talos/IMC spine + real build lessons.
+7. **`LEARNINGS.md`** — the running cheat-sheet + hard-won learnings. Canonical authority stays `OuronetInformational/` in the Ouronet repo.

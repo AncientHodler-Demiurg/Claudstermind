@@ -2,7 +2,16 @@
 
 > Current snapshot. Refresh in the same turn as a change (continuous write-back protocol).
 
-_As of 2026-08-10._
+_As of 2026-08-11._
+
+## Pact knowledge — LEARNED & verified (2026-08-11)
+Full deep-learning pass done: 7 parallel readers over the StoicSyntax spec (v1.6.7), the whole
+`OuronetInformational/` folder (conventions, memories, architecture, module-build handoffs), the existing
+`.cursor/skills` Pact skills, the real Ouronet `.pact`/`.repl` code, and the Pact 5 source
+(`kda-community/pact-5`). Synthesized into the brain: `STOICSYNTAX.md`, `PATTERNS.md`, `PACT5.md`,
+`ARCHITECTURE.md`, `SKILL-write-stoic-pact.md` (+ updated LEARNINGS/ONBOARDING). **Proven with a live
+`pact 5.4` run** — a StoicSyntax-shaped `DEMO` module loads + passes 3/3 `expect`s. Ready to write/review
+StoicSyntax Pact. (Adoption of the full discipline on StoaChain-side modules is still a per-project call.)
 
 ## Tooling / environment
 - Pact **5.4** at `/home/ancientbox/.local/bin/pact` (on PATH). Verified: `Stage00_Sanboxes.repl` → `Load successful`, exit 0.
