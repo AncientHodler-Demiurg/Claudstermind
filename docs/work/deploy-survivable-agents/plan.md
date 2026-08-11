@@ -42,4 +42,12 @@ CHANGELOG top entry, push to main. Never restart the live service.
       SessiondClient when the flag is on), and the bridge's full surface (addSink/removeSink/handleIn/
       transcriptDir + send-as-first-sink) is already implemented by SessiondClient. Added an end-to-end
       parity test (real bridge → real relay → real SessiondClient → real sessiond over a loopback socket).
-- [ ] T5.2 Full review pass (lenses + adversarial validation + fix loop to clean).
+- [x] T5.2 Full review pass (lenses + adversarial validation + fix loop to clean). One confirmed defect
+      fixed (v1.1.31): a stale/half-open SessiondClient conn could tear down the live one on late close
+      (identity-guarded + close-on-failed-handshake; regression test added). All other candidates
+      refuted — see the review report. Tests green (573).
+
+## Status: COMPLETE (2026-08-12)
+All waves delivered; independent adversarial review clean. Safe to enable: install the daemon per
+HANDOFF-SESSIOND.md and set `SESSIOND_SOCK`. With the flag unset the live path is byte-for-byte the
+prior in-process engine, so enabling is reversible with no code change.
