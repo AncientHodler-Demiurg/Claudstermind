@@ -14,9 +14,10 @@ CHANGELOG top entry, push to main. Never restart the live service.
       install/enable steps and the socket path convention.
 
 ## Wave 2 — Web as client (behind fallback flag)
-- [ ] T2.1 `lib/sessiondClient.mjs` — implements the engine surface the web + bridge use (_prompt,
-      handleControl, the `send` sink) over IPC; auto-reconnect + resubscribe + snapshot catch-up. Tests
-      against a stub socket (reconnect, event relay, snapshot).
+- [x] T2.1 `lib/sessiondClient.mjs` — implements the engine surface the web + bridge use (handleIn →
+      prompt/permission/stop/control, the `send` sink, addSink/removeSink, transcriptDir) over IPC;
+      auto-reconnect + resubscribe + snapshot catch-up. Also extended `sessiond` to handle the
+      permission/stop request frames. Tests against a stub socket (reconnect, event relay, snapshot).
 - [ ] T2.2 Wire `dashboard/server.mjs`: when `SESSIOND_SOCK` is set+reachable use SessiondClient, else
       in-process WorkspaceManager (today). Browser endpoints unchanged. Test the selection + fallback.
 

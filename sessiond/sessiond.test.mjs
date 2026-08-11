@@ -43,6 +43,10 @@ function makeStubEngine() {
       engine.emit("event", sessionKey, { kind: "user", text: data.text });
     },
     _control(data) { engine.controls.push(data); },
+    permissions: [],
+    stops: [],
+    _permission(data) { engine.permissions.push(data); },
+    _stop(sessionKey) { engine.stops.push(sessionKey); return Promise.resolve(); },
     emit(kind, sessionKey, data) { for (const fn of sinks) fn(kind, sessionKey, data); },
   };
   return engine;
@@ -92,6 +96,22 @@ test("control requests are forwarded to the engine control handler", () => {
   c.deliver({ type: "control", id: "c1", data: { action: "list", args: {} } });
   assert.deepEqual(h.engine.controls, [{ action: "list", args: {} }]);
   assert.deepEqual(c.sent.at(-1), { type: "ack", id: "c1", ok: true });
+});
+
+test("permission requests are forwarded to the engine permission handler", () => {
+  const h = harness();
+  const c = h.connect();
+  c.deliver({ type: "permission", id: "perm1", data: { requestId: "r1", decision: "allow" } });
+  assert.deepEqual(h.engine.permissions, [{ requestId: "r1", decision: "allow" }]);
+  assert.deepEqual(c.sent.at(-1), { type: "ack", id: "perm1", ok: true });
+});
+
+test("stop requests are forwarded to the engine stop handler with the session key", () => {
+  const h = harness();
+  const c = h.connect();
+  c.deliver({ type: "stop", id: "stop1", sessionKey: "repoA@main" });
+  assert.deepEqual(h.engine.stops, ["repoA@main"]);
+  assert.deepEqual(c.sent.at(-1), { type: "ack", id: "stop1", ok: true });
 });
 
 test("snapshot returns the live session summaries", () => {

@@ -11,11 +11,18 @@
 // HANDOFF-SESSIOND.md for the install/enable steps.
 //
 // Request frames (client → daemon), each an object with a `type`:
-//   { type:"prompt",   id?, sessionKey, data }  → workspace._prompt(sessionKey, data); replies ack
-//   { type:"control",  id?, data:{action,args} } → workspace._control(data);           replies ack
-//   { type:"subscribe",id? }                     → register conn for the live event stream; ack
-//   { type:"snapshot", id? }                     → replies { type:"snapshot", id, sessions:[…] }
-//   { type:"ping",     id? }                      → replies { type:"pong", id }
+//   { type:"prompt",     id?, sessionKey, data } → workspace._prompt(sessionKey, data); replies ack
+//   { type:"control",    id?, data:{action,args}} → workspace._control(data);           replies ack
+//   { type:"permission", id?, data:{requestId,decision}} → workspace._permission(data); replies ack
+//   { type:"stop",       id?, sessionKey }        → workspace._stop(sessionKey);          replies ack
+//   { type:"subscribe",  id? }                    → register conn for the live event stream; ack
+//   { type:"snapshot",   id? }                    → replies { type:"snapshot", id, sessions:[…] }
+//   { type:"ping",       id? }                    → replies { type:"pong", id }
+//
+// `prompt`/`control`/`permission`/`stop` are the exact four WS_IN kinds WorkspaceManager.handleIn
+// dispatches — the web + bridge drive the daemon through the same surface they drive the in-process
+// manager with, so the Stop button and a permission decision reach the engine that owns the turn
+// (without `permission`, a tool turn awaiting a canUseTool decision would hang in the daemon forever).
 // Server → client frames:
 //   { type:"event", kind, sessionKey, data }     — one WorkspaceManager.send(…) fanned out to every
 //                                                  subscriber (the exact shape workspace already emits)
@@ -112,6 +119,18 @@ export function createSessiond(opts = {}) {
         return;
       case "control":
         try { workspace._control(req.data || {}); conn.send({ type: "ack", id, ok: true }); }
+        catch (e) { conn.send({ type: "error", id, message: String(e && e.message || e) }); }
+        return;
+      case "permission":
+        // A permission decision from a browser — resolve the canUseTool promise the turn is blocked
+        // on. Without this the daemon-owned turn would await a decision that can never arrive.
+        try { workspace._permission(req.data || {}); conn.send({ type: "ack", id, ok: true }); }
+        catch (e) { conn.send({ type: "error", id, message: String(e && e.message || e) }); }
+        return;
+      case "stop":
+        // The web "Stop" button — interrupt the CURRENT turn but keep the conversation alive.
+        // `_stop` is async (awaits the SDK interrupt); ack immediately, the interrupt runs on its own.
+        try { Promise.resolve(workspace._stop(req.sessionKey)).catch(() => {}); conn.send({ type: "ack", id, ok: true }); }
         catch (e) { conn.send({ type: "error", id, message: String(e && e.message || e) }); }
         return;
       case "subscribe":

@@ -4,6 +4,29 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.22] - 2026-08-12
+
+### Added
+- **Session daemon client (`lib/sessiondClient.mjs`).** The web process's stand-in for the
+  in-process `WorkspaceManager`, talking to the always-up `sessiond` over the lib/sessionIpc unix
+  socket. It exposes the EXACT surface `dashboard/server.mjs` and `agent/agent.mjs`'s `createBridge`
+  call on the manager: `handleIn(kind, sessionKey, data)` (forwarded to the daemon as a request frame
+  typed by kind — prompt/permission/stop/control), the constructor `send(kind, sessionKey, data)`
+  sink (every daemon `event` frame is re-emitted through it, so the SSE `/api/workspace/stream`
+  fan-out and the bridge tunnel are fed exactly as before), `addSink`/`removeSink`, `transcriptDir`
+  (so the image route keeps resolving), and `snapshot()`. It **auto-reconnects** with exponential
+  backoff and, on every (re)connect, re-`subscribe`s + pulls a `snapshot` re-emitted as a `state`
+  event so browsers catch up on anything streamed during downtime. It never throws into the request
+  path — a dropped socket degrades to a dropped frame the reconnect loop heals. Not yet wired into
+  the web (Wave 2 T2.2); inert until then.
+
+### Changed
+- **`sessiond` now also handles `permission` + `stop` request frames** (→ `_permission` / `_stop`),
+  the two remaining WS_IN kinds `WorkspaceManager.handleIn` dispatches. Additive to the existing
+  prompt/control/subscribe/snapshot/ping surface, so the web + bridge can drive the daemon through
+  the same entry point they drive the in-process manager with — without this, a daemon-owned tool
+  turn awaiting a `canUseTool` decision would hang forever, and the Stop button would be inert.
+
 ## [1.1.21] - 2026-08-12
 
 ### Added
