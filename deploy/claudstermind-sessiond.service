@@ -1,0 +1,23 @@
+[Unit]
+Description=Claudstermind session daemon (owns the agent engine; survives web deploys)
+Documentation=file:///home/ancientbox/ClaudeWS/Claudstermind/HANDOFF-SESSIOND.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ancientbox
+WorkingDirectory=/home/ancientbox/ClaudeWS/Claudstermind
+# systemd creates /run/claudstermind (owned by User above, mode 0750) before ExecStart and removes
+# it on stop — so the unix socket lives in a per-service runtime dir the daemon can write to even as
+# a non-root user, without a stale socket surviving a crash. SESSIOND_SOCK points sessiond at it;
+# the same value must be set for the web process (Wave 2) so it dials the same socket.
+RuntimeDirectory=claudstermind
+RuntimeDirectoryMode=0750
+Environment=SESSIOND_SOCK=/run/claudstermind/sessiond.sock
+ExecStart=/usr/bin/node sessiond/sessiond.mjs
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

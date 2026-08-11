@@ -10,7 +10,7 @@ CHANGELOG top entry, push to main. Never restart the live service.
 - [x] T1.2 `sessiond` entrypoint (`sessiond/sessiond.mjs` or `agent/sessiond.mjs`) — build a
       WorkspaceManager, expose prompt/control/subscribe/snapshot over the IPC server; `send` fans out to
       subscribers. Injectable for tests (stub engine + stub socket). Test: prompt→event round-trip.
-- [ ] T1.3 `deploy/claudstermind-sessiond.service` unit file + `HANDOFF-SESSIOND.md` with the one-time
+- [x] T1.3 `deploy/claudstermind-sessiond.service` unit file + `HANDOFF-SESSIOND.md` with the one-time
       install/enable steps and the socket path convention.
 
 ## Wave 2 — Web as client (behind fallback flag)

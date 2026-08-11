@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.21] - 2026-08-12
+
+### Added
+- **Session daemon systemd unit + handoff docs.** `deploy/claudstermind-sessiond.service` is a
+  `Type=simple` system-level unit (mirroring the existing `claudstermind.service` conventions:
+  `User=ancientbox`, the same `WorkingDirectory`, `/usr/bin/node`, `Restart=on-failure`) that runs
+  `node sessiond/sessiond.mjs`. It uses `RuntimeDirectory=claudstermind` so systemd owns
+  `/run/claudstermind` for the daemon's unix socket and points it there via
+  `Environment=SESSIOND_SOCK=/run/claudstermind/sessiond.sock`. `HANDOFF-SESSIOND.md` documents what
+  the daemon is, the `SESSIOND_SOCK` path convention (`$XDG_RUNTIME_DIR` / `/run` fallbacks), and the
+  exact one-time `cp` + `daemon-reload` + `enable --now` commands the operator runs. Nothing was
+  installed, enabled, or restarted against the live system — installing the unit now is idle until
+  the web client is wired in Wave 2 (docs-only + a unit file).
+
 ## [1.1.20] - 2026-08-12
 
 ### Added
