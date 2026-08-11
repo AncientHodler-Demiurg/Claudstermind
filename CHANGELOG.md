@@ -4,7 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.1.4] - 2026-08-11
+## [1.1.5] - 2026-08-11
+
+### Added
+- **Pact IDE — persist + restore the workspace layout (IDE-style).** The Pact view now reopens exactly
+  where you left it, like Cursor: open files (in the right boxes), the editor box count + resize
+  weights + per-box font, which box is active, the chat tabs (name, per-tab compose draft, order,
+  active), and the right-zone collapse — all snapshotted (debounced ~800ms) to the shared server-side
+  store from P1 and rebuilt on load. Because the store lives on the work machine, **localhost and the
+  remote website restore the same layout**. Per-tab chat drafts now survive tab switches (the shared
+  compose box folds its text back into the tab it belonged to). Chat tabs are renameable (double-click
+  the tab name); the chosen name is kept in a shared `{ sessionKey → name }` map so both surfaces
+  agree. Only file *paths* are persisted, never contents (those live on disk / U3 autosave); a missing
+  or corrupt store just yields the fresh default view. Chat-history listing + resume land next (P3).
 
 ### Added
 - **Pact IDE — shared server-side state store (foundation).** A new `lib/pactIdeState.mjs` persists

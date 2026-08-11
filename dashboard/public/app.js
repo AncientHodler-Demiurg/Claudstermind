@@ -2131,6 +2131,7 @@ function pactEdCloseTab(g, path) {
   g.tabs.splice(i, 1);
   if (g.active === path) g.active = g.tabs.length ? g.tabs[Math.max(0, i - 1)].path : null;
   pactEdRenderGroup(g);
+  pactStateSave();
 }
 // The split ladder (point 6): how the N boxes distribute into rows. Each entry is the box count per
 // row, top-to-bottom. Under-filled last rows (5→[3,2], 7→[4,3]) simply share their row equally.
@@ -2161,6 +2162,7 @@ function pactEdGutter(axis, getA, getB, container, onApply) {
     const up = () => {
       document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up);
       document.body.style.cursor = ""; document.body.style.userSelect = "";
+      pactStateSave();   // persist the new box/row weights
     };
     document.addEventListener("mousemove", move); document.addEventListener("mouseup", up);
   });
@@ -2211,6 +2213,7 @@ function pactEdLayout() {
   });
   host.replaceChildren(...hostKids);
   for (const g of PACT_ED.groups) pactEdRenderGroup(g);
+  pactStateSave();
 }
 function pactEdRenderGroup(g) {
   const tabs = g.tabs.map((tb) => {
@@ -2239,8 +2242,8 @@ function pactEdRenderGroup(g) {
   }
   const fMinus = el("button", { class: "pact-ed-ico", title: "Smaller font (this box)" }, ["A-"]);
   const fPlus = el("button", { class: "pact-ed-ico", title: "Bigger font (this box)" }, ["A+"]);
-  fMinus.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.max(9, (g.fontPx || 12.5) - 1); pactEdRenderGroup(g); });
-  fPlus.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.min(22, (g.fontPx || 12.5) + 1); pactEdRenderGroup(g); });
+  fMinus.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.max(9, (g.fontPx || 12.5) - 1); pactEdRenderGroup(g); pactStateSave(); });
+  fPlus.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.min(22, (g.fontPx || 12.5) + 1); pactEdRenderGroup(g); pactStateSave(); });
   actions.push(fMinus, fPlus);
   const split = el("button", { class: "pact-ed-ico", title: "Split — open another editor box (up to 8)" }, ["⊞"]);
   split.addEventListener("click", (e) => { e.stopPropagation(); pactEdAddGroup(); });
@@ -2426,10 +2429,18 @@ async function pactEdOpen(path, row) {
   if (row) row.classList.add("--active");
   const g = PACT_ED.groups.find((x) => x.id === PACT_ED.activeId) || PACT_ED.groups[0];
   PACT_ED.activeId = g.id;
+  await pactEdOpenInto(g, path, true, true);
+}
+// Open `path` into a SPECIFIC group (not just the active one). Shared by the tree-click open above
+// and by layout restore, which reopens each saved box's files into its own group. `relayout` runs a
+// full pactEdLayout (the tree-click path, which may have just switched the active group); restore
+// already laid the boxes out and only needs the group re-rendered.
+async function pactEdOpenInto(g, path, makeActive, relayout) {
+  if (!PACT_ED || !g) return;
   let tab = g.tabs.find((t) => t.path === path);
   if (!tab) { tab = { path, name: path.split("/").pop(), loaded: false, content: "", saved: "", dirty: false, error: null }; g.tabs.push(tab); }
-  g.active = path;
-  pactEdLayout();
+  if (makeActive) g.active = path;
+  if (relayout) pactEdLayout(); else pactEdRenderGroup(g);
   if (tab.loaded || tab.error) return;
   let d;
   try { d = await (await fetch("/api/pact/file?path=" + encodeURIComponent(path))).json(); }
@@ -2443,6 +2454,104 @@ async function pactEdOpen(path, row) {
 // with repo=Ouronet) streamed back over /api/workspace/stream and routed here by sessionKey. So the
 // agent runs in the repo cwd (writes Pact, runs REPLs) exactly like the Core cockpit, just embedded.
 const PACT_REPO = "OuroborosNetwork/_onchain/Ouronet";
+// ---- Shared, server-side IDE-state (P1 store) — so the Pact workspace reopens exactly where it was
+// left AND state is identical on localhost and the remote website (it lives on the machine, not in
+// localStorage). `PACT_STATE_READY` gates saves so the initial build + restore don't echo back over
+// the freshly-read state; `PACT_CHAT_NAMES` is the shared { sessionKey -> friendly name } map. ----
+let PACT_STATE_READY = false;
+let PACT_STATE_TIMER = null;
+let PACT_CHAT_NAMES = {};
+// A debounced (~800ms) snapshot of the whole IDE layout, PUT to the shared store. No-op until a
+// restore has completed (or a fresh view is ready), so a burst of layout changes coalesces into one
+// write. A read-only remote viewer's PUT is refused server-side (403) and simply ignored here.
+function pactStateSave() {
+  if (!PACT_STATE_READY || !PACT_ED || !PACT_CHAT) return;
+  clearTimeout(PACT_STATE_TIMER);
+  PACT_STATE_TIMER = setTimeout(() => {
+    const state = pactStateSnapshot(); if (!state) return;
+    fetch("/api/pact/ide-state", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state }) }).catch(() => {});
+  }, 800);
+}
+// The opaque blob the store persists: open file paths per editor box (+ active/font/weights), chat
+// tab identity (key/name/draft/order/active), right-zone collapse, and the chat-name map. NEVER file
+// contents — those live on disk / autosave (U3). Group + tab identity is stored by INDEX, since the
+// live `id`/`seq` counters are minted fresh on every rebuild and wouldn't survive a reload.
+function pactStateSnapshot() {
+  if (!PACT_ED || !PACT_CHAT) return null;
+  pactChatSaveDraft();   // fold the active tab's live compose text into its tab before snapshotting
+  const editor = {
+    groups: PACT_ED.groups.map((g) => ({ tabs: g.tabs.map((t) => t.path), active: g.active || null, fontPx: g.fontPx || null, flex: g.flex || 1 })),
+    activeIndex: Math.max(0, PACT_ED.groups.findIndex((g) => g.id === PACT_ED.activeId)),
+    rowFlex: Array.isArray(PACT_ED.rowFlex) ? PACT_ED.rowFlex.slice() : null,
+  };
+  const chat = {
+    tabs: PACT_CHAT.tabs.map((t) => ({ key: t.key, name: t.name, draft: t.draft || "" })),
+    activeIndex: Math.max(0, PACT_CHAT.tabs.findIndex((t) => t.id === PACT_CHAT.activeId)),
+  };
+  const right = document.querySelector(".pact-right");
+  const collapse = right ? (right.classList.contains("pr-chat-collapsed") ? "chat" : right.classList.contains("pr-term-collapsed") ? "term" : null) : null;
+  return { v: 1, editor, chat, collapse, chatNames: PACT_CHAT_NAMES || {} };
+}
+// Fetch the saved state and rebuild the IDE from it — reopen editor boxes (count/sizes/fonts) and
+// their files, restore chat tabs (name/draft/order/active), and the collapse. Every step is guarded
+// so a missing or malformed field just leaves that part at its fresh default (never throws).
+async function pactRestoreState() {
+  let saved = {};
+  try { const r = await (await fetch("/api/pact/ide-state")).json(); if (r && r.ok && r.state && typeof r.state === "object") saved = r.state; } catch {}
+  PACT_CHAT_NAMES = (saved.chatNames && typeof saved.chatNames === "object" && !Array.isArray(saved.chatNames)) ? saved.chatNames : {};
+  try { if (saved.editor && Array.isArray(saved.editor.groups) && saved.editor.groups.length) pactRestoreEditor(saved.editor); } catch (e) { console.warn("pact editor restore failed", e); }
+  try { if (saved.chat && Array.isArray(saved.chat.tabs) && saved.chat.tabs.length) pactRestoreChat(saved.chat); } catch (e) { console.warn("pact chat restore failed", e); }
+  try { if (saved.collapse) pactRestoreCollapse(saved.collapse); } catch {}
+  PACT_STATE_READY = true;   // from here on, user changes persist
+}
+function pactRestoreEditor(ed) {
+  const groups = ed.groups.slice(0, 8);
+  PACT_ED.groups = groups.map((gs) => ({ id: ++PACT_ED.seq, tabs: [], active: null, fontPx: gs.fontPx || undefined, flex: (typeof gs.flex === "number" && gs.flex > 0) ? gs.flex : 1 }));
+  const n = PACT_ED.groups.length;
+  PACT_ED.layoutN = n;   // pin so pactEdLayout doesn't reset our restored weights (it only resets on a count change)
+  PACT_ED.rowFlex = (Array.isArray(ed.rowFlex) && ed.rowFlex.length) ? ed.rowFlex.slice() : (PACT_ED_ROWS[n] || [1]).map(() => 1);
+  const ai = Number.isInteger(ed.activeIndex) && ed.activeIndex >= 0 && ed.activeIndex < n ? ed.activeIndex : 0;
+  PACT_ED.activeId = PACT_ED.groups[ai].id;
+  pactEdLayout();
+  groups.forEach((gs, i) => {
+    const g = PACT_ED.groups[i];
+    const paths = Array.isArray(gs.tabs) ? gs.tabs.filter((p) => typeof p === "string") : [];
+    const active = (gs.active && paths.includes(gs.active)) ? gs.active : (paths[0] || null);
+    for (const p of paths) pactEdOpenInto(g, p, p === active, false);
+    if (!paths.length) { g.active = null; pactEdRenderGroup(g); }
+  });
+}
+function pactRestoreChat(ch) {
+  const tabs = ch.tabs.slice(0, 16).filter((t) => t && typeof t === "object");
+  if (!tabs.length) return;
+  PACT_CHAT.tabs = tabs.map((ts) => {
+    const id = ++PACT_CHAT.seq;
+    const key = (typeof ts.key === "string" && ts.key) ? ts.key : wsUuid();
+    return { id, name: ts.name || PACT_CHAT_NAMES[key] || ("Chat " + id), key,
+      msgs: [], live: "", status: "idle",
+      // A restored tab's backend session already received the orienting preamble in its prior life —
+      // don't re-inject it on the next message. (Full transcript rehydration + resume is P3.)
+      started: true, perm: null, draft: typeof ts.draft === "string" ? ts.draft : "" };
+  });
+  const ai = Number.isInteger(ch.activeIndex) && ch.activeIndex >= 0 && ch.activeIndex < PACT_CHAT.tabs.length ? ch.activeIndex : 0;
+  PACT_CHAT.activeId = PACT_CHAT.tabs[ai].id;
+  pactChatRender();
+}
+function pactRestoreCollapse(mode) {
+  const right = document.querySelector(".pact-right"); if (!right) return;
+  right.classList.remove("pr-chat-collapsed", "pr-term-collapsed");
+  if (mode === "chat") right.classList.add("pr-chat-collapsed");
+  else if (mode === "term") right.classList.add("pr-term-collapsed");
+  pactSyncCollapseBtns();
+}
+// Fold the active chat tab's live compose text into its own `draft` before a render tears the shared
+// textarea down (tab switch, new/close tab) or before a snapshot — so drafts survive per-tab.
+function pactChatSaveDraft() {
+  if (!PACT_CHAT || !PACT_CHAT.host) return;
+  const ta = PACT_CHAT.host.querySelector(".pc-input");
+  const a = pactChatActive();
+  if (ta && a) a.draft = ta.value;
+}
 const PACT_CHAT_PREAMBLE = "[Pact IDE — auto-skill] You are working in the Ouronet Pact repo (your cwd). BEFORE anything else, read `OuronetInformational/SKILL.md` — it is the single load hook: it gives the load order, the StoicSyntax discipline (`StoicSyntax.md` + `ouronet/conventions/*`), the Pact 5 language layer (`pact5/`), the fast-recall rules, and the active-learning protocol. Follow its load order and become fully skilled from those files (they are the canonical authority). Use `OuronetInformational/MODULE-INDEX.md` for a one-glance map of every module (schemas/tables/public C_/A_/X entrypoints). Before writing code in any module, find it in the index then SCAN that module's `.pact` + its interface + its `.repl` tests to learn its real schemas/tables/prefixes/caps, and imitate sibling patterns — e.g. \"an info function for module X\" means mirror how the codebase exposes `UR_`/`INFO-` readers for X's schema (grep for the pattern rather than guessing). Run tests with `pact <file>.repl` (Pact 5.4); namespace `ouronet-ns`. Keep all code in the StoicSyntax discipline. When I correct you (\"do X instead of Y\"), capture it per SKILL.md's active-learning protocol (a dated `memories/` note + fold durable rules into the matching doc).";
 let PACT_CHAT = null;   // { host, tabs:[t], activeId, seq, es, mode, conn }
                         // t = { id, name, key, msgs:[{role|kind,text,tools}], live, status, started, perm, bodyEl }
@@ -2460,21 +2569,41 @@ function pactToggleCollapse(pane) {
   if (pane === "chat") { if (right.classList.toggle("pr-chat-collapsed")) right.classList.remove("pr-term-collapsed"); }
   else { if (right.classList.toggle("pr-term-collapsed")) right.classList.remove("pr-chat-collapsed"); }
   pactSyncCollapseBtns();
+  pactStateSave();
+}
+// Rename a chat tab (double-click its name, or the history rename control). The chosen name is stored
+// in the shared PACT_CHAT_NAMES map (keyed by the tab's sessionKey) so local + remote agree, and on
+// the tab object for the live label.
+function pactChatRenameTab(t) {
+  if (!t) return;
+  const next = window.prompt("Rename this chat", t.name || "");
+  if (next == null) return;
+  const name = next.trim().slice(0, 80);
+  if (!name) return;
+  t.name = name;
+  if (t.key) PACT_CHAT_NAMES[t.key] = name;
+  pactChatRender();
+  pactStateSave();
 }
 function pactChatInit(host) {
   PACT_CHAT = { host, tabs: [], activeId: null, seq: 0, es: null, mode: "bypassPermissions", conn: connIdentity() };
   pactChatOpenStream();
   pactChatNewTab();
 }
-function pactChatStop() { if (PACT_CHAT && PACT_CHAT.es) { try { PACT_CHAT.es.close(); } catch {} PACT_CHAT.es = null; } }
+function pactChatStop() {
+  PACT_STATE_READY = false; clearTimeout(PACT_STATE_TIMER);   // leaving Pact — stop persisting a torn-down layout
+  if (PACT_CHAT && PACT_CHAT.es) { try { PACT_CHAT.es.close(); } catch {} PACT_CHAT.es = null; }
+}
 function pactChatActive() { return PACT_CHAT && PACT_CHAT.tabs.find((t) => t.id === PACT_CHAT.activeId); }
 function pactChatByKey(key) { return PACT_CHAT && PACT_CHAT.tabs.find((t) => t.key === key); }
 function pactChatNewTab() {
   if (!PACT_CHAT) return;
+  pactChatSaveDraft();   // keep the current tab's compose text before the shared textarea is torn down
   const id = ++PACT_CHAT.seq;
-  PACT_CHAT.tabs.push({ id, name: "Chat " + id, key: wsUuid(), msgs: [], live: "", status: "idle", started: false, perm: null });
+  PACT_CHAT.tabs.push({ id, name: "Chat " + id, key: wsUuid(), msgs: [], live: "", status: "idle", started: false, perm: null, draft: "" });
   PACT_CHAT.activeId = id;
   pactChatRender();
+  pactStateSave();
 }
 function pactChatCloseTab(id) {
   const t = PACT_CHAT.tabs.find((x) => x.id === id);
@@ -2483,6 +2612,7 @@ function pactChatCloseTab(id) {
   if (!PACT_CHAT.tabs.length) { pactChatNewTab(); return; }
   if (PACT_CHAT.activeId === id) PACT_CHAT.activeId = PACT_CHAT.tabs[0].id;
   pactChatRender();
+  pactStateSave();
 }
 function pactChatOpenStream() {
   pactChatStop();
@@ -2522,6 +2652,8 @@ function pactChatSend(t) {
   t.msgs.push({ role: "user", text });
   t.status = "thinking"; t.live = "";
   if (ta) { ta.value = ""; ta.style.height = ""; }
+  t.draft = "";   // the draft was just sent — clear it so a reload doesn't resurrect it
+  pactStateSave();
   t._forceBottom = true;   // your own just-sent message lands at the bottom + re-pins, even if you'd scrolled up
   pactChatPaint(t);
   wsPost("prompt", { sessionKey: t.key, repo: PACT_REPO, worktree: "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id });
@@ -2595,8 +2727,10 @@ function pactChatRender() {
     const x = el("span", { class: "pc-tab-x", title: "Close chat" }, ["×"]);
     x.addEventListener("click", (e) => { e.stopPropagation(); pactChatCloseTab(t.id); });
     const dot = el("span", { class: "pc-tab-dot" + (t.status === "thinking" || t.status === "deepwork" ? " busy" : "") });
-    const tab = el("div", { class: "pc-tab" + (t.id === PACT_CHAT.activeId ? " --active" : "") }, [dot, el("span", { class: "pc-tab-name" }, [t.name]), x]);
-    tab.addEventListener("click", () => { PACT_CHAT.activeId = t.id; pactChatRender(); });
+    const nameEl = el("span", { class: "pc-tab-name", title: "Double-click to rename this chat" }, [t.name]);
+    nameEl.addEventListener("dblclick", (e) => { e.stopPropagation(); pactChatRenameTab(t); });
+    const tab = el("div", { class: "pc-tab" + (t.id === PACT_CHAT.activeId ? " --active" : "") }, [dot, nameEl, x]);
+    tab.addEventListener("click", () => { if (t.id === PACT_CHAT.activeId) return; pactChatSaveDraft(); PACT_CHAT.activeId = t.id; pactChatRender(); pactStateSave(); });
     return tab;
   });
   const add = el("button", { class: "pact-ed-ico", title: "New Pact chat" }, ["＋"]);
@@ -2612,8 +2746,10 @@ function pactChatRender() {
   const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (Enter to send)" });
   const send = el("button", { class: "pc-send" }, ["Send"]);
   const active = pactChatActive();
+  if (active) input.value = active.draft || "";   // restore this tab's saved compose draft
   send.addEventListener("click", () => pactChatSend(active));
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); pactChatSend(pactChatActive()); } });
+  input.addEventListener("input", () => { const a = pactChatActive(); if (a) { a.draft = input.value; pactStateSave(); } });
   const compose = el("div", { class: "pc-compose" }, [input, send]);
   host.replaceChildren(head, scroll, compose);
   attachStickController(scroll, { wrapClass: "stick-wrap-pc" });   // wrap now so the pill exists from the first paint
@@ -2659,10 +2795,15 @@ function viewPact() {
   const editorWrap = el("div", { class: "pact-editor-wrap" }, [toolbar, editorEl]);
   const workEl = el("div", { class: "pact-work" }, [editorWrap, rightEl]);
   const root = el("div", { class: "pact-ide" }, [treeEl, workEl]);
+  PACT_STATE_READY = false;   // suppress persistence until the saved layout has been read + rebuilt
   pactEdInit(editorEl);
   PACT_ED.saveBtn = saveBtn; PACT_ED.keepBtn = keepBtn; PACT_ED.saveStatus = saveStatus; pactEdUpdateSaveBar();
   pactChatInit(chatEl);
   loadPactDir("", treeBody);
+  // Rebuild the IDE from the shared server-side store (open files, boxes, chat tabs, drafts, collapse),
+  // then arm persistence. Async + fire-and-forget so the view returns immediately; a fresh/empty or
+  // unreachable store just leaves the default one-box / one-chat view and still arms saving.
+  pactRestoreState();
   return root;
 }
 

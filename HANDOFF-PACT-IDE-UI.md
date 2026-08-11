@@ -41,8 +41,17 @@
   forwarded in `relay/server.mjs`, answered by `pactIdeStateGet`/`pactIdeStatePut` in `agent.mjs`
   handleCommand — mirrors the pactFile/pactWrite tunnel exactly. The blob is opaque JSON the frontend
   authors.
-- ⏳ **P2 — persist + restore the IDE layout** (debounced ~800ms snapshot on any layout change;
-  rebuild on `viewPact()` load). NOT YET DONE.
+- ✅ **P2 — persist + restore the IDE layout** (v1.1.5). `pactStateSnapshot()`/`pactStateSave()`
+  (debounced 800ms PUT) + `pactRestoreState()`/`pactRestoreEditor`/`pactRestoreChat`/`pactRestoreCollapse`
+  in app.js. Snapshot = `{v:1, editor:{groups:[{tabs:[paths],active,fontPx,flex}],activeIndex,rowFlex},
+  chat:{tabs:[{key,name,draft}],activeIndex}, collapse, chatNames}`. Save triggers wired into
+  `pactEdLayout`, `pactEdCloseTab`, font +/-, gutter mouseup, `pactChatNewTab/CloseTab`, tab switch,
+  compose `input`, `pactChatSend` (clears draft), `pactToggleCollapse`, `pactChatRenameTab`.
+  `PACT_STATE_READY` gates saves (false during build/restore + when leaving Pact via `pactChatStop`).
+  Per-tab drafts persist via `pactChatSaveDraft()` (shared textarea folds into the tab on switch).
+  `pactEdOpen` refactored to share `pactEdOpenInto(g,path,makeActive,relayout)` used by restore.
+  Double-click a chat tab name to rename (writes `PACT_CHAT_NAMES`). NOT persisted: file contents,
+  transcripts (P3), tree font.
 - ⏳ **P3 — chat history panel + auto-name + rename + resume** (per-session list for the Pact repo;
   Resume passes the session's `realSessionId` as `resume`). NOT YET DONE.
 - ⏳ **P4 — surface the recovered "Ouronet Pact audit" chat** (session file id
