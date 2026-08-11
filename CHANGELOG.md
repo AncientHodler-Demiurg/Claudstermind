@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.13] - 2026-08-11
+
+### Fixed
+- **Pane stuck on "Working…" after a finished turn.** If a turn's completion (`result`) event was
+  silently dropped (e.g. the SSE subscriber was momentarily evicted), the pane sat on "Working…" with
+  an active Stop button forever — the output was there, but only a full page reload cleared it. The
+  client now self-heals: on each heartbeat, any pane still marked busy but gone quiet past a threshold
+  is resynced against the server's true current state, so a missed end-of-turn recovers on its own.
+
 ## [1.1.12] - 2026-08-11
 
 ### Fixed

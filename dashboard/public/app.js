@@ -1693,6 +1693,9 @@ let WS_EVER_CONNECTED = false;   // true after the FIRST successful "hello" — 
 // Comfortably above the 25s server heartbeat: two missed pulses plus slack, not one, so an
 // ordinary single slow tick over a mobile link never triggers a needless reconnect.
 const WS_STALE_MS = 65_000;
+// A pane still marked busy but silent this long is treated as a missed end-of-turn and resynced on
+// the next heartbeat (server heartbeat is 25s; a live turn streams events far more often than this).
+const WS_HEAL_QUIET_MS = 20_000;
 /* ---------- relay: the tunnel between this LocalHost and the online site ----------
    Symmetric tab. On the LOCAL dashboard it CONTROLS the bridge (enable/disable, address,
    device secret) and shows whether the remote is online + receiving. On the ONLINE relay
@@ -4567,7 +4570,21 @@ function viewWorkspace() {
     // A real (not comment-only) pulse from the server — see the matching server-side comment.
     // No pane state to update here; `WS_ES.onmessage` (below) already stamped `lastStreamMsgAt`
     // for EVERY message including this one, which is this event's entire purpose.
-    if (kind === "heartbeat") return;
+    if (kind === "heartbeat") {
+      // Self-heal a stuck pane: if a completion ("result") event was silently dropped (e.g. the SSE
+      // subscriber was momentarily evicted), the pane sits on "Working…" forever until a manual
+      // reload. A genuinely active turn streams events constantly, so a pane that's still marked busy
+      // yet has gone quiet for a while is almost certainly one whose end-of-turn we missed — ask the
+      // server for its true current state. Harmless if it really is still working (server says so).
+      const now = Date.now();
+      for (const p of st.panes) {
+        if (p.sessionKey && !p.readonly && paneBusy(p) && (now - (p._lastEventAt || 0)) > WS_HEAL_QUIET_MS) {
+          p._lastEventAt = now;   // don't re-fire every heartbeat while the resync round-trips
+          wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey } });
+        }
+      }
+      return;
+    }
     if (kind === "presence") { st.presence = Array.isArray(data.connections) ? data.connections : []; renderPresence(); renderLiveStats(); renderHistory(); return; }
     if (kind === "state") {
       if (Array.isArray(data.worktrees)) {
@@ -4771,6 +4788,7 @@ function viewWorkspace() {
       // not just whichever pane happened to ask.
       if (data.kind === "usageLimits") { st.usageLimits = data.limits; renderUsageLimits(); return; }
       for (const p of targets) {
+        p._lastEventAt = Date.now();   // per-pane activity stamp — the heartbeat self-heal uses it to spot a stuck-busy pane
         // Live typing preview (see lib/claudeSession.mjs's `includePartialMessages`/`stream_event`
         // handling): each chunk just extends a transient, per-pane buffer — never pushed into
         // `p.transcript` itself, so it's never persisted/resynced as real history. Any OTHER event
@@ -4948,7 +4966,7 @@ function viewWorkspace() {
     // but setting it now closes a race — without it, a SECOND queued item could see paneBusy()
     // still false in the brief window before that event arrives and dispatch immediately behind
     // this one instead of waiting its turn.
-    p.status = "thinking"; p._streamingStarted = false; p._saved = false; paintPane(p);
+    p.status = "thinking"; p._streamingStarted = false; p._saved = false; p._lastEventAt = Date.now(); paintPane(p);
     logActivity(p, "→ Sending your message…");
     const r = await wsPost("prompt", body);
     if (!r.ok) {
