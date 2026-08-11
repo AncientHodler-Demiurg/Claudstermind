@@ -926,10 +926,26 @@ function viewDeploy() {
     );
   }
 
-  // The deploy confirmation — a custom in-app modal (never window.confirm). T4.4 layers the
-  // busy-agent guard in front of it; both funnel through here so the deploy button can't be
-  // triggered without passing them.
+  // The deploy confirmation — a custom in-app modal (never window.confirm) PLUS the busy-agent
+  // guard (T4.4). The deploy button's only click path awaits this, so the guard is impossible to
+  // bypass. The plan + busy count are re-fetched here at click time (not read from a possibly-stale
+  // panel render) so the decision is always authoritative. A web-only deploy (deployPlan not
+  // daemon-affected) never warns — it goes straight to the standard confirm.
   async function deployConfirm() {
+    let plan = LAST_PROC && LAST_PROC.plan, busy = LAST_PROC && LAST_PROC.busy;
+    try {
+      const d = await (await fetch("/api/admin/processes", { cache: "no-store" })).json();
+      LAST_PROC = d; if (d.plan) plan = d.plan; if (d.busy) busy = d.busy;
+    } catch { /* keep the last known plan/busy — fail toward the standard confirm below */ }
+    const count = (busy && busy.count) || 0;
+    if (plan && plan.daemonAffected && count > 0) {
+      const goOn = await showModal({
+        title: count === 1 ? "1 agent still working" : count + " agents still working",
+        danger: true, confirmLabel: "Deploy anyway",
+        sub: `This deploy restarts the agent engine (sessiond), so ${count === 1 ? "that agent's" : "those agents'"} unsettled work will be lost. Deploy anyway?`,
+      });
+      if (!goOn) return false;
+    }
     return await showModal({ title: "Deploy to live", confirmLabel: "Deploy",
       sub: "Deploy the current build to brain.ancientholdings.eu? The relay rebuilds (~1 min)." });
   }

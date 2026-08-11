@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.29] - 2026-08-12
+
+### Added
+- **Deploy guard: warn before interrupting busy agents.** When a deploy would restart the agent
+  engine (`deployPlan` daemon-affected) AND agents are still working (`anyBusy` over the engine's
+  live snapshot > 0), the deploy button now shows a custom danger modal ("N agent(s) still working —
+  their unsettled work will be lost — deploy anyway?") and proceeds only on confirm. A web-only
+  deploy never warns. The plan + busy count are re-fetched from `/api/admin/processes` at click time
+  (authoritative, server-side snapshot) and the deploy button's only path runs through this guard,
+  so it cannot be bypassed.
+
 ## [1.1.28] - 2026-08-12
 
 ### Changed
