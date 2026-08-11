@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.19] - 2026-08-12
+
+### Added
+- **Session IPC framing (`lib/sessionIpc.mjs`).** First foundation piece of the deploy-survivable
+  agents work: a newline-delimited JSON frame protocol for the coming session daemon. `encodeFrame`
+  serializes one object as compact JSON plus a trailing newline; a streaming `FrameDecoder` feeds on
+  raw chunks and emits the complete objects that became available, retaining any partial trailing
+  frame so a message split across two reads decodes exactly once and several messages coalesced into
+  one read decode as several (both covered by tests). A malformed line is skipped (optionally
+  reported) rather than wedging the stream. Thin `createIpcServer`/`connectIpc` helpers wrap
+  `node:net` unix domain sockets with a framed `send`/`onFrame`/`onClose` connection surface; the
+  framing itself is pure and has no `node:net` dependency. No web/runtime path changed — new files
+  only.
+
 ## [1.1.18] - 2026-08-11
 
 ### Added
