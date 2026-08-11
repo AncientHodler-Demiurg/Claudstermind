@@ -31,7 +31,7 @@ CHANGELOG top entry, push to main. Never restart the live service.
 ## Wave 4 — Deploy panel UX
 - [x] T4.1 Running-process list + "what this deploy restarts" banner in the deploy admin section (server
       endpoint listing web/sessiond/localhost-apps + client render).
-- [ ] T4.2 StoaExplorer-style streamed progress view (study ~/ClaudeWS/StoaChain/seers/StoaExplorer,
+- [x] T4.2 StoaExplorer-style streamed progress view (study ~/ClaudeWS/StoaChain/seers/StoaExplorer,
       read-only) in Claudstermind's deploy panel.
 - [ ] T4.3 Replace window.confirm/alert/prompt in the deploy flow with custom in-app modals.
 - [ ] T4.4 Wire the guard: daemon-affecting deploy + agents busy → custom warn/confirm or block.

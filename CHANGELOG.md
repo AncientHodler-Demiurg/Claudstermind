@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.27] - 2026-08-12
+
+### Changed
+- **Deploy & Reload: a StoaExplorer-style step-by-step progress view.** Both the deploy and the
+  self-restart admin flows now render a live phase list (Package → Ship → Rebuild + blue-green swap →
+  Cleanup for deploy; Pre-flight → Restart for reload) with StoaExplorer's marks (○ pending · ◐
+  running · ● done · ✕ failed) in Claudstermind's dark theme, plus a per-phase elapsed timer that
+  ticks while running and freezes when the run settles. It's driven entirely by the existing SSE log
+  streams — phases are recognized from the step markers the server already prints — so no server
+  change was needed. The raw log is still there, moved into a collapsible "Full log".
+
 ## [1.1.26] - 2026-08-12
 
 ### Added

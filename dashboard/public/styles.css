@@ -729,6 +729,27 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .deploy-proc-role { font-size: 11px; color: var(--ink-mute); }
 .deploy-proc-detail { margin-left: auto; font-size: 11px; color: var(--ink-mute); font-family: ui-monospace, monospace;
   text-align: right; white-space: nowrap; }
+
+/* ---- Deploy: StoaExplorer-style step-by-step progress (deploy-survivable agents W4) ---- */
+.dp-progress { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+.dp-hd { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+.dp-status { font-size: 13px; font-weight: 600; color: var(--ink); }
+.dp-status.dp-running { color: var(--accent); }
+.dp-status.dp-ok { color: #34d399; }
+.dp-status.dp-failed { color: #f87171; }
+.dp-elapsed { font-size: 11px; color: var(--ink-mute); font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.dp-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.dp-step { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink); }
+.dp-step.dp-pending { opacity: .45; }
+.dp-step.dp-running { color: var(--accent); }
+.dp-step.dp-failed { color: #f87171; }
+.dp-mark { flex: none; width: 14px; text-align: center; }
+.dp-step.dp-done .dp-mark { color: #34d399; }
+.dp-label { min-width: 0; }
+.dp-time { margin-left: auto; font-size: 11px; color: var(--ink-mute); font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.deploy-logwrap { margin-top: 8px; }
+.deploy-logwrap > summary { cursor: pointer; font-size: 12px; color: var(--ink-mute); padding: 4px 0; }
+.deploy-logwrap[open] > summary { margin-bottom: 8px; }
 .ws-databadge { font-size: 9.5px; color: var(--ink-mute); font-family: ui-monospace, monospace; white-space: nowrap; margin-left: auto; }
 .ws-side-item .ws-databadge { margin-left: auto; }
 .ws-orggroup-hd { cursor: pointer; user-select: none; }

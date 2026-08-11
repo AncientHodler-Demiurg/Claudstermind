@@ -736,6 +736,7 @@ function openLogStream(url, term, onDone, opts) {
       onDone(line === "__DONE_OK__");
       return;
     }
+    if (opts && opts.onLine) { try { opts.onLine(line); } catch {} }   // drive the step-by-step progress view
     term.textContent += line + "\n"; term.scrollTop = term.scrollHeight;
   };
   es.onerror = () => {
@@ -789,6 +790,91 @@ async function pollDeploySucceeded(noteEl, expectedVersion, { attempts = 60, del
   }
   noteEl.textContent = "⚠ No confirmation received — check the version chip manually.";
 }
+
+/** A polished, StoaExplorer-style step-by-step progress view driven by the existing deploy/restart
+ *  SSE log stream (openLogStream feeds it each line via opts.onLine). The log is unstructured text,
+ *  so phases are recognized by matching known per-step markers the server already prints (deploy:
+ *  "── Package ──" …; restart: the pre-flight / trigger lines). Marks + colors mirror StoaExplorer
+ *  (○ pending · ◐ running · ● done · ✕ failed) but use Claudstermind's dark-theme classes. Elapsed
+ *  timers tick per-second while running and freeze when the run settles. The raw log stays available
+ *  in a collapsible "Full log" the caller wires below. */
+function makeProgress(phaseDefs) {
+  const state = phaseDefs.map((d) => ({ id: d.id, label: d.label, match: d.match, status: "pending", startedAt: null, endedAt: null }));
+  const MARK = { pending: "○", running: "◐", done: "●", failed: "✕" };
+  const STATUS_TEXT = { idle: "Ready when you are.", running: "Running…", ok: "Complete.", failed: "Failed — the previous version is still serving. See the log." };
+  let runStatus = "idle", runStart = null, runEnd = null, current = -1, tick = null;
+
+  const hd = el("div", { class: "dp-hd" }, []);
+  const list = el("ol", { class: "dp-list" }, []);
+  const wrap = el("div", { class: "dp-progress" }, [hd, list]);
+
+  const fmt = (ms) => {
+    if (ms == null || ms < 0) return "—";
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return s + "s";
+    const m = Math.floor(s / 60), r = s % 60;
+    if (m < 60) return m + "m " + String(r).padStart(2, "0") + "s";
+    return Math.floor(m / 60) + "h " + String(m % 60).padStart(2, "0") + "m";
+  };
+
+  function paint(now = Date.now()) {
+    const totalEnd = runStatus === "running" ? now : (runEnd || now);
+    hd.replaceChildren(
+      el("span", { class: "dp-status dp-" + runStatus }, [STATUS_TEXT[runStatus]]),
+      el("span", { class: "dp-elapsed" }, [runStart ? fmt(totalEnd - runStart) + " elapsed" : ""]),
+    );
+    list.replaceChildren(...state.map((p) => {
+      const end = p.endedAt != null ? p.endedAt : (p.status === "running" ? now : null);
+      const dur = p.startedAt != null && end != null ? end - p.startedAt : null;
+      return el("li", { class: "dp-step dp-" + p.status }, [
+        el("span", { class: "dp-mark", "aria-hidden": "true" }, [MARK[p.status]]),
+        el("span", { class: "dp-label" }, [p.label]),
+        el("span", { class: "dp-time" }, [p.status === "pending" ? "" : fmt(dur)]),
+      ]);
+    }));
+  }
+  const startTick = () => { if (!tick) tick = setInterval(() => paint(), 1000); };
+  const stopTick = () => { if (tick) { clearInterval(tick); tick = null; } };
+
+  function reset() {
+    stopTick();
+    for (const p of state) { p.status = "pending"; p.startedAt = null; p.endedAt = null; }
+    runStatus = "idle"; runStart = null; runEnd = null; current = -1;
+    paint();
+  }
+  function onLine(line) {
+    const now = Date.now();
+    if (runStatus === "idle") { runStatus = "running"; runStart = now; startTick(); }
+    for (let i = 0; i < state.length; i++) {
+      if (i > current && state[i].match.test(line)) {
+        for (let j = current + 1; j < i; j++) { if (state[j].startedAt == null) state[j].startedAt = now; state[j].endedAt = now; state[j].status = "done"; }
+        if (current >= 0 && state[current].status === "running") { state[current].endedAt = now; state[current].status = "done"; }
+        state[i].startedAt = now; state[i].status = "running"; current = i;
+        break;
+      }
+    }
+    paint(now);
+  }
+  function done(ok) {
+    const now = Date.now();
+    stopTick(); runEnd = now; runStatus = ok ? "ok" : "failed";
+    if (ok) { for (const p of state) { if (p.status !== "done") { if (p.startedAt == null) p.startedAt = now; p.endedAt = now; p.status = "done"; } } }
+    else if (current >= 0) { state[current].endedAt = now; state[current].status = "failed"; }
+    paint(now);
+  }
+  paint();
+  return { wrap, onLine, done, reset };
+}
+const DEPLOY_PHASES = [
+  { id: "package", label: "Package the build", match: /── Package ──/ },
+  { id: "ship", label: "Ship to the host", match: /── Ship ──/ },
+  { id: "rebuild", label: "Rebuild image + blue-green swap", match: /── Rebuild ──/ },
+  { id: "cleanup", label: "Clean up", match: /── Cleanup ──/ },
+];
+const RESTART_PHASES = [
+  { id: "preflight", label: "Sandboxed pre-flight", match: /pre-flight/ },
+  { id: "restart", label: "Restart the service", match: /triggering the real restart|restart triggered/ },
+];
 
 function viewDeploy() {
   const root = el("div", { class: "deploy-wrap" }, []);
@@ -848,6 +934,10 @@ function viewDeploy() {
   const rterm = el("pre", { class: "deploy-term" }, ["(no restart run yet)"]);
   const rActions = el("div", { class: "deploy-actions" }, []);
   const rNote = el("div", { class: "hint" }, []);
+
+  // StoaExplorer-style step-by-step progress views, driven by the same SSE log streams (T4.2).
+  const deployProgress = makeProgress(DEPLOY_PHASES);
+  const restartProgress = makeProgress(RESTART_PHASES);
   let restarting = !!RESTART_ES;   // a stream from a previous mount of this section is still live
   let canRestart = true;           // updated by refresh() every poll; read by refreshRestartBtn()
 
@@ -855,24 +945,31 @@ function viewDeploy() {
 
   function openStream(expectedVersion) {
     try { DEPLOY_ES && DEPLOY_ES.close(); } catch {}
+    deployProgress.reset();
     DEPLOY_ES = openLogStream("/api/deploy/stream", term, (ok) => {
+      deployProgress.done(ok);
       note.textContent = ok ? "✓ Deploy finished — refresh version state." : "✗ Deploy failed — see the log.";
       refresh();
-    }, expectedVersion ? {
-      // ~2x a typical ~1min deploy's headroom — long enough that a merely-slow rebuild doesn't
-      // trip it, short enough that a genuinely silent stream doesn't leave "Deploying…" stuck.
-      timeoutMs: 90000,
-      onFallback: () => {
-        DEPLOY_ES = null;
-        note.textContent = "No confirmation received — checking if it actually deployed…";
-        pollDeploySucceeded(note, expectedVersion);
-      },
-    } : undefined);
+    }, {
+      onLine: (line) => deployProgress.onLine(line),
+      ...(expectedVersion ? {
+        // ~2x a typical ~1min deploy's headroom — long enough that a merely-slow rebuild doesn't
+        // trip it, short enough that a genuinely silent stream doesn't leave "Deploying…" stuck.
+        timeoutMs: 90000,
+        onFallback: () => {
+          DEPLOY_ES = null;
+          note.textContent = "No confirmation received — checking if it actually deployed…";
+          pollDeploySucceeded(note, expectedVersion);
+        },
+      } : {}),
+    });
   }
 
   function openRestartStream() {
     try { RESTART_ES && RESTART_ES.close(); } catch {}
+    restartProgress.reset();
     RESTART_ES = openLogStream("/api/dashboard/restart/stream", rterm, (ok) => {
+      restartProgress.done(ok);
       restarting = false;
       RESTART_ES = null;
       if (ok) {
@@ -888,6 +985,7 @@ function viewDeploy() {
       }
       refreshRestartBtn();
     }, {
+      onLine: (line) => restartProgress.onLine(line),
       // 40s: pre-flight's own runSelfRestart budget is up to 15s (dashboard/server.mjs's
       // timeoutMs default), plus the real `systemctl restart` round-trip (process teardown +
       // the unit coming back up) — 40s leaves comfortable headroom over that combined path
@@ -985,8 +1083,12 @@ function viewDeploy() {
     pendingBanner,
     restartBanner,
     procBox,
-    el("h3", { style: "margin:14px 0 4px" }, ["Deploy log"]), term,
-    el("h3", { style: "margin:14px 0 4px" }, ["Reload log"]), rterm,
+    el("h3", { style: "margin:14px 0 4px" }, ["Deploy progress"]),
+    deployProgress.wrap,
+    el("details", { class: "deploy-logwrap" }, [el("summary", {}, ["Full deploy log"]), term]),
+    el("h3", { style: "margin:14px 0 4px" }, ["Reload progress"]),
+    restartProgress.wrap,
+    el("details", { class: "deploy-logwrap" }, [el("summary", {}, ["Full reload log"]), rterm]),
   );
   refresh();
   refreshProcesses();
