@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.28] - 2026-08-12
+
+### Changed
+- **Deploy flow uses custom in-app modals, not `window.confirm`.** The Deploy and Reload
+  confirmations in the admin panel now use the themed `showModal` dialog (matching the rest of the
+  app) instead of the browser's native `confirm()`. Both deploy triggers funnel through one
+  `deployConfirm()` path so the confirmation can't be bypassed (and so the busy-agent guard layers
+  cleanly on top of it).
+
 ## [1.1.27] - 2026-08-12
 
 ### Changed

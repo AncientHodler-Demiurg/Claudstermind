@@ -33,7 +33,7 @@ CHANGELOG top entry, push to main. Never restart the live service.
       endpoint listing web/sessiond/localhost-apps + client render).
 - [x] T4.2 StoaExplorer-style streamed progress view (study ~/ClaudeWS/StoaChain/seers/StoaExplorer,
       read-only) in Claudstermind's deploy panel.
-- [ ] T4.3 Replace window.confirm/alert/prompt in the deploy flow with custom in-app modals.
+- [x] T4.3 Replace window.confirm/alert/prompt in the deploy flow with custom in-app modals.
 - [ ] T4.4 Wire the guard: daemon-affecting deploy + agents busy → custom warn/confirm or block.
 
 ## Wave 5 — Bridge parity + review

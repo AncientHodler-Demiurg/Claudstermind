@@ -926,6 +926,14 @@ function viewDeploy() {
     );
   }
 
+  // The deploy confirmation — a custom in-app modal (never window.confirm). T4.4 layers the
+  // busy-agent guard in front of it; both funnel through here so the deploy button can't be
+  // triggered without passing them.
+  async function deployConfirm() {
+    return await showModal({ title: "Deploy to live", confirmLabel: "Deploy",
+      sub: "Deploy the current build to brain.ancientholdings.eu? The relay rebuilds (~1 min)." });
+  }
+
   // Self-restart safety: a sandboxed pre-flight, then (only on ok:true) the real restart —
   // gated identically to Deploy above (same canDeploy/canRestart condition) rather than a
   // new auth path, and reusing this same log-terminal rendering (openLogStream) rather than
@@ -1022,7 +1030,7 @@ function viewDeploy() {
     const deployBtn = el("button", { class: "loginbtn" + (same ? " secondary" : "") }, [st.running ? "Deploying…" : (same ? "Redeploy" : "Deploy ↗")]);
     if (st.running || !canDeploy) deployBtn.disabled = true;
     deployBtn.addEventListener("click", async () => {
-      if (!confirm("Deploy the current build to brain.ancientholdings.eu? The relay rebuilds (~1 min).")) return;
+      if (!(await deployConfirm())) return;   // custom modal (+ busy-agent guard) — never window.confirm
       note.textContent = "Starting deploy…"; openStream(pending?.version);
       const r = await wsPost2("/api/deploy", {});
       if (!r.ok) { try { DEPLOY_ES.close(); } catch {} DEPLOY_ES = null; note.textContent = "⚠ " + (r.message || "could not start"); }
@@ -1067,7 +1075,8 @@ function viewDeploy() {
     const restartBtn = el("button", { class: "loginbtn secondary" }, [restarting ? "Reloading…" : "⟳ Reload"]);
     if (restarting || !canRestart) restartBtn.disabled = true;
     restartBtn.addEventListener("click", async () => {
-      if (!confirm("Run a sandboxed pre-flight and, only if it passes, reload the local dashboard now?")) return;
+      if (!(await showModal({ title: "Reload the local dashboard", confirmLabel: "Reload",
+        sub: "Run a sandboxed pre-flight and, only if it passes, reload the local dashboard now? Agents on this machine are interrupted by a reload." }))) return;
       restarting = true; rNote.textContent = "Starting reload pre-flight…"; openRestartStream();
       refreshRestartBtn();
       const r = await wsPost2("/api/dashboard/restart", {});
