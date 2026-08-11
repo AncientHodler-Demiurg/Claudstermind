@@ -123,9 +123,9 @@ const SECTIONS = [
   { id: "workspace", label: "Workspace", icon: "💬", view: "workspace", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local"), subs: [
     { id: "core", label: "Core", icon: "💬", short: "Core", view: "workspace" },
     { id: "pact", label: "Pact", icon: "⬡", short: "Pact", view: "pact" },
+    { id: "mirror", label: "Mirror", icon: "🪞", short: "Mirror", view: "mirror" },
+    { id: "localhost", label: "LocalHost", icon: "🌐", short: "Host", view: "localhost" },
   ] },
-  { id: "mirror", label: "Mirror", icon: "🪞", view: "mirror", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local") },
-  { id: "localhost", label: "LocalHost", icon: "🌐", view: "localhost", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local") },
 ];
 const ADMIN_SECTIONS = [
   { id: "deploy", icon: "🚀", label: "Deploy & Version", enabled: true },

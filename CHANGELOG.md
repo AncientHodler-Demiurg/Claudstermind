@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.0.3] - 2026-08-11
+
+### Changed
+- **Mirror & Localhost folded into Workspace as tier-2 tabs.** They're no longer top-level sections —
+  the Workspace tab now has four sub-views: **Core · Pact · Mirror · Localhost** (as originally
+  intended in the Pact IDE handoff). Frees two slots in the mobile bottom bar; the desktop subnav and
+  the mobile tier-2 drawer both list all four. The Mirror/Localhost views themselves are unchanged.
+
 ## [1.0.2] - 2026-08-11
 
 ### Changed
