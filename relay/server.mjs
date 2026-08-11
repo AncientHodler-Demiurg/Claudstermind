@@ -385,6 +385,22 @@ export function createRelay(opts = {}) {
       return sendJSON(res, 200, r || { ok: false, error: "no reply from the work machine" });
     }
 
+    // ---- remote Pact IDE: shared IDE-state read/write, forwarded down the tunnel. The state file
+    // lives beside the Pact history on the work machine, so the remote website reads/writes the SAME
+    // store the local dashboard does — the layout follows you across origins. Mirrors the tree/file
+    // read + pactWrite save forwards above (ancient-only). ----
+    if (path === "/api/pact/ide-state" && (req.method === "GET" || req.method === "PUT")) {
+      if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The Pact workspace is ancient-only." });
+      if (!link.connected) return sendJSON(res, 503, { ok: false, error: "Local Claudstermind is not connected." });
+      if (req.method === "GET") {
+        const r = await link.relay("pactIdeStateGet", {}, 15_000);
+        return sendJSON(res, 200, r || { ok: false, error: "no reply from the work machine" });
+      }
+      const body = await readBody(req);
+      const r = await link.relay("pactIdeStatePut", { state: body.state || {} }, 15_000);
+      return sendJSON(res, 200, r || { ok: false, error: "no reply from the work machine" });
+    }
+
     // ---- remote workspace: serve an attached prompt image (ancient-only) ----
     // Same shape as the local dashboard's own /api/workspace/image, forwarded down the tunnel as
     // a one-shot COMMAND/RESULT (agent/agent.mjs's "workspaceImage") — a single image fetch has

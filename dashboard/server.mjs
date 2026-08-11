@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import { readActivity, readLastBackup } from "../orchestrator/activity.mjs";
 import { listArchives, pruneArchives, deleteArchive } from "../orchestrator/archives.mjs";
 import { listDir as pactListDir, readTextFile as pactReadFile, writeTextFile as pactWriteFile, pactRoot as resolvePactRoot, appendBrainNote } from "../lib/pactFs.mjs";
+import { readIdeState as pactReadIdeState, writeIdeState as pactWriteIdeState } from "../lib/pactIdeState.mjs";
 import { pactRunSpec } from "../lib/pactRun.mjs";
 import { readBackupConfig, writeBackupConfig, isBackupDue, browseDir } from "../orchestrator/backupConfig.mjs";
 import { readCascade } from "../lib/cascade.mjs";
@@ -870,6 +871,22 @@ const handler = async (req, res) => {
     if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Execute permission required." });
     const b = await readBody(req);
     return sendJSON(res, 200, pactWriteFile(resolvePactRoot(MASTER_ROOT), b.path || "", b.content || ""));
+  }
+  // ---- Pact IDE: shared server-side IDE-state (open files, editor boxes, chat tabs/drafts, collapse,
+  // chat names). Lives beside the Pact conversation history so localhost and the remote website read
+  // and write ONE store — the state follows you across origins, like Cursor reopening your workspace.
+  // GET is a plain canRead read; PUT mirrors the pact/file SAVE gate (same-origin + local + execute),
+  // and is tunneled through the relay as `pactIdeStatePut`. ----
+  if (path === "/api/pact/ide-state" && req.method === "GET") {
+    if (!who.canRead) return sendJSON(res, 403, { ok: false, reason: "read-only" });
+    return sendJSON(res, 200, { ok: true, state: pactReadIdeState(join(MASTER_ROOT, ".claude", "workspace")) });
+  }
+  if (path === "/api/pact/ide-state" && req.method === "PUT") {
+    if (!sameOrigin(req)) return sendJSON(res, 403, { ok: false, reason: "cross-origin" });
+    if (!who.localActionsAvailable) return sendJSON(res, 403, { ok: false, reason: "local-only", message: "Saving Pact IDE state is local-only." });
+    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Execute permission required." });
+    const b = await readBody(req);
+    return sendJSON(res, 200, pactWriteIdeState(join(MASTER_ROOT, ".claude", "workspace"), b.state || {}));
   }
   // ---- Pact IDE: continuous write-back — append a note to the pact brain (brain/OuronetPact). ----
   if (path === "/api/pact/brain/append" && req.method === "POST") {

@@ -26,6 +26,7 @@ import { readBackupConfig } from "../orchestrator/backupConfig.mjs";
 import net from "node:net";
 import { createAggregator, registryProjects, mirrorablePorts } from "../lib/localhost.mjs";
 import { listDir as pactListDir, readTextFile as pactReadFile, writeTextFile as pactWriteFile, pactRoot as resolvePactRoot } from "../lib/pactFs.mjs";
+import { readIdeState as pactReadIdeState, writeIdeState as pactWriteIdeState } from "../lib/pactIdeState.mjs";
 import { forwardRequestHeaders, buildUpgradeRequest } from "../lib/mirror.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -250,6 +251,17 @@ export function createBridge(opts = {}) {
       const result = frame.cmd.type === "pactTree" ? pactListDir(root, a.dir || "")
         : frame.cmd.type === "pactWrite" ? pactWriteFile(root, a.path || "", a.content || "")
         : pactReadFile(root, a.path || "");
+      if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
+      return;
+    }
+    // Pact IDE shared state: read/write the layout blob beside the Pact history on THIS machine, so
+    // the remote website persists the same IDE state the local dashboard does. Same one-shot shape.
+    if (frame.cmd.type === "pactIdeStateGet" || frame.cmd.type === "pactIdeStatePut") {
+      const dir = workspace.transcriptDir;
+      const a = frame.cmd.args || {};
+      const result = frame.cmd.type === "pactIdeStateGet"
+        ? { ok: true, state: pactReadIdeState(dir) }
+        : pactWriteIdeState(dir, a.state || {});
       if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
       return;
     }

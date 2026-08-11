@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.4] - 2026-08-11
+
+### Added
+- **Pact IDE — shared server-side state store (foundation).** A new `lib/pactIdeState.mjs` persists
+  the Pact workspace's IDE layout as one opaque JSON blob beside its conversation history
+  (`.claude/workspace/OuroborosNetwork~2f~_onchain~2f~Ouronet@main/_ide-state.json`) — object-only,
+  size-capped (512 KB), and never throwing on a missing or corrupt file (a fresh default view is
+  always recoverable). Wired as `GET`/`PUT /api/pact/ide-state` on the dashboard (GET = canRead;
+  PUT mirrors the pact/file SAVE gate: same-origin + local + execute), forwarded through the relay,
+  and answered on the work machine by new `pactIdeStateGet`/`pactIdeStatePut` bridge commands —
+  the exact tunnel pattern the Pact file read/write already uses. Because the store lives on the
+  machine (not browser localStorage), localhost and the remote website share ONE state. Frontend
+  persist/restore builds on this next.
+
 ## [1.1.3] - 2026-08-11
 
 ### Added

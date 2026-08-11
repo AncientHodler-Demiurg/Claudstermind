@@ -28,6 +28,43 @@
 - ✅ U4 = #3 (agent-edit diff view: green added / red removed lines + Keep All) (v1.1.1) — **solid
   partial**, see the U4 notes below for the scoped remainder.
 
+## IDE state preservation + chat history/resume (P1–P4)
+> Goal: the Pact workspace reopens exactly where you left off (open files, editor boxes, chat tabs,
+> drafts, collapse) like Cursor — and state is **shared local↔remote** (lives server-side on the
+> work machine, NOT localStorage). Plus every Pact chat is saved, auto-named, renameable, listed in
+> a history panel, and resumable with full agent context.
+
+- ✅ **P1 — shared server-side IDE-state store (tunneled)** (v1.1.4). `lib/pactIdeState.mjs`
+  (`readIdeState`/`writeIdeState`, object-only + 512 KB cap + safe-parse, file at
+  `.claude/workspace/OuroborosNetwork~2f~_onchain~2f~Ouronet@main/_ide-state.json`) + `lib/pactIdeState.test.mjs`
+  (9 tests). `GET`/`PUT /api/pact/ide-state` in dashboard (GET=canRead; PUT=same-origin+local+execute),
+  forwarded in `relay/server.mjs`, answered by `pactIdeStateGet`/`pactIdeStatePut` in `agent.mjs`
+  handleCommand — mirrors the pactFile/pactWrite tunnel exactly. The blob is opaque JSON the frontend
+  authors.
+- ⏳ **P2 — persist + restore the IDE layout** (debounced ~800ms snapshot on any layout change;
+  rebuild on `viewPact()` load). NOT YET DONE.
+- ⏳ **P3 — chat history panel + auto-name + rename + resume** (per-session list for the Pact repo;
+  Resume passes the session's `realSessionId` as `resume`). NOT YET DONE.
+- ⏳ **P4 — surface the recovered "Ouronet Pact audit" chat** (session file id
+  `9b41003b-b616-4ac3-9b2b-780f3b229662`, realSessionId `ad269259-019d-4b49-93bd-8742207a8e60`,
+  75 msgs) named in the store + resumable. NOT YET DONE.
+
+**Backend facts for P2–P4 (verified):**
+- Every Pact chat prompt goes out as `wsPost("prompt", {sessionKey:t.key, repo:PACT_REPO, worktree:"main", …})`.
+  In `lib/workspace.mjs._prompt`, `workspaceId` = `OuroborosNetwork/_onchain/Ouronet@main` for ALL Pact
+  chats, so each tab's `t.key` (a `wsUuid()`) becomes the **session-file name** under that one workspace
+  dir. `_prompt` accepts an explicit `resume` (a realSessionId) that WINS over auto-resume — pass the
+  saved session's `realSessionId` on the first prompt of a resumed tab.
+- Per-session listing: `store.listSessions(dir,{repo})` / the `eachSession` generator yields
+  `{id, sessionId, realSessionId, transcript, updatedAt,…}`. NOTE: the `history` control action →
+  `_sendHistory` → `store.listWorkspaces` AGGREGATES the whole Pact repo into ONE row (not per-chat) —
+  P3 needs a per-session list, so add a new control action (e.g. `sessions`) or extend `summarise` to
+  carry `realSessionId` (it's already in the generator's yield, just dropped by `summarise`).
+- Rehydrate a chat: `store.readSession(dir, workspaceId, sessionId)` (a.k.a. sessionTranscript) or the
+  `open` control action (`_openTranscript` → `transcript` frame with `sessionId` = the realSessionId).
+- Chat names: store a `chatNames` map (`{ [sessionKey]: name }`) in the SAME `_ide-state.json` blob so
+  local+remote agree. Pre-seed `chatNames["9b41003b-…"] = "Ouronet Pact audit"` for P4.
+
 ## U4 notes — what shipped vs. the remainder
 **Shipped (v1.1.1):** at the end of each Pact-chat turn (`result` in `pactChatRoute`),
 `pactEdCheckAgentEdits()` re-reads every open, **non-dirty** file. If the on-disk content differs from
