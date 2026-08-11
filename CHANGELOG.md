@@ -4,6 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.6] - 2026-08-11
+
+### Added
+- **Pact IDE — chat history panel, auto-naming + resume.** A 🕐 button in the Pact chat header opens a
+  history panel listing every saved Pact chat (name, first-prompt snippet, message count, last-updated).
+  Per row: **Resume** (adopts the saved session key so the continuation appends to the same transcript,
+  and passes the session's real SDK id as `resume` so the agent continues with FULL prior context),
+  **Load into a new box** (a branch — same context, saved to a fresh session), **Rename**, and
+  **Delete** (removes the saved transcript). New chats **auto-name from the first user line** (first
+  ~40 chars, cleaned, skipping the auto-skill preamble); names are renameable (double-click a tab, or
+  the panel's rename) and stored in the shared server-side names map so localhost and the remote site
+  agree. Backend: per-session listing (`store.listSessions` now carries `realSessionId`), single-session
+  rehydration (`sessionOpen` → a `transcript` frame for one session, not the whole-workspace merge),
+  and `sessionDelete` (`store.deleteSession`) — three new whitelisted workspace control actions that
+  tunnel through the relay exactly like the existing ones.
+
 ## [1.1.5] - 2026-08-11
 
 ### Added

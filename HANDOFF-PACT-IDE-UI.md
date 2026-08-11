@@ -52,8 +52,17 @@
   `pactEdOpen` refactored to share `pactEdOpenInto(g,path,makeActive,relayout)` used by restore.
   Double-click a chat tab name to rename (writes `PACT_CHAT_NAMES`). NOT persisted: file contents,
   transcripts (P3), tree font.
-- ⏳ **P3 — chat history panel + auto-name + rename + resume** (per-session list for the Pact repo;
-  Resume passes the session's `realSessionId` as `resume`). NOT YET DONE.
+- ✅ **P3 — chat history panel + auto-name + rename + resume** (v1.1.6). Backend: `WS_CONTROL_ACTIONS`
+  += `sessions`/`sessionOpen`/`sessionDelete` (protocol.mjs) → `_sendSessionList`/`_openSession`/
+  `_deleteSession` (workspace.mjs). NOTE: my method was first named `_sendSessions`, colliding with the
+  EXISTING live-snapshot `_sendSessions()` — renamed to `_sendSessionList` (a broken test caught it).
+  `store.listSessions` now carries `realSessionId`; new `store.deleteSession(dir,id,sessionId)`.
+  Frontend (app.js): 🕐 header button → `pactChatToggleHistory` overlay → `pactChatRenderHistory` /
+  `pactHistRow`; `pactChatOpenSaved(r, adopt)` (Resume adopts key=sessionId; Load mints a fresh key —
+  both carry `resume=realSessionId`); `pactHistRename`/`pactHistDelete`; `pactTranscriptToMsgs`;
+  `pactDeriveChatName` (auto-name on first send, preamble-stripped). `pactChatSend` now sends
+  `resume: t.resume`. Transcript rehydration routed via `PACT_CHAT._pendingOpen`. CSS: `.pc-hist-*`
+  in styles.css. Names live in the shared `chatNames` map (P1 store).
 - ⏳ **P4 — surface the recovered "Ouronet Pact audit" chat** (session file id
   `9b41003b-b616-4ac3-9b2b-780f3b229662`, realSessionId `ad269259-019d-4b49-93bd-8742207a8e60`,
   75 msgs) named in the store + resumable. NOT YET DONE.

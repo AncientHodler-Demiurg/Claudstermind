@@ -2485,7 +2485,7 @@ function pactStateSnapshot() {
     rowFlex: Array.isArray(PACT_ED.rowFlex) ? PACT_ED.rowFlex.slice() : null,
   };
   const chat = {
-    tabs: PACT_CHAT.tabs.map((t) => ({ key: t.key, name: t.name, draft: t.draft || "" })),
+    tabs: PACT_CHAT.tabs.map((t) => ({ key: t.key, name: t.name, draft: t.draft || "", resume: t.resume || null })),
     activeIndex: Math.max(0, PACT_CHAT.tabs.findIndex((t) => t.id === PACT_CHAT.activeId)),
   };
   const right = document.querySelector(".pact-right");
@@ -2531,7 +2531,9 @@ function pactRestoreChat(ch) {
       msgs: [], live: "", status: "idle",
       // A restored tab's backend session already received the orienting preamble in its prior life —
       // don't re-inject it on the next message. (Full transcript rehydration + resume is P3.)
-      started: true, perm: null, draft: typeof ts.draft === "string" ? ts.draft : "" };
+      started: true, perm: null, draft: typeof ts.draft === "string" ? ts.draft : "",
+      // a resumed/loaded tab keeps its SDK resume target across reloads so continuing still has context
+      resume: (typeof ts.resume === "string" && ts.resume) ? ts.resume : null };
   });
   const ai = Number.isInteger(ch.activeIndex) && ch.activeIndex >= 0 && ch.activeIndex < PACT_CHAT.tabs.length ? ch.activeIndex : 0;
   PACT_CHAT.activeId = PACT_CHAT.tabs[ai].id;
@@ -2585,6 +2587,112 @@ function pactChatRenameTab(t) {
   pactChatRender();
   pactStateSave();
 }
+// ---- P3: chat history panel + naming + resume ------------------------------------------------
+// Derive a friendly chat name from the user's first line — first ~40 chars, whitespace collapsed,
+// and any leaked auto-skill preamble stripped so the name reflects what the USER actually asked.
+function pactDeriveChatName(text) {
+  let s = String(text || "").replace(/\s+/g, " ").trim();
+  if (!s) return "";
+  if (s.startsWith("[Pact IDE")) { const i = s.indexOf("\n\n"); if (i >= 0) s = s.slice(i + 2); s = s.replace(/\s+/g, " ").trim(); }
+  return s.length > 40 ? s.slice(0, 40).trim() + "…" : s;
+}
+// A saved transcript turn → the chat's own message shape (drop store bookkeeping; keep conversation).
+function pactTranscriptToMsgs(transcript) {
+  const out = [];
+  for (const m of Array.isArray(transcript) ? transcript : []) {
+    if (!m) continue;
+    if (m.role === "user") out.push({ role: "user", text: m.text || "" });
+    else if (m.role === "assistant") out.push({ role: "assistant", text: m.text || "" });
+    else if (m.kind === "tool_use") out.push({ kind: "tool_use", tools: m.tools || [] });
+  }
+  return out;
+}
+function pactAgo(ms) {
+  if (!ms) return "";
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+}
+// Toggle the history overlay. Opening it requests the per-session list over the workspace stream
+// (answered as a `pactSessions` state frame → pactChatRenderHistory fills the panel).
+function pactChatToggleHistory() {
+  if (!PACT_CHAT) return;
+  const existing = document.querySelector(".pc-hist-overlay");
+  if (existing) { existing.remove(); return; }
+  const panel = el("div", { class: "pc-hist-panel" }, [el("div", { class: "hint", style: "padding:14px" }, ["Loading saved chats…"])]);
+  const overlay = el("div", { class: "pc-hist-overlay" }, [panel]);
+  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  wsPost("control", { action: "sessions", args: { repo: PACT_REPO } });
+}
+function pactChatCloseHistory() { const o = document.querySelector(".pc-hist-overlay"); if (o) o.remove(); }
+function pactChatRenderHistory() {
+  const panel = document.querySelector(".pc-hist-panel"); if (!panel) return;
+  const rows = (PACT_CHAT && PACT_CHAT.sessions) || [];
+  const refresh = el("button", { class: "pact-ed-ico", title: "Refresh" }, ["⟳"]);
+  refresh.addEventListener("click", () => wsPost("control", { action: "sessions", args: { repo: PACT_REPO } }));
+  const close = el("button", { class: "pact-ed-ico", title: "Close" }, ["×"]);
+  close.addEventListener("click", pactChatCloseHistory);
+  const head = el("div", { class: "pc-hist-hd" }, ["🕐 Pact chat history", el("span", { class: "ws-spacer" }, []), refresh, close]);
+  const list = el("div", { class: "pc-hist-list" }, rows.length ? rows.map(pactHistRow) : [el("div", { class: "hint", style: "padding:14px" }, ["No saved Pact chats yet — send a first message to start one."])]);
+  panel.replaceChildren(head, list);
+}
+function pactHistName(r) { return (r.sessionId && PACT_CHAT_NAMES[r.sessionId]) || r.name || pactDeriveChatName(r.firstPrompt) || "Untitled chat"; }
+function pactHistRow(r) {
+  const nameEl = el("div", { class: "pc-hist-name", title: "Double-click to rename" }, [pactHistName(r)]);
+  nameEl.addEventListener("dblclick", () => pactHistRename(r));
+  const meta = el("div", { class: "pc-hist-meta" }, [`${r.turns || 0} msg${(r.turns || 0) === 1 ? "" : "s"}` + (r.updatedAt ? " · " + pactAgo(r.updatedAt) : "") + (r.realSessionId ? "" : " · no resume")]);
+  const first = el("div", { class: "pc-hist-first" }, [r.firstPrompt || "(no prompt)"]);
+  const resumeB = el("button", { class: "ws-ico", title: "Resume — continue this chat with full agent context" }, ["▶"]);
+  resumeB.addEventListener("click", () => pactChatOpenSaved(r, true));
+  const loadB = el("button", { class: "ws-ico", title: "Load into a new box (branch — continues with context, saved separately)" }, ["⧉"]);
+  loadB.addEventListener("click", () => pactChatOpenSaved(r, false));
+  const renameB = el("button", { class: "ws-ico", title: "Rename" }, ["✎"]);
+  renameB.addEventListener("click", () => pactHistRename(r));
+  const delB = el("button", { class: "ws-ico", title: "Delete this saved chat permanently" }, ["🗑"]);
+  delB.addEventListener("click", () => pactHistDelete(r));
+  return el("div", { class: "pc-hist-row" }, [el("div", { class: "pc-hist-main" }, [nameEl, meta, first]), el("div", { class: "pc-hist-actions" }, [resumeB, loadB, renameB, delB])]);
+}
+// Open a saved chat into a tab. `adopt` = Resume: the tab ADOPTS the saved session key so its
+// continuation appends to the SAME transcript file; otherwise Load-into-box mints a fresh key (a
+// branch). Either way it rehydrates the transcript for display and carries the realSessionId as the
+// `resume` target so the next message continues with full SDK context.
+function pactChatOpenSaved(r, adopt) {
+  if (!PACT_CHAT || !r || !r.sessionId) return;
+  pactChatSaveDraft();
+  const id = ++PACT_CHAT.seq;
+  const key = adopt ? r.sessionId : wsUuid();
+  const name = pactHistName(r);
+  const t = { id, name, key, msgs: [], live: "", status: "idle", started: true, perm: null, draft: "", resume: r.realSessionId || null };
+  if (key) PACT_CHAT_NAMES[key] = name;
+  PACT_CHAT.tabs.push(t);
+  PACT_CHAT.activeId = id;
+  PACT_CHAT._pendingOpen = PACT_CHAT._pendingOpen || {};
+  PACT_CHAT._pendingOpen[r.sessionId] = id;   // route the transcript frame (keyed by sessionId) to THIS tab
+  pactChatRender();
+  wsPost("control", { action: "sessionOpen", args: { repo: PACT_REPO, worktree: "main", sessionId: r.sessionId } });
+  pactChatCloseHistory();
+  pactStateSave();
+}
+function pactHistRename(r) {
+  if (!r || !r.sessionId) return;
+  const next = window.prompt("Rename this chat", pactHistName(r));
+  if (next == null) return;
+  const name = next.trim().slice(0, 80); if (!name) return;
+  PACT_CHAT_NAMES[r.sessionId] = name; r.name = name;
+  const openT = PACT_CHAT.tabs.find((x) => x.key === r.sessionId); if (openT) openT.name = name;
+  pactChatRenderHistory(); pactChatRender(); pactStateSave();
+}
+function pactHistDelete(r) {
+  if (!r || !r.sessionId) return;
+  if (!window.confirm("Delete this saved chat permanently? This cannot be undone.")) return;
+  wsPost("control", { action: "sessionDelete", args: { repo: PACT_REPO, worktree: "main", sessionId: r.sessionId } });
+  if (PACT_CHAT.sessions) PACT_CHAT.sessions = PACT_CHAT.sessions.filter((x) => x.sessionId !== r.sessionId);
+  delete PACT_CHAT_NAMES[r.sessionId];
+  pactChatRenderHistory(); pactStateSave();
+}
 function pactChatInit(host) {
   PACT_CHAT = { host, tabs: [], activeId: null, seq: 0, es: null, mode: "bypassPermissions", conn: connIdentity() };
   pactChatOpenStream();
@@ -2624,6 +2732,18 @@ function pactChatOpenStream() {
 function pactChatRoute({ kind, sessionKey, data }) {
   if (!PACT_CHAT) return;
   if (kind === "heartbeat" || kind === "presence") return;
+  // The per-session history list (state frame, no sessionKey) — refresh the history panel.
+  if (kind === "state" && data && Array.isArray(data.pactSessions)) { PACT_CHAT.sessions = data.pactSessions; pactChatRenderHistory(); return; }
+  // A saved chat's transcript arriving to rehydrate a Resume / Load-into-box tab. The frame is keyed
+  // by the session's OWN id; a "Load into new box" tab has a different key, so correlate via the
+  // pending-open map first, then fall back to a direct key match (Resume, whose key IS the sessionId).
+  if (kind === "transcript") {
+    const targetId = PACT_CHAT._pendingOpen ? PACT_CHAT._pendingOpen[sessionKey] : undefined;
+    const tt = targetId != null ? PACT_CHAT.tabs.find((x) => x.id === targetId) : (sessionKey ? pactChatByKey(sessionKey) : null);
+    if (tt) { tt.msgs = pactTranscriptToMsgs(data && data.transcript); tt.status = "idle"; tt._forceBottom = true; if (data && data.sessionId && !tt.resume) tt.resume = data.sessionId; pactChatPaint(tt); }
+    if (PACT_CHAT._pendingOpen) delete PACT_CHAT._pendingOpen[sessionKey];
+    return;
+  }
   const t = sessionKey ? pactChatByKey(sessionKey) : null;
   if (!t) return;
   if (kind === "state") { if (data && data.session && data.session.status) { t.status = data.session.status; pactChatPaint(t); } return; }
@@ -2648,15 +2768,25 @@ function pactChatSend(t) {
   const text = (ta ? ta.value : "").trim();
   if (!text) return;
   let payload = text;
-  if (!t.started) { t.started = true; payload = PACT_CHAT_PREAMBLE + "\n\n" + text; }   // orient the agent on the first message
+  const firstMsg = !t.started;
+  if (firstMsg) { t.started = true; payload = PACT_CHAT_PREAMBLE + "\n\n" + text; }   // orient the agent on the first message
+  // Auto-name a still-default chat from its FIRST real user line (the clean `text`, never the skill
+  // preamble). Keeps the tab + history readable; stored in the shared names map so both surfaces agree.
+  if (firstMsg && t.key && !PACT_CHAT_NAMES[t.key] && /^Chat \d+$/.test(t.name || "")) {
+    const nm = pactDeriveChatName(text);
+    if (nm) { t.name = nm; PACT_CHAT_NAMES[t.key] = nm; }
+  }
   t.msgs.push({ role: "user", text });
   t.status = "thinking"; t.live = "";
   if (ta) { ta.value = ""; ta.style.height = ""; }
   t.draft = "";   // the draft was just sent — clear it so a reload doesn't resurrect it
+  pactChatRender();   // reflect a fresh auto-name on the tab (also re-paints the active conversation)
   pactStateSave();
   t._forceBottom = true;   // your own just-sent message lands at the bottom + re-pins, even if you'd scrolled up
   pactChatPaint(t);
-  wsPost("prompt", { sessionKey: t.key, repo: PACT_REPO, worktree: "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id });
+  // `resume` continues a specific saved session with full SDK context — set when this tab was opened
+  // from history (Resume / Load-into-box). Ignored server-side once a live session for the key exists.
+  wsPost("prompt", { sessionKey: t.key, repo: PACT_REPO, worktree: "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id, resume: t.resume || undefined });
 }
 function pactChatDecide(t, decision) {
   if (!t || !t.perm) return;
@@ -2727,7 +2857,8 @@ function pactChatRender() {
     const x = el("span", { class: "pc-tab-x", title: "Close chat" }, ["×"]);
     x.addEventListener("click", (e) => { e.stopPropagation(); pactChatCloseTab(t.id); });
     const dot = el("span", { class: "pc-tab-dot" + (t.status === "thinking" || t.status === "deepwork" ? " busy" : "") });
-    const nameEl = el("span", { class: "pc-tab-name", title: "Double-click to rename this chat" }, [t.name]);
+    const label = (t.key && PACT_CHAT_NAMES[t.key]) || t.name;
+    const nameEl = el("span", { class: "pc-tab-name", title: "Double-click to rename this chat" }, [label]);
     nameEl.addEventListener("dblclick", (e) => { e.stopPropagation(); pactChatRenameTab(t); });
     const tab = el("div", { class: "pc-tab" + (t.id === PACT_CHAT.activeId ? " --active" : "") }, [dot, nameEl, x]);
     tab.addEventListener("click", () => { if (t.id === PACT_CHAT.activeId) return; pactChatSaveDraft(); PACT_CHAT.activeId = t.id; pactChatRender(); pactStateSave(); });
@@ -2735,13 +2866,15 @@ function pactChatRender() {
   });
   const add = el("button", { class: "pact-ed-ico", title: "New Pact chat" }, ["＋"]);
   add.addEventListener("click", () => pactChatNewTab());
+  const hist = el("button", { class: "pact-ed-ico", title: "Pact chat history — resume a past conversation" }, ["🕐"]);
+  hist.addEventListener("click", () => pactChatToggleHistory());
   const modeSel = el("select", { class: "wsel wsel-sm pc-mode", title: "Permission mode for these Pact sessions" },
     WS_MODES.map((m) => el("option", { value: m.id }, [m.short])));
   modeSel.value = PACT_CHAT.mode;
   modeSel.addEventListener("change", () => { PACT_CHAT.mode = modeSel.value; });
   const chatCollapse = el("button", { class: "pact-ed-ico pact-collapse pcx-chat" }, ["▾"]);
   chatCollapse.addEventListener("click", () => pactToggleCollapse("chat"));
-  const head = el("div", { class: "pact-zone-hd pc-head" }, [el("div", { class: "pc-tabs" }, tabs), add, el("span", { class: "ws-spacer" }, []), modeSel, chatCollapse]);
+  const head = el("div", { class: "pact-zone-hd pc-head" }, [el("div", { class: "pc-tabs" }, tabs), add, hist, el("span", { class: "ws-spacer" }, []), modeSel, chatCollapse]);
   const scroll = el("div", { class: "pc-scroll" }, []);
   const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (Enter to send)" });
   const send = el("button", { class: "pc-send" }, ["Send"]);
