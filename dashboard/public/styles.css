@@ -735,6 +735,9 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .dp-hd { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
 .dp-status { font-size: 13px; font-weight: 600; color: var(--ink); }
 .dp-status.dp-running { color: var(--accent); }
+.dp-status.dp-waiting { color: #f59e0b; }
+@media (prefers-reduced-motion: no-preference) { .dp-status.dp-waiting { animation: dp-pulse 1.4s ease-in-out infinite; } }
+@keyframes dp-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
 .dp-status.dp-ok { color: #34d399; }
 .dp-status.dp-failed { color: #f87171; }
 .dp-elapsed { font-size: 11px; color: var(--ink-mute); font-family: ui-monospace, monospace; font-variant-numeric: tabular-nums; }

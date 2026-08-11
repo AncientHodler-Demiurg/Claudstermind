@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.33] - 2026-08-12
+
+### Fixed
+- **Reload progress no longer counts forever.** A Reload runs `systemctl restart claudstermind`, which
+  kills this very web process — so the restart SSE stream died mid-flight and the "Restart the service"
+  phase ticked "Running… 53s… 54s…" endlessly, never settling. The panel now watches for the "triggering
+  the real restart" log line (or the stream erroring/timing out after start), FREEZES the elapsed timer on
+  a "Waiting for the service to come back…" state, and polls `/api/version` with capped backoff until the
+  NEW process answers — then marks the phase complete and auto-reloads the whole page after a short beat.
+  The same settle-and-reload flow now covers deploy completion (including the silent blue-green swap case).
+
+### Added
+- `dashboard/public/deploy-helpers.js` — pure, unit-tested helpers for the deploy panel
+  (`partitionProcesses`, `reachedRestartTrigger`, `pollBackoff`).
+
 ## [1.1.32] - 2026-08-12
 
 ### Fixed

@@ -760,15 +760,24 @@ function openLogStream(url, term, onDone, opts) {
  *  Poll the cheap, unauthenticated /api/version endpoint (the same one lib/deploy.mjs's
  *  blue-green verification trusts) until it answers again, and report success or a clear
  *  "still unreachable" failure — never silence (design's Wave-close acceptance §5). */
-async function pollBackUp(noteEl, { attempts = 40, delayMs = 1500 } = {}) {
+async function pollBackUp(noteEl, { attempts = 40 } = {}) {
   for (let i = 0; i < attempts; i++) {
-    await new Promise((r) => setTimeout(r, delayMs));
+    await new Promise((r) => setTimeout(r, DeployHelpers.pollBackoff(i, { baseMs: 1000, maxMs: 5000 })));
     try {
       const v = await (await fetch("/api/version", { cache: "no-store", signal: AbortSignal.timeout(2000) })).json();
-      if (v && v.version) { noteEl.textContent = "✓ Back up — v" + v.version + " reconnected."; return; }
+      if (v && v.version) { noteEl.textContent = "✓ Back up — v" + v.version + " reconnected."; return v.version; }
     } catch { /* still down or unreachable through the tunnel — keep polling */ }
   }
   noteEl.textContent = "⚠ Restart triggered, but the dashboard hasn't answered again after a minute — check it manually.";
+  return null;
+}
+
+/** A restart/deploy that settled successfully means the code on this page is now stale — reload the
+ *  whole page after a short, visible beat (Explorer-style) so the operator lands on the fresh build
+ *  and any leftover progress UI is cleared for free. Isolated so tests / a caller can stub it. */
+function reloadSoon(noteEl, ms = 2500) {
+  if (noteEl) noteEl.textContent += " Reloading…";
+  setTimeout(() => { try { location.reload(); } catch {} }, ms);
 }
 
 /** Deploy's zero-downtime blue-green swap (lib/deploy.mjs) keeps the OLD container alive and
@@ -785,10 +794,11 @@ async function pollDeploySucceeded(noteEl, expectedVersion, { attempts = 60, del
     await new Promise((r) => setTimeout(r, delayMs));
     try {
       const st = await (await fetch("/api/deploy/status", { cache: "no-store", signal: AbortSignal.timeout(4000) })).json();
-      if (st?.live?.version === expectedVersion) { noteEl.textContent = "✓ Deploy finished — live is now v" + expectedVersion + "."; return; }
+      if (st?.live?.version === expectedVersion) { noteEl.textContent = "✓ Deploy finished — live is now v" + expectedVersion + "."; return true; }
     } catch { /* still mid-swap, or briefly unreachable — keep polling */ }
   }
   noteEl.textContent = "⚠ No confirmation received — check the version chip manually.";
+  return false;
 }
 
 /** A polished, StoaExplorer-style step-by-step progress view driven by the existing deploy/restart
@@ -800,8 +810,8 @@ async function pollDeploySucceeded(noteEl, expectedVersion, { attempts = 60, del
  *  in a collapsible "Full log" the caller wires below. */
 function makeProgress(phaseDefs) {
   const state = phaseDefs.map((d) => ({ id: d.id, label: d.label, match: d.match, status: "pending", startedAt: null, endedAt: null }));
-  const MARK = { pending: "○", running: "◐", done: "●", failed: "✕" };
-  const STATUS_TEXT = { idle: "Ready when you are.", running: "Running…", ok: "Complete.", failed: "Failed — the previous version is still serving. See the log." };
+  const MARK = { pending: "○", running: "◐", done: "●", failed: "✕", waiting: "◐" };
+  const STATUS_TEXT = { idle: "Ready when you are.", running: "Running…", waiting: "Waiting for the service to come back…", ok: "Complete.", failed: "Failed — the previous version is still serving. See the log." };
   let runStatus = "idle", runStart = null, runEnd = null, current = -1, tick = null;
 
   const hd = el("div", { class: "dp-hd" }, []);
@@ -855,6 +865,21 @@ function makeProgress(phaseDefs) {
     }
     paint(now);
   }
+  // Freeze the elapsed timer and hold the current phase as in-progress while we wait out-of-band
+  // for the service to answer again (a real restart kills THIS process, so the SSE stream can never
+  // deliver a completion sentinel — the elapsed counter would otherwise tick forever). `runEnd` is
+  // pinned to now so paint() stops advancing the header/step timers; the header shows `msg`.
+  function waiting(msg) {
+    const now = Date.now();
+    stopTick();
+    if (runStatus === "idle") { runStatus = "running"; runStart = now; }   // a stream that closed before any line still gets a start
+    runEnd = now;
+    runStatus = "waiting";
+    if (msg) STATUS_TEXT.waiting = msg;
+    // Anchor a per-step end so the running step's timer freezes at this instant too.
+    if (current >= 0 && state[current].status === "running") state[current].endedAt = now;
+    paint(now);
+  }
   function done(ok) {
     const now = Date.now();
     stopTick(); runEnd = now; runStatus = ok ? "ok" : "failed";
@@ -863,7 +888,7 @@ function makeProgress(phaseDefs) {
     paint(now);
   }
   paint();
-  return { wrap, onLine, done, reset };
+  return { wrap, onLine, done, waiting, reset };
 }
 const DEPLOY_PHASES = [
   { id: "package", label: "Package the build", match: /── Package ──/ },
@@ -972,18 +997,23 @@ function viewDeploy() {
     deployProgress.reset();
     DEPLOY_ES = openLogStream("/api/deploy/stream", term, (ok) => {
       deployProgress.done(ok);
-      note.textContent = ok ? "✓ Deploy finished — refresh version state." : "✗ Deploy failed — see the log.";
-      refresh();
+      if (ok) { note.textContent = "✓ Deploy finished — live is up to date."; reloadSoon(note); }   // settle → auto-reload (Explorer-style)
+      else { note.textContent = "✗ Deploy failed — see the log."; refresh(); }
     }, {
       onLine: (line) => deployProgress.onLine(line),
       ...(expectedVersion ? {
         // ~2x a typical ~1min deploy's headroom — long enough that a merely-slow rebuild doesn't
         // trip it, short enough that a genuinely silent stream doesn't leave "Deploying…" stuck.
         timeoutMs: 90000,
-        onFallback: () => {
+        onFallback: async () => {
           DEPLOY_ES = null;
+          // The blue-green swap stops the OLD container exactly when it would confirm, so a silent
+          // stream here usually means it actually succeeded — freeze the progress on "waiting" and
+          // poll /api/deploy/status until live matches, then settle + auto-reload (never loop).
+          deployProgress.waiting("Waiting for the live container to confirm…");
           note.textContent = "No confirmation received — checking if it actually deployed…";
-          pollDeploySucceeded(note, expectedVersion);
+          const ok = await pollDeploySucceeded(note, expectedVersion);
+          if (ok) { deployProgress.done(true); reloadSoon(note); } else { deployProgress.done(false); refresh(); }
         },
       } : {}),
     });
@@ -992,39 +1022,54 @@ function viewDeploy() {
   function openRestartStream() {
     try { RESTART_ES && RESTART_ES.close(); } catch {}
     restartProgress.reset();
+    // Once the real restart is triggered, `systemctl restart claudstermind` kills THIS process, so
+    // the SSE stream dies mid-flight and can NEVER deliver a completion sentinel — the elapsed
+    // timer would otherwise tick "Running… 53s… 54s…" forever. The moment we see the trigger line
+    // (or the stream errors/times out after start), we FREEZE the progress on a "waiting" state and
+    // poll /api/version until the NEW process answers, then settle "Restart the service" complete
+    // and auto-reload the whole page. `settled` makes at most one of those paths run.
+    let settled = false;
+    async function beginWaiting() {
+      if (settled) return;
+      settled = true;
+      try { RESTART_ES && RESTART_ES.close(); } catch {}
+      RESTART_ES = null;
+      // Keep `restarting` true (button stays "Reloading…" / disabled) through the wait — the page
+      // is about to reload on success, and a failed wait clears it below.
+      restartProgress.waiting("Waiting for the service to come back…");
+      rNote.textContent = "Restart triggered — waiting for the service to come back…";
+      refreshRestartBtn();
+      const back = await pollBackUp(rNote);            // ✕ never loops: bounded attempts w/ backoff
+      if (back) { restartProgress.done(true); reloadSoon(rNote); }   // ● complete → auto-reload
+      else { restartProgress.done(false); restarting = false; }
+      refreshRestartBtn();
+    }
     RESTART_ES = openLogStream("/api/dashboard/restart/stream", rterm, (ok) => {
-      restartProgress.done(ok);
+      // The sentinel DID arrive (fast local restart, or a pre-flight failure that never triggered).
+      if (settled) return;
+      if (ok) { beginWaiting(); return; }              // ok before the process dropped → settle path
+      restartProgress.done(false);
       restarting = false;
       RESTART_ES = null;
-      if (ok) {
-        rNote.textContent = "Restarting… reconnecting";
-        pollBackUp(rNote);
-      } else {
-        // The refusal reason (timeout / crashed / port bind failure / spawn-failed / …) is
-        // written into the log itself by runSelfRestart's onLog (already prefixed "✗ "), not
-        // carried as structured data over the stream — so the specific reason is the log's
-        // last line verbatim, not a generic "restart failed".
-        const lines = rterm.textContent.trim().split("\n");
-        rNote.textContent = lines[lines.length - 1] || "✗ Restart refused — see the log.";
-      }
+      // The refusal reason (timeout / crashed / port bind failure / spawn-failed / …) is
+      // written into the log itself by runSelfRestart's onLog (already prefixed "✗ "), not
+      // carried as structured data over the stream — so the specific reason is the log's
+      // last line verbatim, not a generic "restart failed".
+      const lines = rterm.textContent.trim().split("\n");
+      rNote.textContent = lines[lines.length - 1] || "✗ Restart refused — see the log.";
       refreshRestartBtn();
     }, {
-      onLine: (line) => restartProgress.onLine(line),
-      // 40s: pre-flight's own runSelfRestart budget is up to 15s (dashboard/server.mjs's
-      // timeoutMs default), plus the real `systemctl restart` round-trip (process teardown +
-      // the unit coming back up) — 40s leaves comfortable headroom over that combined path
-      // without leaving the button stuck on "Restarting…" for anywhere near a minute when the
-      // sentinel is genuinely never coming (the remote/live-site restart case, where the
-      // tunnel drop kills the sentinel's only carrier without ever erroring the browser's SSE
-      // connection to the relay).
-      timeoutMs: 40000,
-      onFallback: () => {
-        restarting = false;
-        RESTART_ES = null;
-        rNote.textContent = "No confirmation received — checking if it's back up…";
-        refreshRestartBtn();
-        pollBackUp(rNote);
+      onLine: (line) => {
+        restartProgress.onLine(line);
+        // The trigger line is the last thing this process can ever emit — switch to waiting now
+        // rather than banking on a sentinel the dying process won't live to send.
+        if (DeployHelpers.reachedRestartTrigger(line)) beginWaiting();
       },
+      // 40s backstop for the case where even the trigger line never arrives (e.g. the tunnel drops
+      // silently on the remote/live-site path) — the browser↔relay SSE stays healthy so onerror
+      // never fires, and only a timeout closes that gap.
+      timeoutMs: 40000,
+      onFallback: () => { rNote.textContent = "No confirmation received — checking if it's back up…"; beginWaiting(); },
     });
   }
 
