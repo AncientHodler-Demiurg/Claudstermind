@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.0.9] - 2026-08-11
+
+### Changed
+- **Pact IDE — split ladder + resizable boxes (UI points 5 + 6).** The editor grid now follows the
+  explicit ladder: 1 whole, 2/3/4 across one row, 5 = 3-up + 2-down, 6 = 3 + 3, 7 = 4-up + 3-down,
+  8 = 4 + 4 (**max 8 boxes**, up from 6). Boxes are laid out as flex rows with **draggable gutters**
+  between boxes and between rows (equal by default, weights persist across tab switches, reset when the
+  box count changes) — no more tiny unresizable panes. The chat + REPL zone is now **⅕** of the space
+  after the tree (`.pact-editor` flex 4 : `.pact-right` flex 1). Mobile stacks boxes and hides gutters.
+  Points 2–4 (editable + Save All, agent diffs) follow in U3–U4 — see HANDOFF-PACT-IDE-UI.md.
+
 ## [1.0.8] - 2026-08-11
 
 ### Added

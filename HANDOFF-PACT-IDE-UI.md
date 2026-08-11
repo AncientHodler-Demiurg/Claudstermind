@@ -21,8 +21,8 @@
 
 ## Status
 - ✅ #8 color-coded tabs (v1.0.7).
-- ⏳ U1 = #1 (tree width/font/carousel) + #7 (per-box font, multi-line tabs).
-- ⏳ U2 = #5 + #6 (equal-split resizable boxes + the layout ladder + right zone ⅕).
+- ✅ U1 = #1 (tree width/font) + #7 (per-box font, multi-line tabs) (v1.0.8).
+- ✅ U2 = #5 + #6 (split ladder 1–8, resizable flex gutters, right zone ⅕) (v1.0.9).
 - ⏳ U3 = #2 + #4 (editable files + Save All + autosave + dirty state). **Needs a backend write endpoint.**
 - ⏳ U4 = #3 (agent-edit green/red diffs + Keep All). Hardest — needs change-detection.
 

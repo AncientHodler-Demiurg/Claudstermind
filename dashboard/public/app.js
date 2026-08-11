@@ -2067,7 +2067,7 @@ let PACT_TREE_FONT = 12.5;   // tree font size (px), adjustable via the tree hea
 let PACT_ED = null;   // { host, groups:[group], activeId, seq }; group = { id, tabs:[{path,name,loaded,content,error}], active, fontPx }
 function pactEdInit(host) { PACT_ED = { host, groups: [], activeId: null, seq: 0 }; pactEdAddGroup(); }
 function pactEdAddGroup() {
-  if (!PACT_ED || PACT_ED.groups.length >= 6) return;
+  if (!PACT_ED || PACT_ED.groups.length >= 8) return;
   PACT_ED.groups.push({ id: ++PACT_ED.seq, tabs: [], active: null });
   PACT_ED.activeId = PACT_ED.seq;
   pactEdLayout();
@@ -2084,18 +2084,84 @@ function pactEdCloseTab(g, path) {
   if (g.active === path) g.active = g.tabs.length ? g.tabs[Math.max(0, i - 1)].path : null;
   pactEdRenderGroup(g);
 }
+// The split ladder (point 6): how the N boxes distribute into rows. Each entry is the box count per
+// row, top-to-bottom. Under-filled last rows (5→[3,2], 7→[4,3]) simply share their row equally.
+const PACT_ED_ROWS = { 1: [1], 2: [2], 3: [3], 4: [4], 5: [3, 2], 6: [3, 3], 7: [4, 3], 8: [4, 4] };
+// A draggable gutter between two flex siblings. `axis` "x" resizes the two groups within a row (via
+// each group's flex-grow), "y" resizes two rows (via PACT_ED.rowFlex). Equal by default; weights live
+// on the group objects / PACT_ED.rowFlex so they survive re-renders (tab switches) but reset when the
+// box count changes.
+function pactEdGutter(axis, getA, getB, container, onApply) {
+  const gut = el("div", { class: axis === "x" ? "pact-ed-gutter-x" : "pact-ed-gutter-y" }, []);
+  gut.addEventListener("mousedown", (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const rect = container.getBoundingClientRect();
+    const total = axis === "x" ? rect.width : rect.height;
+    const start = axis === "x" ? e.clientX : e.clientY;
+    const a0 = getA(), b0 = getB(), sum = a0 + b0;
+    document.body.style.cursor = axis === "x" ? "col-resize" : "row-resize";
+    document.body.style.userSelect = "none";
+    const move = (ev) => {
+      const pos = axis === "x" ? ev.clientX : ev.clientY;
+      const frac = total > 0 ? ((pos - start) / total) * sum : 0;
+      const min = sum * 0.15;
+      let a = a0 + frac, b = b0 - frac;
+      if (a < min) { a = min; b = sum - min; }
+      if (b < min) { b = min; a = sum - min; }
+      onApply(a, b);
+    };
+    const up = () => {
+      document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up);
+      document.body.style.cursor = ""; document.body.style.userSelect = "";
+    };
+    document.addEventListener("mousemove", move); document.addEventListener("mouseup", up);
+  });
+  return gut;
+}
 function pactEdLayout() {
   const host = PACT_ED.host, n = PACT_ED.groups.length;
-  host.style.setProperty("--pact-ed-cols", [1, 1, 2, 3, 2, 3, 3][n] || 3);
-  host.replaceChildren(...PACT_ED.groups.map((g) => {
+  const dist = PACT_ED_ROWS[n] || [4, 4];
+  // Equal by default: reset the resize weights whenever the box count changes.
+  if (PACT_ED.layoutN !== n) { PACT_ED.layoutN = n; PACT_ED.rowFlex = dist.map(() => 1); for (const g of PACT_ED.groups) g.flex = 1; }
+  for (const g of PACT_ED.groups) {
     g.tabsEl = el("div", { class: "pact-ed-hd" });
     g.bodyEl = el("div", { class: "pact-ed-body" });
     g.el = el("div", { class: "pact-ed-group" + (g.id === PACT_ED.activeId ? " --active" : "") }, [g.tabsEl, g.bodyEl]);
+    g.el.style.flex = (g.flex || 1) + " 1 0";
     g.el.addEventListener("mousedown", () => {
       if (PACT_ED.activeId !== g.id) { PACT_ED.activeId = g.id; for (const gg of PACT_ED.groups) gg.el.classList.toggle("--active", gg.id === PACT_ED.activeId); }
     });
-    return g.el;
-  }));
+  }
+  const rowEls = [];
+  let idx = 0;
+  dist.forEach((count, ri) => {
+    const groups = PACT_ED.groups.slice(idx, idx + count); idx += count;
+    const rowEl = el("div", { class: "pact-ed-row" }, []);
+    rowEl.style.flex = (PACT_ED.rowFlex[ri] || 1) + " 1 0";
+    const kids = [];
+    groups.forEach((g, gi) => {
+      kids.push(g.el);
+      if (gi < groups.length - 1) {
+        const b = groups[gi + 1];
+        kids.push(pactEdGutter("x", () => g.flex || 1, () => b.flex || 1, rowEl, (av, bv) => {
+          g.flex = av; b.flex = bv; g.el.style.flex = av + " 1 0"; b.el.style.flex = bv + " 1 0";
+        }));
+      }
+    });
+    rowEl.replaceChildren(...kids);
+    rowEls.push(rowEl);
+  });
+  const hostKids = [];
+  rowEls.forEach((rowEl, ri) => {
+    hostKids.push(rowEl);
+    if (ri < rowEls.length - 1) {
+      const next = rowEls[ri + 1];
+      hostKids.push(pactEdGutter("y", () => PACT_ED.rowFlex[ri] || 1, () => PACT_ED.rowFlex[ri + 1] || 1, host, (av, bv) => {
+        PACT_ED.rowFlex[ri] = av; PACT_ED.rowFlex[ri + 1] = bv; rowEl.style.flex = av + " 1 0"; next.style.flex = bv + " 1 0";
+      }));
+    }
+  });
+  host.replaceChildren(...hostKids);
   for (const g of PACT_ED.groups) pactEdRenderGroup(g);
 }
 function pactEdRenderGroup(g) {
