@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.35] - 2026-08-12
+
+### Changed
+- **"Running locally" tab collapses what isn't running.** In the new Running-locally tab, running
+  processes show by default; everything dormant (stopped / not-installed / unknown) is collapsed behind
+  an "N not running — show" button that expands to reveal them. Same graceful degradation as before when
+  the process list can't be read. Partition is a pure, unit-tested helper (`partitionProcesses`).
+
 ## [1.1.34] - 2026-08-12
 
 ### Changed

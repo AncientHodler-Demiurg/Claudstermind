@@ -745,6 +745,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .deploy-proc-role { font-size: 11px; color: var(--ink-mute); }
 .deploy-proc-detail { margin-left: auto; font-size: 11px; color: var(--ink-mute); font-family: ui-monospace, monospace;
   text-align: right; white-space: nowrap; }
+.deploy-proc-more { align-self: flex-start; margin-top: 8px; background: var(--chip); border: 1px solid var(--line);
+  color: var(--ink-dim); font: 600 12px/1 inherit; padding: 7px 11px; border-radius: 8px; cursor: pointer; }
+.deploy-proc-more:hover { color: var(--ink); border-color: var(--accent); }
+.deploy-proc-dormant { display: flex; flex-direction: column; gap: 0; margin-top: 4px; }
+.deploy-proc-dormant[hidden] { display: none; }
 
 /* ---- Deploy: StoaExplorer-style step-by-step progress (deploy-survivable agents W4) ---- */
 .dp-progress { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }

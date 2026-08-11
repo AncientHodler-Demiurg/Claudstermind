@@ -944,19 +944,31 @@ function viewDeploy() {
         d.busy && d.busy.count ? el("span", { class: "deploy-restart-busy" }, ["  ·  " + d.busy.count + " agent(s) working"]) : "",
       ]),
     );
-    const procs = d.processes || [];
-    const rows = procs.map((p) => el("div", { class: "deploy-proc-row" }, [
+    const procRow = (p) => el("div", { class: "deploy-proc-row" }, [
       el("span", { class: "deploy-proc-dot --" + (p.status || "unknown") }, [PROC_ICON[p.status] || "◌"]),
       el("div", { class: "deploy-proc-main" }, [
         el("span", { class: "deploy-proc-name" }, [p.name || p.key]),
         el("span", { class: "deploy-proc-role" }, [p.role || ""]),
       ]),
       el("span", { class: "deploy-proc-detail" }, [p.detail || p.status || ""]),
-    ]));
-    procBox.replaceChildren(
-      el("div", { class: "deploy-card-t" }, ["Running on this machine"]),
-      ...(rows.length ? rows : [el("div", { class: "hint" }, [d.ok === false ? "Process list unavailable." : "No processes reported."])]),
-    );
+    ]);
+    // Running processes show by default; everything dormant (stopped / not-installed / unknown)
+    // collapses behind an "N not running — show" card so the common case (what's up right now) is
+    // front and centre, and the rest is one click away. Partition is a pure, unit-tested helper.
+    const { running, dormant, dormantCount } = DeployHelpers.partitionProcesses(d.processes || []);
+    const kids = [el("div", { class: "deploy-card-t" }, ["Running on this machine"])];
+    if (running.length) kids.push(...running.map(procRow));
+    else kids.push(el("div", { class: "hint" }, [d.ok === false ? "Process list unavailable." : "Nothing running right now."]));
+    if (dormantCount) {
+      const dormBox = el("div", { class: "deploy-proc-dormant", hidden: "" }, dormant.map(procRow));
+      let open = false;
+      const toggle = el("button", { class: "deploy-proc-more", onclick: () => {
+        open = !open; dormBox.hidden = !open;
+        toggle.textContent = open ? "▾ " + dormantCount + " not running — hide" : "▸ " + dormantCount + " not running — show";
+      } }, ["▸ " + dormantCount + " not running — show"]);
+      kids.push(toggle, dormBox);
+    }
+    procBox.replaceChildren(...kids);
   }
 
   // The deploy confirmation — a custom in-app modal (never window.confirm) PLUS the busy-agent
