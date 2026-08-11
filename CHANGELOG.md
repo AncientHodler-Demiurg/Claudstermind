@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.7] - 2026-08-11
+
+### Added
+- **Pact IDE — the recovered "Ouronet Pact audit" chat is surfaced + resumable.** A large earlier Pact
+  conversation that a reload appeared to "lose" was always safe on disk; it now appears in the new chat
+  history panel with a readable name. `lib/pactIdeState.mjs` pre-seeds a `chatNames` entry
+  (`9b41003b-b616-4ac3-9b2b-780f3b229662` → "Ouronet Pact audit"), merged into `chatNames` on every
+  read (localhost + remote) without ever clobbering a name the user later sets. Verified against the
+  on-disk store: the chat is listed in the Pact history, shows the friendly name, and its **Resume**
+  passes the real SDK id `ad269259-019d-4b49-93bd-8742207a8e60` so continuing it restores full agent
+  context.
+
 ## [1.1.6] - 2026-08-11
 
 ### Added

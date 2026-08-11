@@ -63,9 +63,15 @@
   `pactDeriveChatName` (auto-name on first send, preamble-stripped). `pactChatSend` now sends
   `resume: t.resume`. Transcript rehydration routed via `PACT_CHAT._pendingOpen`. CSS: `.pc-hist-*`
   in styles.css. Names live in the shared `chatNames` map (P1 store).
-- ⏳ **P4 — surface the recovered "Ouronet Pact audit" chat** (session file id
-  `9b41003b-b616-4ac3-9b2b-780f3b229662`, realSessionId `ad269259-019d-4b49-93bd-8742207a8e60`,
-  75 msgs) named in the store + resumable. NOT YET DONE.
+- ✅ **P4 — surface the recovered "Ouronet Pact audit" chat** (v1.1.7). `SEED_CHAT_NAMES` in
+  `lib/pactIdeState.mjs` seeds `9b41003b-b616-4ac3-9b2b-780f3b229662` → "Ouronet Pact audit", merged
+  into `chatNames` on every `readIdeState` (never clobbering a user rename). VERIFIED against the real
+  on-disk store (`~/ClaudeWS/.claude/workspace/OuroborosNetwork~2f~_onchain~2f~Ouronet@main/`): the
+  session is listed by `store.listSessions`, shows the friendly name, and its `realSessionId` is
+  `ad269259-019d-4b49-93bd-8742207a8e60` (so Resume passes exactly that as `resume`). NOTE: `turns`
+  counts USER turns (this file has 1 — the rest are assistant/tool), not the 75 total messages. There
+  is also a second Pact session on disk keyed by the workspace id itself (`…Ouronet@main`, 4 turns)
+  which also lists in history.
 
 **Backend facts for P2–P4 (verified):**
 - Every Pact chat prompt goes out as `wsPost("prompt", {sessionKey:t.key, repo:PACT_REPO, worktree:"main", …})`.
