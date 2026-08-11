@@ -2604,23 +2604,36 @@ function pactEdFindReplaceAll(g) {
 function pactDiffLines(before, after) {
   const A = String(before).split("\n"), B = String(after).split("\n");
   const rows = [];
-  if (A.length * B.length > 4_000_000) {   // too large for an LCS — coarse whole-file diff
-    for (const l of A) rows.push({ type: "del", text: l });
-    for (const l of B) rows.push({ type: "add", text: l });
-    return { rows, add: B.length, del: A.length };
+  // Strip the common prefix and suffix FIRST, then LCS only the middle. A localized edit (e.g. one
+  // added comment) in a big file leaves a tiny middle — so the diff is both cheap and correct. The old
+  // code instead bailed to a useless whole-file replace whenever A.length*B.length was large, which is
+  // why adding a single line to a ~4000-line file reddened the entire old file and greened the entire
+  // new one (+3992/−3991) instead of showing just the one added line.
+  let lo = 0;
+  while (lo < A.length && lo < B.length && A[lo] === B[lo]) lo++;
+  let aHi = A.length, bHi = B.length;
+  while (aHi > lo && bHi > lo && A[aHi - 1] === B[bHi - 1]) { aHi--; bHi--; }
+  for (let k = 0; k < lo; k++) rows.push({ type: "same", text: A[k] });   // common prefix
+  const midA = A.slice(lo, aHi), midB = B.slice(lo, bHi);
+  const n = midA.length, m = midB.length;
+  let add = 0, del = 0;
+  if (n * m > 4_000_000) {   // genuinely huge scattered change even after stripping — coarse middle
+    for (const l of midA) { rows.push({ type: "del", text: l }); del++; }
+    for (const l of midB) { rows.push({ type: "add", text: l }); add++; }
+  } else {
+    const dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+      dp[i][j] = midA[i] === midB[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (midA[i] === midB[j]) { rows.push({ type: "same", text: midA[i] }); i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) { rows.push({ type: "del", text: midA[i] }); i++; del++; }
+      else { rows.push({ type: "add", text: midB[j] }); j++; add++; }
+    }
+    while (i < n) { rows.push({ type: "del", text: midA[i++] }); del++; }
+    while (j < m) { rows.push({ type: "add", text: midB[j++] }); add++; }
   }
-  const n = A.length, m = B.length;
-  const dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
-  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
-    dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-  let i = 0, j = 0, add = 0, del = 0;
-  while (i < n && j < m) {
-    if (A[i] === B[j]) { rows.push({ type: "same", text: A[i] }); i++; j++; }
-    else if (dp[i + 1][j] >= dp[i][j + 1]) { rows.push({ type: "del", text: A[i] }); i++; del++; }
-    else { rows.push({ type: "add", text: B[j] }); j++; add++; }
-  }
-  while (i < n) { rows.push({ type: "del", text: A[i++] }); del++; }
-  while (j < m) { rows.push({ type: "add", text: B[j++] }); add++; }
+  for (let k = aHi; k < A.length; k++) rows.push({ type: "same", text: A[k] });   // common suffix
   return { rows, add, del };
 }
 function pactEdAnyDiff() { return !!(PACT_ED && PACT_ED.groups.some((g) => g.tabs.some((t) => t.agentDiff))); }

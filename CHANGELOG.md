@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.17] - 2026-08-11
+
+### Fixed
+- **Agent-edit diff reddened/greened the WHOLE file for a one-line change.** The line diff bailed to a
+  coarse whole-file replace whenever `oldLines * newLines` exceeded ~4M — so adding a single comment to
+  a ~4000-line Pact file showed the entire old file as removed and the entire new file as added
+  (+3992/−3991) instead of one green line. The diff now strips the common prefix/suffix first and runs
+  the LCS only on the changed middle, so a localized edit shows exactly the lines that changed (a
+  single inserted line is now +1/−0), and it stays fast on large files.
+
 ## [1.1.16] - 2026-08-11
 
 ### Fixed
