@@ -2063,7 +2063,8 @@ function pactRunRepl(rel) {
 // file into the ACTIVE box; ⊞ splits (adds a box), × closes it. Content is fetched once per tab and
 // cached, so switching tabs is instant. Files render per type: .pact/.repl → StoicSyntax coloring,
 // .md → markdown, else plain monospace.
-let PACT_ED = null;   // { host, groups:[group], activeId, seq }; group = { id, tabs:[{path,name,loaded,content,error}], active }
+let PACT_TREE_FONT = 12.5;   // tree font size (px), adjustable via the tree header A-/A+
+let PACT_ED = null;   // { host, groups:[group], activeId, seq }; group = { id, tabs:[{path,name,loaded,content,error}], active, fontPx }
 function pactEdInit(host) { PACT_ED = { host, groups: [], activeId: null, seq: 0 }; pactEdAddGroup(); }
 function pactEdAddGroup() {
   if (!PACT_ED || PACT_ED.groups.length >= 6) return;
@@ -2115,7 +2116,12 @@ function pactEdRenderGroup(g) {
     run.addEventListener("click", (e) => { e.stopPropagation(); pactRunRepl(active.path); });
     actions.push(run);
   }
-  const split = el("button", { class: "pact-ed-ico", title: "Split — open another editor box (up to 6)" }, ["⊞"]);
+  const fMinus = el("button", { class: "pact-ed-ico", title: "Smaller font (this box)" }, ["A-"]);
+  const fPlus = el("button", { class: "pact-ed-ico", title: "Bigger font (this box)" }, ["A+"]);
+  fMinus.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.max(9, (g.fontPx || 12.5) - 1); pactEdRenderGroup(g); });
+  fPlus.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.min(22, (g.fontPx || 12.5) + 1); pactEdRenderGroup(g); });
+  actions.push(fMinus, fPlus);
+  const split = el("button", { class: "pact-ed-ico", title: "Split — open another editor box (up to 8)" }, ["⊞"]);
   split.addEventListener("click", (e) => { e.stopPropagation(); pactEdAddGroup(); });
   actions.push(split);
   if (PACT_ED.groups.length > 1) {
@@ -2135,7 +2141,7 @@ function pactEdRenderBody(g, tab) {
     const md = el("div", { class: "pact-md" }); md.innerHTML = window.mdRender(tab.content);
     g.bodyEl.replaceChildren(el("div", { class: "pact-editor-scroll" }, [md]));
   } else {
-    const pre = el("pre", { class: "pact-code" }); renderPactCode(pre, tab.content, tab.path);
+    const pre = el("pre", { class: "pact-code" }); if (g.fontPx) pre.style.fontSize = g.fontPx + "px"; renderPactCode(pre, tab.content, tab.path);
     const kids = [];
     if ((ext.endsWith(".pact") || ext.endsWith(".repl")) && window.pactBandLegend) kids.push(pactLegend());
     kids.push(el("div", { class: "pact-editor-scroll" }, [pre]));
@@ -2317,7 +2323,19 @@ function pactChatRender() {
 function viewPact() {
   const editorEl = el("div", { class: "pact-editor" });
   const treeBody = el("div", { class: "pact-tree-body" }, [el("div", { class: "hint", style: "padding:6px 8px" }, ["Loading tree…"])]);
-  const treeEl = el("aside", { class: "pact-tree" }, [el("div", { class: "pact-tree-hd" }, ["📁 Ouronet (Pact)"]), treeBody]);
+  const treeFontBtns = (() => {
+    const apply = () => { treeEl.style.setProperty("--pk-tree-font", PACT_TREE_FONT + "px"); };
+    const minus = el("button", { class: "pact-ed-ico", title: "Smaller tree font" }, ["A-"]);
+    const plus = el("button", { class: "pact-ed-ico", title: "Bigger tree font" }, ["A+"]);
+    minus.addEventListener("click", () => { PACT_TREE_FONT = Math.max(9, PACT_TREE_FONT - 1); apply(); });
+    plus.addEventListener("click", () => { PACT_TREE_FONT = Math.min(20, PACT_TREE_FONT + 1); apply(); });
+    return [minus, plus];
+  })();
+  const treeEl = el("aside", { class: "pact-tree" }, [
+    el("div", { class: "pact-tree-hd" }, ["📁 Ouronet", el("span", { class: "ws-spacer" }, []), ...treeFontBtns]),
+    treeBody,
+  ]);
+  treeEl.style.setProperty("--pk-tree-font", PACT_TREE_FONT + "px");
   const chatEl = el("div", { class: "pact-chat" }, []);   // filled by pactChatInit() below
   const termOut = el("pre", { class: "pact-terminal" }, ["Open a .repl file and press ▶ Run to stream it here.\n"]);
   const termClear = el("button", { class: "pact-term-clear", title: "Clear the terminal" }, ["clear"]);

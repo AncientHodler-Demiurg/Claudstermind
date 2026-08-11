@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.0.8] - 2026-08-11
+
+### Added
+- **Pact IDE — U1 editor polish.** Multi-line tabs (wrap instead of horizontal scroll, point 7); a
+  responsive file tree that grows with the window (`clamp(180px,16%,340px)`) with **A- / A+ font buttons**
+  in its header (point 1); **per-editor-box A- / A+ font buttons** (point 7); and long tree filenames now
+  reveal fully on hover (a JS marquee is a later refinement). Points 2–6 (editable + Save All, the split
+  ladder, resizable boxes, agent diffs) follow in U2–U4 — see HANDOFF-PACT-IDE-UI.md.
+
 ## [1.0.7] - 2026-08-11
 
 ### Added
