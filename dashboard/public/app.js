@@ -2058,6 +2058,34 @@ function renderPactCode(pre, content, rel) {
   if (isPact && typeof window.pactHighlight === "function") pre.innerHTML = window.pactHighlight(content);
   else pre.textContent = content;
 }
+// Highlight the whole file, then split the resulting HTML into one string per SOURCE line — carefully
+// re-opening/closing any <span> that straddles a newline (only pk-string spans can, for multi-line
+// string literals; comments stop at EOL). pactHighlight never nests spans, so tracking one open tag
+// suffices. Returns exactly content.split("\n").length entries (newline count is preserved by
+// highlighting). Non-pact files (or no highlighter) fall back to per-line escaped plain text.
+function pactHighlightLines(content, rel) {
+  const ext = (rel || "").toLowerCase();
+  const isPact = ext.endsWith(".pact") || ext.endsWith(".repl");
+  const src = String(content);
+  if (!isPact || typeof window.pactHighlight !== "function") return src.split("\n").map(escapeHtml);
+  const html = window.pactHighlight(src);
+  const lines = [];
+  let cur = "", openTag = null;
+  for (const p of html.split(/(<span[^>]*>|<\/span>)/)) {
+    if (!p) continue;
+    if (p.charAt(0) === "<" && p.charAt(1) !== "/") { openTag = p; cur += p; continue; }
+    if (p === "</span>") { openTag = null; cur += p; continue; }
+    const segs = p.split("\n");
+    cur += segs[0];
+    for (let k = 1; k < segs.length; k++) {
+      if (openTag) cur += "</span>";
+      lines.push(cur);
+      cur = (openTag || "") + segs[k];
+    }
+  }
+  lines.push(cur);
+  return lines;
+}
 // A compact strip that teaches the band colors — "the prefix is the contract" made visible.
 function pactLegend() {
   const legend = (window.pactBandLegend || []);
@@ -2256,6 +2284,16 @@ function pactEdRenderGroup(g) {
   fMinus.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.max(9, (g.fontPx || 12.5) - 1); pactEdRenderGroup(g); pactStateSave(); });
   fPlus.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.min(22, (g.fontPx || 12.5) + 1); pactEdRenderGroup(g); pactStateSave(); });
   actions.push(fMinus, fPlus);
+  if (active && (active.path.toLowerCase().endsWith(".pact") || active.path.toLowerCase().endsWith(".repl")) && !active.agentDiff) {
+    const fold = el("button", { class: "pact-ed-ico" + (active.foldMode ? " --on" : ""), title: active.foldMode ? "Back to edit mode" : "Fold / read view — collapse modules & defs" }, [active.foldMode ? "✎" : "⊟"]);
+    fold.addEventListener("click", (e) => {
+      e.stopPropagation();
+      active.foldMode = !active.foldMode;
+      if (active.foldMode && g.find && g.find.open) pactEdCloseFind(g);   // find bar is edit-mode only
+      pactEdRenderGroup(g);
+    });
+    actions.push(fold);
+  }
   const split = el("button", { class: "pact-ed-ico", title: "Split — open another editor box (up to 8)" }, ["⊞"]);
   split.addEventListener("click", (e) => { e.stopPropagation(); pactEdAddGroup(); });
   actions.push(split);
@@ -2294,6 +2332,9 @@ function pactEdRenderBody(g, tab) {
     g.bodyEl.replaceChildren(el("div", { class: "pact-editor-scroll" }, [md]));
     return;
   }
+  // Fold / read view: read-only per-line render with collapsible module/def blocks (outline a file,
+  // grab a whole def). Only for pact/repl; the textarea can't hide lines without desyncing the caret.
+  if (tab.foldMode && (ext.endsWith(".pact") || ext.endsWith(".repl"))) { pactEdRenderFoldBody(g, tab); return; }
   // Editable overlay: a transparent <textarea> over a syntax-highlighted <pre> that scrolls with it.
   // The pre keeps StoicSyntax coloring (point 2 kept the highlight view); the textarea takes the typing.
   const kids = [];
@@ -2325,6 +2366,63 @@ function pactEdRenderBody(g, tab) {
   g._findCtx = { wrap, ta, hl, tab, paint, syncScroll };   // find/replace targets the active tab's live textarea
   if (g.find && g.find.open) { g.find._bar = null; pactEdMountFindBar(g); }   // re-mount (retarget) after a tab/font re-render
   requestAnimationFrame(syncScroll);
+}
+// ---- Fold / read view: a read-only per-line render (NOT the live textarea — folding lines in a
+// textarea desyncs the caret) with a left gutter whose ▾/▸ arrows collapse/expand each `(module`,
+// `(interface`, or `(def*` block. Nested folds work (a defun inside a module folds independently).
+// State lives on the tab (foldMode + a Set of collapsed opener line numbers), so it survives tab
+// switches / font changes while the box stays open. Editing is off here by design.
+function pactEdRenderFoldBody(g, tab) {
+  if (!(tab.folded instanceof Set)) tab.folded = new Set();
+  const ranges = pactFoldRanges(tab.content);
+  const openerByStart = new Map(ranges.map((r) => [r.start, r]));
+  const htmlLines = pactHighlightLines(tab.content, tab.path);
+  const view = el("div", { class: "pact-code pact-fold-view" });
+  if (g.fontPx) view.style.fontSize = g.fontPx + "px";
+  const fill = () => pactFoldViewFill(view, tab, openerByStart, htmlLines);
+  const foldAll = el("button", { class: "pact-ed-ico", title: "Collapse every module & def" }, ["Fold all"]);
+  const unfoldAll = el("button", { class: "pact-ed-ico", title: "Expand everything" }, ["Unfold all"]);
+  foldAll.addEventListener("click", (e) => { e.stopPropagation(); for (const r of ranges) tab.folded.add(r.start); fill(); });
+  unfoldAll.addEventListener("click", (e) => { e.stopPropagation(); tab.folded.clear(); fill(); });
+  const kids = [];
+  if (window.pactBandLegend) kids.push(pactLegend());
+  kids.push(el("div", { class: "pact-fold-bar" }, [
+    el("span", { class: "hint" }, ["Read / fold view — editing is off (toggle ✎ to edit)"]),
+    el("span", { class: "ws-spacer" }, []), foldAll, unfoldAll,
+  ]));
+  kids.push(el("div", { class: "pact-editor-scroll" }, [view]));
+  fill();
+  g.bodyEl.replaceChildren(...kids);
+}
+function pactFoldViewFill(view, tab, openerByStart, htmlLines) {
+  const total = htmlLines.length;
+  const hidden = new Array(total).fill(false);
+  for (const start of tab.folded) {                 // stale starts (content changed) resolve to nothing
+    const r = openerByStart.get(start); if (!r) continue;
+    for (let l = r.start + 1; l <= r.end && l < total; l++) hidden[l] = true;
+  }
+  const rows = [];
+  for (let l = 0; l < total; l++) {
+    if (hidden[l]) continue;
+    const r = openerByStart.get(l);
+    const collapsed = !!r && tab.folded.has(l);
+    const gutter = el("span", { class: "pfv-gutter" }, []);
+    if (r) {
+      const arrow = el("span", { class: "pfv-arrow", title: collapsed ? "Expand block" : "Collapse block" }, [collapsed ? "▸" : "▾"]);
+      arrow.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (tab.folded.has(l)) tab.folded.delete(l); else tab.folded.add(l);
+        pactFoldViewFill(view, tab, openerByStart, htmlLines);
+      });
+      gutter.append(arrow);
+    }
+    const code = el("span", { class: "pfv-code" }, []);
+    code.innerHTML = (htmlLines[l] == null || htmlLines[l] === "") ? "&nbsp;" : htmlLines[l];
+    const rk = [gutter, code];
+    if (collapsed) rk.push(el("span", { class: "pfv-ellipsis", title: "Collapsed block — click ▸ to expand" }, ["⋯)"]));
+    rows.push(el("div", { class: "pfv-row" + (r ? " pfv-openable" : "") }, rk));
+  }
+  view.replaceChildren(...rows);
 }
 // ---- Save state: per-tab dirty (content ≠ last saved), a global Save-All button, debounced autosave.
 function pactEdAnyDirty() { return !!(PACT_ED && PACT_ED.groups.some((g) => g.tabs.some((t) => t.dirty))); }
@@ -2434,6 +2532,54 @@ function pactReplaceAll(text, term, replStr, opts) {
   return { text: text.replace(built.re, repl), count: matches.length };
 }
 // ===== end PACT FIND/REPLACE pure helpers =====
+
+// ===== PACT FOLD — string/comment-aware fold-range finder for the read/fold view. =====
+// pactFoldRanges(content) → [{ start, end }] 0-based line indices, one per foldable block whose
+// opener (`(module`/`(interface`/`(def*`) is the first non-whitespace token on its line and whose
+// matching close paren lands on a LATER line (single-line forms don't fold). String- and comment-
+// aware — parens inside "…" strings (with \" escapes; strings may span lines) or after `;` comments
+// don't count — mirroring pact-highlight.js's scanner. Nested blocks each get their own range;
+// unbalanced/partial parens never throw (an unclosed opener simply yields no range). Pure/DOM-free —
+// unit-tested via lib/pactFold.test.mjs (same sentinel-slice-and-eval pattern as the find helpers).
+function pactFoldRanges(content) {
+  const FOLD = new Set(["module", "interface", "defun", "defcap", "defconst", "defschema", "deftable", "defpact"]);
+  const s = String(content), n = s.length;
+  const isWord = (ch) => /[A-Za-z0-9_|<>.\-]/.test(ch);
+  const ranges = [], stack = [];   // stack entry: { line, foldable }
+  let line = 0, lineHasNonWs = false, i = 0;
+  while (i < n) {
+    const c = s[i];
+    if (c === "\n") { line++; lineHasNonWs = false; i++; continue; }
+    if (c === " " || c === "\t" || c === "\r" || c === "\f" || c === "\v") { i++; continue; }
+    if (c === ";") { while (i < n && s[i] !== "\n") i++; continue; }   // comment to end of line
+    if (c === '"') {                                                    // string: \" escapes; may span lines
+      i++;
+      while (i < n) {
+        if (s[i] === "\\") { i += 2; continue; }
+        if (s[i] === '"') { i++; break; }
+        if (s[i] === "\n") { line++; lineHasNonWs = false; i++; continue; }
+        i++;
+      }
+      lineHasNonWs = true; continue;
+    }
+    if (c === "(") {
+      const firstOnLine = !lineHasNonWs; lineHasNonWs = true;
+      let j = i + 1; while (j < n && (s[j] === " " || s[j] === "\t")) j++;
+      let k = j; while (k < n && isWord(s[k])) k++;
+      stack.push({ line, foldable: firstOnLine && FOLD.has(s.slice(j, k)) });
+      i++; continue;
+    }
+    if (c === ")") {
+      lineHasNonWs = true;
+      const o = stack.pop();
+      if (o && o.foldable && line > o.line) ranges.push({ start: o.line, end: line });
+      i++; continue;
+    }
+    lineHasNonWs = true; i++;
+  }
+  return ranges;
+}
+// ===== end PACT FOLD pure helpers =====
 
 function pactEdFindState(g) {
   if (!g.find) g.find = { open: false, term: "", repl: "", cs: false, ww: false, re: false, showRepl: false, matches: [], idx: -1 };

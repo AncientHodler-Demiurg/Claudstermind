@@ -1010,6 +1010,7 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-ed-ico { flex: 0 0 auto; padding: 2px 8px; border-radius: 6px; background: var(--chip);
   border: 1px solid var(--line); color: var(--ink-dim); font-size: 13px; cursor: pointer; }
 .pact-ed-ico:hover { color: var(--ink); }
+.pact-ed-ico.--on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
 .pact-ed-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .pact-editor-empty { padding: 16px; }
 .pact-editor-scroll { flex: 1; min-height: 0; overflow: auto; }
@@ -1061,6 +1062,19 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pd-del { background: rgba(239, 83, 80, .15); }
 .pd-del .pd-sign { color: #ef5350; }
 .pd-del .pd-text { color: #c99; }
+
+/* Fold / read view (read-only): the container carries `pact-code` too, so the `.pact-code .pk-*`
+   token colors below apply to each line's spans; these rules override the base pre metrics for a
+   per-line flex layout with a left fold gutter. Inline font-size (per-box fontPx) wins over the base. */
+.pact-fold-view { padding: 8px 0; white-space: normal; }
+.pact-fold-bar { display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.pfv-row { display: flex; align-items: flex-start; }
+.pfv-row.pfv-openable:hover { background: rgba(255, 255, 255, .04); }
+.pfv-gutter { flex: 0 0 20px; text-align: center; user-select: none; color: var(--ink-dim); }
+.pfv-arrow { cursor: pointer; display: inline-block; width: 100%; }
+.pfv-arrow:hover { color: var(--ink); }
+.pfv-code { flex: 1; min-width: 0; white-space: pre; padding-right: 12px; }
+.pfv-ellipsis { flex: 0 0 auto; color: var(--ink-dim); user-select: none; padding: 0 8px; cursor: default; }
 
 /* StoicSyntax token colors (VS Code Dark+ base; StoicSyntax prefix BANDS carry the meaning —
    unprotected reads/compute cool, protected state-changers warm/red). */

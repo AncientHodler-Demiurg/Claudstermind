@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.18] - 2026-08-11
+
+### Added
+- **Code folding in the Pact viewer.** Each pact/repl box gets a ⊟ fold/read toggle (next to A-/A+/split)
+  that swaps the editable overlay for a read-only, syntax-highlighted per-line view with a left fold
+  gutter. Rows that open a `(module`, `(interface`, or a `def*` form (`defun`/`defcap`/`defpact`/
+  `defschema`/`defconst`/`deftable`) show a ▾/▸ arrow; clicking collapses the block to just its opener
+  row plus a subtle "⋯)" affordance and re-expands it. Nested folds are independent (a `defun` inside a
+  `module` folds on its own), and the view has "Fold all" / "Unfold all" buttons. Fold state is
+  remembered per tab while the box stays open. Fold mode is read-only by design; the ✎ toggle returns to
+  the textarea overlay with editing/dirty/autosave/find/agent-diff all unchanged (a textarea can't hide
+  lines without desyncing the caret, so folding is a separate view). Fold ranges are computed by a
+  string- and comment-aware paren matcher (`pactFoldRanges`, unit-tested in `lib/pactFold.test.mjs`) that
+  ignores parens inside `"…"` literals and `;` comments and never throws on unbalanced input.
+
 ## [1.1.17] - 2026-08-11
 
 ### Fixed

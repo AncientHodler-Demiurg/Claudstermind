@@ -41,6 +41,22 @@
   marked block in app.js) are DOM-free and unit-tested by `lib/pactFind.test.mjs` (12 tests). **Repo-
   wide / cross-file search is OUT of scope** — a possible follow-up (would mirror the pactTree tunnel
   with a server-side grep). Files: `dashboard/public/app.js`, `styles.css`, `lib/pactFind.test.mjs`.
+- ✅ **U6 — code folding in the viewer** (v1.1.18). A per-box **⊟ fold/read toggle** (next to A-/A+/split
+  in `pactEdRenderGroup`, only for pact/repl, hidden during an agent diff) swaps the editable overlay for
+  a read-only per-line **`.pact-fold-view`** (`pactEdRenderFoldBody`/`pactFoldViewFill` in app.js). Each
+  row is syntax-highlighted via `pactHighlightLines` (highlights the whole file, then splits the HTML by
+  source line, re-opening/closing spans that straddle a newline so multi-line strings still color). Rows
+  that open `(module`/`(interface`/`(def*` get a **▾/▸** arrow in a left gutter; clicking collapses the
+  block to just its opener + a subtle "⋯)" and re-expands. **Nested folds are independent** (a defun
+  inside a module). "Fold all" / "Unfold all" buttons in the fold bar. Fold state (`tab.foldMode` +
+  `tab.folded` Set of opener line numbers) is remembered **per tab while the box stays open** (not
+  persisted to disk). Fold mode is **read-only by design** — a textarea can't hide lines without
+  desyncing the caret — and the ✎ toggle returns to the textarea overlay with editing/dirty/autosave/
+  find/agent-diff all unchanged (`_findCtx` is cleared entering fold mode; an open find bar closes).
+  Fold ranges come from the pure, sentinel-marked **`pactFoldRanges`** — a string/comment-aware paren
+  matcher (ignores parens in `"…"` and after `;`, never throws on unbalanced input), unit-tested in
+  `lib/pactFold.test.mjs` (12 tests). Files: `dashboard/public/app.js`, `styles.css`,
+  `lib/pactFold.test.mjs`. **`pact-highlight.js` was NOT touched.**
 
 ## IDE state preservation + chat history/resume (P1–P4)
 > Goal: the Pact workspace reopens exactly where you left off (open files, editor boxes, chat tabs,
