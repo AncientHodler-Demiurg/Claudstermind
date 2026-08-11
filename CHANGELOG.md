@@ -4,6 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.20] - 2026-08-12
+
+### Added
+- **Session daemon entrypoint (`sessiond/sessiond.mjs`).** The long-lived process that will own the
+  agent session engine (`WorkspaceManager` + `ClaudeSession` + the SDK `query()`) so an ordinary web
+  deploy can restart the web process without interrupting running agents. It builds the engine the
+  same way `dashboard/server.mjs` does (same root/secrets, the same `map.json`-derived repo list) and
+  exposes it over the lib/sessionIpc unix-socket protocol. Request frames: `prompt` → `_prompt`,
+  `control` → `_control`, `subscribe` (register for the live event stream), `snapshot` (live session
+  summaries), `ping` → `pong`. The engine's `send(kind, sessionKey, data)` is fanned out to every
+  subscribed connection as an `event` frame, and a dropped client is pruned from the subscriber set.
+  Engine + transport are injectable (`{ workspace, listen }`) so it is unit-tested against a stub
+  engine over an in-memory connection — no real Claude subprocess, no real socket. Socket path
+  resolves from `SESSIOND_SOCK`, else `$XDG_RUNTIME_DIR`, else `/run`. Not yet wired into the web
+  path (new files only).
+
 ## [1.1.19] - 2026-08-12
 
 ### Added

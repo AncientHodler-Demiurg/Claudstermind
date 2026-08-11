@@ -7,7 +7,7 @@ CHANGELOG top entry, push to main. Never restart the live service.
 ## Wave 1 — Foundation (daemon + IPC, no web change)
 - [x] T1.1 `lib/sessionIpc.mjs` — newline-delimited JSON framing (encode/decode, partial-buffer safe) + a
       tiny unix-socket server/client helper. Unit test: framing round-trips, split/coalesced chunks.
-- [ ] T1.2 `sessiond` entrypoint (`sessiond/sessiond.mjs` or `agent/sessiond.mjs`) — build a
+- [x] T1.2 `sessiond` entrypoint (`sessiond/sessiond.mjs` or `agent/sessiond.mjs`) — build a
       WorkspaceManager, expose prompt/control/subscribe/snapshot over the IPC server; `send` fans out to
       subscribers. Injectable for tests (stub engine + stub socket). Test: prompt→event round-trip.
 - [ ] T1.3 `deploy/claudstermind-sessiond.service` unit file + `HANDOFF-SESSIOND.md` with the one-time
