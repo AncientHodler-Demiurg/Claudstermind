@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.1] - 2026-08-11
+
+### Added
+- **Pact IDE — agent-edit diffs + Keep All (UI point 3).** When the embedded Pact chat agent edits a
+  file that is open in the editor, the box switches to a Cursor-style read-only **diff view** — green
+  added lines, red removed lines, with a `+N / −M` badge — instead of silently swapping the content.
+  A global **Keep All** button (appears only when a diff is pending) accepts the edits (the new text is
+  already on disk) and returns every box to the editable overlay. Detection runs at the end of each chat
+  turn by re-reading open, non-dirty files (an LCS line diff against the pre-agent content); user-dirty
+  tabs are never clobbered. See HANDOFF-PACT-IDE-UI.md for the scoped remainder (whole-repo git-diff
+  surfacing of files that aren't open, and inline diffs within the editable overlay).
+
 ## [1.1.0] - 2026-08-11
 
 ### Added

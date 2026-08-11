@@ -2210,6 +2210,21 @@ function pactEdRenderBody(g, tab) {
   if (tab.error) { g.bodyEl.replaceChildren(el("div", { class: "hint", style: "padding:10px;color:#f87171" }, ["⚠ " + tab.error])); return; }
   if (!tab.loaded) { g.bodyEl.replaceChildren(el("div", { class: "hint", style: "padding:10px" }, ["Loading…"])); return; }
   const ext = tab.path.toLowerCase();
+  // Agent edited this file: show a read-only green/red line diff until Keep All accepts it.
+  if (tab.agentDiff) {
+    const view = el("div", { class: "pact-diff-view" });
+    if (g.fontPx) view.style.fontSize = g.fontPx + "px";
+    view.append(...tab.agentDiff.rows.map((r) => el("div", { class: "pact-diff-row " + (r.type === "add" ? "pd-add" : r.type === "del" ? "pd-del" : "pd-same") }, [
+      el("span", { class: "pd-sign" }, [r.type === "add" ? "+" : r.type === "del" ? "−" : " "]),
+      el("span", { class: "pd-text" }, [r.text === "" ? " " : r.text]),
+    ])));
+    const dkids = [];
+    if ((ext.endsWith(".pact") || ext.endsWith(".repl")) && window.pactBandLegend) dkids.push(pactLegend());
+    dkids.push(el("div", { class: "pact-diff-hd" }, [el("span", { class: "pd-badge pd-badge-add" }, ["+" + tab.agentDiff.add]), el("span", { class: "pd-badge pd-badge-del" }, ["−" + tab.agentDiff.del]), el("span", { class: "hint", style: "margin-left:8px" }, ["agent edit — Keep All to accept + resume editing"])]));
+    dkids.push(el("div", { class: "pact-editor-scroll" }, [view]));
+    g.bodyEl.replaceChildren(...dkids);
+    return;
+  }
   // Markdown renders as a preview by default; ✎ toggles a raw editor (tab.editing).
   if (ext.endsWith(".md") && !tab.editing && typeof window.mdRender === "function") {
     const md = el("div", { class: "pact-md" }); md.innerHTML = window.mdRender(tab.content);
@@ -2247,10 +2262,17 @@ function pactEdRenderBody(g, tab) {
 function pactEdAnyDirty() { return !!(PACT_ED && PACT_ED.groups.some((g) => g.tabs.some((t) => t.dirty))); }
 function pactEdDirtyCount() { return PACT_ED ? PACT_ED.groups.reduce((a, g) => a + g.tabs.filter((t) => t.dirty).length, 0) : 0; }
 function pactEdUpdateSaveBar() {
-  if (!PACT_ED || !PACT_ED.saveBtn) return;
-  const n = pactEdDirtyCount();
-  PACT_ED.saveBtn.disabled = n === 0;
-  PACT_ED.saveBtn.textContent = n ? `💾 Save All (${n})` : "💾 Saved";
+  if (!PACT_ED) return;
+  if (PACT_ED.saveBtn) {
+    const n = pactEdDirtyCount();
+    PACT_ED.saveBtn.disabled = n === 0;
+    PACT_ED.saveBtn.textContent = n ? `💾 Save All (${n})` : "💾 Saved";
+  }
+  if (PACT_ED.keepBtn) {
+    const d = pactEdDiffCount();
+    PACT_ED.keepBtn.style.display = d ? "" : "none";
+    PACT_ED.keepBtn.textContent = d ? `✓ Keep All (${d})` : "✓ Keep All";
+  }
 }
 function pactEdSaveStatus(text, isErr) {
   if (!PACT_ED || !PACT_ED.saveStatus) return;
@@ -2296,6 +2318,59 @@ async function pactEdSaveAll() {
   pactEdSaveStatus("saving " + dirty.length + " file" + (dirty.length > 1 ? "s" : "") + "…", false);
   for (const t of dirty) await pactEdSaveTab(t);
   if (!pactEdAnyDirty()) pactEdSaveStatus("✓ all saved", false);
+}
+// ---- Agent-edit diffs (point 3): the Pact chat agent writes files on disk. After each chat turn we
+// re-read every open, non-dirty file; if the agent changed it, the box switches to a Cursor-style diff
+// view (green added / red removed lines). "Keep All" accepts them (the new text is already on disk) and
+// returns the box to the editable overlay. A user-dirty tab is left alone (their edits win).
+function pactDiffLines(before, after) {
+  const A = String(before).split("\n"), B = String(after).split("\n");
+  const rows = [];
+  if (A.length * B.length > 4_000_000) {   // too large for an LCS — coarse whole-file diff
+    for (const l of A) rows.push({ type: "del", text: l });
+    for (const l of B) rows.push({ type: "add", text: l });
+    return { rows, add: B.length, del: A.length };
+  }
+  const n = A.length, m = B.length;
+  const dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  let i = 0, j = 0, add = 0, del = 0;
+  while (i < n && j < m) {
+    if (A[i] === B[j]) { rows.push({ type: "same", text: A[i] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { rows.push({ type: "del", text: A[i] }); i++; del++; }
+    else { rows.push({ type: "add", text: B[j] }); j++; add++; }
+  }
+  while (i < n) { rows.push({ type: "del", text: A[i++] }); del++; }
+  while (j < m) { rows.push({ type: "add", text: B[j++] }); add++; }
+  return { rows, add, del };
+}
+function pactEdAnyDiff() { return !!(PACT_ED && PACT_ED.groups.some((g) => g.tabs.some((t) => t.agentDiff))); }
+function pactEdDiffCount() { return PACT_ED ? PACT_ED.groups.reduce((a, g) => a + g.tabs.filter((t) => t.agentDiff).length, 0) : 0; }
+let PACT_ED_DIFF_CHECKING = false;
+async function pactEdCheckAgentEdits() {
+  if (!PACT_ED || PACT_ED_DIFF_CHECKING) return;
+  PACT_ED_DIFF_CHECKING = true;
+  let changed = false;
+  try {
+    for (const g of PACT_ED.groups) for (const tab of g.tabs) {
+      if (!tab.loaded || tab.dirty || tab._saving) continue;   // never clobber a tab the user is editing
+      let d; try { d = await (await fetch("/api/pact/file?path=" + encodeURIComponent(tab.path))).json(); } catch { continue; }
+      if (!d.ok || typeof d.content !== "string") continue;
+      if (d.content !== tab.content) {
+        if (!tab.agentDiff) tab.diffBase = tab.content;         // anchor at the pre-agent content
+        tab.content = d.content; tab.saved = d.content;         // disk is the source of truth now
+        tab.agentDiff = pactDiffLines(tab.diffBase, d.content);
+        changed = true;
+      }
+    }
+  } finally { PACT_ED_DIFF_CHECKING = false; }
+  if (changed) { pactEdLayout(); pactEdUpdateSaveBar(); pactEdSaveStatus("agent edited " + pactEdDiffCount() + " open file(s) — review + Keep All", false); }
+}
+function pactEdKeepAll() {
+  if (!PACT_ED) return;
+  for (const g of PACT_ED.groups) for (const t of g.tabs) { if (t.agentDiff) { t.agentDiff = null; t.diffBase = undefined; } }
+  pactEdLayout(); pactEdUpdateSaveBar();
 }
 async function pactEdOpen(path, row) {
   if (!PACT_ED) return;
@@ -2367,7 +2442,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
     case "assistant_delta": t.live = (t.live || "") + (d.text || ""); pactChatPaintLive(t); return;
     case "assistant": t.live = ""; t.msgs.push({ role: "assistant", text: d.text || "" }); pactChatPaint(t); return;
     case "tool_use": t.live = ""; t.msgs.push({ kind: "tool_use", tools: d.tools || [] }); pactChatPaint(t); return;
-    case "result": t.live = ""; t.status = "idle"; pactChatPaint(t); return;
+    case "result": t.live = ""; t.status = "idle"; pactChatPaint(t); pactEdCheckAgentEdits(); return;
     case "error": t.live = ""; t.status = "idle"; t.msgs.push({ kind: "error", text: d.text || d.message || "error" }); pactChatPaint(t); return;
     case "status": t.status = d.status; pactChatPaint(t); return;
     case "interrupted": t.status = "idle"; t.msgs.push({ kind: "note", text: "■ interrupted" }); pactChatPaint(t); return;
@@ -2497,14 +2572,17 @@ function viewPact() {
   const saveBtn = el("button", { class: "pact-save-all", title: "Save every changed file (Ctrl/⌘-S). Files also autosave 1.5s after you stop typing." }, ["💾 Saved"]);
   saveBtn.disabled = true;
   saveBtn.addEventListener("click", () => pactEdSaveAll());
+  const keepBtn = el("button", { class: "pact-keep-all", title: "Accept the agent's edits to open files (they're already on disk) and resume editing" }, ["✓ Keep All"]);
+  keepBtn.style.display = "none";
+  keepBtn.addEventListener("click", () => pactEdKeepAll());
   const saveStatus = el("span", { class: "pact-save-status" }, []);
-  const toolbar = el("div", { class: "pact-ed-toolbar" }, [saveBtn, saveStatus, el("span", { class: "ws-spacer" }, []),
+  const toolbar = el("div", { class: "pact-ed-toolbar" }, [saveBtn, keepBtn, saveStatus, el("span", { class: "ws-spacer" }, []),
     el("span", { class: "pact-save-hint" }, ["autosaves 1.5s after you stop typing"])]);
   const editorWrap = el("div", { class: "pact-editor-wrap" }, [toolbar, editorEl]);
   const workEl = el("div", { class: "pact-work" }, [editorWrap, rightEl]);
   const root = el("div", { class: "pact-ide" }, [treeEl, workEl]);
   pactEdInit(editorEl);
-  PACT_ED.saveBtn = saveBtn; PACT_ED.saveStatus = saveStatus; pactEdUpdateSaveBar();
+  PACT_ED.saveBtn = saveBtn; PACT_ED.keepBtn = keepBtn; PACT_ED.saveStatus = saveStatus; pactEdUpdateSaveBar();
   pactChatInit(chatEl);
   loadPactDir("", treeBody);
   return root;

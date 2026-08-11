@@ -25,7 +25,32 @@
 - ✅ U2 = #5 + #6 (split ladder 1–8, resizable flex gutters, right zone ⅕) (v1.0.9).
 - ✅ U3 = #2 + #4 (editable overlay editor + Save All + debounced autosave + dirty dots; backend
   `writeTextFile` + `POST /api/pact/file` + relay `pactWrite` tunnel) (v1.1.0).
-- ⏳ U4 = #3 (agent-edit green/red diffs + Keep All). Hardest — needs change-detection.
+- ✅ U4 = #3 (agent-edit diff view: green added / red removed lines + Keep All) (v1.1.1) — **solid
+  partial**, see the U4 notes below for the scoped remainder.
+
+## U4 notes — what shipped vs. the remainder
+**Shipped (v1.1.1):** at the end of each Pact-chat turn (`result` in `pactChatRoute`),
+`pactEdCheckAgentEdits()` re-reads every open, **non-dirty** file. If the on-disk content differs from
+what the editor last held, the box switches to a **read-only diff view** (`pactDiffLines()` LCS →
+`.pact-diff-view` rows: `pd-add` green / `pd-del` red, with a `+N/−M` badge). A global **Keep All**
+button (`pactEdKeepAll`, shown only while a diff is pending) accepts the edits and returns the boxes to
+the editable overlay. Because the new content is already on disk (the agent wrote it), Keep All doesn't
+save — it just clears the diff. User-dirty tabs are skipped so in-progress edits are never clobbered.
+
+**Deliberate design choice:** the diff is shown in a **separate read-only view** rather than as inline
+green/red backgrounds *inside* the editable overlay. The overlay aligns a transparent `<textarea>` over
+the highlight `<pre>`; representing **removed** lines inline would require phantom rows the textarea
+can't hold without breaking caret/scroll alignment. The read-only diff view sidesteps that and matches
+Cursor's "review then accept" flow.
+
+**Remainder (deferred, not blocking):**
+1. **Files the agent edits that aren't open** aren't surfaced — only currently-open tabs are diffed.
+   A fuller version would expose a tunneled `git -C <ouronetRoot> diff --name-only` to list changed
+   files and auto-open/badge them. (Endpoint would mirror the `pactTree`/`pactFile`/`pactWrite` tunnel.)
+2. **Inline diff within the editable overlay** (per-line green/red backgrounds behind live-editable
+   text) — needs a line-metric stripe layer; left out to keep the overlay's alignment bulletproof.
+3. Detection is **turn-boundary polling** of open files, not a live filesystem watch; edits mid-turn
+   show once the turn's `result` arrives.
 
 ## Code map (dashboard/public/app.js)
 - **`viewPact()`** builds `.pact-ide` = [ `.pact-tree` (aside), `.pact-work` = [ `.pact-editor` (the editor grid), `.pact-right` = chat + repl-terminal ] ]. Calls `pactEdInit(editorEl)`, `pactChatInit(chatEl)`, `loadPactDir("", treeBody)`.
