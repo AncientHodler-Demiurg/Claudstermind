@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.31] - 2026-08-12
+
+### Fixed
+- **SessiondClient: a stale connection can no longer tear down the live one.** If the daemon accepted
+  the socket but never answered `subscribe` (half-open), the attempt timed out and reconnected onto a
+  fresh, live link — but the abandoned socket was left open and still armed its `onClose`, so when it
+  finally closed it nulled `_conn` and disconnected the now-live connection (silently dropping every
+  forwarded prompt until the next reconnect) and leaked the half-open socket. The close handler is now
+  identity-guarded (only the currently-live conn's close is a real disconnect) and a failed handshake
+  closes + detaches the socket it opened. Found in the T5.2 review; regression test added.
+
 ## [1.1.30] - 2026-08-12
 
 ### Added
