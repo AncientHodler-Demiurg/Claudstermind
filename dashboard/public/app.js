@@ -2164,7 +2164,7 @@ async function pactEdOpen(path, row) {
 // with repo=Ouronet) streamed back over /api/workspace/stream and routed here by sessionKey. So the
 // agent runs in the repo cwd (writes Pact, runs REPLs) exactly like the Core cockpit, just embedded.
 const PACT_REPO = "OuroborosNetwork/_onchain/Ouronet";
-const PACT_CHAT_PREAMBLE = "[Pact IDE context] You're in the Ouronet Pact repo — StoicSyntax discipline: the function prefix IS the contract. Unprotected: UC_/UCK_ (compute), UR_/URD_/URC_/URDC_ (reads), UDC_ (object ctors), UEV_ (enforce), CAP_ (capabilities). Protected: A_ (admin), C_ (client recipe), XI_/XE_/XB_ (orchestration), W_/WI_/WU_/WW_ (persistence writes). Run tests with `pact <file>.repl` (Pact 5.4). Keep new code in this discipline.";
+const PACT_CHAT_PREAMBLE = "[Pact IDE — auto-skill] You are working in the Ouronet Pact repo (your cwd). BEFORE anything else, read `OuronetInformational/SKILL.md` — it is the single load hook: it gives the load order, the StoicSyntax discipline (`StoicSyntax.md` + `ouronet/conventions/*`), the Pact 5 language layer (`pact5/`), the fast-recall rules, and the active-learning protocol. Follow its load order and become fully skilled from those files (they are the canonical authority). Before writing code in any module, SCAN that module's `.pact` + its interface + its `.repl` tests to learn its real schemas/tables/prefixes/caps, and imitate sibling patterns — e.g. \"an info function for module X\" means mirror how the codebase exposes `UR_`/`INFO-` readers for X's schema (grep for the pattern rather than guessing). Run tests with `pact <file>.repl` (Pact 5.4); namespace `ouronet-ns`. Keep all code in the StoicSyntax discipline. When I correct you (\"do X instead of Y\"), capture it per SKILL.md's active-learning protocol (a dated `memories/` note + fold durable rules into the matching doc).";
 let PACT_CHAT = null;   // { host, tabs:[t], activeId, seq, es, mode, conn }
                         // t = { id, name, key, msgs:[{role|kind,text,tools}], live, status, started, perm, bodyEl }
 function pactChatInit(host) {
@@ -3926,7 +3926,10 @@ function viewWorkspace() {
       // trusted/hasToken below.
       if (data.tree) {
         st.tree = data.tree;
-        st.repos = flattenRepos(data.tree, "", []);
+        // The Ouronet Pact repo is OFF-LIMITS in the Core cockpit — it's only worked via the Pact tab
+        // (which uses PACT_REPO directly + the StoicSyntax-skilled agent). Hide it from Core's repo
+        // picker + sidebar so a Core pane can't open it unskilled.
+        st.repos = flattenRepos(data.tree, "", []).filter((r) => r.localPath !== PACT_REPO);
         if (!st.treeExpanded.size) st.treeExpanded.add(data.tree.name);   // start with the root expanded
         for (const p of st.panes) { const ui = paneUI.get(p.id); if (ui) fillRepoSelect(ui.repoSel, p.repo); }
         renderSidebar();

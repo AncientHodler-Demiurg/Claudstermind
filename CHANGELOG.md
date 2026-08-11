@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.0.5] - 2026-08-11
+
+### Changed
+- **Pact chats auto-skill from the Ouronet authority; Ouronet off-limits in Core.** The Pact chat's
+  first-message preamble is now a **load hook**: it tells the agent to read `OuronetInformational/SKILL.md`
+  (the new single entry point in the Ouronet repo) and become fully skilled from the canonical docs, then
+  scan the target module before writing. And the **Ouronet Pact repo is now hidden from the Core cockpit's
+  repo picker + sidebar** — it's worked only via the Pact tab (with the skilled agent). Knowledge authority
+  lives in `OuronetInformational/` (StoicSyntax + `pact5/` language layer); Claudstermind's brain mirrors it.
+
 ## [1.0.4] - 2026-08-11
 
 ### Fixed
