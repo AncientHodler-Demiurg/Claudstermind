@@ -6034,15 +6034,19 @@ function viewWorkspace() {
   openStream();   // primeControls() fires from the hello handler once the stream is subscribed
 
   root.replaceChildren(
+    // ONE controls row: the pane-config controls + the presence/terminals chips share it (presenceBar
+    // flexes in-line and only wraps to a new line when genuinely tight), reclaiming the vertical space
+    // the old separate presence row wasted. The collapse-header toggle sits here too, so the header can
+    // be hidden to gain even more pane height (same control as the Pact toolbar).
     el("div", { class: "ws-toolbar" }, [
       layoutPicker,
       el("label", { class: "ws-trust", title: "The permission mode new panes start in. Each pane can then be switched on its own." }, ["New panes:", defaultModeSel]),
       applyAllBtn,
+      presenceBar,
       el("span", { class: "ws-spacer" }, []),
-      liveStatsEl, usageEl, usageLimitsEl, newFolderBtn, newRepoBtn,
+      liveStatsEl, usageEl, usageLimitsEl, newFolderBtn, newRepoBtn, phCollapseBtn("ghost"),
     ]),
     mobileTabs,
-    presenceBar,
     bridgeNote,
     el("div", { class: "ws-body" }, [
       sideBackdrop,

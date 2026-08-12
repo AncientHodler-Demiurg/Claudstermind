@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.48] - 2026-08-12
+
+### Changed
+- **Core workspace controls reclaim wasted vertical height.** The presence/"N terminals" chips now share
+  the pane-config row (`.ws-toolbar`) with the Panes picker / New-panes select / apply-to-all instead of
+  living on their own line — they flex in-line and only wrap when genuinely tight, giving the panes below
+  more height. The collapse-header toggle (⤢) is also added to this row, so the header can be hidden from
+  the Core workspace too. The Panes picker, New-panes select, apply-to-all, and presence rendering are
+  unchanged.
+
 ## [1.1.47] - 2026-08-12
 
 ### Added
