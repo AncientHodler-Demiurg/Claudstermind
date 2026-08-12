@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.54] - 2026-08-12
+
+### Removed
+- **The "📌 brain" pin on Pact chat replies.** It appended a reply to a LEARNINGS.md the live agents
+  never actually load, and it duplicated the agents' own automatic active-learning; it also shifted a
+  reply's height on hover. Removed the button, its click handler, the CSS, the `/api/pact/brain/append`
+  route, and the now-unused `appendBrainNote` helper + test.
+
 ## [1.1.53] - 2026-08-12
 
 ### Added

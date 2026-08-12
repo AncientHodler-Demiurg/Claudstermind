@@ -1336,10 +1336,6 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pc-asst-body :first-child { margin-top: 0; } .pc-asst-body :last-child { margin-bottom: 0; }
 .pc-asst-body p { margin: 5px 0; } .pc-asst-body pre { background: #0b0f14; border: 1px solid var(--line); border-radius: 7px; padding: 8px; overflow: auto; }
 .pc-asst-body code { font: 11.5px ui-monospace, monospace; }
-.pc-brain { display: none; margin-top: 5px; font-size: 10px; padding: 1px 7px; border-radius: 6px; cursor: pointer;
-  background: transparent; border: 1px solid var(--line); color: var(--ink-mute); }
-.pc-asst:hover .pc-brain { display: inline-block; }
-.pc-brain:hover { color: var(--ink); border-color: var(--accent); }
 .pc-tool { align-self: flex-start; font-size: 11px; color: var(--ink-dim); font-family: ui-monospace, monospace; }
 .pc-err { align-self: flex-start; color: #f87171; font-size: 12px; }
 .pc-note { align-self: center; color: var(--ink-mute); font-size: 11px; }

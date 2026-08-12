@@ -3888,20 +3888,12 @@ function pactChatDecide(t, decision) {
   t.perm = null; t.status = decision === "allow" ? "thinking" : "idle";
   pactChatPaint(t);
 }
-async function pactChatToBrain(text, btn) {
-  const old = btn.textContent; btn.textContent = "…";
-  try { const r = await (await fetch("/api/pact/brain/append", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) })).json(); btn.textContent = r.ok ? "✓ saved" : "✗"; }
-  catch { btn.textContent = "✗"; }
-  setTimeout(() => { btn.textContent = old; }, 1600);
-}
 function pactChatMsgNode(m) {
   if (m.role === "user") return el("div", { class: "pc-msg pc-user" }, [m.text]);
   if (m.role === "assistant") {
     const body = el("div", { class: "pc-asst-body" });
     if (typeof window.mdRender === "function") body.innerHTML = window.mdRender(m.text); else body.textContent = m.text;
-    const save = el("button", { class: "pc-brain", title: "Save this reply to the pact brain (LEARNINGS.md)" }, ["📌 brain"]);
-    save.addEventListener("click", () => pactChatToBrain(m.text, save));
-    return el("div", { class: "pc-msg pc-asst" }, [body, save]);
+    return el("div", { class: "pc-msg pc-asst" }, [body]);
   }
   if (m.kind === "tool_use") return el("div", { class: "pc-tool" }, ["⚙ " + ((m.tools || []).map((x) => x.name).join(", ") || "tool")]);
   if (m.kind === "error") return el("div", { class: "pc-err" }, ["⚠ " + m.text]);

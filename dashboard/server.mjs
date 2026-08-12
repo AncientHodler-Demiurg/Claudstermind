@@ -23,7 +23,7 @@ import { join, extname, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readActivity, readLastBackup } from "../orchestrator/activity.mjs";
 import { listArchives, pruneArchives, deleteArchive } from "../orchestrator/archives.mjs";
-import { listDir as pactListDir, readTextFile as pactReadFile, writeTextFile as pactWriteFile, pactRoot as resolvePactRoot, appendBrainNote } from "../lib/pactFs.mjs";
+import { listDir as pactListDir, readTextFile as pactReadFile, writeTextFile as pactWriteFile, pactRoot as resolvePactRoot } from "../lib/pactFs.mjs";
 import { gitChangedFiles as pactChangedFiles, gitFileAtHead as pactFileAtHead } from "../lib/pactGit.mjs";
 import { readIdeState as pactReadIdeState, writeIdeState as pactWriteIdeState } from "../lib/pactIdeState.mjs";
 import { pactRunSpec } from "../lib/pactRun.mjs";
@@ -1021,14 +1021,6 @@ const handler = async (req, res) => {
     return sendJSON(res, 200, pactWriteIdeState(join(MASTER_ROOT, ".claude", "workspace"), b.state || {}));
   }
   // ---- Pact IDE: continuous write-back — append a note to the pact brain (brain/OuronetPact). ----
-  if (path === "/api/pact/brain/append" && req.method === "POST") {
-    if (!sameOrigin(req)) return sendJSON(res, 403, { ok: false, reason: "cross-origin" });
-    if (!who.localActionsAvailable) return sendJSON(res, 403, { ok: false, reason: "local-only", message: "Brain write-back is local-only." });
-    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only" });
-    const b = await readBody(req);
-    const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
-    return sendJSON(res, 200, appendBrainNote(resolve(__dir, "..", "brain", "OuronetPact"), b.text, stamp));
-  }
   // ---- Pact IDE: run a .repl and stream stdout/stderr live (SSE). Local-only + canExecute (it
   // spawns a process); confined to the repo, .repl only. Works on the local dashboard (the relay
   // doesn't tunnel arbitrary SSE — remote run lands with the bridge protocol later). ----
