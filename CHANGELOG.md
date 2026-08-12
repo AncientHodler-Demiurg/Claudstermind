@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.58] - 2026-08-12
+
+### Added
+- **Overview ruler in the Pact editor (Cursor/VSCode-style scrollbar change decorations).** A thin strip on
+  the right edge of each editable box maps the whole file's height, with colored ticks at the lines that
+  changed vs the committed (git HEAD) version — green added, red removed, amber modified — so you see at a
+  glance where and how many changes there are. The git HEAD baseline is fetched once when a file opens (and
+  re-fetched after a save), diffed against the live text with a new pure `pactChangeMarks` helper, and the
+  ruler updates live (debounced ~250ms while typing) and after Keep All. Clicking a tick scrolls that line
+  into view. The strip sits just left of the textarea's native scrollbar so it never blocks scrolling, and it
+  degrades to empty when git is unavailable (a newly-added / untracked file reads as all-green).
+
 ## [1.1.57] - 2026-08-12
 
 ### Fixed

@@ -1182,6 +1182,19 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-edit::selection { background: rgba(120, 160, 255, .35); }
 .pact-edit::-moz-selection { background: rgba(120, 160, 255, .35); }
 
+/* Overview ruler (Cursor/VSCode-style scrollbar change decorations): a thin strip mapping the WHOLE file
+   with colored ticks at lines changed vs git HEAD. Positioned just LEFT of the textarea's native scrollbar
+   (right offset set in JS to the live scrollbar width) so it never blocks scrolling. The strip itself is
+   click-through (pointer-events:none); only the ticks catch clicks (jump-to-line). Tops/heights are % of the
+   wrap, so the mapping is resize-proof; min-height keeps a single-line tick visible. */
+.pact-ovr { position: absolute; top: 0; right: 0; bottom: 0; width: 6px; z-index: 5; pointer-events: none; }
+.pact-ovr-tick { position: absolute; left: 0; right: 0; min-height: 2px; border-radius: 1px;
+  pointer-events: auto; cursor: pointer; opacity: .8; }
+.pact-ovr-tick:hover { opacity: 1; }
+.pact-ovr-add { background: #34d399; }
+.pact-ovr-del { background: #ef5350; }
+.pact-ovr-mod { background: #fbbf24; }
+
 /* Find / find-and-replace bar — docks top-right inside the editable overlay (Ctrl/⌘-F; Ctrl-H opens
    replace). Sits above the transparent textarea; the textarea's ::selection shows the current match. */
 .pact-find-bar { position: absolute; top: 6px; right: 6px; z-index: 6; display: flex; flex-direction: column; gap: 4px;

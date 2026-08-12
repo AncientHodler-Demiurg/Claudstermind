@@ -2759,8 +2759,49 @@ function pactEdRenderBody(g, tab) {
     gutter.textContent = pactGutterText(n);
     wrap.style.setProperty("--pk-gutter-w", `calc(${pactGutterWidthCh(n)}ch + 18px)`);
   };
+  // Overview ruler (Cursor/VSCode-style): a thin strip on the right that maps the WHOLE file, with colored
+  // ticks at lines changed vs git HEAD (green add / red del / amber mod). Absolutely positioned just LEFT of
+  // the textarea's native scrollbar (right offset = live scrollbar width) so it never blocks scrolling.
+  const ovr = el("div", { class: "pact-ovr", "aria-hidden": "true" }, []);
+  const jumpToLine = (line) => {
+    const lh = parseFloat(getComputedStyle(ta).lineHeight) || (g.fontPx || 12.5) * 1.55;
+    const lines = ta.value.split("\n");
+    let pos = 0; for (let k = 0; k < line && k < lines.length; k++) pos += lines[k].length + 1;
+    ta.focus(); ta.setSelectionRange(pos, pos);
+    ta.scrollTop = Math.max(0, line * lh - ta.clientHeight / 2);   // centre the target line
+    syncScroll();
+  };
+  const renderOvr = () => {
+    if (!ovr.isConnected) return;
+    const sbw = Math.max(0, ta.offsetWidth - ta.clientWidth);   // native vertical scrollbar width
+    ovr.style.right = sbw + "px";
+    if (typeof tab.headContent !== "string") { ovr.replaceChildren(); return; }   // no git baseline yet
+    const marks = pactChangeMarks(tab.headContent, ta.value);
+    if (!marks.length) { ovr.replaceChildren(); return; }
+    const total = Math.max(1, pactGutterLineCount(ta.value));
+    // Merge adjacent same-type marks into one segment (contiguous change block = one bar; bounds the DOM,
+    // e.g. an all-new file is a single full-height green bar instead of thousands of ticks).
+    const segs = [];
+    for (const mk of marks) {
+      const last = segs[segs.length - 1];
+      if (last && last.type === mk.type && mk.line === last.end + 1) last.end = mk.line;
+      else segs.push({ start: mk.line, end: mk.line, type: mk.type });
+    }
+    ovr.replaceChildren(...segs.map((s) => {
+      const len = s.end - s.start + 1;
+      const t = el("div", { class: "pact-ovr-tick pact-ovr-" + s.type,
+        title: (s.type === "add" ? "added" : s.type === "del" ? "removed" : "modified") + (len > 1 ? " · lines " + (s.start + 1) + "–" + (s.end + 1) : " · line " + (s.start + 1)) });
+      t.style.top = (s.start / total * 100) + "%";
+      t.style.height = (len / total * 100) + "%";
+      t.addEventListener("click", () => jumpToLine(s.start));
+      return t;
+    }));
+  };
+  let _ovrTimer = null;
+  const scheduleOvr = () => { if (_ovrTimer) clearTimeout(_ovrTimer); _ovrTimer = setTimeout(renderOvr, 250); };
+  tab._ovrUpdate = renderOvr;   // let the HEAD-content fetch refresh the ruler when it lands (see pactEdFetchHead)
   paint();
-  ta.addEventListener("input", () => { tab.content = ta.value; paint(); updateGutter(); syncScroll(); revealCaret(); pactEdMarkDirty(g, tab); if (g.find && g.find.open) pactEdFindRefresh(g, false); });
+  ta.addEventListener("input", () => { tab.content = ta.value; paint(); updateGutter(); syncScroll(); revealCaret(); pactEdMarkDirty(g, tab); scheduleOvr(); if (g.find && g.find.open) pactEdFindRefresh(g, false); });
   ta.addEventListener("scroll", syncScroll);
   ta.addEventListener("keyup", revealCaret);     // Home/End/arrows: keep the caret visible
   ta.addEventListener("mouseup", revealCaret);   // click-to-place
@@ -2773,16 +2814,17 @@ function pactEdRenderBody(g, tab) {
       const s = ta.selectionStart, en = ta.selectionEnd;
       ta.value = ta.value.slice(0, s) + "  " + ta.value.slice(en);
       ta.selectionStart = ta.selectionEnd = s + 2;
-      tab.content = ta.value; paint(); syncScroll(); revealCaret(); pactEdMarkDirty(g, tab);
+      tab.content = ta.value; paint(); syncScroll(); revealCaret(); pactEdMarkDirty(g, tab); scheduleOvr();
     }
   });
-  const wrap = el("div", { class: "pact-edit-wrap has-gutter" }, [gutter, hl, ov, ta]);
+  const wrap = el("div", { class: "pact-edit-wrap has-gutter" }, [gutter, hl, ov, ta, ovr]);
   updateGutter();
   kids.push(wrap);
   g.bodyEl.replaceChildren(...kids);
   g._findCtx = { wrap, ta, hl, ov, tab, paint, syncScroll };   // find/replace targets the active tab's live textarea
   if (g.find && g.find.open) { g.find._bar = null; pactEdMountFindBar(g); }   // re-mount (retarget) after a tab/font re-render
-  requestAnimationFrame(syncScroll);
+  requestAnimationFrame(() => { syncScroll(); renderOvr(); });   // ruler needs a laid-out wrap for its metrics
+  if (typeof tab.headContent !== "string") pactEdFetchHead(tab);   // fetch the git HEAD baseline once (async)
 }
 // ---- Fold / read view: a read-only per-line render (NOT the live textarea — folding lines in a
 // textarea desyncs the caret) with a left gutter whose ▾/▸ arrows collapse/expand each `(module`,
@@ -2918,6 +2960,7 @@ async function pactEdSaveTab(tab) {
     tab.saved = snapshot;
     tab.dirty = tab.content !== tab.saved;   // may have kept typing during the request
     if (tab._tabEl) tab._tabEl.classList.toggle("--dirty", tab.dirty);
+    pactEdFetchHead(tab);   // re-baseline the overview ruler against HEAD (in case a commit landed)
     if (!tab.dirty) pactEdSaveStatus("✓ saved " + tab.name, false); else pactEdScheduleAutosave(tab);
   } else {
     pactEdSaveStatus("⚠ " + (d.message || d.error || "save failed"), true);
@@ -3321,6 +3364,9 @@ function pactEdFindReplaceAll(g) {
 // re-read every open, non-dirty file; if the agent changed it, the box switches to a Cursor-style diff
 // view (green added / red removed lines). "Keep All" accepts them (the new text is already on disk) and
 // returns the box to the editable overlay. A user-dirty tab is left alone (their edits win).
+// ===== PACT CHANGE-MARKS — pure diff→ruler helper (sliced out for unit tests; see lib/pactChangeMarks.test.mjs)
+// pactDiffLines + pactChangeMarks are wrapped in one sentinel block so the test can eval them together
+// (pactChangeMarks calls pactDiffLines). No DOM, no side effects.
 function pactDiffLines(before, after) {
   const A = String(before).split("\n"), B = String(after).split("\n");
   const rows = [];
@@ -3356,6 +3402,50 @@ function pactDiffLines(before, after) {
   for (let k = aHi; k < A.length; k++) rows.push({ type: "same", text: A[k] });   // common suffix
   return { rows, add, del };
 }
+// Map a before/after diff to per-line change marks against the NEW file (0-based line indices), for the
+// editor's overview ruler. Returns [{ line, type: 'add'|'del'|'mod' }] in ascending, non-overlapping line
+// order. Rules (kept deliberately simple + robust):
+//   • before === after            → [] (no changes).
+//   • before === ""               → EVERY new line is 'add' (a file not in git / newly added is all-green).
+//     (after === "" too ⇒ before===after ⇒ [] already; an emptied file gives a single 'del' at line 0.)
+//   • otherwise, walk each maximal run of consecutive non-'same' diff rows (a "hunk"):
+//       – mixed (has both add + del rows) → the added lines are a modification: the first min(adds,dels)
+//         added lines are 'mod'; any extra added lines beyond the deleted count are 'add'. Extra deletes
+//         beyond the added count are absorbed into the 'mod' (no separate marker).
+//       – adds only → each added line is 'add'.
+//       – dels only → a single 'del' marker at the line boundary that now follows the deletion.
+function pactChangeMarks(before, after) {
+  const B = String(before == null ? "" : before), A = String(after == null ? "" : after);
+  if (B === A) return [];
+  if (B === "") {                       // no committed baseline → the whole file reads as added
+    if (A === "") return [];
+    return A.split("\n").map((_, i) => ({ line: i, type: "add" }));
+  }
+  if (A === "") return [{ line: 0, type: "del" }];   // whole file deleted → one del marker at the top
+  const rows = pactDiffLines(B, A).rows;
+  const marks = [];
+  let newLine = 0, i = 0;
+  while (i < rows.length) {
+    if (rows[i].type === "same") { newLine++; i++; continue; }
+    const hunkStart = newLine;          // new-line index where this run of changes begins
+    const addLines = [];
+    let dels = 0;
+    while (i < rows.length && rows[i].type !== "same") {
+      if (rows[i].type === "add") { addLines.push(newLine); newLine++; } else dels++;
+      i++;
+    }
+    if (addLines.length && dels) {
+      const modCount = Math.min(addLines.length, dels);
+      addLines.forEach((ln, k) => marks.push({ line: ln, type: k < modCount ? "mod" : "add" }));
+    } else if (addLines.length) {
+      addLines.forEach((ln) => marks.push({ line: ln, type: "add" }));
+    } else {
+      marks.push({ line: hunkStart, type: "del" });
+    }
+  }
+  return marks;
+}
+// ===== end PACT CHANGE-MARKS pure helper =====
 function pactEdAnyDiff() { return !!(PACT_ED && PACT_ED.groups.some((g) => g.tabs.some((t) => t.agentDiff))); }
 function pactEdDiffCount() { return PACT_ED ? PACT_ED.groups.reduce((a, g) => a + g.tabs.filter((t) => t.agentDiff).length, 0) : 0; }
 let PACT_ED_DIFF_CHECKING = false;
@@ -3488,6 +3578,7 @@ async function pactEdOpenAsDiff(path) {
   const before = (bRes && bRes.ok && typeof bRes.content === "string") ? bRes.content : "";
   tab.content = after; tab.saved = after; tab.dirty = false; tab.loaded = true; tab.error = null;
   tab.diffBase = before;
+  tab.headContent = before;   // seed the overview-ruler baseline (before = HEAD here) — no refetch needed
   tab.agentDiff = pactDiffLines(before, after);
   pactEdLayout(); pactEdUpdateSaveBar();
 }
@@ -3503,6 +3594,20 @@ async function pactEdOpen(path, row) {
 // and by layout restore, which reopens each saved box's files into its own group. `relayout` runs a
 // full pactEdLayout (the tree-click path, which may have just switched the active group); restore
 // already laid the boxes out and only needs the group re-rendered.
+// Fetch the file's committed (git HEAD) content once and cache it on the tab as `tab.headContent`, then
+// refresh the overview ruler if this tab is rendered. Degrades gracefully: a non-repo dir / newly-added
+// file / git failure yields "" (server returns { ok:true, content:"" }) — the ruler then reads the file as
+// all-added. A network error leaves headContent unset (no ruler) rather than throwing.
+async function pactEdFetchHead(tab) {
+  if (!tab || tab._headFetching) return;
+  tab._headFetching = true;
+  try {
+    const d = await (await fetch("/api/pact/file?ref=head&path=" + encodeURIComponent(tab.path))).json();
+    if (d && d.ok && typeof d.content === "string") tab.headContent = d.content;
+  } catch { /* git unreachable — leave the ruler empty */ }
+  finally { tab._headFetching = false; }
+  if (typeof tab._ovrUpdate === "function") tab._ovrUpdate();
+}
 async function pactEdOpenInto(g, path, makeActive, relayout) {
   if (!PACT_ED || !g) return;
   let tab = g.tabs.find((t) => t.path === path);
