@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.40] - 2026-08-12
+
+### Fixed
+- **Pact fold view: fold arrows landed on the wrong lines and modules didn't fully collapse.** The
+  fold-range parser skipped a backslash-escaped newline (Pact's `\`-at-end-of-line string continuation,
+  e.g. in a multi-line `@doc "…"`), so its line numbers drifted below the highlighted render's — placing
+  every fold arrow after a multi-line string on the wrong line and truncating collapse ranges. The parser
+  now counts continuation newlines, so arrows sit on the right lines and a module folds in its entirety.
+
 ## [1.1.39] - 2026-08-12
 
 ### Fixed

@@ -2891,7 +2891,11 @@ function pactFoldRanges(content) {
     if (c === '"') {                                                    // string: \" escapes; may span lines
       i++;
       while (i < n) {
-        if (s[i] === "\\") { i += 2; continue; }
+        // A backslash escape skips the next char — but if that char is a NEWLINE (Pact's `\`-at-EOL
+        // line continuation in a multi-line string, e.g. `@doc "… \<nl> \ …"`), it still advances a
+        // physical line. Count it, or every continuation line drifts the line numbers below the
+        // highlighted render's — mis-placing every fold arrow after a multi-line string.
+        if (s[i] === "\\") { if (s[i + 1] === "\n") { line++; lineHasNonWs = false; } i += 2; continue; }
         if (s[i] === '"') { i++; break; }
         if (s[i] === "\n") { line++; lineHasNonWs = false; i++; continue; }
         i++;
