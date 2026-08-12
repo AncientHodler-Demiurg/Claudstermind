@@ -4,6 +4,24 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.56] - 2026-08-12
+
+### Changed
+- **Moved the "files changed by the agent" list out of the editor area into the file-tree column as a
+  "Changed (N)" tab.** It previously rendered as a strip above the editor grid, which pushed the editor
+  down and shifted the working box's height on every chat turn. The tree column now has a two-tab header
+  — **Files** (the project tree) and **Changed (N)** — and the changed list uses the column's full
+  height and scrolls. Default is Files; a fresh turn with changes just updates the count and a subtle
+  dot on the Changed tab (never auto-switches). The tree font A-/A+ controls stay in the header. The
+  editor grid reclaims the vertical space the strip used to take.
+
+### Fixed
+- **Changed-file paths with digits no longer bidi-mangle.** The old rows left-ellipsized the path with
+  `direction: rtl`, which reordered paths containing numbers (e.g. `1_SOVEREIGN/…/04_FVT.pact` rendered
+  as `SOVEREIGN/…/04_FVT.pact_1` with a stray `_1`). Rows now show the **basename** prominently with the
+  **directory** dimmed below it, left-truncated in JS (leading `…/` + the last few segments) as plain
+  LTR text — digits render in order. Extracted a pure `pactChangedPathParts` helper with unit tests.
+
 ## [1.1.55] - 2026-08-12
 
 ### Fixed

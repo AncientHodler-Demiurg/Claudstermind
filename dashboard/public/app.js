@@ -3358,45 +3358,85 @@ function pactEdKeepAll() {
   for (const g of PACT_ED.groups) for (const t of g.tabs) { if (t.agentDiff) { t.agentDiff = null; t.diffBase = undefined; } }
   pactEdLayout(); pactEdUpdateSaveBar();
 }
-// ---- "N files changed by the agent" review strip ----
+// ---- "N files changed by the agent" — a secondary tab in the file-tree column ----
 // After a chat turn, list EVERY file the agent changed in the repo (the working-tree diff vs HEAD),
-// not just the ones open in a box. Each row opens that file into the active box as a green/red diff.
+// not just the ones open in a box. The list lives in the left tree column under a "Changed (N)" tab
+// (see viewPact), so it uses the tree's full height and never shoves the editor grid down. Each row
+// opens that file into the active box as a green/red diff.
 let PACT_CHANGED = [];                 // last-fetched change list from /api/pact/changed
-let PACT_CHANGED_DISMISSED = false;    // × dismiss; a fresh turn re-shows the strip
-async function pactEdCheckChangedFiles() {
-  if (!PACT_ED || !PACT_ED.changedStrip) return;
-  let d; try { d = await (await fetch("/api/pact/changed")).json(); } catch { return; }   // git unreachable — leave strip as-is
-  if (!d || !d.ok || !Array.isArray(d.files)) return;   // git unavailable / not a repo — strip stays hidden
-  PACT_CHANGED = d.files;
-  PACT_CHANGED_DISMISSED = false;       // a new turn's changes re-open the review strip
-  pactEdRenderChangedStrip();
+// ===== PACT CHANGED-PATH — pure display helper (sliced out for unit tests; see lib/pactChangedPath.test.mjs)
+// Split a repo-relative path into a prominent basename and a dimmed, LEFT-truncated directory. The
+// directory keeps its LAST `maxSegs` segments (the ones nearest the file) and gets a leading "…/" when
+// segments were dropped. Everything is plain LTR text — no `direction: rtl`, so digits in a path
+// (e.g. "1_SOVEREIGN/…/04_FVT.pact") render in order and never bidi-reorder into "…FVT.pact_1".
+function pactChangedPathParts(path, maxSegs = 3) {
+  const clean = String(path == null ? "" : path).replace(/\/+$/, "");
+  const segs = clean.split("/");
+  const name = segs.pop() || clean;   // basename (or the whole thing when there's no "/")
+  let dir = "";
+  if (segs.length) {
+    const shown = segs.slice(-Math.max(1, maxSegs));
+    dir = (shown.length < segs.length ? "…/" : "") + shown.join("/") + "/";
+  }
+  return { name, dir };
 }
-function pactEdRenderChangedStrip() {
-  const strip = PACT_ED && PACT_ED.changedStrip;
-  if (!strip) return;
+// ===== end PACT CHANGED-PATH pure helper =====
+// Swap the tree column between its "Files" tree and the "Changed" list without touching either's
+// scroll/font state — just toggle visibility and the active-tab underline.
+function pactTreeSwitchTab(which) {
+  if (!PACT_ED) return;
+  const isFiles = which !== "changed";
+  PACT_ED.treeTab = isFiles ? "files" : "changed";
+  if (PACT_ED.treeBody) PACT_ED.treeBody.style.display = isFiles ? "" : "none";
+  if (PACT_ED.changedList) PACT_ED.changedList.style.display = isFiles ? "none" : "";
+  if (PACT_ED.tabFilesBtn) PACT_ED.tabFilesBtn.classList.toggle("--active", isFiles);
+  if (PACT_ED.tabChangedBtn) PACT_ED.tabChangedBtn.classList.toggle("--active", !isFiles);
+}
+async function pactEdCheckChangedFiles() {
+  if (!PACT_ED || !PACT_ED.changedList) return;
+  let d; try { d = await (await fetch("/api/pact/changed")).json(); } catch { return; }   // git unreachable — leave the list as-is
+  if (!d || !d.ok || !Array.isArray(d.files)) return;   // git unavailable / not a repo — list stays empty
+  PACT_CHANGED = d.files;
+  pactEdRenderChanged();
+}
+function pactEdRenderChanged() {
+  const list = PACT_ED && PACT_ED.changedList;
+  if (!list) return;
   const files = PACT_CHANGED || [];
-  if (PACT_CHANGED_DISMISSED || files.length === 0) { strip.style.display = "none"; strip.replaceChildren(); return; }
-  strip.style.display = "";
-  const title = el("span", { class: "pcs-title" }, [`${files.length} file${files.length > 1 ? "s" : ""} changed by the agent`]);
+  // Keep the tab label's count in sync; hide the number (and the emphasis) at 0.
+  if (PACT_ED.tabChangedBtn) {
+    PACT_ED.tabChangedBtn.textContent = files.length ? `Changed (${files.length})` : "Changed";
+    PACT_ED.tabChangedBtn.classList.toggle("--has", files.length > 0);
+  }
+  if (files.length === 0) {   // 0 changes / git unavailable → a quiet empty state (never disruptive)
+    list.replaceChildren(el("div", { class: "hint", style: "padding:8px 10px" }, ["No changes vs HEAD."]));
+    return;
+  }
   const refresh = el("button", { class: "pact-ed-ico", title: "Re-check the repo for agent changes" }, ["⟳"]);
   refresh.addEventListener("click", (e) => { e.stopPropagation(); pactEdCheckChangedFiles(); });
-  const dismiss = el("button", { class: "pact-ed-ico", title: "Dismiss this review strip" }, ["×"]);
-  dismiss.addEventListener("click", (e) => { e.stopPropagation(); PACT_CHANGED_DISMISSED = true; pactEdRenderChangedStrip(); });
-  const head = el("div", { class: "pcs-head" }, [title, el("span", { class: "ws-spacer" }, []), refresh, dismiss]);
+  const head = el("div", { class: "pcs-head" }, [
+    el("span", { class: "pcs-title" }, [`${files.length} file${files.length > 1 ? "s" : ""} changed`]),
+    el("span", { class: "ws-spacer" }, []), refresh,
+  ]);
   const rows = files.map((f) => {
     const cls = f.status === "?" ? "new" : (f.status || "M").toLowerCase();
-    const row = el("button", { class: "pcs-row", title: f.path + " — open as diff" }, [
-      el("span", { class: "pcs-st pcs-st-" + cls }, [f.status || "M"]),
-      el("span", { class: "pcs-path" }, [f.path]),
+    const label = f.status === "?" ? "new" : (f.status || "M");   // status chip: M / A / D / new
+    const parts = pactChangedPathParts(f.path);
+    const main = el("div", { class: "pcs-main" }, [
+      el("span", { class: "pcs-st pcs-st-" + cls }, [label]),
+      el("span", { class: "pcs-name" }, [parts.name]),
       el("span", { class: "pcs-badges" }, [
         el("span", { class: "pd-badge pd-badge-add" }, ["+" + (f.added || 0)]),
         el("span", { class: "pd-badge pd-badge-del" }, ["−" + (f.removed || 0)]),
       ]),
     ]);
+    const kids = [main];
+    if (parts.dir) kids.push(el("span", { class: "pcs-dir" }, [parts.dir]));
+    const row = el("button", { class: "pcs-row", title: f.path + " — open as diff" }, kids);
     row.addEventListener("click", () => pactEdOpenAsDiff(f.path));
     return row;
   });
-  strip.replaceChildren(head, el("div", { class: "pcs-list" }, rows));
+  list.replaceChildren(head, el("div", { class: "pcs-list" }, rows));
 }
 // Open `path` into the active box as a green/red diff: before = the committed HEAD content, after =
 // the current on-disk content (what the agent wrote). If the file is already open in some box, reuse
@@ -3987,9 +4027,19 @@ function viewPact() {
     plus.addEventListener("click", () => { PACT_TREE_FONT = Math.min(20, PACT_TREE_FONT + 1); apply(); });
     return [minus, plus];
   })();
+  // Two tabs share the tree column: "Files" (the project tree) and "Changed (N)" (the agent's changed
+  // files). Clicking a tab swaps the body below; the font A-/A+ controls belong to the Files view but
+  // stay put in the header. The changed list uses the column's full height (see pactEdRenderChanged).
+  const tabFilesBtn = el("button", { class: "pact-tree-tab --active", title: "Project file tree" }, ["📁 Files"]);
+  const tabChangedBtn = el("button", { class: "pact-tree-tab", title: "Files changed by the agent (working tree vs HEAD)" }, ["Changed"]);
+  tabFilesBtn.addEventListener("click", () => pactTreeSwitchTab("files"));
+  tabChangedBtn.addEventListener("click", () => pactTreeSwitchTab("changed"));
+  const changedList = el("div", { class: "pact-changed-list" }, [el("div", { class: "hint", style: "padding:8px 10px" }, ["No changes vs HEAD."])]);
+  changedList.style.display = "none";
   const treeEl = el("aside", { class: "pact-tree" }, [
-    el("div", { class: "pact-tree-hd" }, ["📁 Ouronet", el("span", { class: "ws-spacer" }, []), ...treeFontBtns]),
+    el("div", { class: "pact-tree-hd pact-tree-tabs" }, [tabFilesBtn, tabChangedBtn, el("span", { class: "ws-spacer" }, []), ...treeFontBtns]),
     treeBody,
+    changedList,
   ]);
   treeEl.style.setProperty("--pk-tree-font", PACT_TREE_FONT + "px");
   const chatEl = el("div", { class: "pact-chat" }, []);   // filled by pactChatInit() below
@@ -4015,17 +4065,17 @@ function viewPact() {
   // legend flexes and scrolls horizontally if the row gets tight; the autosave hint stays on the right.
   const toolbar = el("div", { class: "pact-ed-toolbar" }, [saveBtn, keepBtn, phCollapseBtn("pact-ed-ico"), saveStatus, pactLegend(),
     el("span", { class: "pact-save-hint" }, ["autosaves 5 min after you stop typing"])]);
-  // A thin, DISMISSIBLE review strip below the toolbar: after each chat turn it lists EVERY file the
-  // agent changed in the repo (not just the open ones). Hidden until there's a change to show.
-  const changedStrip = el("div", { class: "pact-changed-strip" });
-  changedStrip.style.display = "none";
-  const editorWrap = el("div", { class: "pact-editor-wrap" }, [toolbar, changedStrip, editorEl]);
+  // The "files changed by the agent" list no longer lives here — it moved into the left tree column as
+  // a "Changed (N)" tab (see treeEl above), so the editor grid keeps its full vertical space.
+  const editorWrap = el("div", { class: "pact-editor-wrap" }, [toolbar, editorEl]);
   const workEl = el("div", { class: "pact-work" }, [editorWrap, rightEl]);
   const root = el("div", { class: "pact-ide" }, [treeEl, workEl]);
   PACT_STATE_READY = false;   // suppress persistence until the saved layout has been read + rebuilt
   pactEdInstallFindShortcut();   // global Ctrl/⌘-F/H → in-app find (bound once; self-guards to VIEW==="pact")
   pactEdInit(editorEl);
-  PACT_ED.saveBtn = saveBtn; PACT_ED.keepBtn = keepBtn; PACT_ED.saveStatus = saveStatus; PACT_ED.changedStrip = changedStrip; pactEdUpdateSaveBar();
+  PACT_ED.saveBtn = saveBtn; PACT_ED.keepBtn = keepBtn; PACT_ED.saveStatus = saveStatus;
+  PACT_ED.treeBody = treeBody; PACT_ED.changedList = changedList; PACT_ED.tabFilesBtn = tabFilesBtn; PACT_ED.tabChangedBtn = tabChangedBtn; PACT_ED.treeTab = "files";
+  pactEdUpdateSaveBar();
   pactChatInit(chatEl);
   loadPactDir("", treeBody);
   // Rebuild the IDE from the shared server-side store (open files, boxes, chat tabs, drafts, collapse),
