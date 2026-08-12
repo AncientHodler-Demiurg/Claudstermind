@@ -2645,14 +2645,17 @@ function pactEdRenderBody(g, tab) {
     const view = el("div", { class: "pact-diff-view" });
     if (g.fontPx) view.style.fontSize = g.fontPx + "px";
     const diffIsPact = ext.endsWith(".pact") || ext.endsWith(".repl");
-    view.append(...tab.agentDiff.rows.map((r) => {
+    // Best-effort line numbers: number the rendered rows sequentially (a diff interleaves old/new, so
+    // there's no single true line — sequential keeps it simple). Dim + user-select:none so copy skips them.
+    view.style.setProperty("--pk-lineno-w", pactGutterWidthCh(tab.agentDiff.rows.length) + "ch");
+    view.append(...tab.agentDiff.rows.map((r, i) => {
       const row = el("div", { class: "pact-diff-row " + (r.type === "add" ? "pd-add" : r.type === "del" ? "pd-del" : "pd-same") });
       const text = el("span", { class: "pd-text" });
       // Keep StoicSyntax coloring in the diff (it was dropped before — rows showed as plain text). Per-line
       // highlight is fine: diff rows are interleaved old/new, not one contiguous file.
       if (diffIsPact && typeof window.pactHighlight === "function") text.innerHTML = window.pactHighlight(r.text === "" ? " " : r.text);
       else text.textContent = r.text === "" ? " " : r.text;
-      row.append(el("span", { class: "pd-sign" }, [r.type === "add" ? "+" : r.type === "del" ? "−" : " "]), text);
+      row.append(el("span", { class: "pd-lineno", "aria-hidden": "true" }, [String(i + 1)]), el("span", { class: "pd-sign" }, [r.type === "add" ? "+" : r.type === "del" ? "−" : " "]), text);
       return row;
     }));
     const dkids = [];   // band legend now lives once in the shared toolbar (viewPact), not per box
@@ -2681,11 +2684,24 @@ function pactEdRenderBody(g, tab) {
   const ov = el("div", { class: "pact-find-ov", "aria-hidden": "true" }, []);
   const ta = el("textarea", { class: "pact-edit", spellcheck: "false", wrap: "off" });
   ta.value = tab.content;
-  if (g.fontPx) { hl.style.fontSize = ov.style.fontSize = ta.style.fontSize = g.fontPx + "px"; }
+  // Left line-number gutter: a <pre> of "1\n2\n…\nN" that sits at the left of the wrap and scrolls
+  // vertically IN SYNC with the textarea (via syncScroll). It's a sibling of — never inside — the
+  // textarea, and user-select:none, so copying code never grabs a number. Rebuilt only when the line
+  // COUNT changes (cheap on every keystroke). Its width (in ch, so it scales with fontPx) drives the
+  // code layers' left padding via --pk-gutter-w, so text never sits under the numbers.
+  const gutter = el("pre", { class: "pact-gutter", "aria-hidden": "true" }, []);
+  if (g.fontPx) { hl.style.fontSize = ov.style.fontSize = ta.style.fontSize = gutter.style.fontSize = g.fontPx + "px"; }
   const paint = () => renderPactCode(hl, ta.value, tab.path);
-  const syncScroll = () => { hl.scrollTop = ov.scrollTop = ta.scrollTop; hl.scrollLeft = ov.scrollLeft = ta.scrollLeft; };
+  const syncScroll = () => { hl.scrollTop = ov.scrollTop = gutter.scrollTop = ta.scrollTop; hl.scrollLeft = ov.scrollLeft = ta.scrollLeft; };
+  const updateGutter = () => {
+    const n = pactGutterLineCount(ta.value);
+    if (gutter._n === n) return;               // only rebuild when the line count actually changes
+    gutter._n = n;
+    gutter.textContent = pactGutterText(n);
+    wrap.style.setProperty("--pk-gutter-w", `calc(${pactGutterWidthCh(n)}ch + 18px)`);
+  };
   paint();
-  ta.addEventListener("input", () => { tab.content = ta.value; paint(); syncScroll(); pactEdMarkDirty(g, tab); if (g.find && g.find.open) pactEdFindRefresh(g, false); });
+  ta.addEventListener("input", () => { tab.content = ta.value; paint(); updateGutter(); syncScroll(); pactEdMarkDirty(g, tab); if (g.find && g.find.open) pactEdFindRefresh(g, false); });
   ta.addEventListener("scroll", syncScroll);
   ta.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) { e.preventDefault(); pactEdSaveAll(); return; }
@@ -2699,7 +2715,8 @@ function pactEdRenderBody(g, tab) {
       tab.content = ta.value; paint(); pactEdMarkDirty(g, tab);
     }
   });
-  const wrap = el("div", { class: "pact-edit-wrap" }, [hl, ov, ta]);
+  const wrap = el("div", { class: "pact-edit-wrap has-gutter" }, [gutter, hl, ov, ta]);
+  updateGutter();
   kids.push(wrap);
   g.bodyEl.replaceChildren(...kids);
   g._findCtx = { wrap, ta, hl, ov, tab, paint, syncScroll };   // find/replace targets the active tab's live textarea
@@ -2741,12 +2758,16 @@ function pactFoldViewFill(view, tab, openerByStart, htmlLines) {
   // Collapsing hides start+1 .. end-1 but KEEPS the last line (closing paren) visible under the opener;
   // `feet` maps each preserved closing line to its opener so we can draw the connector between them.
   const { hidden, feet } = pactFoldHidden([...openerByStart.values()], tab.folded, total);
+  // Source line-number column, aligned across every visible row (width scales with fontPx via ch).
+  // Hidden/folded lines simply aren't rendered, so they get no number — that's fine.
+  view.style.setProperty("--pk-lineno-w", pactGutterWidthCh(total) + "ch");
   const rows = [];
   for (let l = 0; l < total; l++) {
     if (hidden[l]) continue;
     const r = openerByStart.get(l);
     const collapsed = !!r && tab.folded.has(l);
     const isFoot = feet.has(l);
+    const lineno = el("span", { class: "pfv-lineno", "aria-hidden": "true" }, [String(l + 1)]);
     const gutter = el("span", { class: "pfv-gutter" }, []);
     if (r) {
       const arrow = el("span", { class: "pfv-arrow", title: collapsed ? "Expand block" : "Collapse block" }, [collapsed ? "▸" : "▾"]);
@@ -2759,7 +2780,7 @@ function pactFoldViewFill(view, tab, openerByStart, htmlLines) {
     }
     const code = el("span", { class: "pfv-code" }, []);
     code.innerHTML = (htmlLines[l] == null || htmlLines[l] === "") ? "&nbsp;" : htmlLines[l];
-    const rk = [gutter, code];
+    const rk = [lineno, gutter, code];
     // On a collapsed opener, a "⋯" affordance signals the hidden middle (the closing paren shows on the
     // preserved foot row below, linked by the gutter connector). Clicking the ▸ still expands.
     if (collapsed) rk.push(el("span", { class: "pfv-ellipsis", title: "Collapsed block — click ▸ to expand" }, ["⋯"]));
@@ -3000,6 +3021,32 @@ function pactFoldCopyText(content, lineA, lineB) {
   return lines.slice(lo, hi + 1).join("\n");
 }
 // ===== end PACT FOLD pure helpers =====
+
+// ===== IDE GUTTER — line-number gutter helpers (pure; unit-tested in lib/pactGutter.test.mjs). =====
+// pactGutterLineCount("a\nb") → 2. An empty document still shows line 1; a trailing newline yields an
+// extra (empty) final line, matching how a textarea renders its own rows. Counts '\n' — cheap, so the
+// editable overlay can call it on every keystroke and only rebuild the gutter when the count changes.
+function pactGutterLineCount(text) {
+  const s = String(text == null ? "" : text);
+  let n = 1;
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) n++;
+  return n;
+}
+// The gutter's text content for N lines: "1\n2\n…\nN". One newline-joined string so the numbers stack
+// with the code's exact line-height inside a <pre>; it lives OUTSIDE the textarea and is user-select:none,
+// so copying code never grabs a line number.
+function pactGutterText(count) {
+  const n = Math.max(1, count | 0);
+  const out = new Array(n);
+  for (let i = 1; i <= n; i++) out[i - 1] = i;
+  return out.join("\n");
+}
+// Column width (in `ch`, so it scales with each box's font-size) for a gutter that must fit `count`
+// lines: widest number's digit count, floored at 2 so single-digit files still read as a column.
+function pactGutterWidthCh(count) {
+  return Math.max(2, String(Math.max(1, count | 0)).length);
+}
+// ===== end IDE GUTTER pure helpers =====
 
 function pactEdFindState(g) {
   if (!g.find) g.find = { open: false, term: "", repl: "", cs: false, ww: false, re: false, showRepl: false, matches: [], idx: -1 };

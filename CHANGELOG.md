@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.46] - 2026-08-12
+
+### Added
+- **Line-number gutter across every Pact IDE document.** The editable overlay gains a left `.pact-gutter`
+  column (monospace, matching the code's font-size/line-height/top padding) that scrolls vertically in
+  sync with the textarea via the existing `syncScroll`, and rebuilds only when the line count changes.
+  The code layers' left padding shifts right (`--pk-gutter-w`, sized in `ch` so it tracks each box's
+  font size) so text never sits under the numbers. The fold/read view shows each row's SOURCE line
+  number beside the fold arrows; the agent-diff view numbers its rows sequentially. Numbers are dim
+  (`--ink-dim`), non-selectable, and excluded from copy — the gutter lives outside the textarea, and the
+  fold/diff numbers are `user-select:none`, so copying code never grabs a line number. New pure helpers
+  `pactGutterLineCount` / `pactGutterText` / `pactGutterWidthCh` are unit-tested in `lib/pactGutter.test.mjs`.
+
 ## [1.1.45] - 2026-08-12
 
 ### Fixed
