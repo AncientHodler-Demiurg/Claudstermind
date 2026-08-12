@@ -2922,6 +2922,27 @@ function pactEdFindState(g) {
   if (!g.find) g.find = { open: false, term: "", repl: "", cs: false, ww: false, re: false, showRepl: false, matches: [], idx: -1 };
   return g.find;
 }
+// Document-level, capture-phase Ctrl/⌘-F (and Ctrl/⌘-H) so the in-app find is reachable even when the
+// editor <textarea> isn't focused — otherwise the browser's own page search steals the shortcut. Bound
+// ONCE (guarded); it self-limits to the active Pact box with a loaded editable overlay and no-ops
+// gracefully (letting the browser have the key) for md preview / agent diff / fold view / empty boxes.
+let PACT_FIND_KEY_BOUND = false;
+function pactEdInstallFindShortcut() {
+  if (PACT_FIND_KEY_BOUND) return;
+  PACT_FIND_KEY_BOUND = true;
+  document.addEventListener("keydown", (e) => {
+    if (VIEW !== "pact" || !PACT_ED) return;
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+    const k = (e.key || "").toLowerCase();
+    if (k !== "f" && k !== "h") return;
+    const g = PACT_ED.groups.find((gg) => gg.id === PACT_ED.activeId);
+    if (!g || !g._findCtx) return;   // active box has no editable overlay (md preview / diff / fold / empty)
+    const active = g.tabs.find((t) => t.path === g.active);
+    if (!active || !active.loaded || active.agentDiff) return;
+    e.preventDefault();
+    pactEdOpenFind(g, k === "h");
+  }, true);
+}
 // Ctrl/⌘-F (Ctrl-H for replace). No-op when the active tab isn't an editable overlay (markdown preview,
 // agent diff, empty, loading — no _findCtx). Seeds the query from the current textarea selection.
 function pactEdOpenFind(g, withReplace) {
@@ -3747,6 +3768,7 @@ function viewPact() {
   const workEl = el("div", { class: "pact-work" }, [editorWrap, rightEl]);
   const root = el("div", { class: "pact-ide" }, [treeEl, workEl]);
   PACT_STATE_READY = false;   // suppress persistence until the saved layout has been read + rebuilt
+  pactEdInstallFindShortcut();   // global Ctrl/⌘-F/H → in-app find (bound once; self-guards to VIEW==="pact")
   pactEdInit(editorEl);
   PACT_ED.saveBtn = saveBtn; PACT_ED.keepBtn = keepBtn; PACT_ED.saveStatus = saveStatus; pactEdUpdateSaveBar();
   pactChatInit(chatEl);

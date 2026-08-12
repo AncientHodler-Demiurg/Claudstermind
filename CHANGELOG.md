@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.43] - 2026-08-12
+
+### Fixed
+- **Pact editor: Ctrl/⌘-F (and Ctrl/⌘-H) now open the in-app find, not the browser's.** The shortcut was
+  bound only on the editor textarea, so with the textarea unfocused the browser's page search took over.
+  A document-level capture-phase handler (bound once) now intercepts Ctrl/⌘-F → find and Ctrl/⌘-H →
+  replace whenever the active Pact box has a loaded editable overlay, and no-ops for md preview / agent
+  diff / fold view so those keep the browser default.
+
 ## [1.1.42] - 2026-08-12
 
 ### Changed
