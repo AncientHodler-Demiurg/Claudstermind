@@ -4,6 +4,13 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.49] - 2026-08-12
+
+### Changed
+- **Pact file tree is ~20% narrower by default** (`.pact-tree` `flex` basis `clamp(180px, 16%, 340px)` →
+  `clamp(144px, 13%, 272px)`), so on deploy it comes up giving more room to the editor. The tree font
+  +/- controls and everything else are unchanged.
+
 ## [1.1.48] - 2026-08-12
 
 ### Changed
