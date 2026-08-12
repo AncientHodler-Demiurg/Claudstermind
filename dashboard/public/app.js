@@ -3591,7 +3591,7 @@ function pactTranscriptToMsgs(transcript) {
   const out = [];
   for (const m of Array.isArray(transcript) ? transcript : []) {
     if (!m) continue;
-    if (m.role === "user") out.push({ role: "user", text: m.text || "" });
+    if (m.role === "user") out.push({ role: "user", text: m.text || "", images: m.images || (m.image ? [m.image] : []), workspaceId: m.workspaceId || PACT_WORKSPACE_ID });
     else if (m.role === "assistant") out.push({ role: "assistant", text: m.text || "" });
     else if (m.kind === "tool_use") out.push({ kind: "tool_use", tools: m.tools || [] });
   }
@@ -3729,7 +3729,7 @@ function pactChatNewTab() {
   if (!PACT_CHAT) return;
   pactChatSaveDraft();   // keep the current tab's compose text before the shared textarea is torn down
   const id = ++PACT_CHAT.seq;
-  PACT_CHAT.tabs.push({ id, name: "Chat " + id, key: wsUuid(), msgs: [], live: "", status: "idle", started: false, perm: null, draft: "" });
+  PACT_CHAT.tabs.push({ id, name: "Chat " + id, key: wsUuid(), msgs: [], live: "", status: "idle", started: false, perm: null, draft: "", attachedImages: [] });
   PACT_CHAT.activeId = id;
   pactChatRender();
   pactStateSave();
@@ -3799,7 +3799,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
   if (kind !== "event") return;
   const d = data || {};
   switch (d.kind) {
-    case "user": if (!(d.by && d.by === PACT_CHAT.conn.id)) { t.msgs.push({ role: "user", text: d.text || "" }); pactChatPaint(t); } return;
+    case "user": if (!(d.by && d.by === PACT_CHAT.conn.id)) { t.msgs.push({ role: "user", text: d.text || "", images: d.images || [], workspaceId: d.workspaceId || PACT_WORKSPACE_ID }); pactChatPaint(t); } return;
     case "assistant_delta": t.live = (t.live || "") + (d.text || ""); pactChatPaintLive(t); return;
     case "assistant": t.live = ""; t.msgs.push({ role: "assistant", text: d.text || "" }); pactChatPaint(t); return;
     case "tool_use": t.live = ""; t.msgs.push({ kind: "tool_use", tools: d.tools || [] }); pactChatPaint(t); return;
@@ -3828,11 +3828,71 @@ function pactChatRoute({ kind, sessionKey, data }) {
     default: return;
   }
 }
+// ---- Pact chat image attach ------------------------------------------------------
+// Mirrors the Core cockpit's attach flow (📎 / paste / drag-drop) but stores state on the active
+// TAB (t.attachedImages) rather than a pane, and reuses the MODULE-scope encode/cap helpers
+// (wsCompressImage, wsDataUrlToAttachment, WS_IMG_* caps) so both surfaces encode identically.
+function pactShowImgErr(t, msg) {
+  if (!PACT_CHAT || !t || t.id !== PACT_CHAT.activeId) return;
+  const errEl = PACT_CHAT.host.querySelector(".pc-img-err"); if (!errEl) return;
+  errEl.textContent = msg || ""; errEl.hidden = !msg;
+}
+function pactImgChip(t, img, idx) {
+  const thumb = el("img", { class: "pc-img-thumb", alt: "attached image" });
+  thumb.src = img.dataUrl;
+  const removeBtn = el("button", { class: "pc-img-x", type: "button", title: "Remove this image" }, ["×"]);
+  removeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    t.attachedImages = (t.attachedImages || []).filter((_, i) => i !== idx);
+    pactShowImgErr(t, "");
+    pactPaintAttachment(t);
+  });
+  return el("div", { class: "pc-img-chip" }, [thumb, removeBtn]);
+}
+function pactPaintAttachment(t) {
+  if (!PACT_CHAT || !t || t.id !== PACT_CHAT.activeId) return;
+  const wrap = PACT_CHAT.host.querySelector(".pc-img-preview"); if (!wrap) return;
+  const imgs = t.attachedImages || [];
+  wrap.hidden = !imgs.length;
+  wrap.replaceChildren(...imgs.map((img, idx) => pactImgChip(t, img, idx)));
+}
+// Serialize all attach ops for a tab through one promise chain so two entry points (e.g. a fast
+// double-paste) can't interleave their read-modify-write of t.attachedImages — same guarantee as
+// the Core wsAttachImageFiles.
+function pactAttachImageFiles(t, files) {
+  if (!t) return Promise.resolve();
+  t._attachChain = (t._attachChain || Promise.resolve())
+    .then(async () => { for (const f of files) await pactAttachImageFile(t, f); })
+    .catch(() => {});
+  return t._attachChain;
+}
+async function pactAttachImageFile(t, file) {
+  pactShowImgErr(t, "");
+  const existing = t.attachedImages || [];
+  if (existing.length >= WS_IMG_MAX_COUNT) { pactShowImgErr(t, `You can attach up to ${WS_IMG_MAX_COUNT} images per message.`); return; }
+  if (!file || !/^image\//.test(file.type || "")) { pactShowImgErr(t, "That isn't an image file."); return; }
+  let attachment = null;
+  try {
+    if (WS_IMG_ALLOWED_TYPES.includes(file.type)) {
+      const dataUrl = await wsReadFileAsDataUrl(file);
+      attachment = wsDataUrlEncodedSize(dataUrl) <= WS_IMG_MAX_ENCODED_BYTES ? wsDataUrlToAttachment(dataUrl) : await wsCompressImage(file);
+    } else {
+      attachment = await wsCompressImage(file);
+    }
+  } catch { attachment = null; }
+  if (!attachment) { pactShowImgErr(t, "That image is too large to attach, even after compression — try a smaller one."); return; }
+  // Re-check the cap right before committing — two async attach paths could both have passed the
+  // early check while `existing` was still under the cap.
+  if ((t.attachedImages || []).length >= WS_IMG_MAX_COUNT) { pactShowImgErr(t, `You can attach up to ${WS_IMG_MAX_COUNT} images per message.`); return; }
+  t.attachedImages = [...(t.attachedImages || []), attachment];
+  pactPaintAttachment(t);
+}
 function pactChatSend(t) {
   if (!PACT_CHAT || !t) return;
   const ta = PACT_CHAT.host.querySelector(".pc-input");
   const text = (ta ? ta.value : "").trim();
   if (!text) return;
+  const attachedImages = t.attachedImages || [];
   let payload = text;
   const firstMsg = !t.started;
   if (firstMsg) { t.started = true; payload = PACT_CHAT_PREAMBLE + "\n\n" + text; }   // orient the agent on the first message
@@ -3842,8 +3902,12 @@ function pactChatSend(t) {
     const nm = pactDeriveChatName(text);
     if (nm) { t.name = nm; PACT_CHAT_NAMES[t.key] = nm; }
   }
-  t.msgs.push({ role: "user", text });
+  // Stash the just-sent images on the local user message as raw dataUrls (the server won't echo
+  // this prompt back to us — see the "user" event's `by` guard — so this render is authoritative
+  // until a reload replaces it with the persisted turn's /api/workspace/image paths).
+  t.msgs.push({ role: "user", text, images: attachedImages.length ? attachedImages.map((a) => ({ dataUrl: a.dataUrl })) : undefined });
   t.status = "thinking"; t.live = "";
+  t.attachedImages = [];   // one-shot per send — cleared before the re-render rebuilds the (empty) preview
   if (ta) { ta.value = ""; ta.style.height = ""; ta.style.overflowY = "hidden"; pactChatAutosize(ta); }
   t.draft = "";   // the draft was just sent — clear it so a reload doesn't resurrect it
   pactChatRender();   // reflect a fresh auto-name on the tab (also re-paints the active conversation)
@@ -3852,7 +3916,9 @@ function pactChatSend(t) {
   pactChatPaint(t);
   // `resume` continues a specific saved session with full SDK context — set when this tab was opened
   // from history (Resume / Load-into-box). Ignored server-side once a live session for the key exists.
-  wsPost("prompt", { sessionKey: t.key, repo: PACT_REPO, worktree: "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id, resume: t.resume || undefined });
+  const body = { sessionKey: t.key, repo: PACT_REPO, worktree: "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id, resume: t.resume || undefined };
+  if (attachedImages.length) body.images = attachedImages.map((a) => ({ mediaType: a.mediaType, base64Data: a.base64Data }));
+  wsPost("prompt", body);
 }
 function pactChatDecide(t, decision) {
   if (!t || !t.perm) return;
@@ -3861,7 +3927,24 @@ function pactChatDecide(t, decision) {
   pactChatPaint(t);
 }
 function pactChatMsgNode(m) {
-  if (m.role === "user") return el("div", { class: "pc-msg pc-user" }, [m.text]);
+  if (m.role === "user") {
+    // `m.images` ride two shapes: a just-sent message carries raw { dataUrl } (rendered inline);
+    // a persisted/reloaded turn carries { path } + m.workspaceId (rendered via /api/workspace/image).
+    // `m.image` (singular) is a pre-multi-image history shape, still read so old rows keep rendering.
+    const imgs = m.images || (m.image ? [m.image] : []);
+    const kids = [];
+    if (imgs.length) {
+      kids.push(el("div", { class: "pc-user-images" }, imgs.map((img) => {
+        const src = img.dataUrl || (img.path && m.workspaceId ? `/api/workspace/image?workspaceId=${encodeURIComponent(m.workspaceId)}&path=${encodeURIComponent(img.path)}` : null);
+        if (!src) return el("span", {}, []);
+        return el("a", { href: src, target: "_blank", rel: "noopener noreferrer", class: "pc-user-image-link" }, [
+          el("img", { class: "pc-user-image", src, alt: "attached image" }, []),
+        ]);
+      })));
+    }
+    kids.push(m.text);
+    return el("div", { class: "pc-msg pc-user" }, kids);
+  }
   if (m.role === "assistant") {
     const body = el("div", { class: "pc-asst-body" });
     if (typeof window.mdRender === "function") body.innerHTML = window.mdRender(m.text); else body.textContent = m.text;
@@ -3949,12 +4032,37 @@ function pactChatRender() {
   send.addEventListener("click", () => pactChatSend(active));
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); pactChatSend(pactChatActive()); } });
   input.addEventListener("input", () => { pactChatAutosize(input); const a = pactChatActive(); if (a) { a.draft = input.value; pactStateSave(); } });
-  const compose = el("div", { class: "pc-compose" }, [input, send]);
-  host.replaceChildren(head, scroll, compose);
+  // Image attach: a hidden file input + 📎 button, plus paste (on the textarea) and drag-drop (onto
+  // the compose row) — all three funnel into pactAttachImageFiles → the exact same attached state.
+  const imgFileInput = el("input", { type: "file", accept: WS_IMG_ALLOWED_TYPES.join(","), multiple: "", class: "pc-img-input" });
+  const attach = el("button", { class: "pact-ed-ico pc-attach", type: "button", title: `Attach up to ${WS_IMG_MAX_COUNT} images — click, paste, or drag onto the box` }, ["📎"]);
+  attach.addEventListener("click", (e) => { e.stopPropagation(); imgFileInput.click(); });
+  imgFileInput.addEventListener("change", () => {
+    const files = imgFileInput.files ? [...imgFileInput.files] : [];
+    imgFileInput.value = "";   // reset so re-picking the SAME file(s) still fires change next time
+    pactAttachImageFiles(pactChatActive(), files);
+  });
+  input.addEventListener("paste", (e) => {
+    const items = e.clipboardData && e.clipboardData.items; if (!items) return;
+    const files = [...items].filter((it) => it.kind === "file" && /^image\//.test(it.type)).map((it) => it.getAsFile()).filter(Boolean);
+    if (files.length) { e.preventDefault(); pactAttachImageFiles(pactChatActive(), files); }
+  });
+  const imgPreview = el("div", { class: "pc-img-preview" }, []); imgPreview.hidden = true;
+  const imgErr = el("div", { class: "pc-img-err" }, []); imgErr.hidden = true;
+  const compose = el("div", { class: "pc-compose" }, [imgFileInput, attach, input, send]);
+  compose.addEventListener("dragover", (e) => { e.preventDefault(); compose.classList.add("pc-drag"); });
+  compose.addEventListener("dragleave", () => compose.classList.remove("pc-drag"));
+  compose.addEventListener("drop", (e) => {
+    e.preventDefault(); compose.classList.remove("pc-drag");
+    const files = e.dataTransfer && e.dataTransfer.files ? [...e.dataTransfer.files] : [];
+    pactAttachImageFiles(pactChatActive(), files);
+  });
+  const composeExtras = el("div", { class: "pc-compose-extras" }, [imgPreview, imgErr]);
+  host.replaceChildren(head, scroll, composeExtras, compose);
   attachStickController(scroll, { wrapClass: "stick-wrap-pc" });   // wrap now so the pill exists from the first paint
   requestAnimationFrame(() => pactChatAutosize(input));   // size to any restored draft once the pane has real layout
   pactSyncCollapseBtns();
-  if (active) pactChatPaint(active);
+  if (active) { pactChatPaint(active); pactPaintAttachment(active); }   // restore any attachments when switching tabs
 }
 function viewPact() {
   const editorEl = el("div", { class: "pact-editor" });

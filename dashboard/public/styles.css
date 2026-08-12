@@ -1352,6 +1352,23 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pc-allow { padding: 3px 12px; border-radius: 6px; background: #34d399; border: 1px solid #34d399; color: #05271b; font-weight: 700; cursor: pointer; }
 .pc-deny { padding: 3px 12px; border-radius: 6px; background: var(--chip); border: 1px solid var(--line); color: var(--ink); cursor: pointer; }
 .pc-compose { display: flex; gap: 6px; align-items: flex-end; padding: 8px; border-top: 1px solid var(--line); }
+.pc-compose.pc-drag { background: var(--chip); box-shadow: inset 0 0 0 1px var(--accent); }
+.pc-img-input { display: none; }
+.pc-attach { flex: 0 0 auto; align-self: flex-end; font-size: 15px; }
+.pc-attach:disabled { opacity: .4; cursor: default; }
+.pc-compose-extras { display: flex; flex-direction: column; }
+.pc-img-preview { display: flex; flex-wrap: wrap; gap: 10px; padding: 6px 8px 0; }
+.pc-img-preview[hidden] { display: none; }
+.pc-img-chip { display: flex; align-items: center; gap: 4px; }
+.pc-img-thumb { max-width: 64px; max-height: 64px; border-radius: 6px; border: 1px solid var(--line); object-fit: cover; }
+.pc-img-x { background: transparent; border: 1px solid var(--line); color: var(--ink-dim); border-radius: 50%; cursor: pointer;
+  width: 18px; height: 18px; line-height: 1; font-size: 12px; padding: 0; }
+.pc-img-x:hover { color: var(--ink); border-color: var(--ink-dim); }
+.pc-img-err { color: #f87171; font-size: 12px; padding: 4px 8px 0; }
+.pc-img-err[hidden] { display: none; }
+.pc-user-images { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.pc-user-image-link { display: block; }
+.pc-user-image { display: block; max-width: 140px; max-height: 140px; border-radius: 6px; border: 1px solid rgba(255,255,255,.25); }
 .pc-input { flex: 1; min-height: 36px; max-height: 40vh; resize: none; background: var(--chip); color: var(--ink);
   border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px; font-family: inherit; font-size: 13px; }
 .pc-send { flex: 0 0 auto; padding: 8px 16px; border-radius: 9px; background: var(--accent); border: 1px solid var(--accent);

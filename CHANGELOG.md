@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.2.3] - 2026-08-12
+
+### Added
+- **Image attach in the Pact chat.** You can now attach up to five images to a Pact prompt — click the
+  📎 button, paste an image straight into the compose box, or drag-drop image files onto it, exactly
+  like the Core cockpit. Removable thumbnail previews sit above the input; images ride the existing
+  prompt as `images: [{ mediaType, base64Data }]` and render in the sent user message (inline dataUrl
+  for a just-sent prompt, `/api/workspace/image` for a reloaded persisted turn). The encode/downscale
+  and size/count caps reuse the shared module-scope helpers, so both surfaces encode identically.
+
 ## [1.2.2] - 2026-08-12
 
 ### Added
