@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.2.5] - 2026-08-12
+
+### Changed
+- **The Pact chat's Send button now matches the Core cockpit's Send/Stop button exactly.** It was a
+  plain static "Send" with no busy state. Now, while the active tab is working, it turns amber and
+  reads "Working…" (red "Deep Work…" when the underlying session is still producing in the
+  background), and a blinking "work" ring pulses around it — the same amber/red colors, the same
+  `wsWorkPulse` keyframe, and the same reduced-motion fallback the Core pane uses (no new colors, the
+  keyframe is reused, not duplicated). A new "■ Stop" button appears beside Send only while the turn
+  is running; clicking it posts the same `stop` control the Core cockpit uses (an SDK interrupt) for
+  the active tab, halting the reply without ending the conversation. Send stays clickable while busy,
+  so a mid-turn message still queues (v1.2.4). On a phone, Send/Stop collapse to glyphs so the text
+  box isn't crushed.
+
 ## [1.2.4] - 2026-08-12
 
 ### Changed

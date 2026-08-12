@@ -1379,6 +1379,19 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pc-send { flex: 0 0 auto; padding: 8px 16px; border-radius: 9px; background: var(--accent); border: 1px solid var(--accent);
   color: #fff; font-weight: 700; cursor: pointer; }
 .pc-send:disabled { opacity: .6; }
+/* Stop + busy/deep-work/pulse states — an EXACT mirror of the Core cockpit's .ws-send/.ws-stop
+   (see above): the SAME amber busy / red deep-work / red stop colors, the SAME wsWorkPulse keyframe,
+   and the SAME reduced-motion fallback, so the two send buttons never drift. */
+.pc-stop { flex: 0 0 auto; align-self: flex-end; padding: 8px 14px; border-radius: 9px; font-weight: 700; font-size: 13px; cursor: pointer;
+  background: #f87171; border: 1px solid #f87171; color: #2a0a0a; white-space: nowrap; }
+.pc-stop:hover { filter: brightness(1.05); }
+.pc-stop[hidden] { display: none; }
+.pc-send.busy { background: #f59e0b; border-color: #f59e0b; color: #1a1400; }
+.pc-send.busy:hover { filter: brightness(1.05); }
+.pc-send.busy.deepwork { background: #f87171; border-color: #f87171; color: #2a0a0a; }
+.pc-send.busy.deepwork:hover { filter: brightness(1.05); }
+.pc-send.work-pulse { animation: wsWorkPulse 1.15s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .pc-send.work-pulse { animation: none; box-shadow: 0 0 0 2px rgba(148,163,184,.7); } }
 
 /* Markdown viewer (.md files). */
 .pact-md { padding: 14px 20px; max-width: 860px; font-size: 13.5px; line-height: 1.62; color: var(--ink); }
@@ -1408,4 +1421,9 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .pact-ed-gutter-x, .pact-ed-gutter-y { display: none; }  /* no drag-resize on touch */
   .pact-right { flex: 0 0 auto; }
   .pact-chat, .pact-term { flex: 0 0 auto; min-height: 140px; }
+  /* Compose buttons collapse to glyphs so Stop + Send don't crush the text box on a phone (mirrors
+     the Core cockpit's mobile compose). The busy/deep-work background colors still show through. */
+  .pc-send, .pc-stop { font-size: 0; padding: 8px 12px; }
+  .pc-send::after { content: "➤"; font-size: 17px; line-height: 1; }
+  .pc-stop::after { content: "■"; font-size: 14px; line-height: 1; }
 }

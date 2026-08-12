@@ -4098,7 +4098,24 @@ function pactChatPaint(t) {
   const wasNearBottom = force || stick.sample();
   scroll.replaceChildren(...(nodes.length ? nodes : [el("div", { class: "hint", style: "padding:10px" }, ["Ask the agent to explore, write, or test Pact in the Ouronet repo."])]));
   stick.apply(wasNearBottom);
-  if (compose) { const send = compose.querySelector(".pc-send"); if (send) send.disabled = false; }
+  // Drive the send + stop buttons from this tab's status — an EXACT mirror of the Core cockpit's
+  // paintPane: label Send/Working…/Deep Work…, the amber `busy` / red `deepwork` treatment, the
+  // `work-pulse` ring, and the Stop button shown only while busy. Send stays enabled while busy so a
+  // mid-turn send still queues (v1.2.4).
+  if (compose) {
+    const send = compose.querySelector(".pc-send");
+    const stop = compose.querySelector(".pc-stop");
+    const busy = pactChatBusy(t);
+    const deep = t.status === "deepwork";
+    if (send) {
+      send.disabled = false;
+      send.classList.toggle("busy", busy);
+      send.classList.toggle("deepwork", deep);
+      send.classList.toggle("work-pulse", busy);
+      send.textContent = deep ? "Deep Work…" : busy ? "Working…" : "Send";
+    }
+    if (stop) stop.hidden = !busy;
+  }
 }
 function pactChatPaintLive(t) {
   if (!PACT_CHAT || t.id !== PACT_CHAT.activeId) return;
@@ -4142,6 +4159,13 @@ function pactChatRender() {
   const scroll = el("div", { class: "pc-scroll" }, []);
   const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (Enter to send)" });
   const send = el("button", { class: "pc-send" }, ["Send"]);
+  // "■ Stop" — interrupt the active tab's in-flight turn without ending the conversation, mirroring
+  // the Core cockpit's stop button (same "stop" control → SDK interrupt in lib/workspace.mjs).
+  // Hidden unless the active tab is busy (driven in pactChatPaint). Send stays clickable while busy
+  // so a mid-turn send still queues (v1.2.4).
+  const stop = el("button", { class: "pc-stop", title: "Stop the current response (keeps the conversation)" }, ["■ Stop"]);
+  stop.hidden = true;
+  stop.addEventListener("click", () => { const a = pactChatActive(); if (a && a.key) wsPost("stop", { sessionKey: a.key }); });
   const active = pactChatActive();
   if (active) input.value = active.draft || "";   // restore this tab's saved compose draft
   send.addEventListener("click", () => pactChatSend(active));
@@ -4164,7 +4188,7 @@ function pactChatRender() {
   });
   const imgPreview = el("div", { class: "pc-img-preview" }, []); imgPreview.hidden = true;
   const imgErr = el("div", { class: "pc-img-err" }, []); imgErr.hidden = true;
-  const compose = el("div", { class: "pc-compose" }, [imgFileInput, attach, input, send]);
+  const compose = el("div", { class: "pc-compose" }, [imgFileInput, attach, input, stop, send]);
   compose.addEventListener("dragover", (e) => { e.preventDefault(); compose.classList.add("pc-drag"); });
   compose.addEventListener("dragleave", () => compose.classList.remove("pc-drag"));
   compose.addEventListener("drop", (e) => {
