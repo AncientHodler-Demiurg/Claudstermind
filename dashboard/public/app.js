@@ -3530,6 +3530,18 @@ function pactRestoreChat(ch) {
     PACT_CHAT._pendingOpen[t.key] = t.id;
     wsPost("control", { action: "sessionOpen", args: { repo: PACT_REPO, worktree: "main", sessionId: t.key } });
   }
+  // Close the persist-race window on a fresh reload: the sessionOpen rehydrate above can race the
+  // daemon's turn-boundary persist for a turn that FINISHED during the downtime — the fresh-open
+  // fetch then reads a transcript still missing that just-saved reply, so it never shows. A short
+  // beat later, re-ask each tab for its authoritative state (the persist has landed by then); the
+  // `event/resync` reply REPLACES the transcript (see pactChatRoute's "resync" case) and surfaces it.
+  // (The stream's `hello` also resyncs, but on a full page reload it fires before these tabs exist —
+  // this delayed pass is what covers the initial load; `hello` covers live re-connects.)
+  const restoredKeys = PACT_CHAT.tabs.map((t) => t.key).filter(Boolean);
+  setTimeout(() => {
+    if (!PACT_CHAT) return;
+    for (const key of restoredKeys) if (PACT_CHAT.tabs.some((t) => t.key === key)) wsPost("control", { action: "resync", args: { sessionKey: key } });
+  }, 1500);
 }
 function pactRestoreCollapse(mode) {
   const right = document.querySelector(".pact-right"); if (!right) return;
@@ -3599,6 +3611,24 @@ function pactTranscriptToMsgs(transcript) {
   }
   return out;
 }
+// ===== PACT RESYNC DECISION — pure helper (sliced out for unit tests; see lib/pactResync.test.mjs)
+// A resync reply is the server's AUTHORITATIVE current state for a session — its persisted transcript
+// plus the live status. Reconciling it with what a chat tab already shows has two pure parts (no DOM,
+// no module state, so a unit test can exercise them without booting the page):
+//   • replace — REPLACE the tab's message list with the resync transcript, but ONLY when that can't
+//     lose content: if the resync transcript is SHORTER than what's on screen, an in-flight turn's
+//     optimistic user bubble / streaming reply simply hasn't been persisted yet, so keep the current
+//     messages rather than clobber them. Replacing with an equal-or-longer transcript is idempotent —
+//     a whole-list swap, never an append, so it can never DUPLICATE (unlike the fresh-open concat).
+//   • keepLive — keep the transient streaming buffer (tt.live) while the session reports a busy/live
+//     status (a turn genuinely in flight); drop it once the server says the turn is done (idle). That
+//     drop is exactly what surfaces a reply COMPLETED during the web's downtime: the finished text is
+//     now in the transcript, so the stale partial buffer must give way to it.
+function pactResyncDecision(currentLen, incomingLen, status, live) {
+  const busy = status === "thinking" || status === "deepwork" || status === "awaiting-permission";
+  return { replace: incomingLen >= currentLen, keepLive: busy || !!live };
+}
+// ===== end PACT RESYNC DECISION pure helper =====
 function pactAgo(ms) {
   if (!ms) return "";
   const s = Math.max(0, (Date.now() - ms) / 1000);
@@ -3757,11 +3787,40 @@ function pactChatOpenStream() {
   const q = "?conn=" + encodeURIComponent(PACT_CHAT.conn.id + ":pact") + "&label=" + encodeURIComponent(PACT_CHAT.conn.label + " (pact)");
   let es; try { es = new EventSource("/api/workspace/stream" + q); } catch { return; }
   PACT_CHAT.es = es;
+  // The stream sends `event: hello` on every (re)connect. The browser's EventSource auto-reconnects
+  // after a deploy/reload drops the connection, so this fires again once the web is back — catch up
+  // every open tab on anything its previous connection silently missed. A turn that FINISHED while
+  // disconnected emitted its live events into a dead stream and is otherwise lost to the UI; the
+  // resync re-fetches the now-persisted reply. Mirrors the Core cockpit's resyncOpenPanes() on `hello`.
+  es.addEventListener("hello", () => pactChatResyncAll());
   es.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } pactChatRoute(m); };
+}
+// Ask the server for the CURRENT authoritative state of every keyed tab's session — the same
+// reconnect catch-up the Core cockpit runs (see resyncOpenPanes + `_resync` server-side). Each reply
+// arrives as an `event/resync` frame handled in pactChatRoute as a wholesale REPLACE (never the
+// fresh-open `sessionOpen` concat, which assumes an empty tab and would duplicate on a filled one).
+function pactChatResyncAll() {
+  if (!PACT_CHAT) return;
+  for (const t of PACT_CHAT.tabs) if (t.key) wsPost("control", { action: "resync", args: { sessionKey: t.key } });
 }
 function pactChatRoute({ kind, sessionKey, data }) {
   if (!PACT_CHAT) return;
-  if (kind === "heartbeat" || kind === "presence") return;
+  if (kind === "presence") return;
+  if (kind === "heartbeat") {
+    // Self-heal a tab whose end-of-turn we missed: a live turn streams events constantly, so a tab
+    // still marked busy yet silent this long is almost certainly one whose "result" was dropped
+    // (e.g. the SSE subscriber was briefly evicted across a deploy) — ask the server for its true
+    // current state rather than spin on "Working…" forever. Harmless if it really is still working
+    // (the resync just confirms it). Mirrors the Core cockpit's heartbeat self-heal (WS_HEAL_QUIET_MS).
+    const now = Date.now();
+    for (const t of PACT_CHAT.tabs) {
+      if (t.key && pactChatBusy(t) && (now - (t._lastEventAt || 0)) > WS_HEAL_QUIET_MS) {
+        t._lastEventAt = now;   // don't re-fire every heartbeat while the resync round-trips
+        wsPost("control", { action: "resync", args: { sessionKey: t.key } });
+      }
+    }
+    return;
+  }
   // The per-session history list (state frame, no sessionKey) — refresh the history panel.
   if (kind === "state" && data && Array.isArray(data.pactSessions)) { PACT_CHAT.sessions = data.pactSessions; pactChatRenderHistory(); return; }
   // A saved chat's transcript arriving to rehydrate a Resume / Load-into-box tab. The frame is keyed
@@ -3803,7 +3862,29 @@ function pactChatRoute({ kind, sessionKey, data }) {
   if (kind === "permission") { t.perm = { requestId: data.requestId, tool: data.tool || data.name || data.title || "a tool" }; t.status = "awaiting-permission"; pactChatPaint(t); return; }
   if (kind !== "event") return;
   const d = data || {};
+  t._lastEventAt = Date.now();   // per-tab activity stamp — the heartbeat self-heal spots a stuck-busy tab by it
   switch (d.kind) {
+    // Reconnect catch-up reply (see pactChatResyncAll + `_resync` server-side): the server's
+    // AUTHORITATIVE current state. REPLACE the tab's messages with the persisted transcript (never
+    // the fresh-open concat — that assumes an empty tab and would DUPLICATE here), guarding on length
+    // so a still-unpersisted in-flight turn is never clobbered, and keeping the streaming buffer only
+    // while the turn is genuinely still running. This is what surfaces a reply that FINISHED during a
+    // deploy/reload's downtime. Also clear any leftover fresh-open pending entry for this tab so a
+    // late sessionOpen reply can't re-concat what we just replaced.
+    case "resync": {
+      const incoming = pactTranscriptToMsgs(d.transcript);
+      const dec = pactResyncDecision(t.msgs.length, incoming.length, d.status, d.live);
+      if (dec.replace) t.msgs = incoming;
+      if (d.usage) t.usage = d.usage;
+      if (d.status) t.status = d.status;
+      if (!dec.keepLive) t.live = "";
+      if (d.sessionId && !t.resume) t.resume = d.sessionId;
+      if (PACT_CHAT._pendingOpen && PACT_CHAT._pendingOpen[t.key] != null) delete PACT_CHAT._pendingOpen[t.key];
+      t._forceBottom = true;
+      pactChatPaint(t);
+      pactChatDrainQueue(t);   // a turn that finished during downtime just landed — release any queued follow-up
+      return;
+    }
     case "user": if (!(d.by && d.by === PACT_CHAT.conn.id)) { t.msgs.push({ role: "user", text: d.text || "", images: d.images || [], workspaceId: d.workspaceId || PACT_WORKSPACE_ID }); pactChatPaint(t); } return;
     case "assistant_delta": t.live = (t.live || "") + (d.text || ""); pactChatPaintLive(t); return;
     case "assistant": t.live = ""; t._pendingText = null; t._pendingImages = null; t.msgs.push({ role: "assistant", text: d.text || "" }); pactChatPaint(t); return;

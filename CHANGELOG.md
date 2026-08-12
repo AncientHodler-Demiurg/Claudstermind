@@ -4,6 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.2.10] - 2026-08-12
+
+### Fixed
+- **Pact chat lost a reply completed while the web was down (deploy/reload mid-response).** The Pact
+  chat rehydrated its transcript exactly once, on restore, with no catch-up: a turn that FINISHED
+  during the web's downtime emitted its live events into a disconnected stream and was never re-fetched
+  — the completed answer sat safely on disk but was missing from the chat until a manual Resume. Added
+  the same reconnect resync the Core cockpit uses: (1) a `hello` listener on the chat stream resyncs
+  every open tab whenever the auto-reconnecting EventSource comes back; (2) a heartbeat self-heal
+  resyncs any tab still marked busy but gone quiet too long (dropped end-of-turn); (3) a short delayed
+  resync after the initial restore closes the fresh-reload persist-race window `hello` misses because
+  it fires before the tabs exist. The `event/resync` reply REPLACES the tab's transcript (authoritative
+  whole-list swap — never the fresh-open concat, which would duplicate on a filled tab), guarded on
+  length so a still-unpersisted in-flight turn is never clobbered and the live streaming buffer is kept
+  while a turn is genuinely running. New pure helper `pactResyncDecision` (unit-tested) makes the
+  replace-vs-keep-live decision.
+
 ## [1.2.9] - 2026-08-12
 
 ### Fixed
