@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.53] - 2026-08-12
+
+### Added
+- **"N files changed by the agent" review strip in the Pact IDE.** After each Pact chat turn, a thin
+  dismissible bar below the editor toolbar lists EVERY file the agent changed in the repo (not just the
+  ones open in a box) — each row shows the repo-relative path (long paths ellipsized), a status chip
+  (M/A/D/new), and `+added / −removed` badges, plus a refresh (⟳) and dismiss (×). Clicking a row opens
+  that file into the active editor box as a green/red diff (before = committed HEAD, after = on-disk),
+  reusing the existing full-context diff view; if the file is already open it reuses that box's tab.
+  Keep All accepts it exactly as before (the file is already on disk — no save). The strip stays hidden
+  when there are no changes or git is unavailable, and doesn't disturb the existing auto-diff for
+  already-open files, the chat, autosave, find, fold, or the deploy panel.
+
 ## [1.1.52] - 2026-08-12
 
 ### Added

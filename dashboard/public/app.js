@@ -3358,6 +3358,74 @@ function pactEdKeepAll() {
   for (const g of PACT_ED.groups) for (const t of g.tabs) { if (t.agentDiff) { t.agentDiff = null; t.diffBase = undefined; } }
   pactEdLayout(); pactEdUpdateSaveBar();
 }
+// ---- "N files changed by the agent" review strip ----
+// After a chat turn, list EVERY file the agent changed in the repo (the working-tree diff vs HEAD),
+// not just the ones open in a box. Each row opens that file into the active box as a green/red diff.
+let PACT_CHANGED = [];                 // last-fetched change list from /api/pact/changed
+let PACT_CHANGED_DISMISSED = false;    // × dismiss; a fresh turn re-shows the strip
+async function pactEdCheckChangedFiles() {
+  if (!PACT_ED || !PACT_ED.changedStrip) return;
+  let d; try { d = await (await fetch("/api/pact/changed")).json(); } catch { return; }   // git unreachable — leave strip as-is
+  if (!d || !d.ok || !Array.isArray(d.files)) return;   // git unavailable / not a repo — strip stays hidden
+  PACT_CHANGED = d.files;
+  PACT_CHANGED_DISMISSED = false;       // a new turn's changes re-open the review strip
+  pactEdRenderChangedStrip();
+}
+function pactEdRenderChangedStrip() {
+  const strip = PACT_ED && PACT_ED.changedStrip;
+  if (!strip) return;
+  const files = PACT_CHANGED || [];
+  if (PACT_CHANGED_DISMISSED || files.length === 0) { strip.style.display = "none"; strip.replaceChildren(); return; }
+  strip.style.display = "";
+  const title = el("span", { class: "pcs-title" }, [`${files.length} file${files.length > 1 ? "s" : ""} changed by the agent`]);
+  const refresh = el("button", { class: "pact-ed-ico", title: "Re-check the repo for agent changes" }, ["⟳"]);
+  refresh.addEventListener("click", (e) => { e.stopPropagation(); pactEdCheckChangedFiles(); });
+  const dismiss = el("button", { class: "pact-ed-ico", title: "Dismiss this review strip" }, ["×"]);
+  dismiss.addEventListener("click", (e) => { e.stopPropagation(); PACT_CHANGED_DISMISSED = true; pactEdRenderChangedStrip(); });
+  const head = el("div", { class: "pcs-head" }, [title, el("span", { class: "ws-spacer" }, []), refresh, dismiss]);
+  const rows = files.map((f) => {
+    const cls = f.status === "?" ? "new" : (f.status || "M").toLowerCase();
+    const row = el("button", { class: "pcs-row", title: f.path + " — open as diff" }, [
+      el("span", { class: "pcs-st pcs-st-" + cls }, [f.status || "M"]),
+      el("span", { class: "pcs-path" }, [f.path]),
+      el("span", { class: "pcs-badges" }, [
+        el("span", { class: "pd-badge pd-badge-add" }, ["+" + (f.added || 0)]),
+        el("span", { class: "pd-badge pd-badge-del" }, ["−" + (f.removed || 0)]),
+      ]),
+    ]);
+    row.addEventListener("click", () => pactEdOpenAsDiff(f.path));
+    return row;
+  });
+  strip.replaceChildren(head, el("div", { class: "pcs-list" }, rows));
+}
+// Open `path` into the active box as a green/red diff: before = the committed HEAD content, after =
+// the current on-disk content (what the agent wrote). If the file is already open in some box, reuse
+// that box's tab rather than duplicating. Keep All then behaves exactly as for an auto-diffed file.
+async function pactEdOpenAsDiff(path) {
+  if (!PACT_ED) return;
+  let g = PACT_ED.groups.find((x) => x.tabs.some((t) => t.path === path))
+    || PACT_ED.groups.find((x) => x.id === PACT_ED.activeId) || PACT_ED.groups[0];
+  if (!g) return;
+  PACT_ED.activeId = g.id;
+  let tab = g.tabs.find((t) => t.path === path);
+  if (!tab) { tab = { path, name: path.split("/").pop(), loaded: false, content: "", saved: "", dirty: false, error: null }; g.tabs.push(tab); }
+  g.active = path;
+  pactEdLayout();   // switch to the box + tab immediately (a "Loading…" body while the two fetches land)
+  const [aRes, bRes] = await Promise.all([
+    fetch("/api/pact/file?path=" + encodeURIComponent(path)).then((r) => r.json()).catch(() => null),         // after = on-disk
+    fetch("/api/pact/file?ref=head&path=" + encodeURIComponent(path)).then((r) => r.json()).catch(() => null), // before = HEAD
+  ]);
+  // A deleted/unreadable file → after = "" (full red diff vs HEAD). A non-tooLarge read error is the
+  // only case we surface as an error.
+  let after = "";
+  if (aRes && aRes.ok && typeof aRes.content === "string") after = aRes.content;
+  else if (aRes && aRes.tooLarge) { tab.loaded = true; tab.error = (aRes.error || "file too large"); pactEdRenderGroup(g); return; }
+  const before = (bRes && bRes.ok && typeof bRes.content === "string") ? bRes.content : "";
+  tab.content = after; tab.saved = after; tab.dirty = false; tab.loaded = true; tab.error = null;
+  tab.diffBase = before;
+  tab.agentDiff = pactDiffLines(before, after);
+  pactEdLayout(); pactEdUpdateSaveBar();
+}
 async function pactEdOpen(path, row) {
   if (!PACT_ED) return;
   document.querySelectorAll(".pact-file.--active").forEach((e) => e.classList.remove("--active"));
@@ -3771,7 +3839,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
     case "assistant_delta": t.live = (t.live || "") + (d.text || ""); pactChatPaintLive(t); return;
     case "assistant": t.live = ""; t.msgs.push({ role: "assistant", text: d.text || "" }); pactChatPaint(t); return;
     case "tool_use": t.live = ""; t.msgs.push({ kind: "tool_use", tools: d.tools || [] }); pactChatPaint(t); return;
-    case "result": t.live = ""; t.status = "idle"; pactChatPaint(t); pactEdCheckAgentEdits(); return;
+    case "result": t.live = ""; t.status = "idle"; pactChatPaint(t); pactEdCheckAgentEdits(); pactEdCheckChangedFiles(); return;
     // A second prompt sent while this session is still finishing its current turn is refused with
     // `busy` (see lib/workspace.mjs's single-writer turn lock). Flip off the optimistic "thinking…"
     // this tab set on send — otherwise the tab spins forever on a prompt the backend never accepted —
@@ -3955,13 +4023,17 @@ function viewPact() {
   // legend flexes and scrolls horizontally if the row gets tight; the autosave hint stays on the right.
   const toolbar = el("div", { class: "pact-ed-toolbar" }, [saveBtn, keepBtn, phCollapseBtn("pact-ed-ico"), saveStatus, pactLegend(),
     el("span", { class: "pact-save-hint" }, ["autosaves 5 min after you stop typing"])]);
-  const editorWrap = el("div", { class: "pact-editor-wrap" }, [toolbar, editorEl]);
+  // A thin, DISMISSIBLE review strip below the toolbar: after each chat turn it lists EVERY file the
+  // agent changed in the repo (not just the open ones). Hidden until there's a change to show.
+  const changedStrip = el("div", { class: "pact-changed-strip" });
+  changedStrip.style.display = "none";
+  const editorWrap = el("div", { class: "pact-editor-wrap" }, [toolbar, changedStrip, editorEl]);
   const workEl = el("div", { class: "pact-work" }, [editorWrap, rightEl]);
   const root = el("div", { class: "pact-ide" }, [treeEl, workEl]);
   PACT_STATE_READY = false;   // suppress persistence until the saved layout has been read + rebuilt
   pactEdInstallFindShortcut();   // global Ctrl/⌘-F/H → in-app find (bound once; self-guards to VIEW==="pact")
   pactEdInit(editorEl);
-  PACT_ED.saveBtn = saveBtn; PACT_ED.keepBtn = keepBtn; PACT_ED.saveStatus = saveStatus; pactEdUpdateSaveBar();
+  PACT_ED.saveBtn = saveBtn; PACT_ED.keepBtn = keepBtn; PACT_ED.saveStatus = saveStatus; PACT_ED.changedStrip = changedStrip; pactEdUpdateSaveBar();
   pactChatInit(chatEl);
   loadPactDir("", treeBody);
   // Rebuild the IDE from the shared server-side store (open files, boxes, chat tabs, drafts, collapse),

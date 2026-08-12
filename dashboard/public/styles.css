@@ -1077,6 +1077,25 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-save-status { font-size: 11.5px; color: var(--ink-mute); }
 .pact-save-status.--err { color: #f87171; }
 .pact-save-hint { font-size: 11px; color: var(--ink-dim); }
+/* "N files changed by the agent" review strip — a thin, dismissible bar below the toolbar, above the
+   box grid. Its list scrolls horizontally (and caps its height) so a big change set never shoves the
+   editor down. */
+.pact-changed-strip { flex: 0 0 auto; display: flex; flex-direction: column; gap: 5px; padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel2)); max-height: 168px; overflow: hidden; }
+.pcs-head { display: flex; align-items: center; gap: 8px; }
+.pcs-title { font-size: 12px; font-weight: 700; color: var(--ink); }
+.pcs-list { display: flex; flex-direction: column; gap: 3px; overflow-y: auto; min-height: 0; }
+.pcs-row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; cursor: pointer;
+  padding: 3px 6px; border-radius: 7px; border: 1px solid transparent; background: transparent; color: var(--ink); }
+.pcs-row:hover { background: var(--chip); border-color: var(--line); }
+.pcs-st { flex: 0 0 auto; width: 16px; text-align: center; font: 700 10.5px ui-monospace, monospace; border-radius: 4px; padding: 1px 0; }
+.pcs-st-m { color: #fbbf24; background: rgba(251, 191, 36, .16); }
+.pcs-st-a, .pcs-st-new { color: #6ee7b7; background: rgba(52, 211, 153, .16); }
+.pcs-st-d { color: #fca5a5; background: rgba(239, 83, 80, .16); }
+.pcs-path { flex: 1 1 auto; min-width: 0; font: 12px ui-monospace, monospace; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.pcs-badges { flex: 0 0 auto; display: flex; gap: 4px; }
 .pact-editor { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .pact-ed-row { display: flex; min-width: 0; min-height: 0; }
 .pact-ed-gutter-x { flex: 0 0 8px; align-self: stretch; cursor: col-resize; position: relative; }
