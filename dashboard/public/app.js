@@ -2655,8 +2655,7 @@ function pactEdRenderBody(g, tab) {
       row.append(el("span", { class: "pd-sign" }, [r.type === "add" ? "+" : r.type === "del" ? "−" : " "]), text);
       return row;
     }));
-    const dkids = [];
-    if ((ext.endsWith(".pact") || ext.endsWith(".repl")) && window.pactBandLegend) dkids.push(pactLegend());
+    const dkids = [];   // band legend now lives once in the shared toolbar (viewPact), not per box
     dkids.push(el("div", { class: "pact-diff-hd" }, [el("span", { class: "pd-badge pd-badge-add" }, ["+" + tab.agentDiff.add]), el("span", { class: "pd-badge pd-badge-del" }, ["−" + tab.agentDiff.del]), el("span", { class: "hint", style: "margin-left:8px" }, ["agent edit — Keep All to accept + resume editing"])]));
     dkids.push(el("div", { class: "pact-editor-scroll" }, [view]));
     g.bodyEl.replaceChildren(...dkids);
@@ -2673,8 +2672,7 @@ function pactEdRenderBody(g, tab) {
   if (tab.foldMode && (ext.endsWith(".pact") || ext.endsWith(".repl"))) { pactEdRenderFoldBody(g, tab); return; }
   // Editable overlay: a transparent <textarea> over a syntax-highlighted <pre> that scrolls with it.
   // The pre keeps StoicSyntax coloring (point 2 kept the highlight view); the textarea takes the typing.
-  const kids = [];
-  if ((ext.endsWith(".pact") || ext.endsWith(".repl")) && window.pactBandLegend) kids.push(pactLegend());
+  const kids = [];   // band legend now lives once in the shared toolbar (viewPact), not per box
   const hl = el("pre", { class: "pact-code pact-edit-hl", "aria-hidden": "true" }, []);
   const ta = el("textarea", { class: "pact-edit", spellcheck: "false", wrap: "off" });
   ta.value = tab.content;
@@ -2720,8 +2718,7 @@ function pactEdRenderFoldBody(g, tab) {
   const unfoldAll = el("button", { class: "pact-ed-ico", title: "Expand everything" }, ["Unfold all"]);
   foldAll.addEventListener("click", (e) => { e.stopPropagation(); for (const r of ranges) tab.folded.add(r.start); fill(); });
   unfoldAll.addEventListener("click", (e) => { e.stopPropagation(); tab.folded.clear(); fill(); });
-  const kids = [];
-  if (window.pactBandLegend) kids.push(pactLegend());
+  const kids = [];   // band legend now lives once in the shared toolbar (viewPact), not per box
   kids.push(el("div", { class: "pact-fold-bar" }, [
     el("span", { class: "hint" }, ["Read / fold view — editing is off (toggle ✎ to edit)"]),
     el("span", { class: "ws-spacer" }, []), foldAll, unfoldAll,
@@ -3741,8 +3738,11 @@ function viewPact() {
   keepBtn.style.display = "none";
   keepBtn.addEventListener("click", () => pactEdKeepAll());
   const saveStatus = el("span", { class: "pact-save-status" }, []);
-  const toolbar = el("div", { class: "pact-ed-toolbar" }, [saveBtn, keepBtn, saveStatus, el("span", { class: "ws-spacer" }, []),
+  // Toolbar = an action row (Save All / Keep All …) plus ONE shared StoicSyntax band legend beneath it,
+  // so the color key reads as a single global key for every editor box instead of being repeated per box.
+  const actionRow = el("div", { class: "pact-ed-toolbar-row" }, [saveBtn, keepBtn, saveStatus, el("span", { class: "ws-spacer" }, []),
     el("span", { class: "pact-save-hint" }, ["autosaves 1.5s after you stop typing"])]);
+  const toolbar = el("div", { class: "pact-ed-toolbar" }, [actionRow, pactLegend()]);
   const editorWrap = el("div", { class: "pact-editor-wrap" }, [toolbar, editorEl]);
   const workEl = el("div", { class: "pact-work" }, [editorWrap, rightEl]);
   const root = el("div", { class: "pact-ide" }, [treeEl, workEl]);

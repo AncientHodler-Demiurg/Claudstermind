@@ -4,6 +4,13 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.42] - 2026-08-12
+
+### Changed
+- **Pact editor: one shared band legend instead of one per box.** The StoicSyntax color key used to be
+  repeated inside every editor box (edit overlay, agent-diff, and fold views). It now renders once in the
+  shared editor toolbar (beneath Save All / Keep All), so it reads as a single global key for all boxes.
+
 ## [1.1.41] - 2026-08-12
 
 ### Changed
