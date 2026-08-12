@@ -2729,6 +2729,29 @@ function pactEdRenderBody(g, tab) {
   if (g.fontPx) { hl.style.fontSize = ov.style.fontSize = ta.style.fontSize = gutter.style.fontSize = g.fontPx + "px"; }
   const paint = () => renderPactCode(hl, ta.value, tab.path);
   const syncScroll = () => { hl.scrollTop = ov.scrollTop = gutter.scrollTop = ta.scrollTop; hl.scrollLeft = ov.scrollLeft = ta.scrollLeft; };
+  // Keep the caret on-screen. The browser's own caret-reveal under-scrolls (and can leave the caret
+  // under the opaque line-number gutter): pressing Home while scrolled right didn't bring the cursor
+  // fully into view. Code is monospace, so compute the caret x and scroll it clear of the gutter / right edge.
+  let _charW = 0;
+  const revealCaret = () => {
+    if (document.activeElement !== ta) return;
+    if (!_charW) {
+      const sp = document.createElement("span"); const cs = getComputedStyle(ta);
+      sp.style.cssText = "position:absolute;visibility:hidden;white-space:pre;top:-9999px;left:-9999px;font:" + cs.font;
+      sp.textContent = "0000000000"; document.body.appendChild(sp); _charW = sp.offsetWidth / 10; sp.remove();
+    }
+    if (!_charW) return;
+    const pos = ta.selectionEnd, val = ta.value;
+    const col = pos - (val.lastIndexOf("\n", pos - 1) + 1);
+    const padL = parseFloat(getComputedStyle(ta).paddingLeft) || 0;
+    const caretX = padL + col * _charW;                    // caret x within the textarea content
+    const gutW = gutter.offsetWidth || 0;                  // the overlay gutter covers viewport 0..gutW
+    const view = ta.clientWidth, m = Math.max(_charW, 6);
+    let sl = ta.scrollLeft;
+    if (caretX - sl < gutW + m) sl = Math.max(0, caretX - gutW - m);          // hidden by / left of the gutter → scroll left
+    else if (caretX - sl > view - m) sl = caretX - view + m;                   // off the right edge → scroll right
+    if (Math.abs(sl - ta.scrollLeft) > 0.5) { ta.scrollLeft = sl; syncScroll(); }
+  };
   const updateGutter = () => {
     const n = pactGutterLineCount(ta.value);
     if (gutter._n === n) return;               // only rebuild when the line count actually changes
@@ -2737,8 +2760,10 @@ function pactEdRenderBody(g, tab) {
     wrap.style.setProperty("--pk-gutter-w", `calc(${pactGutterWidthCh(n)}ch + 18px)`);
   };
   paint();
-  ta.addEventListener("input", () => { tab.content = ta.value; paint(); updateGutter(); syncScroll(); pactEdMarkDirty(g, tab); if (g.find && g.find.open) pactEdFindRefresh(g, false); });
+  ta.addEventListener("input", () => { tab.content = ta.value; paint(); updateGutter(); syncScroll(); revealCaret(); pactEdMarkDirty(g, tab); if (g.find && g.find.open) pactEdFindRefresh(g, false); });
   ta.addEventListener("scroll", syncScroll);
+  ta.addEventListener("keyup", revealCaret);     // Home/End/arrows: keep the caret visible
+  ta.addEventListener("mouseup", revealCaret);   // click-to-place
   ta.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) { e.preventDefault(); pactEdSaveAll(); return; }
     if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) { e.preventDefault(); pactEdOpenFind(g, false); return; }
@@ -2748,7 +2773,7 @@ function pactEdRenderBody(g, tab) {
       const s = ta.selectionStart, en = ta.selectionEnd;
       ta.value = ta.value.slice(0, s) + "  " + ta.value.slice(en);
       ta.selectionStart = ta.selectionEnd = s + 2;
-      tab.content = ta.value; paint(); pactEdMarkDirty(g, tab);
+      tab.content = ta.value; paint(); syncScroll(); revealCaret(); pactEdMarkDirty(g, tab);
     }
   });
   const wrap = el("div", { class: "pact-edit-wrap has-gutter" }, [gutter, hl, ov, ta]);

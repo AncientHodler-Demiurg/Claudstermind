@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.57] - 2026-08-12
+
+### Fixed
+- **Editor now always keeps the cursor on-screen when scrolled horizontally.** Pressing Home (or moving
+  the caret) while scrolled right didn't fully scroll the view, so the cursor could stay off-screen or
+  hidden behind the line-number gutter. The editor now reveals the caret on every caret move — code is
+  monospace, so it computes the caret's position and scrolls it clear of the gutter and the right edge.
+
 ## [1.1.56] - 2026-08-12
 
 ### Changed
