@@ -3122,14 +3122,16 @@ function pactEdInstallFindShortcut() {
     const g = PACT_ED.groups.find((gg) => gg.id === PACT_ED.activeId);
     if (!g) return;
     const active = g.tabs.find((t) => t.path === g.active);
-    if (!active || !active.loaded || active.agentDiff) return;   // diff is a read-only review surface
+    if (!active) return;
     const ext = active.path.toLowerCase();
-    if (ext.endsWith(".md") && !active.editing && typeof window.mdRender === "function") return;   // md preview, no editor
-    const cm = active._cm;
-    if (!cm) return;
+    const mdPreview = ext.endsWith(".md") && !active.editing && typeof window.mdRender === "function";
+    const cm = (active.loaded && !active.agentDiff && !mdPreview) ? active._cm : null;
+    // Take over Ctrl/⌘-F/H inside a Pact editor box so the browser page-search never hijacks it (incl.
+    // the read-only diff view, where there's no CM). stopPropagation is REQUIRED: otherwise the same
+    // keydown ALSO reaches CM's own Ctrl-F keymap and the second findPersistent toggled the dialog shut.
     e.preventDefault();
-    cm.focus();
-    cm.execCommand(k === "h" ? "replace" : "findPersistent");
+    e.stopPropagation();
+    if (cm) { cm.focus(); cm.execCommand(k === "h" ? "replace" : "findPersistent"); }
   }, true);
 }
 

@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.2.7] - 2026-08-12
+
+### Fixed
+- **Pact editor Ctrl/⌘-F was busted after the CodeMirror migration.** In the read-only agent-diff view it
+  fell through to the browser's page search; in the editable view the find dialog opened and instantly
+  closed. The global shortcut now stops event propagation (so CodeMirror's own Ctrl-F keymap can't
+  re-trigger and toggle the dialog shut) and always suppresses the browser search inside a Pact editor
+  box — so Ctrl-F reliably opens the in-app find, and Ctrl-H replace.
+
 ## [1.2.6] - 2026-08-12
 
 ### Fixed
