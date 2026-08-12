@@ -3729,7 +3729,10 @@ function pactChatNewTab() {
   if (!PACT_CHAT) return;
   pactChatSaveDraft();   // keep the current tab's compose text before the shared textarea is torn down
   const id = ++PACT_CHAT.seq;
-  PACT_CHAT.tabs.push({ id, name: "Chat " + id, key: wsUuid(), msgs: [], live: "", status: "idle", started: false, perm: null, draft: "", attachedImages: [] });
+  // `_queue`/`_pendingText` start empty and are only ever tied to THIS fresh session key — every tab
+  // is a new object with its own key, so a message queued mid-turn can never fire into another
+  // session (the Core cockpit resets p._queue on repo/worktree switch for the same reason).
+  PACT_CHAT.tabs.push({ id, name: "Chat " + id, key: wsUuid(), msgs: [], live: "", status: "idle", started: false, perm: null, draft: "", attachedImages: [], _queue: null, _pendingText: null, _pendingImages: null });
   PACT_CHAT.activeId = id;
   pactChatRender();
   pactStateSave();
@@ -3801,30 +3804,58 @@ function pactChatRoute({ kind, sessionKey, data }) {
   switch (d.kind) {
     case "user": if (!(d.by && d.by === PACT_CHAT.conn.id)) { t.msgs.push({ role: "user", text: d.text || "", images: d.images || [], workspaceId: d.workspaceId || PACT_WORKSPACE_ID }); pactChatPaint(t); } return;
     case "assistant_delta": t.live = (t.live || "") + (d.text || ""); pactChatPaintLive(t); return;
-    case "assistant": t.live = ""; t.msgs.push({ role: "assistant", text: d.text || "" }); pactChatPaint(t); return;
+    case "assistant": t.live = ""; t._pendingText = null; t._pendingImages = null; t.msgs.push({ role: "assistant", text: d.text || "" }); pactChatPaint(t); return;
     case "tool_use": t.live = ""; t.msgs.push({ kind: "tool_use", tools: d.tools || [] }); pactChatPaint(t); return;
     case "result":
-      t.live = ""; t.status = "idle";
+      t.live = ""; t.status = "idle"; t._pendingText = null; t._pendingImages = null;
       if (d.usageTotal) t.usage = d.usageTotal;
       // Context usage changes every turn — refresh it once a turn actually finishes (not on every
       // streamed chunk), exactly like the Core cockpit (see paintPane's contextUsage request).
       wsPost("control", { action: "contextUsage", args: { sessionKey: t.key } });
-      pactChatPaint(t); pactEdCheckAgentEdits(); pactEdCheckChangedFiles(); return;
+      pactChatPaint(t); pactEdCheckAgentEdits(); pactEdCheckChangedFiles();
+      pactChatDrainQueue(t);   // turn done → release anything typed mid-turn, merged into one prompt
+      return;
     // Context-window usage answer for this tab's session — store + repaint the header indicator.
     case "contextUsage": t.contextUsage = d.usage; pactChatPaint(t); return;
-    // A second prompt sent while this session is still finishing its current turn is refused with
-    // `busy` (see lib/workspace.mjs's single-writer turn lock). Flip off the optimistic "thinking…"
-    // this tab set on send — otherwise the tab spins forever on a prompt the backend never accepted —
-    // and note it so the user knows to resend once the current reply lands.
-    case "busy": t.live = ""; t.status = "idle"; t.msgs.push({ kind: "note", text: "⏳ Busy finishing the current reply — resend once it lands." }); pactChatPaint(t); return;
+    // A prompt sent while this session was still finishing its current turn is refused with `busy`
+    // (see lib/workspace.mjs's single-writer turn lock). Normally pactChatSend already queues a
+    // mid-turn message rather than POSTing it, so this only fires on a genuine race — a turn started
+    // between our busy check and the server receiving the POST. Re-queue the just-sent prompt (with
+    // its images) exactly as if pactChatSend had seen the turn coming; drainQueue releases it when the
+    // running turn ends. Keep the spinner (a turn IS running) — don't reset to idle, or nothing would
+    // drain the re-queued message.
+    case "busy":
+      t.live = "";
+      if (t._pendingText != null) {
+        t._queue = t._queue || [];
+        t._queue.push({ text: t._pendingText, images: t._pendingImages || [] });
+        t._pendingText = null; t._pendingImages = null;
+        t._forceBottom = true;
+        pactChatPaint(t);   // surface the re-queued message as a pending bubble
+      } else {
+        t.msgs.push({ kind: "note", text: "⏳ Busy finishing the current reply — your message will send once it lands." });
+        pactChatPaint(t);
+      }
+      return;
     case "error":
       // A "could not be opened" reply to a rehydrate/resume in flight (the session no longer exists on
       // disk) must leave the tab quietly empty, not push a scary error bubble into a freshly-restored
       // tab. Any OTHER error (a real turn failure) still surfaces normally.
-      if (PACT_CHAT._pendingOpen && sessionKey && PACT_CHAT._pendingOpen[sessionKey] != null) { delete PACT_CHAT._pendingOpen[sessionKey]; t.live = ""; t.status = "idle"; pactChatPaint(t); return; }
-      t.live = ""; t.status = "idle"; t.msgs.push({ kind: "error", text: d.text || d.message || "error" }); pactChatPaint(t); return;
-    case "status": t.status = d.status; pactChatPaint(t); return;
-    case "interrupted": t.status = "idle"; t.msgs.push({ kind: "note", text: "■ interrupted" }); pactChatPaint(t); return;
+      if (PACT_CHAT._pendingOpen && sessionKey && PACT_CHAT._pendingOpen[sessionKey] != null) { delete PACT_CHAT._pendingOpen[sessionKey]; t.live = ""; t.status = "idle"; t._pendingText = null; t._pendingImages = null; pactChatPaint(t); return; }
+      t.live = ""; t.status = "idle"; t._pendingText = null; t._pendingImages = null; t.msgs.push({ kind: "error", text: d.text || d.message || "error" });
+      pactChatPaint(t);
+      pactChatDrainQueue(t);   // a failed turn still ends the turn — don't strand a queued follow-up
+      return;
+    case "status":
+      t.status = d.status;
+      pactChatPaint(t);
+      pactChatDrainQueue(t);   // e.g. status→idle after an interrupt: release any queued message
+      return;
+    case "interrupted":
+      t.status = "idle"; t.msgs.push({ kind: "note", text: "■ interrupted" });
+      pactChatPaint(t);
+      pactChatDrainQueue(t);
+      return;
     default: return;
   }
 }
@@ -3887,12 +3918,32 @@ async function pactAttachImageFile(t, file) {
   t.attachedImages = [...(t.attachedImages || []), attachment];
   pactPaintAttachment(t);
 }
-function pactChatSend(t) {
+// A tab is "busy" (a turn is running) whenever it's thinking, in deep work, or waiting on a tool
+// permission — the exact set the Core cockpit's paneBusy() uses. Mirroring it keeps the "queue a
+// message typed mid-turn" behaviour identical across the two chat surfaces.
+function pactChatBusy(t) { return !!t && (t.status === "thinking" || t.status === "deepwork" || t.status === "awaiting-permission"); }
+// ===== PACT QUEUE MERGE — pure helper (sliced out for unit tests; see lib/pactQueue.test.mjs)
+// Merge N queued { text, images } entries (typed while the agent was mid-turn) into ONE prompt: the
+// texts joined by a blank line (double-newline, exactly like the Core drainQueue), the images
+// concatenated in the order they were typed and capped at `imgCap` (the same per-message image limit
+// a single send respects). `overflow` flags that images past the cap were dropped, so the caller can
+// warn. Pure — no DOM, no module state — so a unit test can exercise the merge without booting the page.
+function pactMergeQueued(items, imgCap) {
+  const list = Array.isArray(items) ? items : [];
+  const text = list.map((i) => (i && i.text) || "").join("\n\n");
+  const allImages = list.flatMap((i) => (i && i.images) || []);
+  const cap = Number.isFinite(imgCap) ? imgCap : Infinity;
+  return { text, images: allImages.slice(0, cap), overflow: allImages.length > cap };
+}
+// ===== end PACT QUEUE MERGE pure helper =====
+// The actual dispatch: POST one prompt (with its own text/images) and do the round-trip bookkeeping.
+// Split out of pactChatSend — exactly like the Core cockpit's dispatchPrompt/send split — so a queued
+// item (pactChatDrainQueue) can be sent identically once the tab goes idle, not only a prompt typed
+// while the tab was already free. First-message preamble/auto-name + resume handling live here so both
+// entry points inherit them.
+function pactChatDispatch(t, text, images) {
   if (!PACT_CHAT || !t) return;
-  const ta = PACT_CHAT.host.querySelector(".pc-input");
-  const text = (ta ? ta.value : "").trim();
-  if (!text) return;
-  const attachedImages = t.attachedImages || [];
+  images = images || [];
   let payload = text;
   const firstMsg = !t.started;
   if (firstMsg) { t.started = true; payload = PACT_CHAT_PREAMBLE + "\n\n" + text; }   // orient the agent on the first message
@@ -3905,11 +3956,12 @@ function pactChatSend(t) {
   // Stash the just-sent images on the local user message as raw dataUrls (the server won't echo
   // this prompt back to us — see the "user" event's `by` guard — so this render is authoritative
   // until a reload replaces it with the persisted turn's /api/workspace/image paths).
-  t.msgs.push({ role: "user", text, images: attachedImages.length ? attachedImages.map((a) => ({ dataUrl: a.dataUrl })) : undefined });
+  t.msgs.push({ role: "user", text, images: images.length ? images.map((a) => ({ dataUrl: a.dataUrl })) : undefined });
   t.status = "thinking"; t.live = "";
-  t.attachedImages = [];   // one-shot per send — cleared before the re-render rebuilds the (empty) preview
-  if (ta) { ta.value = ""; ta.style.height = ""; ta.style.overflowY = "hidden"; pactChatAutosize(ta); }
-  t.draft = "";   // the draft was just sent — clear it so a reload doesn't resurrect it
+  // Safety net for a busy race: if the server refuses THIS dispatch with `busy` (its turn lock caught a
+  // turn we couldn't yet see), pactChatRoute's `busy` case needs the exact text + images back to
+  // re-queue rather than drop them. Cleared once the prompt is accepted (assistant/result) or errors.
+  t._pendingText = text; t._pendingImages = images;
   pactChatRender();   // reflect a fresh auto-name on the tab (also re-paints the active conversation)
   pactStateFlush();   // persist the just-sent tab/key IMMEDIATELY so it's restorable even if you navigate away at once
   t._forceBottom = true;   // your own just-sent message lands at the bottom + re-pins, even if you'd scrolled up
@@ -3917,8 +3969,53 @@ function pactChatSend(t) {
   // `resume` continues a specific saved session with full SDK context — set when this tab was opened
   // from history (Resume / Load-into-box). Ignored server-side once a live session for the key exists.
   const body = { sessionKey: t.key, repo: PACT_REPO, worktree: "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id, resume: t.resume || undefined };
-  if (attachedImages.length) body.images = attachedImages.map((a) => ({ mediaType: a.mediaType, base64Data: a.base64Data }));
+  if (images.length) body.images = images.map((a) => ({ mediaType: a.mediaType, base64Data: a.base64Data }));
   wsPost("prompt", body);
+}
+function pactChatSend(t) {
+  if (!PACT_CHAT || !t) return;
+  const ta = PACT_CHAT.host.querySelector(".pc-input");
+  const text = (ta ? ta.value : "").trim();
+  if (!text) return;
+  const attachedImages = t.attachedImages || [];
+  // One-shot: clear the compose input + attachments up front. Neither path restores them — a queued
+  // entry keeps its OWN copy, a dispatch already captured them — and the re-render rebuilds the (now
+  // empty) preview.
+  t.attachedImages = [];
+  if (ta) { ta.value = ""; ta.style.height = ""; ta.style.overflowY = "hidden"; pactChatAutosize(ta); }
+  t.draft = "";   // the draft was just sent/queued — clear it so a reload doesn't resurrect it
+  // While a turn is already running, don't POST (the server would refuse it with `busy` anyway) —
+  // queue it locally instead: shown as its own dim pending bubble, sent automatically the instant the
+  // current turn finishes (pactChatDrainQueue). Mirrors typing ahead in Claude's own desktop app, and
+  // the Core cockpit's send()/drainQueue().
+  if (pactChatBusy(t)) {
+    t._queue = t._queue || [];
+    t._queue.push({ text, images: attachedImages });
+    pactChatRender();   // reflect the cleared compose/attachment preview (also repaints the conversation)
+    t._forceBottom = true;
+    pactChatPaint(t);    // show the queued bubble at the tail
+    pactStateSave();
+    return;
+  }
+  pactChatDispatch(t, text, attachedImages);
+}
+// The moment the tab genuinely stops being busy (its turn-end `result`, or any other idle transition),
+// release whatever queued while it was working — MERGED into ONE prompt (Core drainQueue parity), not
+// fired as N separate turns. Draining one-at-a-time would answer each queued message in isolation,
+// missing the context the later ones added. `t._draining` guards against a re-entrant route/paint
+// draining the same queue twice.
+function pactChatDrainQueue(t) {
+  if (!t || pactChatBusy(t) || !t._queue || !t._queue.length || t._draining) return;
+  t._draining = true;
+  try {
+    const items = t._queue;
+    t._queue = null;
+    const merged = pactMergeQueued(items, WS_IMG_MAX_COUNT);
+    if (merged.overflow) t.msgs.push({ kind: "note", text: `⚠ Only the first ${WS_IMG_MAX_COUNT} images across your queued messages were sent — Claude's own per-message limit.` });
+    pactChatDispatch(t, merged.text, merged.images);
+  } finally {
+    t._draining = false;
+  }
 }
 function pactChatDecide(t, decision) {
   if (!t || !t.perm) return;
@@ -3975,6 +4072,24 @@ function pactChatPaint(t) {
   }
   if (t.live) nodes.push(el("div", { class: "pc-msg pc-asst pc-live" }, [el("div", { class: "pc-asst-body" }, [t.live])]));
   else if (t.status === "thinking" || t.status === "deepwork") nodes.push(el("div", { class: "pc-think" }, [t.status === "deepwork" ? "🔴 still producing…" : "● thinking…"]));
+  // Queued messages — typed while the agent was mid-turn, held (not yet sent) until this turn
+  // finishes (see pactChatSend/pactChatDrainQueue). Rendered AFTER the live/thinking indicator, in a
+  // dim pending style, in the order they'll be sent; drainQueue merges several into ONE prompt, so the
+  // tag says so when more than one is waiting. Images ride as raw local dataUrls (same bytes the real
+  // send will carry) since they aren't uploaded yet. Mirrors the Core cockpit's .ws-queued nodes.
+  if (t._queue && t._queue.length) {
+    const many = t._queue.length > 1;
+    const tag = many
+      ? "queued — will be merged with the other" + (t._queue.length - 1 > 1 ? "s" : "") + " into one message once this turn finishes"
+      : "queued — sending once this turn finishes";
+    const cls = "pc-msg pc-user pc-queued" + (t.status === "deepwork" ? " pc-queued-deep" : "");
+    for (const q of t._queue) {
+      const kids = [];
+      if (q.images && q.images.length) kids.push(el("div", { class: "pc-user-images" }, q.images.map((img) => el("img", { class: "pc-user-image", src: img.dataUrl, alt: "attached image (queued)" }, []))));
+      kids.push(q.text, el("span", { class: "pc-queued-tag" }, [tag]));
+      nodes.push(el("div", { class: cls }, kids));
+    }
+  }
   // "Read at your own pace" through the shared controller. This render REPLACES all children, so the
   // pinned-ness must be measured BEFORE replaceChildren (afterwards scrollTop is meaningless); a
   // just-sent message forces the tail via t._forceBottom.

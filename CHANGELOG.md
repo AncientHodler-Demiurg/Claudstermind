@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.2.4] - 2026-08-12
+
+### Changed
+- **The Pact chat now queues a message typed mid-turn instead of refusing it.** Previously, sending a
+  message while the agent was still replying was rejected with "⏳ Busy finishing the current reply —
+  resend once it lands" and you had to resend by hand. Now it's held locally — shown as a dim pending
+  bubble at the tail ("queued — sending once this turn finishes") — and auto-sent the instant the turn
+  finishes, exactly like typing ahead in Claude's desktop app and matching the Core cockpit. Queue
+  several and they merge into ONE prompt when the turn ends (texts joined by a blank line, images
+  concatenated in order and capped at the per-message image limit) rather than firing as separate
+  turns. Queued images render from their local dataUrl. If a genuine server `busy` race still slips
+  through, the just-sent prompt (with its images) is re-queued rather than dropped. A queued message
+  is only ever tied to its own tab's session, so it can never fire into a different chat.
+
 ## [1.2.3] - 2026-08-12
 
 ### Added
