@@ -1311,6 +1311,13 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 /* Scrollbar match annotations (matchesonscrollbar addon) — reuse the find-highlight amber. */
 .pact-cm-host .CodeMirror-search-match { background: rgba(250, 214, 90, .38); border-top: 1px solid rgba(250, 214, 90, .7); border-bottom: 1px solid rgba(250, 214, 90, .7); box-sizing: border-box; }
 
+/* Change ruler (annotatescrollbar addon): git-diff decorations painted on the native scrollbar — the
+   CM-native successor to the old custom .pact-ovr strip. Green added / red removed / amber modified vs
+   git HEAD, reusing the exact .pact-code hex bands. */
+.pact-cm-host .cm-change-add { background: #34d399; border-radius: 1px; }
+.pact-cm-host .cm-change-del { background: #ef5350; border-radius: 1px; }
+.pact-cm-host .cm-change-mod { background: #fbbf24; border-radius: 1px; }
+
 /* StoicSyntax token colors for CodeMirror (it prefixes mode styles with `cm-`, so `pk-write` → `cm-pk-write`).
    SAME hex values as `.pact-code .pk-*` above — the editable view must look identical to the read-only one. */
 .CodeMirror .cm-pk-comment { color: #6a9955; font-style: italic; }

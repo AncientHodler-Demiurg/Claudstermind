@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.64] - 2026-08-12
+
+### Changed
+- **Git change-markers on the editor scrollbar** — added/removed/modified lines vs git HEAD now paint
+  as green/red/amber bands on CodeMirror's native scrollbar (the `annotatescrollbar` addon), replacing
+  the old custom `.pact-ovr` overview strip. The marks reuse the existing `pactChangeMarks(HEAD, current)`
+  diff; a new pure helper `pactChangeAnnRanges` maps them to per-type scrollbar ranges (merging adjacent
+  same-type lines into one band). Recomputed on open (once HEAD is fetched), on edit (debounced), and
+  after save / Keep-All; the ruler clears when there are no changes or git/HEAD is unavailable.
+
 ## [1.1.63] - 2026-08-12
 
 ### Changed

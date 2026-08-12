@@ -2706,7 +2706,7 @@ function pactEdRenderBody(g, tab) {
   const fontPx = g.fontPx || 12.5;
   cm.getWrapperElement().style.fontSize = fontPx + "px";
   g.bodyEl.replaceChildren(tab._cmHost);
-  requestAnimationFrame(() => { cm.refresh(); });   // CM needs a laid-out host to size itself
+  requestAnimationFrame(() => { cm.refresh(); pactEdUpdateRuler(tab); });   // CM needs a laid-out host to size itself + paint the ruler
   if (typeof tab.headContent !== "string") pactEdFetchHead(tab);   // keep the git HEAD baseline for the change ruler (S4)
 }
 // Build (or reuse) the CodeMirror editor for a tab. One CM instance per tab, cached on `tab._cm` with its
@@ -2746,9 +2746,29 @@ function pactEdBuildCm(g, tab, ext) {
     foldOptions: isPact ? { rangeFinder: pactCmRangeFinder } : undefined,
     extraKeys,
   });
-  cm.on("change", () => { tab.content = cm.getValue(); pactEdMarkDirty(g, tab); });
+  cm.on("change", () => { tab.content = cm.getValue(); pactEdMarkDirty(g, tab); pactEdScheduleRuler(tab); });
   tab._cm = cm; tab._cmHost = host;
+  tab._ovrUpdate = () => pactEdUpdateRuler(tab);   // pactEdFetchHead re-paints the ruler once HEAD lands
   return cm;
+}
+// ===== PACT CHANGE RULER — git-diff scrollbar decorations on the CM editor (S4). Reuses the pure
+// pactChangeMarks(HEAD, current) diff and pactChangeAnnRanges mapping; paints three CM annotateScrollbar
+// layers (add=green, del=red, mod=amber) on the native scrollbar. Recomputed on open (once HEAD is
+// fetched), on edit (debounced 250ms), and after save / Keep-All. Empty ruler when there are 0 changes
+// or git/HEAD is unavailable (tab.headContent unset). CM's native scrollbar handles click-to-scroll.
+function pactEdScheduleRuler(tab) {
+  if (!tab) return;
+  if (tab._rulerT) clearTimeout(tab._rulerT);
+  tab._rulerT = setTimeout(() => { tab._rulerT = null; pactEdUpdateRuler(tab); }, 250);
+}
+function pactEdUpdateRuler(tab) {
+  const cm = tab && tab._cm;
+  if (!cm || typeof cm.annotateScrollbar !== "function") return;
+  if (!cm._ann) cm._ann = { add: cm.annotateScrollbar("cm-change-add"), del: cm.annotateScrollbar("cm-change-del"), mod: cm.annotateScrollbar("cm-change-mod") };
+  const ann = cm._ann;
+  if (typeof tab.headContent !== "string") { ann.add.update([]); ann.del.update([]); ann.mod.update([]); return; }
+  const ranges = pactChangeAnnRanges(pactChangeMarks(tab.headContent, cm.getValue()));
+  ann.add.update(ranges.add); ann.del.update(ranges.del); ann.mod.update(ranges.mod);
 }
 // CodeMirror fold RangeFinder for .pact/.repl: given a start Pos, return the {from,to} of the foldable
 // block whose opener is on that line, or null. Ranges (pactCmFoldRanges) are recomputed only when the doc
@@ -3125,6 +3145,23 @@ function pactChangeMarks(before, after) {
     }
   }
   return marks;
+}
+// Map the [{line,type}] change marks to per-type CodeMirror annotateScrollbar ranges. Returns
+// { add, del, mod } where each is an array of { from:{line,ch}, to:{line,ch} } (ch always 0) in
+// ascending line order. Consecutive same-type lines are merged into one range so a multi-line hunk
+// paints a single scrollbar band rather than a stack of 1px ticks. Pure/DOM-free — unit-tested
+// alongside pactChangeMarks (see lib/pactChangeMarks.test.mjs).
+function pactChangeAnnRanges(marks) {
+  const out = { add: [], del: [], mod: [] };
+  if (!Array.isArray(marks)) return out;
+  for (const m of marks) {
+    const list = out[m.type];
+    if (!list) continue;
+    const last = list[list.length - 1];
+    if (last && last.to.line === m.line - 1) last.to = { line: m.line, ch: 0 };   // extend the run
+    else list.push({ from: { line: m.line, ch: 0 }, to: { line: m.line, ch: 0 } });
+  }
+  return out;
 }
 // ===== end PACT CHANGE-MARKS pure helper =====
 function pactEdAnyDiff() { return !!(PACT_ED && PACT_ED.groups.some((g) => g.tabs.some((t) => t.agentDiff))); }
