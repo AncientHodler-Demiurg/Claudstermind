@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.55] - 2026-08-12
+
+### Fixed
+- **Agent-edit diff view showed uncolored (mangled) code until Keep All.** The StoicSyntax colors are
+  defined as `.pact-code .pk-*`, but the diff container lacked the `pact-code` class, so its highlight
+  spans were never styled — the code looked colorless in the diff and only "came back" when Keep All
+  switched to the editable view. The diff container now carries `pact-code`, so colors show in the diff
+  state, before Keep All.
+
 ## [1.1.54] - 2026-08-12
 
 ### Removed

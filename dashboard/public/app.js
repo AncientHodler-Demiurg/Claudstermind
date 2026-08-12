@@ -2670,7 +2670,7 @@ function pactEdRenderBody(g, tab) {
   const ext = tab.path.toLowerCase();
   // Agent edited this file: show a read-only green/red line diff until Keep All accepts it.
   if (tab.agentDiff) {
-    const view = el("div", { class: "pact-diff-view" });
+    const view = el("div", { class: "pact-diff-view pact-code" });   // pact-code so the .pact-code .pk-* band colors actually apply in the diff
     if (g.fontPx) view.style.fontSize = g.fontPx + "px";
     const diffIsPact = ext.endsWith(".pact") || ext.endsWith(".repl");
     // Best-effort line numbers: number the rendered rows sequentially (a diff interleaves old/new, so
