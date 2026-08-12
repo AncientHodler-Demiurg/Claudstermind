@@ -2709,122 +2709,54 @@ function pactEdRenderBody(g, tab) {
   // Fold / read view: read-only per-line render with collapsible module/def blocks (outline a file,
   // grab a whole def). Only for pact/repl; the textarea can't hide lines without desyncing the caret.
   if (tab.foldMode && (ext.endsWith(".pact") || ext.endsWith(".repl"))) { pactEdRenderFoldBody(g, tab); return; }
-  // Editable overlay: a transparent <textarea> over a syntax-highlighted <pre> that scrolls with it.
-  // The pre keeps StoicSyntax coloring (point 2 kept the highlight view); the textarea takes the typing.
-  const kids = [];   // band legend now lives once in the shared toolbar (viewPact), not per box
-  const hl = el("pre", { class: "pact-code pact-edit-hl", "aria-hidden": "true" }, []);
-  // Find-match highlight layer: mirrors the file text (same font/padding/white-space, scroll-synced) but
-  // renders only translucent <mark> backgrounds over matches (its own text is transparent). Sits between
-  // the colored <pre> and the transparent <textarea>, so the current match is VISIBLY highlighted even
-  // while focus stays in the find input (a textarea's own ::selection is invisible when unfocused).
-  const ov = el("div", { class: "pact-find-ov", "aria-hidden": "true" }, []);
-  const ta = el("textarea", { class: "pact-edit", spellcheck: "false", wrap: "off" });
-  ta.value = tab.content;
-  // Left line-number gutter: a <pre> of "1\n2\n…\nN" that sits at the left of the wrap and scrolls
-  // vertically IN SYNC with the textarea (via syncScroll). It's a sibling of — never inside — the
-  // textarea, and user-select:none, so copying code never grabs a number. Rebuilt only when the line
-  // COUNT changes (cheap on every keystroke). Its width (in ch, so it scales with fontPx) drives the
-  // code layers' left padding via --pk-gutter-w, so text never sits under the numbers.
-  const gutter = el("pre", { class: "pact-gutter", "aria-hidden": "true" }, []);
-  if (g.fontPx) { hl.style.fontSize = ov.style.fontSize = ta.style.fontSize = gutter.style.fontSize = g.fontPx + "px"; }
-  const paint = () => renderPactCode(hl, ta.value, tab.path);
-  const syncScroll = () => { hl.scrollTop = ov.scrollTop = gutter.scrollTop = ta.scrollTop; hl.scrollLeft = ov.scrollLeft = ta.scrollLeft; };
-  // Keep the caret on-screen. The browser's own caret-reveal under-scrolls (and can leave the caret
-  // under the opaque line-number gutter): pressing Home while scrolled right didn't bring the cursor
-  // fully into view. Code is monospace, so compute the caret x and scroll it clear of the gutter / right edge.
-  let _charW = 0;
-  const revealCaret = () => {
-    if (document.activeElement !== ta) return;
-    if (!_charW) {
-      const sp = document.createElement("span"); const cs = getComputedStyle(ta);
-      sp.style.cssText = "position:absolute;visibility:hidden;white-space:pre;top:-9999px;left:-9999px;font:" + cs.font;
-      sp.textContent = "0000000000"; document.body.appendChild(sp); _charW = sp.offsetWidth / 10; sp.remove();
-    }
-    if (!_charW) return;
-    const pos = ta.selectionEnd, val = ta.value;
-    const col = pos - (val.lastIndexOf("\n", pos - 1) + 1);
-    const padL = parseFloat(getComputedStyle(ta).paddingLeft) || 0;
-    const caretX = padL + col * _charW;                    // caret x within the textarea content
-    const gutW = gutter.offsetWidth || 0;                  // the overlay gutter covers viewport 0..gutW
-    const view = ta.clientWidth, m = Math.max(_charW, 6);
-    let sl = ta.scrollLeft;
-    if (caretX - sl < gutW + m) sl = Math.max(0, caretX - gutW - m);          // hidden by / left of the gutter → scroll left
-    else if (caretX - sl > view - m) sl = caretX - view + m;                   // off the right edge → scroll right
-    if (Math.abs(sl - ta.scrollLeft) > 0.5) { ta.scrollLeft = sl; syncScroll(); }
+  // Editable surface: a real CodeMirror 5 instance (see pactEdBuildCm). CM owns line numbers, the caret,
+  // scrolling, bracket matching, the active-line highlight, find/replace, and (once wired) inline folding —
+  // so all the old textarea-overlay machinery (transparent <textarea> over a highlighted <pre>, the
+  // hand-rolled line-number gutter, the find overlay, caret-reveal) is gone. The CM instance is cached on
+  // the tab and simply re-appended on tab switches / font changes, keeping undo history + caret.
+  const cm = pactEdBuildCm(g, tab, ext);
+  g._cm = cm;   // the active box's editor (used by the Ctrl/⌘-F routing + font buttons)
+  const fontPx = g.fontPx || 12.5;
+  cm.getWrapperElement().style.fontSize = fontPx + "px";
+  g.bodyEl.replaceChildren(tab._cmHost);
+  requestAnimationFrame(() => { cm.refresh(); });   // CM needs a laid-out host to size itself
+  if (typeof tab.headContent !== "string") pactEdFetchHead(tab);   // keep the git HEAD baseline for the change ruler (S4)
+}
+// Build (or reuse) the CodeMirror editor for a tab. One CM instance per tab, cached on `tab._cm` with its
+// host node on `tab._cmHost`, so switching tabs / bumping the font just re-appends the same editor (undo +
+// caret survive). `.pact`/`.repl` get the StoicSyntax mode + fold gutter; everything else is plain text.
+function pactEdBuildCm(g, tab, ext) {
+  if (tab._cm) {
+    // Reuse: only force the doc if it diverged out-of-band (e.g. Keep-All swapped in the on-disk content).
+    if (tab._cm.getValue() !== tab.content) { tab._cm.setValue(tab.content); tab._cm.clearHistory(); }
+    return tab._cm;
+  }
+  const isPact = ext.endsWith(".pact") || ext.endsWith(".repl");
+  const host = el("div", { class: "pact-cm-host" });
+  const extraKeys = {
+    "Cmd-S": () => pactEdSaveAll(), "Ctrl-S": () => pactEdSaveAll(),
+    "Tab": (cmi) => cmi.execCommand("insertSoftTab"),
+    "Cmd-F": "findPersistent", "Ctrl-F": "findPersistent",
+    "Cmd-H": "replace", "Ctrl-H": "replace",
+    "Cmd-G": "findNext", "Ctrl-G": "findNext",
+    "Shift-Cmd-G": "findPrev", "Shift-Ctrl-G": "findPrev",
   };
-  const updateGutter = () => {
-    const n = pactGutterLineCount(ta.value);
-    if (gutter._n === n) return;               // only rebuild when the line count actually changes
-    gutter._n = n;
-    gutter.textContent = pactGutterText(n);
-    wrap.style.setProperty("--pk-gutter-w", `calc(${pactGutterWidthCh(n)}ch + 18px)`);
-  };
-  // Overview ruler (Cursor/VSCode-style): a thin strip on the right that maps the WHOLE file, with colored
-  // ticks at lines changed vs git HEAD (green add / red del / amber mod). Absolutely positioned just LEFT of
-  // the textarea's native scrollbar (right offset = live scrollbar width) so it never blocks scrolling.
-  const ovr = el("div", { class: "pact-ovr", "aria-hidden": "true" }, []);
-  const jumpToLine = (line) => {
-    const lh = parseFloat(getComputedStyle(ta).lineHeight) || (g.fontPx || 12.5) * 1.55;
-    const lines = ta.value.split("\n");
-    let pos = 0; for (let k = 0; k < line && k < lines.length; k++) pos += lines[k].length + 1;
-    ta.focus(); ta.setSelectionRange(pos, pos);
-    ta.scrollTop = Math.max(0, line * lh - ta.clientHeight / 2);   // centre the target line
-    syncScroll();
-  };
-  const renderOvr = () => {
-    if (!ovr.isConnected) return;
-    const sbw = Math.max(0, ta.offsetWidth - ta.clientWidth);   // native vertical scrollbar width
-    ovr.style.right = sbw + "px";
-    if (typeof tab.headContent !== "string") { ovr.replaceChildren(); return; }   // no git baseline yet
-    const marks = pactChangeMarks(tab.headContent, ta.value);
-    if (!marks.length) { ovr.replaceChildren(); return; }
-    const total = Math.max(1, pactGutterLineCount(ta.value));
-    // Merge adjacent same-type marks into one segment (contiguous change block = one bar; bounds the DOM,
-    // e.g. an all-new file is a single full-height green bar instead of thousands of ticks).
-    const segs = [];
-    for (const mk of marks) {
-      const last = segs[segs.length - 1];
-      if (last && last.type === mk.type && mk.line === last.end + 1) last.end = mk.line;
-      else segs.push({ start: mk.line, end: mk.line, type: mk.type });
-    }
-    ovr.replaceChildren(...segs.map((s) => {
-      const len = s.end - s.start + 1;
-      const t = el("div", { class: "pact-ovr-tick pact-ovr-" + s.type,
-        title: (s.type === "add" ? "added" : s.type === "del" ? "removed" : "modified") + (len > 1 ? " · lines " + (s.start + 1) + "–" + (s.end + 1) : " · line " + (s.start + 1)) });
-      t.style.top = (s.start / total * 100) + "%";
-      t.style.height = (len / total * 100) + "%";
-      t.addEventListener("click", () => jumpToLine(s.start));
-      return t;
-    }));
-  };
-  let _ovrTimer = null;
-  const scheduleOvr = () => { if (_ovrTimer) clearTimeout(_ovrTimer); _ovrTimer = setTimeout(renderOvr, 250); };
-  tab._ovrUpdate = renderOvr;   // let the HEAD-content fetch refresh the ruler when it lands (see pactEdFetchHead)
-  paint();
-  ta.addEventListener("input", () => { tab.content = ta.value; paint(); updateGutter(); syncScroll(); revealCaret(); pactEdMarkDirty(g, tab); scheduleOvr(); if (g.find && g.find.open) pactEdFindRefresh(g, false); });
-  ta.addEventListener("scroll", syncScroll);
-  ta.addEventListener("keyup", revealCaret);     // Home/End/arrows: keep the caret visible
-  ta.addEventListener("mouseup", revealCaret);   // click-to-place
-  ta.addEventListener("keydown", (e) => {
-    if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) { e.preventDefault(); pactEdSaveAll(); return; }
-    if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) { e.preventDefault(); pactEdOpenFind(g, false); return; }
-    if ((e.ctrlKey || e.metaKey) && (e.key === "h" || e.key === "H")) { e.preventDefault(); pactEdOpenFind(g, true); return; }
-    if (e.key === "Tab") {
-      e.preventDefault();
-      const s = ta.selectionStart, en = ta.selectionEnd;
-      ta.value = ta.value.slice(0, s) + "  " + ta.value.slice(en);
-      ta.selectionStart = ta.selectionEnd = s + 2;
-      tab.content = ta.value; paint(); syncScroll(); revealCaret(); pactEdMarkDirty(g, tab); scheduleOvr();
-    }
+  const cm = window.CodeMirror(host, {
+    value: tab.content,
+    mode: isPact ? "stoicpact" : null,
+    lineNumbers: true,
+    lineWrapping: false,
+    tabSize: 2,
+    indentUnit: 2,
+    indentWithTabs: false,
+    matchBrackets: true,
+    styleActiveLine: true,
+    gutters: ["CodeMirror-linenumbers"],
+    extraKeys,
   });
-  const wrap = el("div", { class: "pact-edit-wrap has-gutter" }, [gutter, hl, ov, ta, ovr]);
-  updateGutter();
-  kids.push(wrap);
-  g.bodyEl.replaceChildren(...kids);
-  g._findCtx = { wrap, ta, hl, ov, tab, paint, syncScroll };   // find/replace targets the active tab's live textarea
-  if (g.find && g.find.open) { g.find._bar = null; pactEdMountFindBar(g); }   // re-mount (retarget) after a tab/font re-render
-  requestAnimationFrame(() => { syncScroll(); renderOvr(); });   // ruler needs a laid-out wrap for its metrics
-  if (typeof tab.headContent !== "string") pactEdFetchHead(tab);   // fetch the git HEAD baseline once (async)
+  cm.on("change", () => { tab.content = cm.getValue(); pactEdMarkDirty(g, tab); });
+  tab._cm = cm; tab._cmHost = host;
+  return cm;
 }
 // ---- Fold / read view: a read-only per-line render (NOT the live textarea — folding lines in a
 // textarea desyncs the caret) with a left gutter whose ▾/▸ arrows collapse/expand each `(module`,

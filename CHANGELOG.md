@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.61] - 2026-08-12
+
+### Changed
+- **Pact editor now runs on CodeMirror 5 (vendored, no build) — core swap.** The editable .pact/.repl
+  surface is a real CodeMirror instance instead of a transparent `<textarea>` over a highlighted `<pre>`.
+  A new StoicSyntax CM mode (`pact-cm-mode.js`) reuses the exact `pactClassifyWord` token rules, so the
+  band colors are identical to the read-only highlighter. Native line numbers, bracket matching, and an
+  active-line highlight come for free; the old hand-rolled line-number gutter, find overlay, and
+  caret-reveal are gone. CodeMirror 5 + its addons are vendored under `dashboard/public/vendor/codemirror/`
+  (no runtime CDN). Inline folding and the migrated find/change-ruler land in the following patches.
+
 ## [1.1.60] - 2026-08-12
 
 ### Fixed

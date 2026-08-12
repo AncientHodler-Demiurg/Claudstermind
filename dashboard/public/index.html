@@ -6,6 +6,12 @@
        native app), content allowed under the notch (padded via env(safe-area-inset-*) in CSS). -->
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <title>Claudstermind — Master Map</title>
+  <!-- CodeMirror 5 (vendored locally under /vendor/codemirror — NO runtime CDN). Powers the editable
+       Pact IDE editor: inline folding, line numbers, find/replace, bracket matching. -->
+  <link rel="stylesheet" href="/vendor/codemirror/lib/codemirror.css" />
+  <link rel="stylesheet" href="/vendor/codemirror/addon/fold/foldgutter.css" />
+  <link rel="stylesheet" href="/vendor/codemirror/addon/dialog/dialog.css" />
+  <link rel="stylesheet" href="/vendor/codemirror/addon/search/matchesonscrollbar.css" />
   <link rel="stylesheet" href="/styles.css" />
   <!-- Claudstermind brain mark — the generated blue circuit-brain logo (transparent). -->
   <link rel="icon" type="image/png" href="/brand/favicon.png?v=2" />
@@ -54,8 +60,23 @@
     <span id="legend" class="legend"></span>
   </footer>
 
-  <!-- Pact/StoicSyntax highlighter + minimal Markdown renderer (classic scripts → window.*), before app.js. -->
+  <!-- CodeMirror 5 core + addons (vendored). Load BEFORE the StoicSyntax mode + app.js so window.CodeMirror
+       exists when they register the mode / build editors. Addon order respects deps (searchcursor + dialog
+       before search; annotatescrollbar + searchcursor before matchesonscrollbar). -->
+  <script src="/vendor/codemirror/lib/codemirror.js"></script>
+  <script src="/vendor/codemirror/addon/fold/foldcode.js"></script>
+  <script src="/vendor/codemirror/addon/fold/foldgutter.js"></script>
+  <script src="/vendor/codemirror/addon/edit/matchbrackets.js"></script>
+  <script src="/vendor/codemirror/addon/selection/active-line.js"></script>
+  <script src="/vendor/codemirror/addon/dialog/dialog.js"></script>
+  <script src="/vendor/codemirror/addon/search/searchcursor.js"></script>
+  <script src="/vendor/codemirror/addon/search/search.js"></script>
+  <script src="/vendor/codemirror/addon/search/jump-to-line.js"></script>
+  <script src="/vendor/codemirror/addon/scroll/annotatescrollbar.js"></script>
+  <script src="/vendor/codemirror/addon/search/matchesonscrollbar.js"></script>
+  <!-- Pact/StoicSyntax highlighter + CM mode + minimal Markdown renderer (classic scripts → window.*), before app.js. -->
   <script src="/pact-highlight.js"></script>
+  <script src="/pact-cm-mode.js"></script>
   <script src="/md-mini.js"></script>
   <script src="/deploy-helpers.js"></script>
   <script src="/app.js"></script>
