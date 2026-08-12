@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.62] - 2026-08-12
+
+### Changed
+- **Inline folding while editing** — modules, interfaces, and def* blocks fold/unfold via the
+  CodeMirror fold-gutter arrows (▾/▸) directly in the editable view; no more read-only fold mode. The
+  fold range finder reuses the existing `pactFoldRanges` paren logic (new pure helper `pactCmFoldRanges`
+  maps a block to a CodeMirror `{from,to}` range, cached per doc value). Removed the old ⊟/✎ toggle and
+  the separate read-only fold view (`pactEdRenderFoldBody`/`pactFoldViewFill`); the pure fold helpers and
+  their tests stay.
+
 ## [1.1.61] - 2026-08-12
 
 ### Changed

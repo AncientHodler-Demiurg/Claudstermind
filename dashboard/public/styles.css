@@ -1319,6 +1319,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-cm-host .CodeMirror-activeline-background { background: rgba(255, 255, 255, .035); }
 .pact-cm-host .CodeMirror-matchingbracket { color: #ffd700 !important; font-weight: 700; border-bottom: 1px solid #ffd700; }
 .pact-cm-host .CodeMirror-nonmatchingbracket { color: #ef5350 !important; }
+/* Inline fold gutter (foldgutter addon): ▾/▸ arrows + the collapsed "…" marker, dark-themed. */
+.pact-cm-host .CodeMirror-foldgutter { width: 14px; }
+.pact-cm-host .CodeMirror-foldgutter-open, .pact-cm-host .CodeMirror-foldgutter-folded { color: var(--ink-dim); cursor: pointer; }
+.pact-cm-host .CodeMirror-foldgutter-open:hover, .pact-cm-host .CodeMirror-foldgutter-folded:hover { color: var(--ink); }
+.pact-cm-host .CodeMirror-foldmarker { color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); border-radius: 4px; padding: 0 5px; margin: 0 2px; font-family: ui-monospace, monospace; cursor: pointer; }
 /* CodeMirror find/replace dialog (search + dialog addons) — dark theme. */
 .pact-cm-host .CodeMirror-dialog { background: var(--panel); color: var(--ink); border-bottom: 1px solid var(--line); font: 12px ui-monospace, "SF Mono", Menlo, monospace; }
 .pact-cm-host .CodeMirror-dialog input { background: var(--chip); border: 1px solid var(--line); border-radius: 5px; color: var(--ink); font: 12px ui-monospace, monospace; padding: 2px 6px; outline: none; }

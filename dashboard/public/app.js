@@ -2641,16 +2641,7 @@ function pactEdRenderGroup(g) {
   fMinus.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.max(9, (g.fontPx || 12.5) - 1); pactEdRenderGroup(g); pactStateSave(); });
   fPlus.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.min(22, (g.fontPx || 12.5) + 1); pactEdRenderGroup(g); pactStateSave(); });
   actions.push(fMinus, fPlus);
-  if (active && (active.path.toLowerCase().endsWith(".pact") || active.path.toLowerCase().endsWith(".repl")) && !active.agentDiff) {
-    const fold = el("button", { class: "pact-ed-ico" + (active.foldMode ? " --on" : ""), title: active.foldMode ? "Back to edit mode" : "Fold / read view — collapse modules & defs" }, [active.foldMode ? "✎" : "⊟"]);
-    fold.addEventListener("click", (e) => {
-      e.stopPropagation();
-      active.foldMode = !active.foldMode;
-      if (active.foldMode && g.find && g.find.open) pactEdCloseFind(g);   // find bar is edit-mode only
-      pactEdRenderGroup(g);
-    });
-    actions.push(fold);
-  }
+  // Folding is now native + inline (CodeMirror fold gutter) — the old ⊟/✎ read-only fold-view toggle is gone.
   const split = el("button", { class: "pact-ed-ico", title: "Split — open another editor box (up to 8)" }, ["⊞"]);
   split.addEventListener("click", (e) => { e.stopPropagation(); pactEdAddGroup(); });
   actions.push(split);
@@ -2706,9 +2697,6 @@ function pactEdRenderBody(g, tab) {
     g.bodyEl.replaceChildren(el("div", { class: "pact-editor-scroll" }, [md]));
     return;
   }
-  // Fold / read view: read-only per-line render with collapsible module/def blocks (outline a file,
-  // grab a whole def). Only for pact/repl; the textarea can't hide lines without desyncing the caret.
-  if (tab.foldMode && (ext.endsWith(".pact") || ext.endsWith(".repl"))) { pactEdRenderFoldBody(g, tab); return; }
   // Editable surface: a real CodeMirror 5 instance (see pactEdBuildCm). CM owns line numbers, the caret,
   // scrolling, bracket matching, the active-line highlight, find/replace, and (once wired) inline folding —
   // so all the old textarea-overlay machinery (transparent <textarea> over a highlighted <pre>, the
@@ -2751,100 +2739,30 @@ function pactEdBuildCm(g, tab, ext) {
     indentWithTabs: false,
     matchBrackets: true,
     styleActiveLine: true,
-    gutters: ["CodeMirror-linenumbers"],
+    // Inline folding for .pact/.repl: the fold gutter's ▾/▸ arrows collapse modules/interfaces/def*
+    // blocks WHILE the editor stays fully editable (no read-only mode). The range finder is built from
+    // our paren logic (pactFoldRanges → pactCmFoldRanges), cached per doc value on the CM instance.
+    gutters: isPact ? ["CodeMirror-linenumbers", "CodeMirror-foldgutter"] : ["CodeMirror-linenumbers"],
+    foldGutter: isPact,
+    foldOptions: isPact ? { rangeFinder: pactCmRangeFinder } : undefined,
     extraKeys,
   });
   cm.on("change", () => { tab.content = cm.getValue(); pactEdMarkDirty(g, tab); });
   tab._cm = cm; tab._cmHost = host;
   return cm;
 }
-// ---- Fold / read view: a read-only per-line render (NOT the live textarea — folding lines in a
-// textarea desyncs the caret) with a left gutter whose ▾/▸ arrows collapse/expand each `(module`,
-// `(interface`, or `(def*` block. Nested folds work (a defun inside a module folds independently).
-// State lives on the tab (foldMode + a Set of collapsed opener line numbers), so it survives tab
-// switches / font changes while the box stays open. Editing is off here by design.
-function pactEdRenderFoldBody(g, tab) {
-  if (!(tab.folded instanceof Set)) tab.folded = new Set();
-  const ranges = pactFoldRanges(tab.content);
-  const openerByStart = new Map(ranges.map((r) => [r.start, r]));
-  const htmlLines = pactHighlightLines(tab.content, tab.path);
-  const view = el("div", { class: "pact-code pact-fold-view" });
-  if (g.fontPx) view.style.fontSize = g.fontPx + "px";
-  // Copy in the fold view is whole-line and folded-aware: selecting a collapsed block copies the ENTIRE
-  // block (hidden middle lines too). Each row carries a dataset.line source marker; we map the selection's
-  // start/end rows to source line numbers and rebuild the clipboard from tab.content over that range.
-  view.addEventListener("copy", (e) => pactFoldOnCopy(e, view, tab));
-  const fill = () => pactFoldViewFill(view, tab, openerByStart, htmlLines);
-  const foldAll = el("button", { class: "pact-ed-ico", title: "Collapse every module & def" }, ["Fold all"]);
-  const unfoldAll = el("button", { class: "pact-ed-ico", title: "Expand everything" }, ["Unfold all"]);
-  foldAll.addEventListener("click", (e) => { e.stopPropagation(); for (const r of ranges) tab.folded.add(r.start); fill(); });
-  unfoldAll.addEventListener("click", (e) => { e.stopPropagation(); tab.folded.clear(); fill(); });
-  const kids = [];   // band legend now lives once in the shared toolbar (viewPact), not per box
-  kids.push(el("div", { class: "pact-fold-bar" }, [
-    el("span", { class: "hint" }, ["Read / fold view — editing is off (toggle ✎ to edit)"]),
-    el("span", { class: "ws-spacer" }, []), foldAll, unfoldAll,
-  ]));
-  kids.push(el("div", { class: "pact-editor-scroll" }, [view]));
-  fill();
-  g.bodyEl.replaceChildren(...kids);
-}
-function pactFoldViewFill(view, tab, openerByStart, htmlLines) {
-  const total = htmlLines.length;
-  // Collapsing hides start+1 .. end-1 but KEEPS the last line (closing paren) visible under the opener;
-  // `feet` maps each preserved closing line to its opener so we can draw the connector between them.
-  const { hidden, feet } = pactFoldHidden([...openerByStart.values()], tab.folded, total);
-  // Source line-number column, aligned across every visible row (width scales with fontPx via ch).
-  // Hidden/folded lines simply aren't rendered, so they get no number — that's fine.
-  view.style.setProperty("--pk-lineno-w", pactGutterWidthCh(total) + "ch");
-  const rows = [];
-  for (let l = 0; l < total; l++) {
-    if (hidden[l]) continue;
-    const r = openerByStart.get(l);
-    const collapsed = !!r && tab.folded.has(l);
-    const isFoot = feet.has(l);
-    const lineno = el("span", { class: "pfv-lineno", "aria-hidden": "true" }, [String(l + 1)]);
-    const gutter = el("span", { class: "pfv-gutter" }, []);
-    if (r) {
-      const arrow = el("span", { class: "pfv-arrow", title: collapsed ? "Expand block" : "Collapse block" }, [collapsed ? "▸" : "▾"]);
-      arrow.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (tab.folded.has(l)) tab.folded.delete(l); else tab.folded.add(l);
-        pactFoldViewFill(view, tab, openerByStart, htmlLines);
-      });
-      gutter.append(arrow);
-    }
-    const code = el("span", { class: "pfv-code" }, []);
-    code.innerHTML = (htmlLines[l] == null || htmlLines[l] === "") ? "&nbsp;" : htmlLines[l];
-    const rk = [lineno, gutter, code];
-    // On a collapsed opener, a "⋯" affordance signals the hidden middle (the closing paren shows on the
-    // preserved foot row below, linked by the gutter connector). Clicking the ▸ still expands.
-    if (collapsed) rk.push(el("span", { class: "pfv-ellipsis", title: "Collapsed block — click ▸ to expand" }, ["⋯"]));
-    const cls = "pfv-row" + (r ? " pfv-openable" : "") + (collapsed ? " pfv-fold-head" : "") + (isFoot ? " pfv-fold-foot" : "");
-    const row = el("div", { class: cls }, rk);
-    row.dataset.line = l;   // stable source-line marker → fold-aware whole-block copy (pactFoldOnCopy)
-    rows.push(row);
+// CodeMirror fold RangeFinder for .pact/.repl: given a start Pos, return the {from,to} of the foldable
+// block whose opener is on that line, or null. Ranges (pactCmFoldRanges) are recomputed only when the doc
+// value changes and cached on the CM instance, so foldgutter's per-line probing stays O(1) after the map
+// is built (not O(n) per line). CM.Pos-based; the pure line→range mapping lives in pactCmFoldRanges.
+function pactCmRangeFinder(cm, start) {
+  const val = cm.getValue();
+  if (cm._foldVal !== val) {
+    cm._foldMap = new Map(pactCmFoldRanges(val).map((r) => [r.from.line, r]));
+    cm._foldVal = val;
   }
-  view.replaceChildren(...rows);
-}
-// Fold-view copy: map the selection's start/end rows to their source line numbers (dataset.line) and
-// rebuild the clipboard from tab.content over that inclusive range — so selecting a collapsed block copies
-// the WHOLE block, hidden middle lines included, in source order. Whole-line granularity (fold view is
-// read-only, never mid-line). Bails to the browser default if the selection strays outside the fold rows.
-function pactFoldOnCopy(e, view, tab) {
-  const sel = window.getSelection && window.getSelection();
-  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
-  const rowOf = (node) => {
-    let n = node;
-    while (n && n !== view) { if (n.nodeType === 1 && n.classList && n.classList.contains("pfv-row")) return n; n = n.parentNode; }
-    return null;
-  };
-  const r = sel.getRangeAt(0);
-  const a = rowOf(r.startContainer), b = rowOf(r.endContainer);
-  if (!a || !b) return;
-  const la = parseInt(a.dataset.line, 10), lb = parseInt(b.dataset.line, 10);
-  if (Number.isNaN(la) || Number.isNaN(lb)) return;
-  const text = pactFoldCopyText(tab.content, la, lb);
-  if (e.clipboardData) { e.clipboardData.setData("text/plain", text); e.preventDefault(); }
+  const r = cm._foldMap.get(start.line);
+  return r ? { from: window.CodeMirror.Pos(r.from.line, r.from.ch), to: window.CodeMirror.Pos(r.to.line, r.to.ch) } : null;
 }
 // ---- Save state: per-tab dirty (content ≠ last saved), a global Save-All button, debounced autosave.
 function pactEdAnyDirty() { return !!(PACT_ED && PACT_ED.groups.some((g) => g.tabs.some((t) => t.dirty))); }
@@ -3055,6 +2973,17 @@ function pactFoldCopyText(content, lineA, lineB) {
   const hi = Math.min(lines.length - 1, Math.max(lineA, lineB));
   if (hi < lo) return "";
   return lines.slice(lo, hi + 1).join("\n");
+}
+// pactCmFoldRanges(content) → [{ from:{line,ch}, to:{line,ch} }], one CodeMirror fold range per foldable
+// block from pactFoldRanges. `from` is the END of the opener line (so the opener stays visible) and `to`
+// is the END of the block's closing line — folding collapses everything between into the opener + a "…"
+// marker, INLINE, while the editor stays fully editable. Pure/DOM-free — unit-tested via lib/pactFold.test.mjs.
+function pactCmFoldRanges(content) {
+  const lines = String(content).split("\n");
+  return pactFoldRanges(content).map((r) => ({
+    from: { line: r.start, ch: lines[r.start] != null ? lines[r.start].length : 0 },
+    to: { line: r.end, ch: lines[r.end] != null ? lines[r.end].length : 0 },
+  }));
 }
 // ===== end PACT FOLD pure helpers =====
 
