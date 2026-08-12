@@ -2879,7 +2879,7 @@ function pactEdMarkDirty(g, tab) {
 function pactEdScheduleAutosave(tab) {
   if (tab._saveTimer) { clearTimeout(tab._saveTimer); tab._saveTimer = null; }
   if (!tab.dirty) return;
-  tab._saveTimer = setTimeout(() => { tab._saveTimer = null; pactEdSaveTab(tab); }, 1500);
+  tab._saveTimer = setTimeout(() => { tab._saveTimer = null; pactEdSaveTab(tab); }, 300000);   // 5 min after you stop typing (Ctrl/⌘-S + Save All are immediate)
 }
 async function pactEdSaveTab(tab) {
   if (!tab || !tab.dirty || tab._saving) return;
@@ -3943,7 +3943,7 @@ function viewPact() {
     termOut,
   ]);
   const rightEl = el("div", { class: "pact-right" }, [chatEl, termEl]);
-  const saveBtn = el("button", { class: "pact-save-all", title: "Save every changed file (Ctrl/⌘-S). Files also autosave 1.5s after you stop typing." }, ["💾 Saved"]);
+  const saveBtn = el("button", { class: "pact-save-all", title: "Save every changed file (Ctrl/⌘-S). Files also autosave 5 min after you stop typing." }, ["💾 Saved"]);
   saveBtn.disabled = true;
   saveBtn.addEventListener("click", () => pactEdSaveAll());
   const keepBtn = el("button", { class: "pact-keep-all", title: "Accept the agent's edits to open files (they're already on disk) and resume editing" }, ["✓ Keep All"]);
@@ -3954,7 +3954,7 @@ function viewPact() {
   // band legend inline, so the color key reads as a single global key without wasting a second line. The
   // legend flexes and scrolls horizontally if the row gets tight; the autosave hint stays on the right.
   const toolbar = el("div", { class: "pact-ed-toolbar" }, [saveBtn, keepBtn, phCollapseBtn("pact-ed-ico"), saveStatus, pactLegend(),
-    el("span", { class: "pact-save-hint" }, ["autosaves 1.5s after you stop typing"])]);
+    el("span", { class: "pact-save-hint" }, ["autosaves 5 min after you stop typing"])]);
   const editorWrap = el("div", { class: "pact-editor-wrap" }, [toolbar, editorEl]);
   const workEl = el("div", { class: "pact-work" }, [editorWrap, rightEl]);
   const root = el("div", { class: "pact-ide" }, [treeEl, workEl]);

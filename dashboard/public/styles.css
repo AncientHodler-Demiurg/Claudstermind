@@ -1128,7 +1128,7 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    sync with the textarea). --pk-gutter-w (set per box in JS, in ch so it tracks fontPx) sizes the column
    AND the code layers' left padding, so code text starts just right of the numbers. user-select:none +
    living outside the textarea means copying code never captures a line number. */
-.pact-gutter { position: absolute; left: 0; top: 0; bottom: 0; width: var(--pk-gutter-w, 3ch); margin: 0;
+.pact-gutter { position: absolute; left: 0; top: 0; bottom: 0; width: var(--pk-gutter-w, 3ch); margin: 0; z-index: 4;
   padding: 12px 8px 12px 6px; box-sizing: border-box; overflow: hidden; pointer-events: none;
   font: 12.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre; tab-size: 2;
   text-align: right; color: var(--ink-dim); background: var(--panel);
@@ -1181,7 +1181,8 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-diff-view { margin: 0; padding: 8px 0; font: 12.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; tab-size: 2; color: #d2d3d4; display: inline-block; min-width: 100%; box-sizing: border-box; }
 .pact-diff-row { display: block; white-space: pre; }
 .pact-diff-row .pd-lineno { display: inline-block; min-width: var(--pk-lineno-w, 2ch); text-align: right; padding-right: 8px;
-  color: var(--ink-dim); user-select: none; -webkit-user-select: none; }
+  color: var(--ink-dim); user-select: none; -webkit-user-select: none;
+  position: sticky; left: 0; z-index: 2; background: var(--panel); }   /* stay fixed on horizontal scroll; code passes behind */
 .pact-diff-row .pd-sign { display: inline-block; width: 24px; text-align: center; color: var(--ink-dim); user-select: none; }
 .pact-diff-row .pd-text { padding-right: 12px; }
 .pd-add { background: rgba(52, 211, 153, .16); }
@@ -1200,7 +1201,8 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 /* Source line number (dim, non-select, excluded from copy — the fold-view copy handler rebuilds text
    from tab.content, so DOM numbers never reach the clipboard). Width scales with fontPx via --pk-lineno-w. */
 .pfv-lineno { flex: 0 0 auto; min-width: var(--pk-lineno-w, 2ch); text-align: right; padding: 0 8px 0 4px;
-  color: var(--ink-dim); user-select: none; -webkit-user-select: none; }
+  color: var(--ink-dim); user-select: none; -webkit-user-select: none;
+  position: sticky; left: 0; z-index: 2; background: var(--panel); }   /* stay fixed on horizontal scroll */
 .pfv-gutter { position: relative; flex: 0 0 20px; text-align: center; user-select: none; color: var(--ink-dim); }
 .pfv-arrow { cursor: pointer; display: inline-block; width: 100%; }
 .pfv-arrow:hover { color: var(--ink); }

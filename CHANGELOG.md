@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.51] - 2026-08-12
+
+### Fixed
+- **Line numbers stay fixed on horizontal scroll.** The editor gutter and the diff/fold line numbers no
+  longer let code slide over/under them — the editable gutter is layered above the code, and the diff &
+  fold numbers are sticky to the left with an opaque background, so code scrolls behind them.
+
+### Changed
+- **Autosave interval is now 5 minutes** (was 1.5s) after you stop typing. Ctrl/⌘-S and the Save All
+  button still save immediately.
+
 ## [1.1.50] - 2026-08-12
 
 ### Fixed
