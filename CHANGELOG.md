@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.60] - 2026-08-12
+
+### Fixed
+- **Revert default-fold: files open editable again, restoring Ctrl-F find and the change-ruler.**
+  Opening .pact/.repl files in the read-only fold view (v1.1.59) had no find bar and no overview ruler,
+  so Ctrl-F fell through to the browser search and the change decorations disappeared. Files open in the
+  editable view again; the fold arrows remain available via the ⊟ toggle.
+
 ## [1.1.59] - 2026-08-12
 
 ### Changed
