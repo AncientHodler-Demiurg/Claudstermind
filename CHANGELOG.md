@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.38] - 2026-08-12
+
+### Changed
+- **Running-locally: all Claudstermind processes are prioritized.** Claudstermind-named localhost apps
+  (e.g. the Claudstermind Dashboard) now show in the CORE group alongside the web service and the
+  sessiond daemon, instead of being hidden in the collapsed "others" list. Non-Claudstermind apps still
+  collapse.
+
 ## [1.1.37] - 2026-08-12
 
 ### Changed
