@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.2.9] - 2026-08-12
+
+### Fixed
+- **Change-ruler green/red/amber stripes were invisible (regression from 1.2.8).** The previous
+  thumb-visibility fix set `left:0` on the marks, but the annotatescrollbar container is 0-width pinned
+  at `right:0`, so that pushed the marks off the right edge. Keep the addon's `right:0` and only narrow
+  the width — the +/- change stripes are back on the scrollbar, and the gray thumb stays visible.
+
 ## [1.2.8] - 2026-08-12
 
 ### Fixed
