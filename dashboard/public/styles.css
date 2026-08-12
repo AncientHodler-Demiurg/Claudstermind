@@ -1172,11 +1172,19 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-fold-bar { display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .pfv-row { display: flex; align-items: flex-start; }
 .pfv-row.pfv-openable:hover { background: rgba(255, 255, 255, .04); }
-.pfv-gutter { flex: 0 0 20px; text-align: center; user-select: none; color: var(--ink-dim); }
+.pfv-gutter { position: relative; flex: 0 0 20px; text-align: center; user-select: none; color: var(--ink-dim); }
 .pfv-arrow { cursor: pointer; display: inline-block; width: 100%; }
 .pfv-arrow:hover { color: var(--ink); }
 .pfv-code { flex: 1; min-width: 0; white-space: pre; padding-right: 12px; }
 .pfv-ellipsis { flex: 0 0 auto; color: var(--ink-dim); user-select: none; padding: 0 8px; cursor: default; }
+/* Fold connector — a gutter line linking a collapsed opener (head) to its preserved closing line (foot),
+   which sit on adjacent visible rows, so the two read as one folded block. */
+.pfv-fold-head .pfv-gutter::after { content: ""; position: absolute; left: 50%; top: 55%; bottom: -1px;
+  border-left: 1px solid color-mix(in srgb, var(--accent) 60%, var(--line)); }
+.pfv-fold-foot .pfv-gutter::before { content: ""; position: absolute; left: 50%; top: -1px; height: 50%;
+  border-left: 1px solid color-mix(in srgb, var(--accent) 60%, var(--line)); }
+.pfv-fold-foot .pfv-gutter::after { content: ""; position: absolute; left: 50%; top: 50%; width: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 60%, var(--line)); }
 
 /* StoicSyntax token colors (VS Code Dark+ base; StoicSyntax prefix BANDS carry the meaning —
    unprotected reads/compute cool, protected state-changers warm/red). */

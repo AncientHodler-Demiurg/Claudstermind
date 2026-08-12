@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.44] - 2026-08-12
+
+### Changed
+- **Pact fold view: a collapsed block keeps its last line, and selecting it copies the whole block.**
+  Collapsing now hides only the middle (`start+1 … end-1`) and keeps the closing-paren line visible
+  directly under the opener, with a gutter connector linking the two so they read as one folded block.
+  Copy is fold-aware: each row carries a source-line marker and a `copy` handler rebuilds the clipboard
+  from the source over the selected inclusive line range — so selecting a collapsed module copies the
+  ENTIRE module source (hidden middle lines included), which is the whole point of grabbing a fold. Fold
+  view stays read-only; Fold all / Unfold all, nesting, and the line-alignment fix are unchanged.
+
 ## [1.1.43] - 2026-08-12
 
 ### Fixed

@@ -2713,6 +2713,10 @@ function pactEdRenderFoldBody(g, tab) {
   const htmlLines = pactHighlightLines(tab.content, tab.path);
   const view = el("div", { class: "pact-code pact-fold-view" });
   if (g.fontPx) view.style.fontSize = g.fontPx + "px";
+  // Copy in the fold view is whole-line and folded-aware: selecting a collapsed block copies the ENTIRE
+  // block (hidden middle lines too). Each row carries a dataset.line source marker; we map the selection's
+  // start/end rows to source line numbers and rebuild the clipboard from tab.content over that range.
+  view.addEventListener("copy", (e) => pactFoldOnCopy(e, view, tab));
   const fill = () => pactFoldViewFill(view, tab, openerByStart, htmlLines);
   const foldAll = el("button", { class: "pact-ed-ico", title: "Collapse every module & def" }, ["Fold all"]);
   const unfoldAll = el("button", { class: "pact-ed-ico", title: "Expand everything" }, ["Unfold all"]);
@@ -2729,16 +2733,15 @@ function pactEdRenderFoldBody(g, tab) {
 }
 function pactFoldViewFill(view, tab, openerByStart, htmlLines) {
   const total = htmlLines.length;
-  const hidden = new Array(total).fill(false);
-  for (const start of tab.folded) {                 // stale starts (content changed) resolve to nothing
-    const r = openerByStart.get(start); if (!r) continue;
-    for (let l = r.start + 1; l <= r.end && l < total; l++) hidden[l] = true;
-  }
+  // Collapsing hides start+1 .. end-1 but KEEPS the last line (closing paren) visible under the opener;
+  // `feet` maps each preserved closing line to its opener so we can draw the connector between them.
+  const { hidden, feet } = pactFoldHidden([...openerByStart.values()], tab.folded, total);
   const rows = [];
   for (let l = 0; l < total; l++) {
     if (hidden[l]) continue;
     const r = openerByStart.get(l);
     const collapsed = !!r && tab.folded.has(l);
+    const isFoot = feet.has(l);
     const gutter = el("span", { class: "pfv-gutter" }, []);
     if (r) {
       const arrow = el("span", { class: "pfv-arrow", title: collapsed ? "Expand block" : "Collapse block" }, [collapsed ? "▸" : "▾"]);
@@ -2752,10 +2755,35 @@ function pactFoldViewFill(view, tab, openerByStart, htmlLines) {
     const code = el("span", { class: "pfv-code" }, []);
     code.innerHTML = (htmlLines[l] == null || htmlLines[l] === "") ? "&nbsp;" : htmlLines[l];
     const rk = [gutter, code];
-    if (collapsed) rk.push(el("span", { class: "pfv-ellipsis", title: "Collapsed block — click ▸ to expand" }, ["⋯)"]));
-    rows.push(el("div", { class: "pfv-row" + (r ? " pfv-openable" : "") }, rk));
+    // On a collapsed opener, a "⋯" affordance signals the hidden middle (the closing paren shows on the
+    // preserved foot row below, linked by the gutter connector). Clicking the ▸ still expands.
+    if (collapsed) rk.push(el("span", { class: "pfv-ellipsis", title: "Collapsed block — click ▸ to expand" }, ["⋯"]));
+    const cls = "pfv-row" + (r ? " pfv-openable" : "") + (collapsed ? " pfv-fold-head" : "") + (isFoot ? " pfv-fold-foot" : "");
+    const row = el("div", { class: cls }, rk);
+    row.dataset.line = l;   // stable source-line marker → fold-aware whole-block copy (pactFoldOnCopy)
+    rows.push(row);
   }
   view.replaceChildren(...rows);
+}
+// Fold-view copy: map the selection's start/end rows to their source line numbers (dataset.line) and
+// rebuild the clipboard from tab.content over that inclusive range — so selecting a collapsed block copies
+// the WHOLE block, hidden middle lines included, in source order. Whole-line granularity (fold view is
+// read-only, never mid-line). Bails to the browser default if the selection strays outside the fold rows.
+function pactFoldOnCopy(e, view, tab) {
+  const sel = window.getSelection && window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+  const rowOf = (node) => {
+    let n = node;
+    while (n && n !== view) { if (n.nodeType === 1 && n.classList && n.classList.contains("pfv-row")) return n; n = n.parentNode; }
+    return null;
+  };
+  const r = sel.getRangeAt(0);
+  const a = rowOf(r.startContainer), b = rowOf(r.endContainer);
+  if (!a || !b) return;
+  const la = parseInt(a.dataset.line, 10), lb = parseInt(b.dataset.line, 10);
+  if (Number.isNaN(la) || Number.isNaN(lb)) return;
+  const text = pactFoldCopyText(tab.content, la, lb);
+  if (e.clipboardData) { e.clipboardData.setData("text/plain", text); e.preventDefault(); }
 }
 // ---- Save state: per-tab dirty (content ≠ last saved), a global Save-All button, debounced autosave.
 function pactEdAnyDirty() { return !!(PACT_ED && PACT_ED.groups.some((g) => g.tabs.some((t) => t.dirty))); }
@@ -2915,6 +2943,38 @@ function pactFoldRanges(content) {
     lineHasNonWs = true; i++;
   }
   return ranges;
+}
+// pactFoldHidden(ranges, folded, total) → { hidden:boolean[], feet:Map<endLine,startLine> }.
+// Which source lines vanish when the given opener start-lines are collapsed: we hide start+1 .. end-1
+// and KEEP the last line (the closing paren) visible directly under the opener, so a collapsed block
+// shows its first AND last line. `feet` maps each preserved closing line back to its opener — the fold
+// view uses it to draw the connector linking the two. Nested feet inside a collapsed parent are hidden
+// (their end line falls in the parent's hidden span), so only outermost-visible feet appear. Pure/
+// DOM-free — unit-tested via lib/pactFold.test.mjs.
+function pactFoldHidden(ranges, folded, total) {
+  const openerByStart = new Map(ranges.map((r) => [r.start, r]));
+  const hidden = new Array(total).fill(false);
+  for (const start of folded) {
+    const r = openerByStart.get(start); if (!r) continue;
+    for (let l = r.start + 1; l < r.end && l < total; l++) hidden[l] = true;
+  }
+  const feet = new Map();
+  for (const start of folded) {
+    const r = openerByStart.get(start); if (!r) continue;
+    if (r.end < total && r.end !== r.start && !hidden[r.end]) feet.set(r.end, r.start);
+  }
+  return { hidden, feet };
+}
+// pactFoldCopyText(content, lineA, lineB) → the inclusive source-line slice joined with "\n". The fold
+// view's copy handler maps the selection's start/end rows to their source line numbers and calls this,
+// so selecting a collapsed block yields the WHOLE block (hidden middle lines included), in source order.
+// Whole-line granularity — a fold view never copies mid-line. Pure — unit-tested.
+function pactFoldCopyText(content, lineA, lineB) {
+  const lines = String(content).split("\n");
+  const lo = Math.max(0, Math.min(lineA, lineB));
+  const hi = Math.min(lines.length - 1, Math.max(lineA, lineB));
+  if (hi < lo) return "";
+  return lines.slice(lo, hi + 1).join("\n");
 }
 // ===== end PACT FOLD pure helpers =====
 
