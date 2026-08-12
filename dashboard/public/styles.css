@@ -1058,10 +1058,10 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    (pactEdLayout). editor:right = 4:1 → the chat+repl zone is ⅕ of the space after the tree.
    Draggable gutters resize boxes/rows. */
 .pact-editor-wrap { flex: 4 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
-.pact-ed-toolbar { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; }
-.pact-ed-toolbar-row { display: flex; align-items: center; gap: 10px; }
-/* The one shared band legend sits in the toolbar — drop its per-box divider/padding to read as a strip. */
-.pact-ed-toolbar .pact-legend { border-bottom: 0; padding: 2px 0; }
+.pact-ed-toolbar { flex: 0 0 auto; display: flex; flex-direction: row; align-items: center; gap: 10px; }
+/* The one shared band legend sits INLINE on the toolbar row — drop its per-box divider/padding to read as
+   a strip, and let it flex + scroll horizontally so it stays on one line even when the row gets tight. */
+.pact-ed-toolbar .pact-legend { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; border-bottom: 0; padding: 2px 0; }
 .pact-save-all { flex: 0 0 auto; padding: 5px 14px; border-radius: 8px; font-size: 12.5px; font-weight: 700; cursor: pointer;
   border: 1px solid var(--line); background: color-mix(in srgb, var(--accent) 22%, var(--panel)); color: var(--ink); }
 .pact-save-all:disabled { cursor: default; opacity: .5; background: var(--chip); color: var(--ink-dim); }
@@ -1119,9 +1119,14 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 /* Editable overlay: a transparent <textarea> sits exactly over the highlighted <pre>; the pre shows the
    StoicSyntax colors, the textarea takes the typing + caret. Both share font/padding/scroll metrics. */
 .pact-edit-wrap { position: relative; flex: 1; min-height: 0; overflow: hidden; }
-.pact-edit-hl, .pact-edit { position: absolute; inset: 0; margin: 0; padding: 12px 14px; border: 0;
+.pact-edit-hl, .pact-find-ov, .pact-edit { position: absolute; inset: 0; margin: 0; padding: 12px 14px; border: 0;
   font: 12.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre; tab-size: 2; }
 .pact-edit-hl { overflow: hidden; pointer-events: none; color: #d2d3d4; }
+/* Find-match highlight overlay: transparent text (columns only), translucent <mark> over each match so
+   the syntax colors of the code below show through. Layered between the highlight <pre> and the textarea. */
+.pact-find-ov { overflow: hidden; pointer-events: none; color: transparent; -webkit-text-fill-color: transparent; }
+.pact-find-ov mark { color: transparent; -webkit-text-fill-color: transparent; background: rgba(250, 214, 90, .28); border-radius: 2px; }
+.pact-find-ov mark.pact-find-cur { background: rgba(255, 150, 40, .58); box-shadow: 0 0 0 1px rgba(255, 176, 32, .9); }
 .pact-edit { overflow: auto; resize: none; background: transparent; color: transparent; caret-color: #e6edf3;
   outline: none; -webkit-text-fill-color: transparent; }
 .pact-edit::selection { background: rgba(120, 160, 255, .35); }

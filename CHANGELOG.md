@@ -4,6 +4,27 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.45] - 2026-08-12
+
+### Fixed
+- **Pact editor find/replace bar was inert past the match count — root cause + a visible highlight.**
+  A single Ctrl-F fired BOTH the document capture-phase shortcut and the textarea's own keydown, so the
+  bar was mounted TWICE, stacking two identical bars exactly over each other (both `position:absolute`
+  top-right). Every click landed on the top bar while its hidden twin stayed put, so × "did nothing" (the
+  twin reappeared), and next/prev/toggles/Replace looked dead. `pactEdMountFindBar` now tears down every
+  existing `.pact-find-bar` in the wrap before building one (and close removes them all), guaranteeing a
+  single live bar and killing orphans left by a body re-render.
+- **The current match is now VISIBLY highlighted.** Selecting a match only set the (invisible, unfocused)
+  textarea selection, so search "did nothing" on screen. A new transparent highlight overlay layer sits
+  between the syntax `<pre>` and the textarea, scroll-synced, rendering translucent `<mark>`s over every
+  match with the active one brighter — driven by a pure, unit-tested `pactFindOverlaySegs` tokenizer.
+  Replace / All still go through `pactEdMarkDirty` (dirty + autosave) and repaint the overlay.
+
+### Changed
+- **StoicSyntax band legend is back inline on the Save All / Keep All row**, not a separate second line.
+  The Pact toolbar is one flex row again (the legend flexes and scrolls horizontally if tight); the
+  now-unused `.pact-ed-toolbar-row` column wrapper is removed.
+
 ## [1.1.44] - 2026-08-12
 
 ### Changed

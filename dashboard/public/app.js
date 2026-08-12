@@ -2674,13 +2674,18 @@ function pactEdRenderBody(g, tab) {
   // The pre keeps StoicSyntax coloring (point 2 kept the highlight view); the textarea takes the typing.
   const kids = [];   // band legend now lives once in the shared toolbar (viewPact), not per box
   const hl = el("pre", { class: "pact-code pact-edit-hl", "aria-hidden": "true" }, []);
+  // Find-match highlight layer: mirrors the file text (same font/padding/white-space, scroll-synced) but
+  // renders only translucent <mark> backgrounds over matches (its own text is transparent). Sits between
+  // the colored <pre> and the transparent <textarea>, so the current match is VISIBLY highlighted even
+  // while focus stays in the find input (a textarea's own ::selection is invisible when unfocused).
+  const ov = el("div", { class: "pact-find-ov", "aria-hidden": "true" }, []);
   const ta = el("textarea", { class: "pact-edit", spellcheck: "false", wrap: "off" });
   ta.value = tab.content;
-  if (g.fontPx) { hl.style.fontSize = g.fontPx + "px"; ta.style.fontSize = g.fontPx + "px"; }
+  if (g.fontPx) { hl.style.fontSize = ov.style.fontSize = ta.style.fontSize = g.fontPx + "px"; }
   const paint = () => renderPactCode(hl, ta.value, tab.path);
-  const syncScroll = () => { hl.scrollTop = ta.scrollTop; hl.scrollLeft = ta.scrollLeft; };
+  const syncScroll = () => { hl.scrollTop = ov.scrollTop = ta.scrollTop; hl.scrollLeft = ov.scrollLeft = ta.scrollLeft; };
   paint();
-  ta.addEventListener("input", () => { tab.content = ta.value; paint(); syncScroll(); pactEdMarkDirty(g, tab); });
+  ta.addEventListener("input", () => { tab.content = ta.value; paint(); syncScroll(); pactEdMarkDirty(g, tab); if (g.find && g.find.open) pactEdFindRefresh(g, false); });
   ta.addEventListener("scroll", syncScroll);
   ta.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) { e.preventDefault(); pactEdSaveAll(); return; }
@@ -2694,10 +2699,10 @@ function pactEdRenderBody(g, tab) {
       tab.content = ta.value; paint(); pactEdMarkDirty(g, tab);
     }
   });
-  const wrap = el("div", { class: "pact-edit-wrap" }, [hl, ta]);
+  const wrap = el("div", { class: "pact-edit-wrap" }, [hl, ov, ta]);
   kids.push(wrap);
   g.bodyEl.replaceChildren(...kids);
-  g._findCtx = { wrap, ta, hl, tab, paint, syncScroll };   // find/replace targets the active tab's live textarea
+  g._findCtx = { wrap, ta, hl, ov, tab, paint, syncScroll };   // find/replace targets the active tab's live textarea
   if (g.find && g.find.open) { g.find._bar = null; pactEdMountFindBar(g); }   // re-mount (retarget) after a tab/font re-render
   requestAnimationFrame(syncScroll);
 }
@@ -2892,6 +2897,24 @@ function pactReplaceAll(text, term, replStr, opts) {
   const repl = opts && opts.re ? replStr : String(replStr).replace(/\$/g, "$$$$");   // literal mode: keep $ literal
   return { text: text.replace(built.re, repl), count: matches.length };
 }
+// pactFindOverlaySegs(text, matches, curIdx) → ordered [{ text, mark }] covering the WHOLE text, where
+// mark is null (gap) | "hit" (a match) | "cur" (the active match, index curIdx). The overlay renders each
+// segment as transparent text, wrapping "hit"/"cur" in a translucent <mark> — so every character keeps its
+// exact column (white-space:pre) and only match backgrounds show over the syntax-colored code. Zero-width
+// matches are skipped (nothing to paint). Pure — unit-tested.
+function pactFindOverlaySegs(text, matches, curIdx) {
+  const t = String(text), segs = [];
+  let pos = 0;
+  for (let i = 0; matches && i < matches.length; i++) {
+    const m = matches[i];
+    if (!m || m.end <= m.start || m.start < pos) continue;   // skip zero-width / overlapping
+    if (m.start > pos) segs.push({ text: t.slice(pos, m.start), mark: null });
+    segs.push({ text: t.slice(m.start, m.end), mark: i === curIdx ? "cur" : "hit" });
+    pos = m.end;
+  }
+  if (pos < t.length) segs.push({ text: t.slice(pos), mark: null });
+  return segs;
+}
 // ===== end PACT FIND/REPLACE pure helpers =====
 
 // ===== PACT FOLD — string/comment-aware fold-range finder for the read/fold view. =====
@@ -3021,14 +3044,24 @@ function pactEdOpenFind(g, withReplace) {
 function pactEdCloseFind(g) {
   const f = g.find; if (!f) return;
   f.open = false;
-  if (f._bar && f._bar.parentNode) f._bar.parentNode.removeChild(f._bar);
+  const ctx = g._findCtx;
+  // Remove EVERY bar in the wrap (not just f._bar) so a stray twin can never survive the close.
+  if (ctx && ctx.wrap) Array.from(ctx.wrap.querySelectorAll(".pact-find-bar")).forEach((b) => { if (b.parentNode) b.parentNode.removeChild(b); });
+  else if (f._bar && f._bar.parentNode) f._bar.parentNode.removeChild(f._bar);
   f._bar = f._input = f._replIn = f._count = null;
-  if (g._findCtx && g._findCtx.ta) g._findCtx.ta.focus();
+  if (ctx && ctx.ov) ctx.ov.textContent = "";   // drop the match highlights
+  if (ctx && ctx.ta) ctx.ta.focus();
 }
 function pactEdMountFindBar(g) {
   const ctx = g._findCtx, f = g.find;
   if (!ctx || !f || !f.open) return;
-  if (f._bar && f._bar.parentNode === ctx.wrap) { pactEdFindRefresh(g, false); return; }
+  // Dedupe (root cause of the "dead find bar"): a single Ctrl-F fires BOTH the document capture-phase
+  // handler AND the textarea's own keydown, so pactEdOpenFind ran twice and mounted TWO bars stacked
+  // exactly over each other (both position:absolute top-right). Clicking ×/next/prev/toggles hit the top
+  // bar while its identical twin stayed behind — so closing "did nothing" (the twin reappeared) and the
+  // bar looked inert. A body re-render while open could orphan a bar the same way. Always tear down every
+  // existing bar in this wrap before building a fresh one, so there is ever exactly ONE live bar.
+  Array.from(ctx.wrap.querySelectorAll(".pact-find-bar")).forEach((b) => { if (b.parentNode) b.parentNode.removeChild(b); });
 
   const input = el("input", { class: "pact-find-in", type: "text", placeholder: "Find", spellcheck: "false" });
   input.value = f.term || "";
@@ -3098,13 +3131,27 @@ function pactEdFindRefresh(g, doSelect) {
   if (!f || !ctx || !f._input) return;
   const res = pactFindMatches(ctx.ta.value, f.term, { cs: f.cs, ww: f.ww, re: f.re });
   f._input.classList.toggle("--bad", res === null);
-  if (res === null) { f.matches = []; f.idx = -1; f._count.textContent = "bad pattern"; return; }
+  if (res === null) { f.matches = []; f.idx = -1; f._count.textContent = "bad pattern"; pactEdFindPaintOverlay(g); return; }
   f.matches = res;
-  if (!f.term) { f.idx = -1; f._count.textContent = ""; return; }
-  if (!res.length) { f.idx = -1; f._count.textContent = "No results"; return; }
+  if (!f.term) { f.idx = -1; f._count.textContent = ""; pactEdFindPaintOverlay(g); return; }
+  if (!res.length) { f.idx = -1; f._count.textContent = "No results"; pactEdFindPaintOverlay(g); return; }
   if (f.idx < 0 || f.idx >= res.length) f.idx = 0;
   f._count.textContent = (f.idx + 1) + "/" + res.length;
+  pactEdFindPaintOverlay(g);
   if (doSelect) pactEdFindSelect(g);
+}
+// Repaint the highlight overlay (all matches faint, the current one bright). Pure-helper-driven so the
+// column math is testable; escaping + <mark> wrapping happens here. Cleared when there's nothing to show.
+function pactEdFindPaintOverlay(g) {
+  const f = g.find, ctx = g._findCtx;
+  if (!ctx || !ctx.ov) return;
+  if (!f || !f.open || !f.term || !f.matches || !f.matches.length) { ctx.ov.textContent = ""; return; }
+  const segs = pactFindOverlaySegs(ctx.ta.value, f.matches, f.idx);
+  ctx.ov.innerHTML = segs.map((s) => {
+    const t = escapeHtml(s.text);
+    return s.mark ? '<mark class="pact-find-hit' + (s.mark === "cur" ? " pact-find-cur" : "") + '">' + t + "</mark>" : t;
+  }).join("");
+  ctx.ov.scrollTop = ctx.ta.scrollTop; ctx.ov.scrollLeft = ctx.ta.scrollLeft;   // stay aligned with the code
 }
 function pactEdFindStep(g, dir) {
   const f = g.find;
@@ -3120,7 +3167,8 @@ function pactEdFindSelect(g) {
   const m = f.matches[f.idx];
   if (!m || !ctx) return;
   const ta = ctx.ta;
-  ta.setSelectionRange(m.start, m.end);   // highlights via the transparent textarea's ::selection
+  ta.setSelectionRange(m.start, m.end);   // keep the native selection in sync (visible if focus returns)
+  pactEdFindPaintOverlay(g);   // move the bright "current match" mark on the visible overlay
   const before = ta.value.slice(0, m.start);
   const line = before.length - before.replace(/\n/g, "").length;   // newlines before the match = line index
   const lh = parseFloat(getComputedStyle(ta).lineHeight) || (g.fontPx || 12.5) * 1.55;
@@ -3819,11 +3867,11 @@ function viewPact() {
   keepBtn.style.display = "none";
   keepBtn.addEventListener("click", () => pactEdKeepAll());
   const saveStatus = el("span", { class: "pact-save-status" }, []);
-  // Toolbar = an action row (Save All / Keep All …) plus ONE shared StoicSyntax band legend beneath it,
-  // so the color key reads as a single global key for every editor box instead of being repeated per box.
-  const actionRow = el("div", { class: "pact-ed-toolbar-row" }, [saveBtn, keepBtn, saveStatus, el("span", { class: "ws-spacer" }, []),
+  // Toolbar = ONE row: the action controls (Save All / Keep All / status) and the ONE shared StoicSyntax
+  // band legend inline, so the color key reads as a single global key without wasting a second line. The
+  // legend flexes and scrolls horizontally if the row gets tight; the autosave hint stays on the right.
+  const toolbar = el("div", { class: "pact-ed-toolbar" }, [saveBtn, keepBtn, saveStatus, pactLegend(),
     el("span", { class: "pact-save-hint" }, ["autosaves 1.5s after you stop typing"])]);
-  const toolbar = el("div", { class: "pact-ed-toolbar" }, [actionRow, pactLegend()]);
   const editorWrap = el("div", { class: "pact-editor-wrap" }, [toolbar, editorEl]);
   const workEl = el("div", { class: "pact-work" }, [editorWrap, rightEl]);
   const root = el("div", { class: "pact-ide" }, [treeEl, workEl]);
