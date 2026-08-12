@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.2.2] - 2026-08-12
+
+### Added
+- **Token + context% indicator in the Pact chat.** The Pact agentic chat now shows the same subtle
+  "N tok · P% ctx" readout the Core cockpit has, in the chat header near the mode picker. It refreshes
+  after every turn (the tab requests `contextUsage` once a `result` lands) and also picks up per-session
+  token totals from any `state` summary. Hidden until a tab actually has usage data.
+
+### Changed
+- **Shared usage + image-encode helpers lifted to module scope.** The token/context formatter
+  (`wsUsageLabel`) and the image encode/cap helpers (`wsDataUrlToAttachment`, `wsCompressImage`, the
+  size/count caps, …) moved out of the Core workspace closure to module scope so the Pact chat reuses
+  the exact same logic instead of duplicating it. The Core cockpit calls the lifted helpers unchanged;
+  both are covered by new unit tests (`lib/wsUsage.test.mjs`, `lib/wsImage.test.mjs`).
+
 ## [1.2.1] - 2026-08-12
 
 ### Fixed

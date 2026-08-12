@@ -2300,6 +2300,86 @@ function wsBackfillTurnWorkspace(transcript, wid) {
   if (Array.isArray(transcript) && wid) for (const m of transcript) if (m && (m.images || m.image) && !m.workspaceId) m.workspaceId = wid;
   return Array.isArray(transcript) ? transcript : [];
 }
+// ===== WS USAGE — pure token/context formatter (sliced out for unit tests; see lib/wsUsage.test.mjs)
+// The compact "N tok · P% ctx" readout shared by BOTH the Core pane badge (paintPane) and the Pact
+// chat header (pactChatPaint) — one formatter so the two surfaces never drift. `usage` carries the
+// running input/output token totals; `contextUsage` (requested per-turn) carries the context-window
+// percentage + totals. Returns { text, ctxPct, title } — `text` is "" when there's no usage yet
+// (each caller decides its own placeholder), `title` is the hover breakdown.
+function wsUsageLabel(usage, contextUsage) {
+  const u = usage || {};
+  const ctx = contextUsage;
+  const ctxPct = ctx && typeof ctx.percentage === "number" ? Math.round(ctx.percentage <= 1 ? ctx.percentage * 100 : ctx.percentage) : null;
+  const text = (u.inputTokens || u.outputTokens)
+    ? `${((u.inputTokens || 0) + (u.outputTokens || 0)).toLocaleString()} tok` + (ctxPct !== null ? ` · ${ctxPct}% ctx` : "")
+    : "";
+  const title = ctx ? `Context window: ${(ctx.totalTokens || 0).toLocaleString()} / ${(ctx.maxTokens || 0).toLocaleString()} tokens (${ctxPct ?? "—"}%)` : "";
+  return { text, ctxPct, title };
+}
+// ===== end WS USAGE pure helper =====
+// ===== WS IMAGE — pure attach/encode helpers (sliced out for unit tests; see lib/wsImage.test.mjs)
+// Up to WS_IMG_MAX_COUNT images per prompt (Claude Code's own limit), riding the existing `prompt`
+// payload as `images: [{ mediaType, base64Data }, ...]` — see lib/workspace.mjs `_prompt`/`_saveImages`
+// and lib/workspaceStore.mjs `saveImage`'s IMAGE_EXT for the closed mediaType list this must match.
+// Lifted to module scope so BOTH the Core cockpit (viewWorkspace) and the Pact chat encode identically.
+const WS_IMG_ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp"];
+const WS_IMG_MAX_COUNT = 5;
+// "roughly 3 MB" per design — measured on the ENCODED (base64) string, since that's what actually
+// rides the WS control frame; base64 chars ≈ bytes (ASCII), so string length is a fine proxy.
+const WS_IMG_MAX_ENCODED_BYTES = 3 * 1024 * 1024;
+// Recompression ladder: try full-size-but-lower-quality first (cheapest to look at), only downscaling
+// resolution once quality alone can't get under the cap.
+const WS_IMG_COMPRESS_STEPS = [[1, 0.92], [1, 0.7], [0.75, 0.6], [0.5, 0.5], [0.35, 0.4]];
+function wsReadFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error || new Error("could not read file"));
+    r.readAsDataURL(file);
+  });
+}
+/** Length of the base64 payload after the `data:...;base64,` prefix — the part that actually travels
+ *  in the prompt payload. */
+function wsDataUrlEncodedSize(dataUrl) { const i = dataUrl.indexOf(","); return i < 0 ? 0 : dataUrl.length - i - 1; }
+function wsDataUrlToAttachment(dataUrl) {
+  const m = /^data:([^;,]+)(?:;[^,]*)?,([\s\S]*)$/.exec(dataUrl || "");
+  if (!m || !m[2]) return null;
+  return { mediaType: m[1], base64Data: m[2], dataUrl };
+}
+/** Decode a File into something <canvas> can draw — `createImageBitmap` where available (works
+ *  off-thread, no DOM node needed), falling back to a plain `Image`. */
+async function wsLoadDrawable(file) {
+  if (window.createImageBitmap) { try { return await createImageBitmap(file); } catch { /* fall through to Image */ } }
+  const url = URL.createObjectURL(file);
+  try {
+    return await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("could not decode image"));
+      img.src = url;
+    });
+  } finally { URL.revokeObjectURL(url); }
+}
+/** Downscale/recompress via <canvas>, always re-encoding as JPEG (in WS_IMG_ALLOWED_TYPES regardless
+ *  of the source format) — walks WS_IMG_COMPRESS_STEPS until the encoded result fits under the cap, or
+ *  returns null if it still doesn't after the whole ladder. */
+async function wsCompressImage(file) {
+  let drawable;
+  try { drawable = await wsLoadDrawable(file); } catch { return null; }
+  const srcW = drawable.width || drawable.naturalWidth || 0, srcH = drawable.height || drawable.naturalHeight || 0;
+  if (!srcW || !srcH) return null;
+  for (const [scale, quality] of WS_IMG_COMPRESS_STEPS) {
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(srcW * scale));
+    canvas.height = Math.max(1, Math.round(srcH * scale));
+    canvas.getContext("2d").drawImage(drawable, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL("image/jpeg", quality);
+    if (wsDataUrlEncodedSize(dataUrl) <= WS_IMG_MAX_ENCODED_BYTES) { if (drawable.close) drawable.close(); return wsDataUrlToAttachment(dataUrl); }
+  }
+  if (drawable.close) drawable.close();
+  return null;
+}
+// ===== end WS IMAGE pure helper =====
 // This browser's stable identity for presence — kept across reloads so a refresh doesn't read as
 // a new terminal. A human label (editable) rides along so the roster is legible.
 const WS_CONN_KEY = "cm.conn.v1";
@@ -3337,6 +3417,10 @@ async function pactEdOpenInto(g, path, makeActive, relayout) {
 // with repo=Ouronet) streamed back over /api/workspace/stream and routed here by sessionKey. So the
 // agent runs in the repo cwd (writes Pact, runs REPLs) exactly like the Core cockpit, just embedded.
 const PACT_REPO = "OuroborosNetwork/_onchain/Ouronet";
+// The single workspace id every Pact chat session lives under (repo@worktree) — used to build the
+// /api/workspace/image URL for attached images on persisted turns (the server strips per-turn
+// workspaceId, same as Core; see wsBackfillTurnWorkspace).
+const PACT_WORKSPACE_ID = wsWorkspaceId(PACT_REPO, "main");
 // ---- Shared, server-side IDE-state (P1 store) — so the Pact workspace reopens exactly where it was
 // left AND state is identical on localhost and the remote website (it lives on the machine, not in
 // localStorage). `PACT_STATE_READY` gates saves so the initial build + restore don't echo back over
@@ -3710,7 +3794,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
   }
   const t = sessionKey ? pactChatByKey(sessionKey) : null;
   if (!t) return;
-  if (kind === "state") { if (data && data.session && data.session.status) { t.status = data.session.status; pactChatPaint(t); } return; }
+  if (kind === "state") { if (data && data.session) { if (data.session.status) t.status = data.session.status; if (data.session.usage) t.usage = data.session.usage; pactChatPaint(t); } return; }
   if (kind === "permission") { t.perm = { requestId: data.requestId, tool: data.tool || data.name || data.title || "a tool" }; t.status = "awaiting-permission"; pactChatPaint(t); return; }
   if (kind !== "event") return;
   const d = data || {};
@@ -3719,7 +3803,15 @@ function pactChatRoute({ kind, sessionKey, data }) {
     case "assistant_delta": t.live = (t.live || "") + (d.text || ""); pactChatPaintLive(t); return;
     case "assistant": t.live = ""; t.msgs.push({ role: "assistant", text: d.text || "" }); pactChatPaint(t); return;
     case "tool_use": t.live = ""; t.msgs.push({ kind: "tool_use", tools: d.tools || [] }); pactChatPaint(t); return;
-    case "result": t.live = ""; t.status = "idle"; pactChatPaint(t); pactEdCheckAgentEdits(); pactEdCheckChangedFiles(); return;
+    case "result":
+      t.live = ""; t.status = "idle";
+      if (d.usageTotal) t.usage = d.usageTotal;
+      // Context usage changes every turn — refresh it once a turn actually finishes (not on every
+      // streamed chunk), exactly like the Core cockpit (see paintPane's contextUsage request).
+      wsPost("control", { action: "contextUsage", args: { sessionKey: t.key } });
+      pactChatPaint(t); pactEdCheckAgentEdits(); pactEdCheckChangedFiles(); return;
+    // Context-window usage answer for this tab's session — store + repaint the header indicator.
+    case "contextUsage": t.contextUsage = d.usage; pactChatPaint(t); return;
     // A second prompt sent while this session is still finishing its current turn is refused with
     // `busy` (see lib/workspace.mjs's single-writer turn lock). Flip off the optimistic "thinking…"
     // this tab set on send — otherwise the tab spins forever on a prompt the backend never accepted —
@@ -3785,6 +3877,10 @@ function pactChatPaint(t) {
   const scroll = PACT_CHAT.host.querySelector(".pc-scroll");
   const compose = PACT_CHAT.host.querySelector(".pc-compose");
   if (!scroll) { pactChatRender(); return; }
+  // Token/context indicator — shared formatter with the Core cockpit (wsUsageLabel); hidden until
+  // this tab has usage data.
+  const usageEl = PACT_CHAT.host.querySelector(".pc-usage");
+  if (usageEl) { const usg = wsUsageLabel(t.usage, t.contextUsage); usageEl.textContent = usg.text; usageEl.title = usg.title; usageEl.hidden = !usg.text; }
   const nodes = t.msgs.map(pactChatMsgNode);
   if (t.perm) {
     const bar = el("div", { class: "pc-perm" }, [
@@ -3840,7 +3936,11 @@ function pactChatRender() {
   modeSel.addEventListener("change", () => { PACT_CHAT.mode = modeSel.value; });
   const chatCollapse = el("button", { class: "pact-ed-ico pact-collapse pcx-chat" }, ["▾"]);
   chatCollapse.addEventListener("click", () => pactToggleCollapse("chat"));
-  const head = el("div", { class: "pact-zone-hd pc-head" }, [el("div", { class: "pc-tabs" }, tabs), add, hist, el("span", { class: "ws-spacer" }, []), modeSel, chatCollapse]);
+  // A subtle "N tok · P% ctx" readout for the active tab — same formatter/format as the Core pane
+  // badge (wsUsageLabel). Hidden until this tab actually has usage data; filled by pactChatPaint.
+  const usageEl = el("span", { class: "pc-usage" }, []);
+  usageEl.hidden = true;
+  const head = el("div", { class: "pact-zone-hd pc-head" }, [el("div", { class: "pc-tabs" }, tabs), add, hist, el("span", { class: "ws-spacer" }, []), usageEl, modeSel, chatCollapse]);
   const scroll = el("div", { class: "pc-scroll" }, []);
   const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (Enter to send)" });
   const send = el("button", { class: "pc-send" }, ["Send"]);
@@ -4512,12 +4612,11 @@ function viewWorkspace() {
   }
 
   // ---- image attach ---------------------------------------------------------------
-  // Up to WS_IMG_MAX_COUNT images per pane (Claude Code's own attachment limit), riding the
-  // existing `prompt` payload (no new upload route/control action) as `images: [{ mediaType,
-  // base64Data }, ...]` — see lib/workspace.mjs `_prompt`/`_saveImages` and lib/workspaceStore.mjs
-  // `saveImage`'s IMAGE_EXT for the closed mediaType list this must match.
-  const WS_IMG_ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp"];
-  const WS_IMG_MAX_COUNT = 5;
+  // The encode/cap/attachment helpers (WS_IMG_ALLOWED_TYPES, WS_IMG_MAX_COUNT,
+  // WS_IMG_MAX_ENCODED_BYTES, WS_IMG_COMPRESS_STEPS, wsReadFileAsDataUrl, wsDataUrlEncodedSize,
+  // wsDataUrlToAttachment, wsLoadDrawable, wsCompressImage) now live at MODULE scope (see the "WS
+  // IMAGE — pure attach/encode helpers" block) so the Pact chat encodes images identically — this
+  // pane only keeps the pane-stateful pieces (attach chain, preview chips, error line).
   // The compose box grows with what you type — up to WS_PROMPT_MAX_ROWS lines — instead of
   // staying a fixed 2-line box, matching Claude Code's own desktop compose box. Computed from the
   // textarea's OWN computed line-height/padding (getComputedStyle), not a hardcoded pixel guess,
@@ -4547,64 +4646,6 @@ function viewWorkspace() {
       el.style.height = Math.min(needed, maxHeight) + "px";
       el.style.overflowY = needed > maxHeight ? "auto" : "hidden";
     }
-  }
-  // "roughly 3 MB" per design — measured on the ENCODED (base64) string, since that's what
-  // actually rides the WS control frame; base64 chars ≈ bytes (ASCII), so string length is a
-  // fine proxy without decoding back to bytes just to check.
-  const WS_IMG_MAX_ENCODED_BYTES = 3 * 1024 * 1024;
-  // Recompression ladder: try full-size-but-lower-quality first (cheapest to look at), only
-  // downscaling resolution once quality alone can't get under the cap.
-  const WS_IMG_COMPRESS_STEPS = [[1, 0.92], [1, 0.7], [0.75, 0.6], [0.5, 0.5], [0.35, 0.4]];
-
-  function wsReadFileAsDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(r.result);
-      r.onerror = () => reject(r.error || new Error("could not read file"));
-      r.readAsDataURL(file);
-    });
-  }
-  /** Length of the base64 payload after the `data:...;base64,` prefix — the part that actually
-   *  travels in the prompt payload. */
-  function wsDataUrlEncodedSize(dataUrl) { const i = dataUrl.indexOf(","); return i < 0 ? 0 : dataUrl.length - i - 1; }
-  function wsDataUrlToAttachment(dataUrl) {
-    const m = /^data:([^;,]+)(?:;[^,]*)?,([\s\S]*)$/.exec(dataUrl || "");
-    if (!m || !m[2]) return null;
-    return { mediaType: m[1], base64Data: m[2], dataUrl };
-  }
-  /** Decode a File into something <canvas> can draw — `createImageBitmap` where available
-   *  (works off-thread, no DOM node needed), falling back to a plain `Image` for browsers
-   *  without it. */
-  async function wsLoadDrawable(file) {
-    if (window.createImageBitmap) { try { return await createImageBitmap(file); } catch { /* fall through to Image */ } }
-    const url = URL.createObjectURL(file);
-    try {
-      return await new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error("could not decode image"));
-        img.src = url;
-      });
-    } finally { URL.revokeObjectURL(url); }
-  }
-  /** Downscale/recompress via <canvas>, always re-encoding as JPEG (in WS_IMG_ALLOWED_TYPES
-   *  regardless of the source format) — walks WS_IMG_COMPRESS_STEPS until the encoded result
-   *  fits under the cap, or returns null if it still doesn't after the whole ladder. */
-  async function wsCompressImage(file) {
-    let drawable;
-    try { drawable = await wsLoadDrawable(file); } catch { return null; }
-    const srcW = drawable.width || drawable.naturalWidth || 0, srcH = drawable.height || drawable.naturalHeight || 0;
-    if (!srcW || !srcH) return null;
-    for (const [scale, quality] of WS_IMG_COMPRESS_STEPS) {
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(srcW * scale));
-      canvas.height = Math.max(1, Math.round(srcH * scale));
-      canvas.getContext("2d").drawImage(drawable, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL("image/jpeg", quality);
-      if (wsDataUrlEncodedSize(dataUrl) <= WS_IMG_MAX_ENCODED_BYTES) { if (drawable.close) drawable.close(); return wsDataUrlToAttachment(dataUrl); }
-    }
-    if (drawable.close) drawable.close();
-    return null;
   }
   /** Attach a whole batch (a multi-select from the file picker, a multi-file drop, or several
    *  clipboard image items) ONE AT A TIME, awaiting each before starting the next — wsAttachImageFile
@@ -5004,11 +5045,9 @@ function viewWorkspace() {
     ui.sendBtn.disabled = !!p.readonly;
     ui.attachBtn.disabled = !!p.readonly;
     ui.promptEl.placeholder = p.readonly ? "Read-only — pick the repo above or Resume from history to continue" : (p.resume ? "Resuming saved session — your next message continues it" : "Message Claude… (Ctrl+Enter)");
-    const u = p.usage || {};
-    const ctx = p.contextUsage;
-    const ctxPct = ctx && typeof ctx.percentage === "number" ? Math.round(ctx.percentage <= 1 ? ctx.percentage * 100 : ctx.percentage) : null;
-    ui.usageEl.textContent = (u.inputTokens || u.outputTokens) ? `${((u.inputTokens || 0) + (u.outputTokens || 0)).toLocaleString()} tok` + (ctxPct !== null ? ` · ${ctxPct}% ctx` : "") : "—";
-    ui.usageEl.title = ctx ? `Context window: ${(ctx.totalTokens || 0).toLocaleString()} / ${(ctx.maxTokens || 0).toLocaleString()} tokens (${ctxPct ?? "—"}%)` : "";
+    const usg = wsUsageLabel(p.usage, p.contextUsage);
+    ui.usageEl.textContent = usg.text || "—";
+    ui.usageEl.title = usg.title;
     // paintPane fires on every streamed event during a turn — a full replaceChildren() would
     // otherwise (a) blow away any tool-group a user just expanded (fixed by handing the pane's
     // persisted `_expandedGroups` into renderTranscript) and (b) yank the scroll position back to

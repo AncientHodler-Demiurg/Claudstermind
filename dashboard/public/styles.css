@@ -1317,6 +1317,8 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pc-tab-x { color: var(--ink-mute); font-size: 13px; line-height: 1; padding: 0 2px; }
 .pc-tab-x:hover { color: var(--ink); }
 .pc-mode { flex: 0 0 auto; max-width: 96px; }
+.pc-usage { flex: 0 0 auto; font-size: 10.5px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.pc-usage[hidden] { display: none; }
 .pc-tab-name { max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
 /* Pact chat history panel (P3) — a centered modal listing every saved Pact chat, resumable. */
 .pc-hist-overlay { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.5);
