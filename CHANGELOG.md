@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.52] - 2026-08-12
+
+### Added
+- **Backend for "files changed by the agent" review.** New `lib/pactGit.mjs` reads the Ouronet repo's
+  working-tree diff vs its last commit (Claude writes to disk directly, doesn't commit): `gitChangedFiles`
+  lists every modified/added/deleted/untracked TEXT file with `+added/−removed` counts, and `gitFileAtHead`
+  returns a file's committed ("before") content for the diff. Pure parser `parseGitStatus` is unit-tested.
+  All git calls are argv-only (no shell), timed out, repo-confined, and degrade to empty when the dir
+  isn't a git repo. Exposed as `GET /api/pact/changed` and `GET /api/pact/file?ref=head`, tunneled to the
+  remote website exactly like the existing Pact reads (`pactChanged` / `pactFile` `ref` cases).
+
 ## [1.1.51] - 2026-08-12
 
 ### Fixed

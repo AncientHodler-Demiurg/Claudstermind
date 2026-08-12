@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import { readActivity, readLastBackup } from "../orchestrator/activity.mjs";
 import { listArchives, pruneArchives, deleteArchive } from "../orchestrator/archives.mjs";
 import { listDir as pactListDir, readTextFile as pactReadFile, writeTextFile as pactWriteFile, pactRoot as resolvePactRoot, appendBrainNote } from "../lib/pactFs.mjs";
+import { gitChangedFiles as pactChangedFiles, gitFileAtHead as pactFileAtHead } from "../lib/pactGit.mjs";
 import { readIdeState as pactReadIdeState, writeIdeState as pactWriteIdeState } from "../lib/pactIdeState.mjs";
 import { pactRunSpec } from "../lib/pactRun.mjs";
 import { readBackupConfig, writeBackupConfig, isBackupDue, browseDir } from "../orchestrator/backupConfig.mjs";
@@ -981,7 +982,18 @@ const handler = async (req, res) => {
   }
   if (path === "/api/pact/file" && req.method === "GET") {
     if (!who.canRead) return sendJSON(res, 403, { ok: false, reason: "read-only" });
-    return sendJSON(res, 200, pactReadFile(resolvePactRoot(MASTER_ROOT), url.searchParams.get("path") || ""));
+    const root = resolvePactRoot(MASTER_ROOT);
+    // ?ref=head → the committed ("before") content, for the agent-changed diff view (before=HEAD,
+    // after=on-disk). Same canRead gate + repo confinement as the plain on-disk read.
+    if (url.searchParams.get("ref") === "head")
+      return sendJSON(res, 200, pactFileAtHead(root, url.searchParams.get("path") || ""));
+    return sendJSON(res, 200, pactReadFile(root, url.searchParams.get("path") || ""));
+  }
+  // ---- Pact IDE: the working-tree diff vs HEAD — EVERY file the agent changed this turn (Claude
+  // writes to disk directly, doesn't commit). Read-only (canRead), repo-confined via pactGit. ----
+  if (path === "/api/pact/changed" && req.method === "GET") {
+    if (!who.canRead) return sendJSON(res, 403, { ok: false, reason: "read-only" });
+    return sendJSON(res, 200, { ok: true, files: pactChangedFiles(resolvePactRoot(MASTER_ROOT)) });
   }
   // ---- Pact IDE: SAVE a file back to disk (the editor's Save All / autosave). Local-only + canExecute
   // + repo-confined (pactFs refuses any escape). Tunneled through the relay as `pactWrite`. ----

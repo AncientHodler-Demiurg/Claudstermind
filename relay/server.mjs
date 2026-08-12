@@ -366,11 +366,14 @@ export function createRelay(opts = {}) {
 
     // ---- remote Pact IDE: tree + file reads, forwarded down the tunnel (the Ouronet repo lives on
     // the work machine, so the relay can't answer locally — one-shot COMMAND/RESULT via the bridge) ----
-    if (req.method === "GET" && (path === "/api/pact/tree" || path === "/api/pact/file")) {
+    if (req.method === "GET" && (path === "/api/pact/tree" || path === "/api/pact/file" || path === "/api/pact/changed")) {
       if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The Pact workspace is ancient-only." });
       if (!link.connected) return sendJSON(res, 503, { ok: false, error: "Local Claudstermind is not connected." });
-      const type = path === "/api/pact/tree" ? "pactTree" : "pactFile";
-      const args = type === "pactTree" ? { dir: url.searchParams.get("dir") || "" } : { path: url.searchParams.get("path") || "" };
+      const type = path === "/api/pact/tree" ? "pactTree" : path === "/api/pact/changed" ? "pactChanged" : "pactFile";
+      const args = type === "pactTree" ? { dir: url.searchParams.get("dir") || "" }
+        : type === "pactChanged" ? {}
+        // `ref` carries the ?ref=head diff-"before" request through the tunnel alongside the path.
+        : { path: url.searchParams.get("path") || "", ref: url.searchParams.get("ref") || "" };
       const r = await link.relay(type, args, 15_000);
       return sendJSON(res, 200, r || { ok: false, error: "no reply from the work machine" });
     }
