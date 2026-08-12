@@ -2676,13 +2676,21 @@ function pactEdRenderBody(g, tab) {
     // Best-effort line numbers: number the rendered rows sequentially (a diff interleaves old/new, so
     // there's no single true line — sequential keeps it simple). Dim + user-select:none so copy skips them.
     view.style.setProperty("--pk-lineno-w", pactGutterWidthCh(tab.agentDiff.rows.length) + "ch");
+    // Highlight with FULL multi-line context (not per-line): reconstruct the before/after files from the
+    // rows and run pactHighlightLines (re-opens spans across newlines) so multi-line @doc strings colour
+    // correctly — per-line highlighting mangled every line after such a string.
+    const canHl = diffIsPact && typeof window.pactHighlight === "function";
+    const afterHl = canHl ? pactHighlightLines(tab.agentDiff.rows.filter((r) => r.type !== "del").map((r) => r.text).join("\n"), tab.path) : null;
+    const beforeHl = canHl ? pactHighlightLines(tab.agentDiff.rows.filter((r) => r.type !== "add").map((r) => r.text).join("\n"), tab.path) : null;
+    let ai = 0, bi = 0;
     view.append(...tab.agentDiff.rows.map((r, i) => {
       const row = el("div", { class: "pact-diff-row " + (r.type === "add" ? "pd-add" : r.type === "del" ? "pd-del" : "pd-same") });
       const text = el("span", { class: "pd-text" });
-      // Keep StoicSyntax coloring in the diff (it was dropped before — rows showed as plain text). Per-line
-      // highlight is fine: diff rows are interleaved old/new, not one contiguous file.
-      if (diffIsPact && typeof window.pactHighlight === "function") text.innerHTML = window.pactHighlight(r.text === "" ? " " : r.text);
+      const html = canHl ? (r.type === "del" ? beforeHl[ai] : afterHl[bi]) : null;
+      if (html != null) text.innerHTML = html === "" ? "&nbsp;" : html;
       else text.textContent = r.text === "" ? " " : r.text;
+      if (r.type !== "del") bi++;
+      if (r.type !== "add") ai++;
       row.append(el("span", { class: "pd-lineno", "aria-hidden": "true" }, [String(i + 1)]), el("span", { class: "pd-sign" }, [r.type === "add" ? "+" : r.type === "del" ? "−" : " "]), text);
       return row;
     }));

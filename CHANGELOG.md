@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.50] - 2026-08-12
+
+### Fixed
+- **Agent-edit diff view mangled syntax coloring around multi-line strings.** The diff highlighted each
+  line in isolation, so a multi-line `@doc "… \\ …"` string (whose continuation lines are inside the
+  string) mis-colored — the lines after the opening quote rendered as code instead of string. The diff
+  now highlights the reconstructed before/after files with full multi-line context and maps each row to
+  its line, so coloring matches the editor exactly, including across multi-line strings.
+
 ## [1.1.49] - 2026-08-12
 
 ### Changed
