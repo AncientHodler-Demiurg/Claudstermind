@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.2.1] - 2026-08-12
+
+### Fixed
+- **Collapsed header no longer leaks off the workspace.** The "hide header" toggle is persisted, and it
+  was hiding the app header on every page — so after logging out and back in on a non-workspace view,
+  the header and its nav buttons were gone. The collapse now only applies on the workspace/Pact cockpit
+  views; every other page always shows its header.
+
 ## [1.2.0] - 2026-08-12
 
 ### Changed

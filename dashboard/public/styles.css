@@ -33,7 +33,10 @@ body {
 /* Collapse-header toggle: hide the whole top app header to reclaim vertical working area. The toggle
    buttons live below the header (Pact toolbar / Core workspace controls) so they stay reachable. The
    mobile bottom tab bar (.ph-tabbar) is NOT part of .ph, so navigation survives the collapse. */
-body.ph-collapsed .ph { display: none; }
+/* The collapse-header toggle only applies ON the workspace/pact cockpit views (body.ws-full is set
+   only there). Scoping to .ws-full stops the persisted preference from hiding the header on other
+   pages — e.g. after logging back in on a non-workspace view, where the nav would otherwise vanish. */
+body.ph-collapsed.ws-full .ph { display: none; }
 .ph-collapse-btn.--on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
 /* #main is FULL width (no auto-margin — that shrinks a flex item to content width); the content
    inside (#statbar / #view) is what caps + centres at --maxw. */
