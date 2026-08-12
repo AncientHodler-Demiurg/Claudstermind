@@ -30,6 +30,11 @@ body {
   display: flex; flex-direction: column; min-height: 100%;
 }
 .ph { flex: 0 0 auto; }
+/* Collapse-header toggle: hide the whole top app header to reclaim vertical working area. The toggle
+   buttons live below the header (Pact toolbar / Core workspace controls) so they stay reachable. The
+   mobile bottom tab bar (.ph-tabbar) is NOT part of .ph, so navigation survives the collapse. */
+body.ph-collapsed .ph { display: none; }
+.ph-collapse-btn.--on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
 /* #main is FULL width (no auto-margin — that shrinks a flex item to content width); the content
    inside (#statbar / #view) is what caps + centres at --maxw. */
 #main { flex: 1 1 auto; width: 100%; min-width: 0; display: flex; flex-direction: column; }

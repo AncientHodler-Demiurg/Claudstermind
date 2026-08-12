@@ -177,6 +177,33 @@ function renderIdentity() {
   // a long email from overflowing the header — see the mobile block in styles.css.
   host.replaceChildren(el("span", { class: "ph-id-name" }, [el("span", { class: "ph-id-prefix" }, ["Signed in as "]), nameB]), roleBadge(isAncient ? "ancient" : ((ME.roles || [])[0] || "member")), adminLink(isAncient), el("a", { class: "ph-btn --ghost --sm ph-logout", href: "/auth/logout" }, ["Log out"]));
 }
+// ---- Collapse the whole top app header (.ph) to reclaim vertical working area. Implemented as a
+// body class so a single flag hides the header everywhere; the toggle buttons live BELOW the header
+// (Pact toolbar, Core workspace controls) so they stay reachable when it's hidden. Persisted across
+// reloads in localStorage so the header stays where the user left it.
+const PH_COLLAPSE_KEY = "cm.ph-collapsed";
+function phHeaderCollapsed() { try { return localStorage.getItem(PH_COLLAPSE_KEY) === "1"; } catch { return false; } }
+function applyPhCollapsed(on) {
+  document.body.classList.toggle("ph-collapsed", !!on);
+  for (const b of document.querySelectorAll(".ph-collapse-btn")) {
+    b.classList.toggle("--on", !!on);
+    b.title = on ? "Show the app header" : "Hide the app header to maximize the working area";
+  }
+}
+function togglePhCollapsed() {
+  const on = !document.body.classList.contains("ph-collapsed");
+  try { localStorage.setItem(PH_COLLAPSE_KEY, on ? "1" : "0"); } catch { /* private mode — still toggles for the session */ }
+  applyPhCollapsed(on);
+}
+// A toggle button for the collapse-header control — reused by the Pact toolbar and the Core workspace.
+function phCollapseBtn(extraClass) {
+  const b = el("button", { class: (extraClass ? extraClass + " " : "") + "ph-collapse-btn", type: "button" }, ["⤢"]);
+  b.classList.toggle("--on", document.body.classList.contains("ph-collapsed"));
+  b.title = document.body.classList.contains("ph-collapsed") ? "Show the app header" : "Hide the app header to maximize the working area";
+  b.addEventListener("click", () => togglePhCollapsed());
+  return b;
+}
+
 function renderHeader() {
   const phSections = $("#phSections"), phSubnav = $("#phSubnav"), phL2 = $("#phL2"), phBack = $("#phBack"), phAction = $("#phAction");
   if (!phSections) return;
@@ -280,6 +307,7 @@ async function boot() {
   // Version chip in the medallion (§10) — public, so it shows on every surface.
   try { const v = await (await fetch("/api/version", { cache: "no-store" })).json(); const vc = $("#phVer"); if (vc) { vc.textContent = "v" + v.version; vc.title = `v${v.version}${v.gitSha ? " · " + v.gitSha : ""}${v.builtAt ? " · " + v.builtAt : ""}`; } } catch {}
 
+  applyPhCollapsed(phHeaderCollapsed());   // restore the collapsed-header preference before first paint
   renderHeader();
 
   MAP = await (await fetch("/api/map")).json();
@@ -3917,7 +3945,7 @@ function viewPact() {
   // Toolbar = ONE row: the action controls (Save All / Keep All / status) and the ONE shared StoicSyntax
   // band legend inline, so the color key reads as a single global key without wasting a second line. The
   // legend flexes and scrolls horizontally if the row gets tight; the autosave hint stays on the right.
-  const toolbar = el("div", { class: "pact-ed-toolbar" }, [saveBtn, keepBtn, saveStatus, pactLegend(),
+  const toolbar = el("div", { class: "pact-ed-toolbar" }, [saveBtn, keepBtn, phCollapseBtn("pact-ed-ico"), saveStatus, pactLegend(),
     el("span", { class: "pact-save-hint" }, ["autosaves 1.5s after you stop typing"])]);
   const editorWrap = el("div", { class: "pact-editor-wrap" }, [toolbar, editorEl]);
   const workEl = el("div", { class: "pact-work" }, [editorWrap, rightEl]);

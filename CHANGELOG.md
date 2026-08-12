@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.47] - 2026-08-12
+
+### Added
+- **"Collapse header" toggle in the Pact toolbar** (⤢, near Save All) that hides the whole top app
+  header (`.ph`) to reclaim vertical working area; clicking it again restores it. Implemented as a
+  `body.ph-collapsed` class so one flag hides the header everywhere, and the toggle sits below the
+  header so it stays reachable. The collapsed state persists across reloads (localStorage
+  `cm.ph-collapsed`) and is re-applied before first paint. The same control is also wired into the Core
+  workspace (next entry). The mobile bottom tab bar is unaffected, so navigation survives the collapse.
+
 ## [1.1.46] - 2026-08-12
 
 ### Added
