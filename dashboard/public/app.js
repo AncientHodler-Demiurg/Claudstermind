@@ -1006,6 +1006,53 @@ function viewDeploy() {
   const rActions = el("div", { class: "deploy-actions" }, []);
   const rNote = el("div", { class: "hint" }, []);
 
+  // ── ONE shared terminal (Explorer-style: collapsed by default; a header toggle expands it) that
+  // replaces the two per-column terminals. When expanded it shows the reload log, the deploy log, or
+  // — when BOTH run concurrently — a terminator-style split (reload LEFT, deploy RIGHT, equal width).
+  // It collapses back to a single pane the moment only one stream is still active; once both are idle
+  // it shows whichever ran most recently. `term`/`rterm` (above) stay the two live SSE buffers — this
+  // only re-parents those same <pre> nodes between single/split layouts, so their content persists.
+  // Never auto-expands on a run (matches Explorer); expanding mid/after a run shows the current log.
+  let termExpanded = false, reloadRunning = !!RESTART_ES, deployRunning = false, lastActive = null;
+  const termToggle = el("button", { class: "deploy-term-toggle" }, []);
+  const termBody = el("div", { class: "deploy-term-body", hidden: "" }, []);
+  termToggle.addEventListener("click", () => { termExpanded = !termExpanded; renderTerm(); });
+  function termWhich() {
+    if (reloadRunning) return "reload";
+    if (deployRunning) return "deploy";
+    if (lastActive) return lastActive;
+    if (term.textContent && term.textContent !== "(no deploy run yet)") return "deploy";
+    if (rterm.textContent && rterm.textContent !== "(no restart run yet)") return "reload";
+    return null;
+  }
+  function renderTerm() {
+    const both = reloadRunning && deployRunning;
+    const live = both ? "reload + deploy" : reloadRunning ? "reload" : deployRunning ? "deploy" : "";
+    termToggle.replaceChildren(
+      el("span", { class: "deploy-term-caret", "aria-hidden": "true" }, [termExpanded ? "▾" : "▸"]),
+      el("span", {}, [" Terminal"]),
+      live ? el("span", { class: "deploy-term-live" }, ["● " + live]) : "",
+    );
+    termBody.hidden = !termExpanded;
+    if (!termExpanded) return;
+    if (both) {
+      termBody.className = "deploy-term-body --split";
+      termBody.replaceChildren(
+        el("div", { class: "deploy-term-pane" }, [el("div", { class: "deploy-term-hd" }, ["Reload log"]), rterm]),
+        el("div", { class: "deploy-term-pane" }, [el("div", { class: "deploy-term-hd" }, ["Deploy log"]), term]),
+      );
+    } else {
+      termBody.className = "deploy-term-body";
+      const which = termWhich();
+      if (which === "reload") termBody.replaceChildren(el("div", { class: "deploy-term-hd" }, ["Reload log"]), rterm);
+      else if (which === "deploy") termBody.replaceChildren(el("div", { class: "deploy-term-hd" }, ["Deploy log"]), term);
+      else termBody.replaceChildren(el("div", { class: "hint" }, ["No reload or deploy has run yet — start one above, then expand to watch the log."]));
+    }
+    // Both buffers jump to their newest line — either may have streamed while off-screen (collapsed).
+    rterm.scrollTop = rterm.scrollHeight; term.scrollTop = term.scrollHeight;
+  }
+  const sharedTerm = el("div", { class: "deploy-shared-term" }, [termToggle, termBody]);
+
   // StoaExplorer-style step-by-step progress views, driven by the same SSE log streams (T4.2).
   const deployProgress = makeProgress(DEPLOY_PHASES);
   const restartProgress = makeProgress(RESTART_PHASES);
@@ -1017,10 +1064,12 @@ function viewDeploy() {
   function openStream(expectedVersion) {
     try { DEPLOY_ES && DEPLOY_ES.close(); } catch {}
     deployProgress.reset();
+    deployRunning = true; lastActive = "deploy"; renderTerm();
     DEPLOY_ES = openLogStream("/api/deploy/stream", term, (ok) => {
       deployProgress.done(ok);
       if (ok) { note.textContent = "✓ Deploy finished — live is up to date."; reloadSoon(note); }   // settle → auto-reload (Explorer-style)
       else { note.textContent = "✗ Deploy failed — see the log."; refresh(); }
+      deployRunning = false; renderTerm();
     }, {
       onLine: (line) => deployProgress.onLine(line),
       ...(expectedVersion ? {
@@ -1036,6 +1085,7 @@ function viewDeploy() {
           note.textContent = "No confirmation received — checking if it actually deployed…";
           const ok = await pollDeploySucceeded(note, expectedVersion);
           if (ok) { deployProgress.done(true); reloadSoon(note); } else { deployProgress.done(false); refresh(); }
+          deployRunning = false; renderTerm();
         },
       } : {}),
     });
@@ -1044,6 +1094,7 @@ function viewDeploy() {
   function openRestartStream() {
     try { RESTART_ES && RESTART_ES.close(); } catch {}
     restartProgress.reset();
+    reloadRunning = true; lastActive = "reload"; renderTerm();
     // Once the real restart is triggered, `systemctl restart claudstermind` kills THIS process, so
     // the SSE stream dies mid-flight and can NEVER deliver a completion sentinel — the elapsed
     // timer would otherwise tick "Running… 53s… 54s…" forever. The moment we see the trigger line
@@ -1064,6 +1115,7 @@ function viewDeploy() {
       const back = await pollBackUp(rNote);            // ✕ never loops: bounded attempts w/ backoff
       if (back) { restartProgress.done(true); reloadSoon(rNote); }   // ● complete → auto-reload
       else { restartProgress.done(false); restarting = false; }
+      reloadRunning = false; renderTerm();
       refreshRestartBtn();
     }
     RESTART_ES = openLogStream("/api/dashboard/restart/stream", rterm, (ok) => {
@@ -1072,6 +1124,7 @@ function viewDeploy() {
       if (ok) { beginWaiting(); return; }              // ok before the process dropped → settle path
       restartProgress.done(false);
       restarting = false;
+      reloadRunning = false; renderTerm();
       RESTART_ES = null;
       // The refusal reason (timeout / crashed / port bind failure / spawn-failed / …) is
       // written into the log itself by runSelfRestart's onLog (already prefixed "✗ "), not
@@ -1116,7 +1169,7 @@ function viewDeploy() {
       if (!(await deployConfirm())) return;   // custom modal (+ busy-agent guard) — never window.confirm
       note.textContent = "Starting deploy…"; openStream(pending?.version);
       const r = await wsPost2("/api/deploy", {});
-      if (!r.ok) { try { DEPLOY_ES.close(); } catch {} DEPLOY_ES = null; note.textContent = "⚠ " + (r.message || "could not start"); }
+      if (!r.ok) { try { DEPLOY_ES.close(); } catch {} DEPLOY_ES = null; note.textContent = "⚠ " + (r.message || "could not start"); deployRunning = false; renderTerm(); }
     });
     // No "show log" button: the log opens itself while a deploy is running (below) and the
     // tail is replayed after one finishes. There is nothing to show at any other time.
@@ -1167,34 +1220,35 @@ function viewDeploy() {
       restarting = true; rNote.textContent = "Starting reload pre-flight…"; openRestartStream();
       refreshRestartBtn();
       const r = await wsPost2("/api/dashboard/restart", {});
-      if (!r.ok) { try { RESTART_ES.close(); } catch {} RESTART_ES = null; restarting = false; rNote.textContent = "⚠ " + (r.message || "could not start"); refreshRestartBtn(); }
+      if (!r.ok) { try { RESTART_ES.close(); } catch {} RESTART_ES = null; restarting = false; rNote.textContent = "⚠ " + (r.message || "could not start"); reloadRunning = false; renderTerm(); refreshRestartBtn(); }
     });
     rActions.replaceChildren(restartBtn);
     if (!canRestart) rActions.append(el("span", { class: "hint" }, ["  (the work machine is offline)"]));
   }
 
-  // ── Tab A "Deploy & Reload" — the terminator split. Each column is self-contained: action card →
-  // its "what this restarts" banner → its progress checker → its always-visible black terminal. ──
+  // ── Tab A "Deploy & Reload" — two symmetric columns (Reload LEFT, Deploy RIGHT), each: header →
+  // action/version card → its "what this restarts" banner → its progress checker. The four paired
+  // sections are kept top-aligned across the columns by a CSS subgrid (`.deploy-col` adopts the
+  // split's rows), so Reload's 2-step and Deploy's 4-step checkers still start at the same y. The two
+  // terminals are gone from the columns — one shared, collapsible terminal sits below the split. ──
   const reloadCol = el("div", { class: "deploy-col" }, [
     el("div", { class: "deploy-col-hd" }, ["⟳ Reload — local host"]),
     reloadCardBox,
     reloadBanner,
     restartProgress.wrap,
-    el("div", { class: "deploy-term-hd" }, ["Reload log"]),
-    rterm,
   ]);
   const deployCol = el("div", { class: "deploy-col" }, [
     el("div", { class: "deploy-col-hd" }, ["🚀 Deploy — live container"]),
     deployCardBox,
     restartBanner,
     deployProgress.wrap,
-    el("div", { class: "deploy-term-hd" }, ["Deploy log"]),
-    term,
   ]);
   const tabDeploy = el("div", { class: "deploy-tabpanel" }, [
     pendingHd,
     el("div", { class: "deploy-split" }, [reloadCol, deployCol]),
+    sharedTerm,
   ]);
+  renderTerm();   // set the collapsed toggle label; body stays hidden until the user expands it
   // ── Tab B "Running locally" — the process list, moved out of the deploy columns (filled by
   // refreshProcesses, which partitions running vs. dormant). ──
   const tabProcs = el("div", { class: "deploy-tabpanel", hidden: "" }, [procBox]);

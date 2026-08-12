@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.37] - 2026-08-12
+
+### Changed
+- **Deploy admin: symmetric columns + one shared, collapsible terminal.** The Reload (LEFT) and
+  Deploy (RIGHT) columns are now kept top-aligned by a CSS subgrid — their paired sections (header,
+  action/version card, "what this restarts" banner, progress checker) line up at the same y, so
+  Reload's 2-step and Deploy's 4-step checkers start level despite unequal content heights. The two
+  per-column terminals are replaced by ONE shared terminal below the split, collapsed by default
+  (Explorer-style — a "▸ Terminal" header toggle expands it). When expanded it shows the reload log,
+  the deploy log, or — when both run concurrently — a terminator-style two-pane split (reload left,
+  deploy right); it collapses back to a single pane as soon as only one stream is still active, and
+  shows the most-recent log once both are idle. It never auto-expands on a run; expanding mid/after a
+  run shows the current log. The reload-counter fix, auto-reload-after-done, custom modals, busy-agent
+  guard, and what-restarts banners are all preserved.
+
 ## [1.1.36] - 2026-08-12
 
 ### Changed
