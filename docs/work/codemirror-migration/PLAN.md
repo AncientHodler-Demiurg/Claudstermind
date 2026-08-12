@@ -21,7 +21,8 @@ a CM mode. Keep StoicSyntax band colors identical.
   editable CM instance per tab + native line numbers; textarea overlay / caret-reveal / custom ruler DOM removed.
 - **S2 Inline folding.** ✅ DONE (v1.1.62). Fold gutter + pactCmFoldRanges range finder; read-only fold view + ⊟/✎ toggle removed.
 - **S3 Find/replace.** ✅ DONE (v1.1.63). CM search/dialog/matchesonscrollbar; custom find bar removed.
-- **S4 Change ruler + S5 Cleanup/1.2.0.** ⏳ TODO (follow-up): annotatescrollbar change ruler + delete remaining dead overlay CSS + bump 1.2.0.
+- **S4 Change ruler.** ✅ DONE (v1.1.64). annotatescrollbar change ruler (add/del/mod bands vs git HEAD) via pure pactChangeAnnRanges; custom `.pact-ovr` removed.
+- **S5 Cleanup + 1.2.0.** ✅ DONE (v1.2.0). Removed dead textarea/overlay/gutter/find-overlay/ovr + read-only fold-view CSS and the unused `renderPactCode`; kept `pactHighlightLines` (agent-diff view) and all unit-tested pure helpers. Shipped as 1.2.0.
 - **S1 Core swap.** Load CodeMirror 5 + addons from CDN in index.html. Write a CM5 mode for StoicSyntax
   (wrap `window.pactHighlight`'s tokenizer, or a token-level mode that reuses the same prefix/band rules
   → same `.pk-*`/`cm-*` colors). Replace the editable overlay in `pactEdRenderBody` with a CM instance

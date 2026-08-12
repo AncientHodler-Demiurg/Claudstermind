@@ -2407,14 +2407,6 @@ function pactFileIcon(name) {
   if (n.endsWith(".yaml") || n.endsWith(".yml")) return "⚙";
   return "•";
 }
-// Pact/.repl files get StoicSyntax coloring (window.pactHighlight, loaded before app.js); everything
-// else renders as plain monospace text. Falls back to plain text if the highlighter isn't present.
-function renderPactCode(pre, content, rel) {
-  const ext = (rel || "").toLowerCase();
-  const isPact = ext.endsWith(".pact") || ext.endsWith(".repl");
-  if (isPact && typeof window.pactHighlight === "function") pre.innerHTML = window.pactHighlight(content);
-  else pre.textContent = content;
-}
 // Highlight the whole file, then split the resulting HTML into one string per SOURCE line — carefully
 // re-opening/closing any <span> that straddles a newline (only pk-string spans can, for multi-line
 // string literals; comments stop at EOL). pactHighlight never nests spans, so tracking one open tag

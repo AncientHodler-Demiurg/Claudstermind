@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.2.0] - 2026-08-12
+
+### Changed
+- **The Pact editor is rebuilt on CodeMirror.** Editing `.pact`/`.repl` files now runs on a real editor
+  engine instead of a transparent textarea over a highlighted `<pre>`: you get inline code folding while
+  editing (fold modules, interfaces, and def* blocks in place — no more separate read-only fold view),
+  native line numbers, find/replace (Ctrl/⌘-F and Ctrl/⌘-H with case/regex and scrollbar match markers),
+  and git change-markers (green added / red removed / amber modified vs HEAD) painted on the scrollbar.
+  The StoicSyntax band colors are unchanged. This final release also removes the leftover styles and code
+  from the old textarea editor and the old read-only fold view.
+
 ## [1.1.64] - 2026-08-12
 
 ### Changed

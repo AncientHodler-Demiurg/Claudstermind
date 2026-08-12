@@ -1153,49 +1153,6 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-editor-scroll { flex: 1; min-height: 0; overflow: auto; }
 .pact-code { margin: 0; padding: 12px 14px; font: 12.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre; tab-size: 2; color: #d2d3d4; }
 
-/* Editable overlay: a transparent <textarea> sits exactly over the highlighted <pre>; the pre shows the
-   StoicSyntax colors, the textarea takes the typing + caret. Both share font/padding/scroll metrics. */
-.pact-edit-wrap { position: relative; flex: 1; min-height: 0; overflow: hidden; }
-/* Left line-number gutter: a <pre> pinned to the left, overflow hidden (scrolled programmatically in
-   sync with the textarea). --pk-gutter-w (set per box in JS, in ch so it tracks fontPx) sizes the column
-   AND the code layers' left padding, so code text starts just right of the numbers. user-select:none +
-   living outside the textarea means copying code never captures a line number. */
-.pact-gutter { position: absolute; left: 0; top: 0; bottom: 0; width: var(--pk-gutter-w, 3ch); margin: 0; z-index: 4;
-  padding: 12px 8px 12px 6px; box-sizing: border-box; overflow: hidden; pointer-events: none;
-  font: 12.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre; tab-size: 2;
-  text-align: right; color: var(--ink-dim); background: var(--panel);
-  border-right: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
-  user-select: none; -webkit-user-select: none; }
-.pact-edit-wrap.has-gutter .pact-edit-hl,
-.pact-edit-wrap.has-gutter .pact-find-ov,
-.pact-edit-wrap.has-gutter .pact-edit { padding-left: calc(var(--pk-gutter-w, 3ch) + 8px); }
-.pact-edit-hl, .pact-find-ov, .pact-edit { position: absolute; inset: 0; margin: 0; padding: 12px 14px; border: 0;
-  font: 12.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre; tab-size: 2; }
-.pact-edit-hl { overflow: hidden; pointer-events: none; color: #d2d3d4; }
-/* Find-match highlight overlay: transparent text (columns only), translucent <mark> over each match so
-   the syntax colors of the code below show through. Layered between the highlight <pre> and the textarea. */
-.pact-find-ov { overflow: hidden; pointer-events: none; color: transparent; -webkit-text-fill-color: transparent; }
-.pact-find-ov mark { color: transparent; -webkit-text-fill-color: transparent; background: rgba(250, 214, 90, .28); border-radius: 2px; }
-.pact-find-ov mark.pact-find-cur { background: rgba(255, 150, 40, .58); box-shadow: 0 0 0 1px rgba(255, 176, 32, .9); }
-.pact-edit { overflow: auto; resize: none; background: transparent; color: transparent; caret-color: #e6edf3;
-  outline: none; -webkit-text-fill-color: transparent; }
-.pact-edit::selection { background: rgba(120, 160, 255, .35); }
-.pact-edit::-moz-selection { background: rgba(120, 160, 255, .35); }
-
-/* Overview ruler (Cursor/VSCode-style scrollbar change decorations): a thin strip mapping the WHOLE file
-   with colored ticks at lines changed vs git HEAD. Positioned just LEFT of the textarea's native scrollbar
-   (right offset set in JS to the live scrollbar width) so it never blocks scrolling. The strip itself is
-   click-through (pointer-events:none); only the ticks catch clicks (jump-to-line). Tops/heights are % of the
-   wrap, so the mapping is resize-proof; min-height keeps a single-line tick visible. */
-.pact-ovr { position: absolute; top: 0; right: 0; bottom: 0; width: 6px; z-index: 5; pointer-events: none; }
-.pact-ovr-tick { position: absolute; left: 0; right: 0; min-height: 2px; border-radius: 1px;
-  pointer-events: auto; cursor: pointer; opacity: .8; }
-.pact-ovr-tick:hover { opacity: 1; }
-.pact-ovr-add { background: #34d399; }
-.pact-ovr-del { background: #ef5350; }
-.pact-ovr-mod { background: #fbbf24; }
-
-
 /* Agent-edit diff view (read-only until Keep All): Cursor-style green added / red removed lines. */
 .pact-diff-hd { display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .pd-badge { font: 700 11px ui-monospace, monospace; padding: 1px 7px; border-radius: 6px; }
@@ -1216,31 +1173,6 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pd-del .pd-sign { color: #ef5350; }
 .pd-del .pd-text { color: #c99; }
 
-/* Fold / read view (read-only): the container carries `pact-code` too, so the `.pact-code .pk-*`
-   token colors below apply to each line's spans; these rules override the base pre metrics for a
-   per-line flex layout with a left fold gutter. Inline font-size (per-box fontPx) wins over the base. */
-.pact-fold-view { padding: 8px 0; white-space: normal; }
-.pact-fold-bar { display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
-.pfv-row { display: flex; align-items: flex-start; }
-.pfv-row.pfv-openable:hover { background: rgba(255, 255, 255, .04); }
-/* Source line number (dim, non-select, excluded from copy — the fold-view copy handler rebuilds text
-   from tab.content, so DOM numbers never reach the clipboard). Width scales with fontPx via --pk-lineno-w. */
-.pfv-lineno { flex: 0 0 auto; min-width: var(--pk-lineno-w, 2ch); text-align: right; padding: 0 8px 0 4px;
-  color: var(--ink-dim); user-select: none; -webkit-user-select: none;
-  position: sticky; left: 0; z-index: 2; background: var(--panel); }   /* stay fixed on horizontal scroll */
-.pfv-gutter { position: relative; flex: 0 0 20px; text-align: center; user-select: none; color: var(--ink-dim); }
-.pfv-arrow { cursor: pointer; display: inline-block; width: 100%; }
-.pfv-arrow:hover { color: var(--ink); }
-.pfv-code { flex: 1; min-width: 0; white-space: pre; padding-right: 12px; }
-.pfv-ellipsis { flex: 0 0 auto; color: var(--ink-dim); user-select: none; padding: 0 8px; cursor: default; }
-/* Fold connector — a gutter line linking a collapsed opener (head) to its preserved closing line (foot),
-   which sit on adjacent visible rows, so the two read as one folded block. */
-.pfv-fold-head .pfv-gutter::after { content: ""; position: absolute; left: 50%; top: 55%; bottom: -1px;
-  border-left: 1px solid color-mix(in srgb, var(--accent) 60%, var(--line)); }
-.pfv-fold-foot .pfv-gutter::before { content: ""; position: absolute; left: 50%; top: -1px; height: 50%;
-  border-left: 1px solid color-mix(in srgb, var(--accent) 60%, var(--line)); }
-.pfv-fold-foot .pfv-gutter::after { content: ""; position: absolute; left: 50%; top: 50%; width: 6px;
-  border-bottom: 1px solid color-mix(in srgb, var(--accent) 60%, var(--line)); }
 
 /* StoicSyntax token colors (VS Code Dark+ base; StoicSyntax prefix BANDS carry the meaning —
    unprotected reads/compute cool, protected state-changers warm/red). */
