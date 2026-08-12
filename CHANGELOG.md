@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.39] - 2026-08-12
+
+### Fixed
+- **Test suite hung when run through the live service after the daemon was installed.** With the
+  sessiond daemon enabled, `SESSIOND_SOCK` is in the service environment; a test process launched
+  through the service inherited it, and importing `dashboard/server.mjs` then dialed the real daemon at
+  load and never released, hanging `node --test`. The server test now clears that variable before the
+  import so the run is deterministic regardless of ambient environment.
+
 ## [1.1.38] - 2026-08-12
 
 ### Changed

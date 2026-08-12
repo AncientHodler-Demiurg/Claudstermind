@@ -10,6 +10,7 @@
 // (package.json, .secrets, .claude, backup config, …) with no way to redirect them for a test.
 // Driving `readBody` directly with a synthetic request-like async iterable gets the same
 // incremental-cap coverage without any of that risk.
+import "./_test-no-sessiond.mjs";   // MUST be first — clears SESSIOND_SOCK before ./server.mjs loads (else a test run through the live service hangs dialing the daemon)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
