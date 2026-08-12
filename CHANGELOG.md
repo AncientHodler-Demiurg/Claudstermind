@@ -4,6 +4,13 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.2.6] - 2026-08-12
+
+### Fixed
+- **Pact chat preserves your typed line breaks.** The user message bubble collapsed newlines and spacing
+  into one blob; it now renders with `pre-wrap`, so paragraphs and line breaks appear exactly as typed
+  (applies to queued bubbles too).
+
 ## [1.2.5] - 2026-08-12
 
 ### Changed
