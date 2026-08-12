@@ -3563,7 +3563,7 @@ async function pactEdOpenAsDiff(path) {
   if (!g) return;
   PACT_ED.activeId = g.id;
   let tab = g.tabs.find((t) => t.path === path);
-  if (!tab) { tab = { path, name: path.split("/").pop(), loaded: false, content: "", saved: "", dirty: false, error: null }; g.tabs.push(tab); }
+  if (!tab) { tab = { path, name: path.split("/").pop(), loaded: false, content: "", saved: "", dirty: false, error: null, foldMode: /\.(pact|repl)$/i.test(path) }; g.tabs.push(tab); }   // Pact/repl files open in the fold/read view (arrows) by default; ✎ toggles to edit
   g.active = path;
   pactEdLayout();   // switch to the box + tab immediately (a "Loading…" body while the two fetches land)
   const [aRes, bRes] = await Promise.all([
@@ -3611,7 +3611,7 @@ async function pactEdFetchHead(tab) {
 async function pactEdOpenInto(g, path, makeActive, relayout) {
   if (!PACT_ED || !g) return;
   let tab = g.tabs.find((t) => t.path === path);
-  if (!tab) { tab = { path, name: path.split("/").pop(), loaded: false, content: "", saved: "", dirty: false, error: null }; g.tabs.push(tab); }
+  if (!tab) { tab = { path, name: path.split("/").pop(), loaded: false, content: "", saved: "", dirty: false, error: null, foldMode: /\.(pact|repl)$/i.test(path) }; g.tabs.push(tab); }   // Pact/repl files open in the fold/read view (arrows) by default; ✎ toggles to edit
   if (makeActive) g.active = path;
   if (relayout) pactEdLayout(); else pactEdRenderGroup(g);
   if (tab.loaded || tab.error) return;

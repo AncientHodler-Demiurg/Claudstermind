@@ -4,6 +4,13 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.59] - 2026-08-12
+
+### Changed
+- **Pact/.repl files open in the fold (read) view by default** — the collapse arrows for
+  modules/interfaces/defs are there the moment you open a file, no toggle needed. Click ✎ to switch that
+  file to edit mode (per-tab, remembered while it stays open).
+
 ## [1.1.58] - 2026-08-12
 
 ### Added
