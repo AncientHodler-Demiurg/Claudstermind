@@ -1249,9 +1249,14 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 /* Change ruler (annotatescrollbar addon): git-diff decorations painted on the native scrollbar — the
    CM-native successor to the old custom .pact-ovr strip. Green added / red removed / amber modified vs
    git HEAD, reusing the exact .pact-code hex bands. */
-.pact-cm-host .cm-change-add { background: #34d399; border-radius: 1px; }
-.pact-cm-host .cm-change-del { background: #ef5350; border-radius: 1px; }
-.pact-cm-host .cm-change-mod { background: #fbbf24; border-radius: 1px; }
+.pact-cm-host .cm-change-add { background: #34d399; }
+.pact-cm-host .cm-change-del { background: #ef5350; }
+.pact-cm-host .cm-change-mod { background: #fbbf24; }
+/* The annotatescrollbar addon draws each mark full-scrollbar-width at right:0 (opaque, z-index 7), which
+   HID the gray scroll thumb behind it. Pin the change marks to a thin band on the LEFT edge so the thumb
+   stays visible/usable, VSCode-style (add=green, del=red, mod=amber, vs git HEAD). */
+.pact-cm-host .cm-change-add, .pact-cm-host .cm-change-del, .pact-cm-host .cm-change-mod {
+  right: auto !important; left: 0 !important; width: 4px !important; border-radius: 2px; }
 
 /* StoicSyntax token colors for CodeMirror (it prefixes mode styles with `cm-`, so `pk-write` → `cm-pk-write`).
    SAME hex values as `.pact-code .pk-*` above — the editable view must look identical to the read-only one. */

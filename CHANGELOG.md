@@ -4,6 +4,13 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.2.8] - 2026-08-12
+
+### Fixed
+- **Change-ruler marks no longer hide the scrollbar thumb.** The git change decorations (green=added,
+  red=removed, amber=modified vs HEAD) were painted across the full scrollbar width, covering the gray
+  scroll thumb. They're now a thin band on the left edge, so the thumb stays visible and draggable.
+
 ## [1.2.7] - 2026-08-12
 
 ### Fixed
