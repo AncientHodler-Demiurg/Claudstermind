@@ -952,21 +952,23 @@ function viewDeploy() {
       ]),
       el("span", { class: "deploy-proc-detail" }, [p.detail || p.status || ""]),
     ]);
-    // Running processes show by default; everything dormant (stopped / not-installed / unknown)
-    // collapses behind an "N not running — show" card so the common case (what's up right now) is
-    // front and centre, and the rest is one click away. Partition is a pure, unit-tested helper.
-    const { running, dormant, dormantCount } = DeployHelpers.partitionProcesses(d.processes || []);
-    const kids = [el("div", { class: "deploy-card-t" }, ["Running on this machine"])];
-    if (running.length) kids.push(...running.map(procRow));
-    else kids.push(el("div", { class: "hint" }, [d.ok === false ? "Process list unavailable." : "Nothing running right now."]));
-    if (dormantCount) {
-      const dormBox = el("div", { class: "deploy-proc-dormant", hidden: "" }, dormant.map(procRow));
+    // Claudstermind CORE processes (the web service + the claudstermind-sessiond daemon, flagged
+    // `core: true` server-side) always show — even when stopped / not-installed — so the daemon row
+    // is visible by default (as "unit not installed") rather than buried. Everything else (the
+    // aggregator's localhost apps) collapses behind an "N others — show" toggle, running or not.
+    // Partition is a pure, unit-tested helper.
+    const { core, others, othersCount } = DeployHelpers.partitionProcesses(d.processes || []);
+    const kids = [el("div", { class: "deploy-card-t" }, ["Claudstermind core"])];
+    if (core.length) kids.push(...core.map(procRow));
+    else kids.push(el("div", { class: "hint" }, [d.ok === false ? "Process list unavailable." : "No core processes reported."]));
+    if (othersCount) {
+      const othBox = el("div", { class: "deploy-proc-dormant", hidden: "" }, others.map(procRow));
       let open = false;
       const toggle = el("button", { class: "deploy-proc-more", onclick: () => {
-        open = !open; dormBox.hidden = !open;
-        toggle.textContent = open ? "▾ " + dormantCount + " not running — hide" : "▸ " + dormantCount + " not running — show";
-      } }, ["▸ " + dormantCount + " not running — show"]);
-      kids.push(toggle, dormBox);
+        open = !open; othBox.hidden = !open;
+        toggle.textContent = open ? "▾ " + othersCount + " others — hide" : "▸ " + othersCount + " others — show";
+      } }, ["▸ " + othersCount + " others — show"]);
+      kids.push(toggle, othBox);
     }
     procBox.replaceChildren(...kids);
   }

@@ -5,19 +5,22 @@
 (function (root) {
   "use strict";
 
-  // Split the /api/admin/processes list into what's actually running vs. everything dormant
-  // (stopped / not-installed / unknown / anything not "running"). The "Running locally" tab shows
-  // `running` by default and collapses `dormant` behind an "N not running — show" card.
+  // Split the /api/admin/processes list into Claudstermind CORE processes vs. everything else. Core =
+  // the two entries the server flags `core: true` (the web service AND the claudstermind-sessiond
+  // daemon) — ALWAYS shown in the "Running locally" tab even when stopped / not-installed, so the
+  // daemon row is visible by default (showing "unit not installed") rather than hidden. Everything
+  // else (the aggregator's localhost apps) is a non-core "other", collapsed behind an "N others —
+  // show" toggle regardless of whether it's running or stopped.
   function partitionProcesses(procs) {
     var list = Array.isArray(procs) ? procs : [];
-    var running = [];
-    var dormant = [];
+    var core = [];
+    var others = [];
     for (var i = 0; i < list.length; i++) {
       var p = list[i] || {};
-      if (p.status === "running") running.push(p);
-      else dormant.push(p);
+      if (p.core === true) core.push(p);
+      else others.push(p);
     }
-    return { running: running, dormant: dormant, runningCount: running.length, dormantCount: dormant.length };
+    return { core: core, others: others, coreCount: core.length, othersCount: others.length };
   }
 
   // True once the restart log announces the REAL restart is being triggered — the point past which

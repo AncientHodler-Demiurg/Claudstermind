@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.36] - 2026-08-12
+
+### Changed
+- **"Running locally" tab: always show the Claudstermind core, collapse the rest.** The tab now
+  partitions by CORE vs. other rather than running vs. stopped. The two core processes — the web
+  service and the `claudstermind-sessiond` daemon — are ALWAYS visible, even when stopped or not
+  installed, so the daemon row shows "unit not installed" by default instead of being hidden. Every
+  other process (the aggregator's localhost apps) collapses behind an "N others — show" toggle,
+  running or not. Core entries are flagged `core: true` server-side (`webProcess` / `sessiondProcess`);
+  the split is the pure, unit-tested `partitionProcesses` helper.
+
 ## [1.1.35] - 2026-08-12
 
 ### Changed
