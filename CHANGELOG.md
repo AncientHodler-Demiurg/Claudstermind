@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.41] - 2026-08-12
+
+### Changed
+- **Pact syntax palette — rainbow by contract.** Re-tinted the StoicSyntax bands: write=red, admin=cherry,
+  orchestration=orange, capability=golden yellow, ctors=pale yellow, client=green, and a compute→reads
+  blue gradient (UC/UCK light blue, UR/URC blue, URD/URDC dark blue), enforce=violet. The reserved words
+  now separate the def family (dark teal) from native functions (lighter teal). Band prefixes also accept
+  an optional write-count digit, so counted names like `WU7_` color by their band (write) instead of
+  going uncolored.
+
 ## [1.1.40] - 2026-08-12
 
 ### Fixed

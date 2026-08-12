@@ -55,16 +55,20 @@
   // Prefix → band class. Order matters (specific/single-letter handled with a strict [_>] boundary so
   // they can't swallow multi-letter prefixes). The lead class `[|.:>]` requires a real segment start;
   // the trailing class allows `_`, cap-arrow `>`, or a `|` band separator (multi-letter only).
+  // `\d*` after the letters = an optional WRITE-COUNT (e.g. `WU7_`, `WI2_`, `A1_`, `XE2_`) — the digit
+  // only says how many writes the fn does; it never changes the band. The read band is split: UR/URC
+  // (reads) vs URD/URDC (derived reads) get distinct blues — URDC/URD tested first so UR can't swallow.
   var BANDS = [
-    ["pk-write",   /(?:^|[|.:>])(?:WI|WU|WW|W)[_>]/],
-    ["pk-admin",   /(?:^|[|.:>])A[_>]/],
-    ["pk-client",  /(?:^|[|.:>])C[_>]/],
-    ["pk-orch",    /(?:^|[|.:>])(?:XI|XE|XB)[_>]/],
-    ["pk-cap",     /(?:^|[|.:>])CAP[_>|]/],
-    ["pk-enforce", /(?:^|[|.:>])UEV[_>|]/],
-    ["pk-ctor",    /(?:^|[|.:>])UDC[_>|]/],
-    ["pk-read",    /(?:^|[|.:>])(?:URDC|URD|URC|UR)[_>|]/],
-    ["pk-compute", /(?:^|[|.:>])(?:UCK|UC)[_>|]/],
+    ["pk-write",   /(?:^|[|.:>])(?:WI|WU|WW|W)\d*[_>]/],
+    ["pk-admin",   /(?:^|[|.:>])A\d*[_>]/],
+    ["pk-client",  /(?:^|[|.:>])C\d*[_>]/],
+    ["pk-orch",    /(?:^|[|.:>])(?:XI|XE|XB)\d*[_>]/],
+    ["pk-cap",     /(?:^|[|.:>])CAP\d*[_>|]/],
+    ["pk-enforce", /(?:^|[|.:>])UEV\d*[_>|]/],
+    ["pk-ctor",    /(?:^|[|.:>])UDC\d*[_>|]/],
+    ["pk-readd",   /(?:^|[|.:>])(?:URDC|URD)\d*[_>|]/],
+    ["pk-read",    /(?:^|[|.:>])(?:URC|UR)\d*[_>|]/],
+    ["pk-compute", /(?:^|[|.:>])(?:UCK|UC)\d*[_>|]/],
   ];
 
   var NUM = /^-?\d+(\.\d+)?$/;
@@ -132,7 +136,8 @@
   // The band legend (class → human label + one-liner), so the UI can teach the color language.
   var LEGEND = [
     ["pk-compute", "UC_", "pure compute"],
-    ["pk-read", "UR_", "reads / derives"],
+    ["pk-read", "UR_", "reads"],
+    ["pk-readd", "URD_", "derived reads"],
     ["pk-ctor", "UDC_", "object ctors"],
     ["pk-enforce", "UEV_", "enforce / validate"],
     ["pk-cap", "CAP_", "capability"],
