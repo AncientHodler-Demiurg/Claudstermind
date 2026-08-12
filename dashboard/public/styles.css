@@ -1195,26 +1195,6 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-ovr-del { background: #ef5350; }
 .pact-ovr-mod { background: #fbbf24; }
 
-/* Find / find-and-replace bar — docks top-right inside the editable overlay (Ctrl/⌘-F; Ctrl-H opens
-   replace). Sits above the transparent textarea; the textarea's ::selection shows the current match. */
-.pact-find-bar { position: absolute; top: 6px; right: 6px; z-index: 6; display: flex; flex-direction: column; gap: 4px;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 5px 6px;
-  box-shadow: 0 8px 22px rgba(0, 0, 0, .38); max-width: min(94%, 460px); }
-.pact-find-row { display: flex; align-items: center; gap: 4px; }
-.pact-find-in { flex: 1 1 auto; min-width: 90px; background: var(--chip); border: 1px solid var(--line); border-radius: 6px;
-  color: var(--ink); font: 12px ui-monospace, "SF Mono", Menlo, monospace; padding: 3px 6px; outline: none; }
-.pact-find-in:focus { border-color: var(--accent); }
-.pact-find-in.--bad { border-color: var(--danger); color: #fca5a5; }
-.pact-find-count { flex: 0 0 auto; min-width: 48px; text-align: right; white-space: nowrap;
-  font: 11px ui-monospace, monospace; color: var(--ink-dim); }
-.pact-find-nav, .pact-find-tog, .pact-find-x, .pact-find-expand, .pact-find-rep {
-  flex: 0 0 auto; background: var(--chip); border: 1px solid var(--line); color: var(--ink-dim);
-  border-radius: 6px; font: 12px ui-monospace, monospace; padding: 3px 6px; line-height: 1; cursor: pointer; }
-.pact-find-nav:hover, .pact-find-tog:hover, .pact-find-x:hover, .pact-find-expand:hover, .pact-find-rep:hover { color: var(--ink); }
-.pact-find-tog.--on, .pact-find-expand.--on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
-.pact-find-expand { width: 22px; padding: 3px 0; text-align: center; }
-.pact-find-replrow .pact-find-spacer { flex: 0 0 22px; }
-.pact-find-rep { padding: 3px 8px; }
 
 /* Agent-edit diff view (read-only until Keep All): Cursor-style green added / red removed lines. */
 .pact-diff-hd { display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
@@ -1462,5 +1442,4 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .pact-ed-gutter-x, .pact-ed-gutter-y { display: none; }  /* no drag-resize on touch */
   .pact-right { flex: 0 0 auto; }
   .pact-chat, .pact-term { flex: 0 0 auto; min-height: 140px; }
-  .pact-find-bar { left: 6px; right: 6px; max-width: none; }   /* span the box on a phone */
 }

@@ -2654,7 +2654,6 @@ function pactEdRenderGroup(g) {
   pactEdRenderBody(g, active);
 }
 function pactEdRenderBody(g, tab) {
-  g._findCtx = null;   // cleared here; only the editable overlay branch below re-arms it (retargets/hides the find bar)
   if (!tab) { g.bodyEl.replaceChildren(el("div", { class: "pact-editor-empty hint" }, ["Empty box — pick a file from the tree."])); return; }
   if (tab.error) { g.bodyEl.replaceChildren(el("div", { class: "hint", style: "padding:10px;color:#f87171" }, ["⚠ " + tab.error])); return; }
   if (!tab.loaded) { g.bodyEl.replaceChildren(el("div", { class: "hint", style: "padding:10px" }, ["Loading…"])); return; }
@@ -3013,14 +3012,12 @@ function pactGutterWidthCh(count) {
 }
 // ===== end IDE GUTTER pure helpers =====
 
-function pactEdFindState(g) {
-  if (!g.find) g.find = { open: false, term: "", repl: "", cs: false, ww: false, re: false, showRepl: false, matches: [], idx: -1 };
-  return g.find;
-}
-// Document-level, capture-phase Ctrl/⌘-F (and Ctrl/⌘-H) so the in-app find is reachable even when the
-// editor <textarea> isn't focused — otherwise the browser's own page search steals the shortcut. Bound
-// ONCE (guarded); it self-limits to the active Pact box with a loaded editable overlay and no-ops
-// gracefully (letting the browser have the key) for md preview / agent diff / fold view / empty boxes.
+// Document-level, capture-phase Ctrl/⌘-F (Ctrl/⌘-H for replace) → the active box's CodeMirror find/replace
+// dialog, so the in-app search is reachable even when the editor isn't focused (otherwise the browser's own
+// page search steals the shortcut — the earlier "find fell through to the browser" bug). CM's search +
+// searchcursor + dialog addons (vendored) drive find/next/prev/replace/all, case + regex, and scrollbar
+// match annotations. No-ops gracefully (letting the browser have the key) when the active box has no editable
+// CM — markdown preview, agent diff, empty/loading tab. Bound ONCE (guarded); self-limits to VIEW === "pact".
 let PACT_FIND_KEY_BOUND = false;
 function pactEdInstallFindShortcut() {
   if (PACT_FIND_KEY_BOUND) return;
@@ -3031,196 +3028,19 @@ function pactEdInstallFindShortcut() {
     const k = (e.key || "").toLowerCase();
     if (k !== "f" && k !== "h") return;
     const g = PACT_ED.groups.find((gg) => gg.id === PACT_ED.activeId);
-    if (!g || !g._findCtx) return;   // active box has no editable overlay (md preview / diff / fold / empty)
+    if (!g) return;
     const active = g.tabs.find((t) => t.path === g.active);
-    if (!active || !active.loaded || active.agentDiff) return;
+    if (!active || !active.loaded || active.agentDiff) return;   // diff is a read-only review surface
+    const ext = active.path.toLowerCase();
+    if (ext.endsWith(".md") && !active.editing && typeof window.mdRender === "function") return;   // md preview, no editor
+    const cm = active._cm;
+    if (!cm) return;
     e.preventDefault();
-    pactEdOpenFind(g, k === "h");
+    cm.focus();
+    cm.execCommand(k === "h" ? "replace" : "findPersistent");
   }, true);
 }
-// Ctrl/⌘-F (Ctrl-H for replace). No-op when the active tab isn't an editable overlay (markdown preview,
-// agent diff, empty, loading — no _findCtx). Seeds the query from the current textarea selection.
-function pactEdOpenFind(g, withReplace) {
-  const ctx = g._findCtx;
-  const active = g.tabs.find((t) => t.path === g.active);
-  if (!ctx || !active || !active.loaded || active.agentDiff) return;
-  const f = pactEdFindState(g);
-  f.open = true;
-  if (withReplace) f.showRepl = true;
-  const sel = ctx.ta.value.slice(ctx.ta.selectionStart, ctx.ta.selectionEnd);
-  if (sel && sel.length < 200 && !/\n/.test(sel)) f.term = sel;
-  f._bar = null;
-  pactEdMountFindBar(g);
-  if (f._input) { f._input.focus(); f._input.select(); }
-}
-function pactEdCloseFind(g) {
-  const f = g.find; if (!f) return;
-  f.open = false;
-  const ctx = g._findCtx;
-  // Remove EVERY bar in the wrap (not just f._bar) so a stray twin can never survive the close.
-  if (ctx && ctx.wrap) Array.from(ctx.wrap.querySelectorAll(".pact-find-bar")).forEach((b) => { if (b.parentNode) b.parentNode.removeChild(b); });
-  else if (f._bar && f._bar.parentNode) f._bar.parentNode.removeChild(f._bar);
-  f._bar = f._input = f._replIn = f._count = null;
-  if (ctx && ctx.ov) ctx.ov.textContent = "";   // drop the match highlights
-  if (ctx && ctx.ta) ctx.ta.focus();
-}
-function pactEdMountFindBar(g) {
-  const ctx = g._findCtx, f = g.find;
-  if (!ctx || !f || !f.open) return;
-  // Dedupe (root cause of the "dead find bar"): a single Ctrl-F fires BOTH the document capture-phase
-  // handler AND the textarea's own keydown, so pactEdOpenFind ran twice and mounted TWO bars stacked
-  // exactly over each other (both position:absolute top-right). Clicking ×/next/prev/toggles hit the top
-  // bar while its identical twin stayed behind — so closing "did nothing" (the twin reappeared) and the
-  // bar looked inert. A body re-render while open could orphan a bar the same way. Always tear down every
-  // existing bar in this wrap before building a fresh one, so there is ever exactly ONE live bar.
-  Array.from(ctx.wrap.querySelectorAll(".pact-find-bar")).forEach((b) => { if (b.parentNode) b.parentNode.removeChild(b); });
 
-  const input = el("input", { class: "pact-find-in", type: "text", placeholder: "Find", spellcheck: "false" });
-  input.value = f.term || "";
-  const count = el("span", { class: "pact-find-count" }, [""]);
-  const prevB = el("button", { class: "pact-find-nav", title: "Previous match (Shift-Enter / ↑)" }, ["↑"]);
-  const nextB = el("button", { class: "pact-find-nav", title: "Next match (Enter / ↓)" }, ["↓"]);
-  const mkTog = (label, title, key) => {
-    const b = el("button", { class: "pact-find-tog" + (f[key] ? " --on" : ""), title }, [label]);
-    b.addEventListener("mousedown", (e) => e.preventDefault());   // keep focus in the field
-    b.addEventListener("click", () => { f[key] = !f[key]; b.classList.toggle("--on", f[key]); f.idx = 0; pactEdFindRefresh(g, false); input.focus(); });
-    return b;
-  };
-  const expand = el("button", { class: "pact-find-expand" + (f.showRepl ? " --on" : ""), title: "Toggle replace" }, [f.showRepl ? "▾" : "▸"]);
-  expand.addEventListener("mousedown", (e) => e.preventDefault());
-  const closeB = el("button", { class: "pact-find-x", title: "Close (Esc)" }, ["×"]);
-  closeB.addEventListener("mousedown", (e) => e.preventDefault());
-  closeB.addEventListener("click", () => pactEdCloseFind(g));
-  const findRow = el("div", { class: "pact-find-row" }, [
-    expand, input, count, prevB, nextB,
-    mkTog("Aa", "Match case", "cs"), mkTog("ab", "Whole word", "ww"), mkTog(".*", "Regex", "re"),
-    closeB,
-  ]);
-
-  const replIn = el("input", { class: "pact-find-in", type: "text", placeholder: "Replace", spellcheck: "false" });
-  replIn.value = f.repl || "";
-  const repOne = el("button", { class: "pact-find-rep", title: "Replace this match" }, ["Replace"]);
-  const repAll = el("button", { class: "pact-find-rep", title: "Replace all matches" }, ["All"]);
-  const replRow = el("div", { class: "pact-find-row pact-find-replrow" }, [
-    el("span", { class: "pact-find-spacer" }, []), replIn, repOne, repAll,
-  ]);
-  replRow.style.display = f.showRepl ? "" : "none";
-
-  input.addEventListener("input", () => { f.term = input.value; f.idx = 0; pactEdFindRefresh(g, false); });
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); pactEdFindStep(g, e.shiftKey ? -1 : 1); }
-    else if (e.key === "Escape") { e.preventDefault(); pactEdCloseFind(g); }
-    else if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) { e.preventDefault(); input.select(); }
-  });
-  replIn.addEventListener("input", () => { f.repl = replIn.value; });
-  replIn.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); pactEdFindReplaceOne(g); }
-    else if (e.key === "Escape") { e.preventDefault(); pactEdCloseFind(g); }
-  });
-  prevB.addEventListener("mousedown", (e) => e.preventDefault());
-  nextB.addEventListener("mousedown", (e) => e.preventDefault());
-  prevB.addEventListener("click", () => { pactEdFindStep(g, -1); input.focus(); });
-  nextB.addEventListener("click", () => { pactEdFindStep(g, 1); input.focus(); });
-  repOne.addEventListener("mousedown", (e) => e.preventDefault());
-  repAll.addEventListener("mousedown", (e) => e.preventDefault());
-  repOne.addEventListener("click", () => pactEdFindReplaceOne(g));
-  repAll.addEventListener("click", () => pactEdFindReplaceAll(g));
-  expand.addEventListener("click", () => {
-    f.showRepl = !f.showRepl;
-    replRow.style.display = f.showRepl ? "" : "none";
-    expand.textContent = f.showRepl ? "▾" : "▸";
-    expand.classList.toggle("--on", f.showRepl);
-    input.focus();
-  });
-
-  const bar = el("div", { class: "pact-find-bar" }, [findRow, replRow]);
-  f._bar = bar; f._input = input; f._replIn = replIn; f._count = count;
-  ctx.wrap.appendChild(bar);
-  pactEdFindRefresh(g, false);
-}
-function pactEdFindRefresh(g, doSelect) {
-  const f = g.find, ctx = g._findCtx;
-  if (!f || !ctx || !f._input) return;
-  const res = pactFindMatches(ctx.ta.value, f.term, { cs: f.cs, ww: f.ww, re: f.re });
-  f._input.classList.toggle("--bad", res === null);
-  if (res === null) { f.matches = []; f.idx = -1; f._count.textContent = "bad pattern"; pactEdFindPaintOverlay(g); return; }
-  f.matches = res;
-  if (!f.term) { f.idx = -1; f._count.textContent = ""; pactEdFindPaintOverlay(g); return; }
-  if (!res.length) { f.idx = -1; f._count.textContent = "No results"; pactEdFindPaintOverlay(g); return; }
-  if (f.idx < 0 || f.idx >= res.length) f.idx = 0;
-  f._count.textContent = (f.idx + 1) + "/" + res.length;
-  pactEdFindPaintOverlay(g);
-  if (doSelect) pactEdFindSelect(g);
-}
-// Repaint the highlight overlay (all matches faint, the current one bright). Pure-helper-driven so the
-// column math is testable; escaping + <mark> wrapping happens here. Cleared when there's nothing to show.
-function pactEdFindPaintOverlay(g) {
-  const f = g.find, ctx = g._findCtx;
-  if (!ctx || !ctx.ov) return;
-  if (!f || !f.open || !f.term || !f.matches || !f.matches.length) { ctx.ov.textContent = ""; return; }
-  const segs = pactFindOverlaySegs(ctx.ta.value, f.matches, f.idx);
-  ctx.ov.innerHTML = segs.map((s) => {
-    const t = escapeHtml(s.text);
-    return s.mark ? '<mark class="pact-find-hit' + (s.mark === "cur" ? " pact-find-cur" : "") + '">' + t + "</mark>" : t;
-  }).join("");
-  ctx.ov.scrollTop = ctx.ta.scrollTop; ctx.ov.scrollLeft = ctx.ta.scrollLeft;   // stay aligned with the code
-}
-function pactEdFindStep(g, dir) {
-  const f = g.find;
-  if (!f) return;
-  pactEdFindRefresh(g, false);
-  if (!f.matches.length) return;
-  f.idx = ((f.idx < 0 ? 0 : f.idx) + dir + f.matches.length) % f.matches.length;
-  f._count.textContent = (f.idx + 1) + "/" + f.matches.length;
-  pactEdFindSelect(g);
-}
-function pactEdFindSelect(g) {
-  const f = g.find, ctx = g._findCtx;
-  const m = f.matches[f.idx];
-  if (!m || !ctx) return;
-  const ta = ctx.ta;
-  ta.setSelectionRange(m.start, m.end);   // keep the native selection in sync (visible if focus returns)
-  pactEdFindPaintOverlay(g);   // move the bright "current match" mark on the visible overlay
-  const before = ta.value.slice(0, m.start);
-  const line = before.length - before.replace(/\n/g, "").length;   // newlines before the match = line index
-  const lh = parseFloat(getComputedStyle(ta).lineHeight) || (g.fontPx || 12.5) * 1.55;
-  const target = line * lh;
-  if (target < ta.scrollTop || target > ta.scrollTop + ta.clientHeight - lh * 2) {
-    ta.scrollTop = Math.max(0, target - ta.clientHeight / 2);
-  }
-  ctx.syncScroll();   // keep the highlight <pre> aligned
-}
-function pactEdFindReplaceOne(g) {
-  const f = g.find, ctx = g._findCtx;
-  if (!f || !ctx) return;
-  pactEdFindRefresh(g, false);
-  if (!f.matches.length || f.idx < 0) { pactEdFindStep(g, 1); return; }
-  const ta = ctx.ta, tab = ctx.tab, m = f.matches[f.idx];
-  const next = pactReplaceOne(ta.value, m, f.term, f.repl, { cs: f.cs, ww: f.ww, re: f.re });
-  if (next === null) return;
-  ta.value = next;
-  tab.content = next;
-  ctx.paint();
-  pactEdMarkDirty(g, tab);   // SAME dirty + autosave path a keystroke uses → Save All lights up, autosave fires
-  pactEdFindRefresh(g, false);
-  if (f.matches.length) { if (f.idx >= f.matches.length) f.idx = 0; f._count.textContent = (f.idx + 1) + "/" + f.matches.length; pactEdFindSelect(g); }
-}
-function pactEdFindReplaceAll(g) {
-  const f = g.find, ctx = g._findCtx;
-  if (!f || !ctx) return;
-  const ta = ctx.ta, tab = ctx.tab;
-  const out = pactReplaceAll(ta.value, f.term, f.repl, { cs: f.cs, ww: f.ww, re: f.re });
-  if (out === null) { pactEdFindRefresh(g, false); return; }
-  if (!out.count) { pactEdFindRefresh(g, false); return; }
-  ta.value = out.text;
-  tab.content = out.text;
-  ctx.paint();
-  pactEdMarkDirty(g, tab);
-  f.idx = -1;
-  pactEdFindRefresh(g, false);
-  f._count.textContent = "Replaced " + out.count;
-  if (f._input) f._input.focus();
-}
 // ---- Agent-edit diffs (point 3): the Pact chat agent writes files on disk. After each chat turn we
 // re-read every open, non-dirty file; if the agent changed it, the box switches to a Cursor-style diff
 // view (green added / red removed lines). "Keep All" accepts them (the new text is already on disk) and

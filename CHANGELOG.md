@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.1.63] - 2026-08-12
+
+### Changed
+- **Find/replace now runs on CodeMirror's search** — Ctrl/⌘-F opens the persistent find dialog,
+  Ctrl/⌘-H opens replace, Ctrl/⌘-G / Shift steps matches, with case/regex and scrollbar match
+  annotations (matchesonscrollbar), all working reliably in the editable view (fixes the old
+  browser-search fallthrough). A capture-phase document handler routes the shortcut to the active box's
+  editor even when it isn't focused. Removed the custom `.pact-find-bar` machinery + overlay it replaced;
+  the pure find helpers (`pactFindMatches`/`pactReplace*`) and their tests stay.
+
 ## [1.1.62] - 2026-08-12
 
 ### Changed
