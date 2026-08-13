@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.3.3] - 2026-08-12
+
+### Added
+- **Git modified-file coloring in the Pact file tree (VSCode-style).** Files with uncommitted changes vs
+  HEAD now get a colored name + a compact letter badge in the tree — amber "M" for modified, green "U" for
+  new/untracked — so you can see at a glance what you've changed, like VSCode's Explorer markers. Ancestor
+  directories get a subtle "changes below" tint. It reuses the existing `/api/pact/changed` list (no new
+  fetch), re-colors live on turn end / save / directory expand without collapsing the tree, and degrades
+  to no coloring when git is unavailable. Complementary to (not a replacement for) the scrollbar ruler.
+
 ## [1.3.2] - 2026-08-12
 
 ### Changed

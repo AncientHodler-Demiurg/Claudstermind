@@ -2529,6 +2529,7 @@ async function loadPactDir(rel, container) {
   if (!d.ok) { container.replaceChildren(el("div", { class: "hint" }, [d.error || "error"])); return; }
   if (!d.items.length) { container.replaceChildren(el("div", { class: "hint", style: "padding:4px 8px" }, ["(empty)"])); return; }
   container.replaceChildren(...d.items.map((it) => pactNode(it)));
+  pactTreeApplyChangeColors();   // color the freshly-rendered nodes (+ update dir hints) from the current map
 }
 function pactNode(it) {
   if (it.type === "dir") {
@@ -2536,17 +2537,20 @@ function pactNode(it) {
     let loaded = false;
     const chev = el("span", { class: "pact-chev" }, ["▸"]);
     const row = el("div", { class: "pact-node pact-dir" }, [chev, el("span", { class: "pact-node-ic" }, ["📁"]), el("span", { class: "pact-node-name" }, [it.name])]);
+    row.dataset.path = it.path;   // so pactTreeApplyChangeColors can give it a "changes below" hint
     row.addEventListener("click", async () => {
       const opening = kids.hidden;
       kids.hidden = !opening;
       chev.textContent = opening ? "▾" : "▸";
-      if (opening && !loaded) { loaded = true; await loadPactDir(it.path, kids); }
+      if (opening && !loaded) { loaded = true; await loadPactDir(it.path, kids); }   // loadPactDir re-colors on completion
     });
     return el("div", { class: "pact-node-wrap" }, [row, kids]);
   }
   const row = el("div", { class: "pact-node pact-file", title: it.path }, [
     el("span", { class: "pact-chev" }, [""]), el("span", { class: "pact-node-ic" }, [pactFileIcon(it.name)]), el("span", { class: "pact-node-name" }, [it.name]),
   ]);
+  row.dataset.path = it.path;   // stable key so the tree can be re-colored on update without a full re-render
+  pactFileRowApplyGit(row, pactChangedStatusMap().get(it.path) || null);   // initial color at creation
   // Desktop: tap opens into the active box. Mobile: viewPactMobile installs PACT_MOBILE_FILE_TAP, which
   // pops the double-donut box picker instead (M3). Read the hook at click time so the (cached, warmed-once)
   // tree always routes to the CURRENT mobile view — and falls back to pactEdOpen after a rotate to desktop.
@@ -2974,6 +2978,7 @@ async function pactEdSaveTab(tab) {
     tab.dirty = tab.content !== tab.saved;   // may have kept typing during the request
     if (tab._tabEl) tab._tabEl.classList.toggle("--dirty", tab.dirty);
     pactEdFetchHead(tab);   // re-baseline the overview ruler against HEAD (in case a commit landed)
+    pactTreeApplyChangeColors();   // reflect the save on the tree row promptly (uses the current change map)
     if (!tab.dirty) pactEdSaveStatus("✓ saved " + tab.name, false); else pactEdScheduleAutosave(tab);
   } else {
     pactEdSaveStatus("⚠ " + (d.message || d.error || "save failed"), true);
@@ -2988,6 +2993,7 @@ async function pactEdSaveAll() {
   pactEdSaveStatus("saving " + dirty.length + " file" + (dirty.length > 1 ? "s" : "") + "…", false);
   for (const t of dirty) await pactEdSaveTab(t);
   if (!pactEdAnyDirty()) pactEdSaveStatus("✓ all saved", false);
+  pactEdCheckChangedFiles();   // re-fetch the change list once (reuses the existing endpoint) so saves/commits re-color the tree
 }
 
 // ===== PACT FIND/REPLACE — within-file find + find-and-replace for the active editor box. =====
@@ -3375,6 +3381,58 @@ function pactChangedPathParts(path, maxSegs = 3) {
   return { name, dir };
 }
 // ===== end PACT CHANGED-PATH pure helper =====
+// ===== PACT GIT-STATUS — pure classifier (sliced out for unit tests; see lib/pactGitStatus.test.mjs)
+// Map a git working-tree status letter to the file-tree coloring class (VSCode-Explorer-style):
+//   'M' (modified)                → 'mod'   (amber tint + "M" badge)
+//   '?' (untracked) / 'A' (added) → 'new'   (green tint + "U" badge)
+//   'D' (deleted) / anything else → null    (deleted files aren't in the tree; junk is ignored)
+function pactGitStatusClass(status) {
+  const s = String(status == null ? "" : status).trim().charAt(0).toUpperCase();
+  if (s === "M") return "mod";
+  if (s === "?" || s === "A") return "new";
+  return null;
+}
+// ===== end PACT GIT-STATUS pure classifier =====
+// Build a lookup of repo-relative path → 'mod'|'new' from the last-fetched PACT_CHANGED. Deleted
+// files (and any unknown status) are dropped, since they never appear in the on-disk tree.
+function pactChangedStatusMap() {
+  const m = new Map();
+  for (const f of (PACT_CHANGED || [])) {
+    if (!f || !f.path) continue;
+    const cls = pactGitStatusClass(f.status);
+    if (cls) m.set(f.path, cls);
+  }
+  return m;
+}
+// Paint a single file row to reflect its git-change class (or clear it when `cls` is null). Idempotent:
+// strips any prior tint class + badge first, so re-applying on an update never duplicates the badge.
+function pactFileRowApplyGit(row, cls) {
+  if (!row) return;
+  row.classList.remove("pact-node--mod", "pact-node--new");
+  const old = row.querySelector(".pact-node-git");
+  if (old) old.remove();
+  if (!cls) return;
+  row.classList.add(cls === "mod" ? "pact-node--mod" : "pact-node--new");
+  row.appendChild(el("span", { class: "pact-node-git pact-node-git--" + cls, title: cls === "mod" ? "Modified vs HEAD" : "New / untracked" }, [cls === "mod" ? "M" : "U"]));
+}
+// Re-apply change coloring to the currently-rendered tree WITHOUT re-rendering it (so the tree keeps
+// its expand/collapse + scroll state). Walks every rendered file row, looks it up by dataset.path, and
+// adds/removes the tint class + badge. Also gives ancestor directory rows a subtle "has changes below"
+// hint. Called at the end of pactEdCheckChangedFiles, after a save, and after a dir lazy-expands.
+function pactTreeApplyChangeColors() {
+  if (!PACT_ED || !PACT_ED.treeBody) return;
+  const map = pactChangedStatusMap();
+  for (const row of PACT_ED.treeBody.querySelectorAll(".pact-node.pact-file"))
+    pactFileRowApplyGit(row, map.get(row.dataset.path) || null);
+  // Parent-dir hint: mark any directory that has a changed file nested somewhere beneath it.
+  const dirty = new Set();
+  for (const p of map.keys()) {
+    const segs = String(p).split("/"); let cur = "";
+    for (let i = 0; i < segs.length - 1; i++) { cur = cur ? cur + "/" + segs[i] : segs[i]; dirty.add(cur); }
+  }
+  for (const row of PACT_ED.treeBody.querySelectorAll(".pact-node.pact-dir"))
+    row.classList.toggle("pact-node--dirty-dir", !!(row.dataset.path && dirty.has(row.dataset.path)));
+}
 // Swap the tree column between its "Files" tree and the "Changed" list without touching either's
 // scroll/font state — just toggle visibility and the active-tab underline.
 function pactTreeSwitchTab(which) {
@@ -3392,6 +3450,7 @@ async function pactEdCheckChangedFiles() {
   if (!d || !d.ok || !Array.isArray(d.files)) return;   // git unavailable / not a repo — list stays empty
   PACT_CHANGED = d.files;
   pactEdRenderChanged();
+  pactTreeApplyChangeColors();   // reflect the fresh list on the tree live (a file becoming changed/committed re-colors without collapsing)
 }
 function pactEdRenderChanged() {
   const list = PACT_ED && PACT_ED.changedList;

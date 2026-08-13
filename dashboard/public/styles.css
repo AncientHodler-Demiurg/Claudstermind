@@ -1060,6 +1060,16 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 /* Long filename: reveal it fully on hover (a robust 'peek'; JS marquee is a later refinement). */
 .pact-node:hover .pact-node-name { overflow: visible; text-overflow: clip; white-space: nowrap; }
 .pact-node-kids { margin-left: 12px; }
+/* VSCode-Explorer-style git coloring: tint a changed file's name + show a compact letter badge.
+   modified → amber "M", new/untracked → green "U". Complements (does not replace) the scrollbar ruler. */
+.pact-node--mod .pact-node-name { color: #e2b04a; }
+.pact-node--new .pact-node-name { color: #6cc36c; }
+.pact-node-git { flex: 0 0 auto; margin-left: auto; padding: 0 4px; border-radius: 4px; font-size: 9.5px; font-weight: 800;
+  line-height: 1.5; letter-spacing: .02em; }
+.pact-node-git--mod { color: #e2b04a; background: color-mix(in srgb, #e2b04a 16%, transparent); }
+.pact-node-git--new { color: #6cc36c; background: color-mix(in srgb, #6cc36c 16%, transparent); }
+/* Subtle "has changes below" hint on an ancestor directory row (VSCode dims the folder name). */
+.pact-node--dirty-dir .pact-node-name { color: color-mix(in srgb, #e2b04a 62%, var(--ink)); }
 
 .pact-work { flex: 1; min-width: 0; display: flex; gap: 10px; }
 /* Zone A = a Save-All toolbar over rows of editor boxes (up to 8), stacked per the split ladder
