@@ -2636,6 +2636,9 @@ function pactIsMobile() { return !!PACT_MOBILE_MQ.matches; }
 if (PACT_MOBILE_MQ.addEventListener) PACT_MOBILE_MQ.addEventListener("change", () => {
   if (VIEW !== "pact") return;
   if (typeof PACT_CHAT !== "undefined" && PACT_CHAT) pactChatStop();   // close the old chat stream before the rebuild reopens one
+  // Drop the mobile-only hooks so the discarded stage's closures (a gone donut / history sheet) can't fire
+  // into detached DOM after the swap; viewPactMobile re-installs its own on the way back.
+  PACT_MOBILE_FILE_TAP = null; PACT_MOBILE_SESSIONS_CB = null;
   render();
 });
 let PACT_TREE_FONT = 12.5;   // tree font size (px), adjustable via the tree header A-/A+
@@ -4444,10 +4447,21 @@ function viewPactMobile() {
   const openMenu = () => { renderMenu(); root.classList.add("pactm-open"); };
   const closeMenu = () => root.classList.remove("pactm-open");
   const toggleMenu = () => (root.classList.contains("pactm-open") ? closeMenu() : openMenu());
-  hb.addEventListener("click", toggleMenu);
-  hb.addEventListener("touchend", (e) => { e.preventDefault(); toggleMenu(); });   // README §9: preventDefault kills the ghost-tap double-fire (open-then-close on a quick tap)
-  drawerX.addEventListener("click", closeMenu);
-  backdrop.addEventListener("click", closeMenu);
+  // README §9 — one tap handler that (a) kills the ghost-tap double-fire (a touch's synthetic click firing
+  // a SECOND time, which on a toggle re-closes it, and on a nav row lets the click fall THROUGH to whatever
+  // the swap revealed under the finger) and (b) ignores a scroll-then-release inside a scrollable list (so
+  // dragging the menu/sheet doesn't select the row you lifted off). preventDefault on a stationary touchend
+  // suppresses the synthetic click; a moved touch falls through to native scroll and fires nothing.
+  const onTap = (node, fn) => {
+    let moved = false, y0 = 0;
+    node.addEventListener("click", fn);
+    node.addEventListener("touchstart", (e) => { moved = false; y0 = e.touches[0] ? e.touches[0].clientY : 0; }, { passive: true });
+    node.addEventListener("touchmove", (e) => { const y = e.touches[0] ? e.touches[0].clientY : y0; if (Math.abs(y - y0) > 8) moved = true; }, { passive: true });
+    node.addEventListener("touchend", (e) => { if (moved) return; e.preventDefault(); fn(e); });
+  };
+  onTap(hb, toggleMenu);
+  onTap(drawerX, closeMenu);
+  onTap(backdrop, closeMenu);
 
   // Reused stage elements so their state (tree expansion, terminal output, chat DOM) survives selection
   // swaps instead of being rebuilt from scratch each time.
@@ -4473,7 +4487,7 @@ function viewPactMobile() {
     const kids = [el("span", { class: "pactm-item-ic" }, [icon]), el("span", { class: "pactm-item-name" }, [name])];
     if (sub) kids.push(el("span", { class: "pactm-item-sub" }, [sub]));
     const b = el("button", { class: "pactm-item" + (active ? " --active" : ""), type: "button" }, kids);
-    b.addEventListener("click", onSel);
+    onTap(b, onSel);
     return b;
   }
   function renderMenu() {
@@ -4554,7 +4568,7 @@ function viewPactMobile() {
         x.addEventListener("click", closeFile);
         x.addEventListener("touchend", (e) => { e.preventDefault(); closeFile(e); });
         const row = el("div", { class: "pactm-frow" + (t.path === g.active ? " --active" : "") }, [name, x]);
-        row.addEventListener("click", () => { g.active = t.path; PACT_ED.activeId = g.id; closeSheet(); renderStage(); pactStateSave(); });
+        onTap(row, () => { g.active = t.path; PACT_ED.activeId = g.id; closeSheet(); renderStage(); pactStateSave(); });
         return row;
       }));
     };
@@ -4647,7 +4661,7 @@ function viewPactMobile() {
     const rebuild = () => {
       const rows = [];
       const add = el("div", { class: "pactm-frow pactm-frow-new" }, [el("span", { class: "pactm-frow-name" }, ["＋ New conversation"])]);
-      add.addEventListener("click", () => { pactChatNewTab(); closeSheet(); renderStage(); });
+      onTap(add, () => { pactChatNewTab(); closeSheet(); renderStage(); });
       rows.push(add);
       (PACT_CHAT.tabs || []).forEach((t) => {
         const label = (t.key && PACT_CHAT_NAMES[t.key]) || t.name;
@@ -4657,7 +4671,7 @@ function viewPactMobile() {
         x.addEventListener("click", closeConv);
         x.addEventListener("touchend", (e) => { e.preventDefault(); closeConv(e); });
         const row = el("div", { class: "pactm-frow" + (t.id === PACT_CHAT.activeId ? " --active" : "") }, [name, x]);
-        row.addEventListener("click", () => { if (t.id !== PACT_CHAT.activeId) { pactChatSaveDraft(); PACT_CHAT.activeId = t.id; pactChatRender(); pactStateSave(); } closeSheet(); renderStage(); });
+        onTap(row, () => { if (t.id !== PACT_CHAT.activeId) { pactChatSaveDraft(); PACT_CHAT.activeId = t.id; pactChatRender(); pactStateSave(); } closeSheet(); renderStage(); });
         rows.push(row);
       });
       list.replaceChildren(...rows);
@@ -4682,7 +4696,7 @@ function viewPactMobile() {
         const meta = el("div", { class: "pactm-hrow-meta" }, [pactChatMsgLabel(r.turns) + (r.updatedAt ? " · " + pactAgo(r.updatedAt) : "") + (r.realSessionId ? "" : " · no resume")]);
         const first = el("div", { class: "pactm-hrow-first" }, [r.firstPrompt || "(no prompt)"]);
         const row = el("div", { class: "pactm-frow pactm-hrow" }, [el("div", { class: "pactm-hrow-main" }, [name, meta, first])]);
-        row.addEventListener("click", () => { pactChatOpenSaved(r, true); closeSheet(); renderStage(); });   // Resume — adopt the saved session key + rehydrate its transcript into a tab
+        onTap(row, () => { pactChatOpenSaved(r, true); closeSheet(); renderStage(); });   // Resume — adopt the saved session key + rehydrate its transcript into a tab
         return row;
       }));
     };

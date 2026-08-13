@@ -1451,6 +1451,10 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .pactm-tree { overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 8px 6px; }
   .pactm-tree .pact-node { font-size: 14px; padding: 6px 8px; }   /* bigger tap targets on a phone */
   .pactm-pane { min-height: 0; }
+  /* The chat pane is reused verbatim from the desktop renderer, which includes a ▾ collapse button that
+     hands the REPL its space by toggling a class on `.pact-right`. There's no `.pact-right` on the mobile
+     stage (chat is full-screen), so the button is dead here — hide it (M1 report flagged it). */
+  .pactm .pact-collapse { display: none; }
 
   /* Left slide-menu drawer (Twitter/X-style): overlay + backdrop, slides from the left, closes on a pick
      or a backdrop tap. Scoped to .pactm so it overlays only the stage, never the app's bottom tab bar. */
@@ -1485,7 +1489,7 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
      padding keeps the editor content from crowding into the riser band. */
   .pactm-boxwrap { display: flex; flex-direction: column; min-height: 0; position: relative; padding-bottom: 6px; }
   .pactm-boxwrap > .pactm-box { flex: 1 1 auto; min-height: 0; }
-  .pactm-riser { position: absolute; right: 12px; bottom: 8px; z-index: 15; min-height: 34px; padding: 6px 14px;
+  .pactm-riser { position: absolute; right: 12px; bottom: 8px; z-index: 15; min-height: 40px; padding: 6px 14px;
     display: inline-flex; align-items: center; gap: 6px; background: var(--accent); color: #fff; border: none;
     border-radius: 999px; font-size: 12.5px; font-weight: 700; box-shadow: 0 3px 10px rgba(0,0,0,.35);
     cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
@@ -1518,7 +1522,7 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
      center: 'open' boxes highlighted, the 'next' creatable box accented, higher 'disabled' wedges dimmed. */
   .pactm-donut-panel { align-items: center; }
   .pactm-donut-wrap { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 14px 12px 22px; }
-  .pactm-donut { width: min(78vw, 320px); height: auto; touch-action: manipulation; }
+  .pactm-donut { width: min(78vw, 320px, 58vh); height: auto; touch-action: manipulation; }   /* 58vh cap keeps the square donut inside the sheet in landscape */
   .pactm-wedge { stroke: var(--panel2); stroke-width: 2; }
   .pactm-wedge.--open { fill: color-mix(in srgb, var(--accent) 32%, var(--panel)); cursor: pointer; }
   .pactm-wedge.--open:hover { fill: color-mix(in srgb, var(--accent) 46%, var(--panel)); }
@@ -1536,7 +1540,7 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   /* M4 — the full-screen CHAT: the reused chat pane fills the wrap; TWO up-arrow risers bulge up from the
      bottom (conversations 💬 bottom-left, history 🕐 bottom-right). The wrap reserves a bottom band so the
      compose/send row doesn't crowd into the risers. */
-  .pactm-chatwrap { display: flex; flex-direction: column; min-height: 0; position: relative; padding-bottom: 46px; }
+  .pactm-chatwrap { display: flex; flex-direction: column; min-height: 0; position: relative; padding-bottom: 52px; }
   .pactm-chatwrap > .pact-chat { flex: 1 1 auto; min-height: 0; }
   .pactm-riser-hist { right: 12px; }
   .pactm-riser-chat { right: auto; left: 12px; }

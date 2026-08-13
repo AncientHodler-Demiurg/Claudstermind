@@ -4,6 +4,24 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.2.15] - 2026-08-12
+
+### Fixed
+- **Pact workspace — mobile view, stage M5 polish (touch, tap targets, dead chrome).** Audited the whole
+  phone re-layout against the Pantheonic mobile law and fixed the real defects. **Touch:** a single robust
+  `onTap(node, fn)` now backs every menu item, drawer/backdrop dismiss and every sheet nav row — it kills the
+  ghost-tap double-fire (a touch's synthetic click firing a second time, which on a nav row would fall
+  THROUGH to whatever the stage swap revealed under the finger) via `touchend` `preventDefault`, AND ignores
+  a scroll-then-release inside a scrollable list (dragging the menu/sheet no longer selects the row you lift
+  off). **Dead chrome:** the chat pane is reused verbatim from desktop, which carries a ▾ collapse button that
+  toggles a class on `.pact-right`; there's no `.pact-right` on the full-screen mobile stage, so the button
+  was dead — it's now hidden (`.pactm .pact-collapse`). **Tap targets / risers:** the up-arrow risers grew to
+  a ≥ 40px min-height and the chat wrap's bottom band to match, so the file/conversation/history risers clear
+  both the app tab bar and the compose row on a 360px phone. **Landscape:** the donut picker is capped at
+  `58vh` so the square selector can't outgrow its sheet in landscape. **Breakpoint cross:** rotating across
+  the 900px line now also drops the mobile-only `PACT_MOBILE_FILE_TAP` / `PACT_MOBILE_SESSIONS_CB` hooks so a
+  discarded stage's closures can't fire into detached DOM. Desktop `viewPact()` is byte-unchanged.
+
 ## [1.2.14] - 2026-08-12
 
 ### Added
