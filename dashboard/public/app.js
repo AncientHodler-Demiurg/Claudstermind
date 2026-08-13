@@ -3821,6 +3821,24 @@ function pactChatSaveDraft() {
 const PACT_CHAT_PREAMBLE = "[Pact IDE — auto-skill] You are working in the Ouronet Pact repo (your cwd). BEFORE anything else, read `OuronetInformational/SKILL.md` — it is the single load hook: it gives the load order, the StoicSyntax discipline (`StoicSyntax.md` + `ouronet/conventions/*`), the Pact 5 language layer (`pact5/`), the fast-recall rules, and the active-learning protocol. Follow its load order and become fully skilled from those files (they are the canonical authority). Use `OuronetInformational/MODULE-INDEX.md` for a one-glance map of every module (schemas/tables/public C_/A_/X entrypoints). Before writing code in any module, find it in the index then SCAN that module's `.pact` + its interface + its `.repl` tests to learn its real schemas/tables/prefixes/caps, and imitate sibling patterns — e.g. \"an info function for module X\" means mirror how the codebase exposes `UR_`/`INFO-` readers for X's schema (grep for the pattern rather than guessing). Run tests with `pact <file>.repl` (Pact 5.4); namespace `ouronet-ns`. Keep all code in the StoicSyntax discipline. When I correct you (\"do X instead of Y\"), capture it per SKILL.md's active-learning protocol (a dated `memories/` note + fold durable rules into the matching doc).";
 let PACT_CHAT = null;   // { host, tabs:[t], activeId, seq, es, mode, conn }
                         // t = { id, name, key, msgs:[{role|kind,text,tools}], live, status, started, perm, bodyEl }
+// Pact chat live-stream health, mirroring the Core cockpit (WS_LAST_MSG_AT + WS_STALE_TIMER). A mobile
+// carrier's NAT / the relay tunnel can drop an idle SSE connection with NO FIN/RST — the browser's
+// `onerror` never fires and the server keeps writing into a socket nobody reads, so the Pact chat used to
+// sit on "thinking…" forever (the answer was ready; this stream just went deaf). The watchdog notices the
+// silence and force-reconnects, which re-fires `hello` → pactChatResyncAll → the stuck tab gets its true
+// current state. `PACT_TICK_TIMER` drives the 1s "thinking… M:SS" elapsed readout.
+let PACT_STREAM_LAST_MSG_AT = 0;
+let PACT_STREAM_STALE_TIMER = null;
+let PACT_TICK_TIMER = null;
+// ===== PACT DURATION — pure helper (unit-tested via lib/pactDuration.test.mjs) =====
+// M:SS (or H:MM:SS past an hour) for the response timer. Junk/negative → "0:00".
+function pactFmtDuration(ms) {
+  const s = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  const mm = h ? String(m).padStart(2, "0") : String(m);
+  return (h ? h + ":" : "") + mm + ":" + String(sec).padStart(2, "0");
+}
+// ===== end PACT DURATION pure helper =====
 // Collapse one right-zone pane (chat / REPL) so the other fills the whole column. Mutually
 // exclusive — collapsing one un-collapses the other. State lives as a class on `.pact-right`.
 function pactSyncCollapseBtns() {
@@ -4009,6 +4027,15 @@ function pactChatInit(host) {
   pactChatNewTab();
   pactChatEnsurePrime();   // the fresh tab becomes the prime (undeletable) conversation
   pactChatRender();        // re-render so the prime marker (★, no ×) shows immediately
+  clearInterval(PACT_TICK_TIMER);
+  PACT_TICK_TIMER = setInterval(pactChatTickTimer, 1000);   // live "thinking… M:SS" elapsed readout
+}
+// Update the active tab's live elapsed timer in place (no full repaint) once a second while it's busy.
+function pactChatTickTimer() {
+  if (!PACT_CHAT || !PACT_CHAT.host) return;
+  const t = pactChatActive(); if (!t) return;
+  const node = PACT_CHAT.host.querySelector(".pc-timer");
+  if (node && pactChatBusy(t) && t._turnStartedAt) node.textContent = pactFmtDuration(Date.now() - t._turnStartedAt);
 }
 // The Pact chat ALWAYS has exactly one "prime" conversation: it can never be closed, so there is never a
 // state with zero conversations (a chat box always has one discussion open). If none is flagged yet (fresh
@@ -4023,6 +4050,7 @@ function pactChatStop() {
   // pending debounced save and a prompt typed in the last 800ms is silently lost on the way out.
   if (PACT_STATE_READY) pactStateFlush();
   PACT_STATE_READY = false; clearTimeout(PACT_STATE_TIMER);   // leaving Pact — stop persisting a torn-down layout
+  clearInterval(PACT_STREAM_STALE_TIMER);   // the watchdog is per-stream — reopen re-arms it
   if (PACT_CHAT && PACT_CHAT.es) { try { PACT_CHAT.es.close(); } catch {} PACT_CHAT.es = null; }
 }
 function pactChatActive() { return PACT_CHAT && PACT_CHAT.tabs.find((t) => t.id === PACT_CHAT.activeId); }
@@ -4064,8 +4092,18 @@ function pactChatOpenStream() {
   // every open tab on anything its previous connection silently missed. A turn that FINISHED while
   // disconnected emitted its live events into a dead stream and is otherwise lost to the UI; the
   // resync re-fetches the now-persisted reply. Mirrors the Core cockpit's resyncOpenPanes() on `hello`.
-  es.addEventListener("hello", () => { pactChatResyncAll(); pactOutboxFlush(); });
-  es.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } pactChatRoute(m); };
+  PACT_STREAM_LAST_MSG_AT = Date.now();   // a fresh stream isn't already stale
+  es.addEventListener("hello", () => { PACT_STREAM_LAST_MSG_AT = Date.now(); pactChatResyncAll(); pactOutboxFlush(); });
+  es.onmessage = (e) => { PACT_STREAM_LAST_MSG_AT = Date.now(); let m; try { m = JSON.parse(e.data); } catch { return; } pactChatRoute(m); };
+  // Staleness watchdog — the fix for "desktop stuck on thinking while the phone shows the answer". Every
+  // message AND the server's 25s heartbeat stamp PACT_STREAM_LAST_MSG_AT; if nothing arrives for
+  // WS_STALE_MS the connection is a zombie (see the note where these vars are declared) — force-reconnect,
+  // which re-fires `hello` → pactChatResyncAll and surfaces the reply the dead stream swallowed.
+  clearInterval(PACT_STREAM_STALE_TIMER);
+  PACT_STREAM_STALE_TIMER = setInterval(() => {
+    if (!PACT_CHAT || !PACT_CHAT.es) return;
+    if (Date.now() - PACT_STREAM_LAST_MSG_AT > WS_STALE_MS) pactChatOpenStream();
+  }, 10_000);
 }
 // Ask the server for the CURRENT authoritative state of every keyed tab's session — the same
 // reconnect catch-up the Core cockpit runs (see resyncOpenPanes + `_resync` server-side). Each reply
@@ -4163,6 +4201,10 @@ function pactChatRoute({ kind, sessionKey, data }) {
     case "tool_use": t.live = ""; t.msgs.push({ kind: "tool_use", tools: d.tools || [] }); pactChatPaint(t); return;
     case "result":
       t.live = ""; t.status = "idle"; t._pendingText = null; t._pendingImages = null;
+      // Stamp the total turn time onto this turn's reply so you can see "how long did it take" at a
+      // glance (and diagnose a slow turn). Only when WE started the turn (a resync-restored turn has no
+      // local start time). Attaches to the last assistant bubble; the tool rounds sit above it.
+      if (t._turnStartedAt) { const last = [...t.msgs].reverse().find((m) => m.role === "assistant"); if (last) last.elapsedMs = Date.now() - t._turnStartedAt; t._turnStartedAt = null; }
       if (d.usageTotal) t.usage = d.usageTotal;
       // Context usage changes every turn — refresh it once a turn actually finishes (not on every
       // streamed chunk), exactly like the Core cockpit (see paintPane's contextUsage request).
@@ -4315,6 +4357,7 @@ async function pactChatDispatch(t, text, images) {
   const userMsg = { role: "user", text, images: images.length ? images.map((a) => ({ dataUrl: a.dataUrl })) : undefined };
   t.msgs.push(userMsg);
   t.status = "thinking"; t.live = "";
+  t._turnStartedAt = Date.now();   // start the response timer (ticks live; final elapsed shown on the reply)
   // Safety net for a busy race: if the server refuses THIS dispatch with `busy` (its turn lock caught a
   // turn we couldn't yet see), pactChatRoute's `busy` case needs the exact text + images back to
   // re-queue rather than drop them. Cleared once the prompt is accepted (assistant/result) or errors.
@@ -4423,9 +4466,25 @@ function pactChatMsgNode(m) {
   if (m.role === "assistant") {
     const body = el("div", { class: "pc-asst-body" });
     if (typeof window.mdRender === "function") body.innerHTML = window.mdRender(m.text); else body.textContent = m.text;
-    return el("div", { class: "pc-msg pc-asst" }, [body]);
+    const kids = [body];
+    // Total time this response took — stamped on the reply when its turn finished (see the "result" case).
+    if (m.elapsedMs != null) kids.push(el("div", { class: "pc-elapsed", title: "Total time for this response" }, ["⏱ " + pactFmtDuration(m.elapsedMs)]));
+    return el("div", { class: "pc-msg pc-asst" }, kids);
   }
-  if (m.kind === "tool_use") return el("div", { class: "pc-tool" }, ["⚙ " + ((m.tools || []).map((x) => x.name).join(", ") || "tool")]);
+  if (m.kind === "tool_use") {
+    // Expandable, like the Core cockpit: the tool names show at a glance; tap to reveal each call's
+    // input so you can see exactly what the agent is doing before the reply lands.
+    const tools = m.tools || [];
+    const caret = el("span", { class: "pc-tool-caret" }, ["▸"]);
+    const head = el("div", { class: "pc-tool-head" }, [caret, "⚙ " + (tools.map((x) => x.name).join(", ") || "tool")]);
+    const inner = tools.map((x) => {
+      const inp = x.input == null ? "" : (typeof x.input === "string" ? x.input : (() => { try { return JSON.stringify(x.input, null, 2); } catch { return String(x.input); } })());
+      return el("div", { class: "pc-tool-call" }, [el("b", {}, [x.name || "tool"]), inp ? el("pre", { class: "pc-tool-input" }, [inp.length > 2000 ? inp.slice(0, 2000) + "…" : inp]) : ""]);
+    });
+    const bodyEl = el("div", { class: "pc-tool-body" }, inner); bodyEl.hidden = true;
+    head.addEventListener("click", () => { const willOpen = bodyEl.hidden; bodyEl.hidden = !willOpen; caret.textContent = willOpen ? "▾" : "▸"; });
+    return el("div", { class: "pc-tool" }, [head, bodyEl]);
+  }
   if (m.kind === "error") {
     const kids = ["⚠ " + m.text];
     if (typeof m.retry === "function") { const b = el("button", { class: "pc-retry", type: "button" }, ["Retry"]); b.addEventListener("click", (e) => { e.stopPropagation(); m.retry(); }); kids.push(b); }
@@ -4452,8 +4511,9 @@ function pactChatPaint(t) {
     ]);
     nodes.push(bar);
   }
-  if (t.live) nodes.push(el("div", { class: "pc-msg pc-asst pc-live" }, [el("div", { class: "pc-asst-body" }, [t.live])]));
-  else if (t.status === "thinking" || t.status === "deepwork") nodes.push(el("div", { class: "pc-think" }, [t.status === "deepwork" ? "🔴 still producing…" : "● thinking…"]));
+  const timerSpan = () => el("span", { class: "pc-timer", title: "Time on this response" }, [t._turnStartedAt ? pactFmtDuration(Date.now() - t._turnStartedAt) : ""]);
+  if (t.live) nodes.push(el("div", { class: "pc-msg pc-asst pc-live" }, [el("div", { class: "pc-asst-body" }, [t.live]), el("div", { class: "pc-live-meta" }, ["▍ ", timerSpan()])]));
+  else if (t.status === "thinking" || t.status === "deepwork") nodes.push(el("div", { class: "pc-think" }, [(t.status === "deepwork" ? "🔴 still producing… " : "● thinking… "), timerSpan()]));
   // Queued messages — typed while the agent was mid-turn, held (not yet sent) until this turn
   // finishes (see pactChatSend/pactChatDrainQueue). Rendered AFTER the live/thinking indicator, in a
   // dim pending style, in the order they'll be sent; drainQueue merges several into ONE prompt, so the

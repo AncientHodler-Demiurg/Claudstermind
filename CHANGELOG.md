@@ -4,6 +4,24 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.3.6] - 2026-08-13
+
+### Fixed
+- **Pact chat "stuck on thinking" (the answer was ready but never showed until refresh).** The Pact chat's
+  live SSE stream lacked the staleness watchdog the Core cockpit already has, so a zombie/half-open
+  connection (mobile-NAT or relay tunnel dropping an idle socket with no FIN/RST — the browser's `onerror`
+  never fires) left it sitting on "thinking…" forever while another device showed the reply. It now stamps
+  every message + heartbeat and force-reconnects after 65s of silence (re-firing `hello` → resync), the
+  same mechanism the Core cockpit uses. This — not slow processing — is what made a finished reply take
+  "5–10 minutes" to appear.
+
+### Added
+- **Response timer in the Pact chat.** A live "M:SS" ticks next to "thinking…"/streaming, and the total
+  time is stamped on each finished reply ("⏱ 1:12") so you can diagnose exactly how long a turn took.
+- **Expandable tool calls in the Pact chat.** Tool steps now expand (like the Core cockpit) to show each
+  call's input, so you can see what the agent is actually doing before the reply lands — not just a
+  "thinking" dot.
+
 ## [1.3.5] - 2026-08-13
 
 ### Added
