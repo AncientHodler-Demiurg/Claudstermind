@@ -269,6 +269,7 @@ export function createRelay(opts = {}) {
         snapshotAgeMs: link.snapshotAt ? Date.now() - link.snapshotAt : null,
         localActionsAvailable: connected,   // on the relay, actions exist iff the tunnel is up
         canWorkspace: who.canExecute && connected,   // drive Claude remotely: ancient + bridge up
+        sessionExpiresAt: who.sessionExp ? who.sessionExp * 1000 : null,
       });
     }
 

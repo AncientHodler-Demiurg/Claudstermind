@@ -639,6 +639,7 @@ const handler = async (req, res) => {
       canRead: who.canRead,
       canExecute: who.canExecute,
       localActionsAvailable: who.localActionsAvailable,
+      sessionExpiresAt: who.sessionExp ? who.sessionExp * 1000 : null,
     });
   }
 

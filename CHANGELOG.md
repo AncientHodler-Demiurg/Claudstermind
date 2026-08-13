@@ -4,6 +4,27 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.3.5] - 2026-08-13
+
+### Added
+- **Stay-logged-in (sliding session) + a visible session timer.** The login is now a 30-day *sliding*
+  cookie that auto-renews while a tab is open (a keep-alive refresh on a timer + whenever you refocus the
+  tab, via a new `/auth/refresh` endpoint), so an active session no longer silently dies at the old 8-hour
+  mark. The header shows a "🔒 <time-left>" pill (amber under an hour; click to renew now). Only ~30 days
+  of *total* inactivity forces a fresh hub login.
+- **Never-silent expiry.** If the login ever does lapse, a non-destructive top banner ("Your login
+  expired — Re-login; your unsent messages are saved") appears — detected by the `/api/me` poll, without
+  waiting for a failed send. No auto-redirect (that used to wipe in-progress text).
+- **Pact chat outbox — never lose a prompt.** A prompt that can't be sent (offline, or an expired login)
+  is no longer silently dropped: it's retracted from the transcript, kept in a localStorage outbox that
+  survives reload/relogin, refilled into the compose box, and shown with a "Retry" — and it auto-retries
+  the moment the connection/login is healthy again (on refresh, on stream reconnect).
+
+### Fixed
+- **Pact chat send now checks its result.** `wsPost` normalizes `ok` to the HTTP status, so a 401/403/503
+  (previously read as "sent") is correctly treated as a failed send by both the Pact chat and the Core
+  cockpit compose.
+
 ## [1.3.4] - 2026-08-13
 
 ### Added

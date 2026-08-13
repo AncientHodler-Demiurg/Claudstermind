@@ -106,6 +106,8 @@ export async function guard(req, cfg) {
     canRead: Boolean(session) && hasModernRole(roles),
     canExecute: Boolean(session) && hasAncientRole(roles),
     localActionsAvailable: false,
+    // Cookie expiry (epoch SECONDS from the JWT) so /api/me can surface a countdown to the client.
+    sessionExp: session?.exp ?? null,
   };
 }
 
@@ -227,6 +229,28 @@ export async function handleAuthRoute(req, res, url, cfg) {
   if (url.pathname === "/auth/logout") {
     res.writeHead(302, { "set-cookie": clearCookie(SESSION_COOKIE, "/"), location: "/" });
     res.end();
+    return true;
+  }
+
+  if (url.pathname === "/auth/refresh") {
+    // Sliding session: while the current cookie is STILL valid, mint a fresh one so an active tab never
+    // gets logged out mid-work. The client calls this on a timer + on refocus (see app.js keep-alive).
+    // A dead cookie gets a clean 401 (never a redirect) so the client can show a non-destructive banner
+    // instead of blowing away in-progress work. Never elevates: a request without a valid session is
+    // refused, so this can't be used to forge or extend a login that wasn't already granted at the hub.
+    const { session } = await readSessionFromHeader(req.headers.cookie, cfg.sessionSecret);
+    if (!session) {
+      res.writeHead(401, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify({ ok: false, authenticated: false }));
+      return true;
+    }
+    const fresh = await signSession({ sub: session.sub, roles: session.roles, name: session.name }, cfg.sessionSecret);
+    res.writeHead(200, {
+      "set-cookie": cookie(SESSION_COOKIE, fresh, { path: "/", maxAge: SESSION_TTL_SECONDS }),
+      "content-type": "application/json",
+      "cache-control": "no-store",
+    });
+    res.end(JSON.stringify({ ok: true, authenticated: true, expiresAt: Date.now() + SESSION_TTL_SECONDS * 1000 }));
     return true;
   }
 

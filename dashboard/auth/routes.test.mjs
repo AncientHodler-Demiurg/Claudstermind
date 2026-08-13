@@ -8,8 +8,18 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
 
-import { postForm, guard, readSessionFromHeader } from "./routes.mjs";
+import { postForm, guard, readSessionFromHeader, handleAuthRoute } from "./routes.mjs";
 import { signSession, SESSION_COOKIE, cookie } from "./session.mjs";
+
+/** A minimal node:http-style response capturing status/headers/body for handleAuthRoute tests. */
+function mockRes() {
+  return {
+    statusCode: 0, headers: {}, body: "", ended: false,
+    writeHead(s, h) { this.statusCode = s; for (const k in (h || {})) this.headers[k.toLowerCase()] = h[k]; return this; },
+    setHeader(k, v) { this.headers[String(k).toLowerCase()] = v; },
+    end(b) { if (b != null) this.body = String(b); this.ended = true; },
+  };
+}
 
 /** A stand-in hub: /token 308s to /token/, which echoes back what it received. */
 async function startHub() {
@@ -163,4 +173,38 @@ test("a forged session cookie is never admitted, even among duplicates", async (
   const header = `${SESSION_COOKIE}=${forged}; ${SESSION_COOKIE}=also-garbage`;
   const { session } = await readSessionFromHeader(header, CFG.sessionSecret);
   assert.equal(session, null);
+});
+
+test("guard surfaces the session expiry (epoch seconds) for the client countdown", async () => {
+  const c = cookie(SESSION_COOKIE, await signSession({ sub: "a", roles: ["ancient"] }, CFG.sessionSecret));
+  const g = await guard(reqWith(c), CFG);
+  assert.equal(typeof g.sessionExp, "number");
+  assert.ok(g.sessionExp * 1000 > Date.now(), "expiry is in the future");
+});
+
+test("/auth/refresh re-issues a fresh, valid session cookie for a live login (sliding session)", async () => {
+  const good = await signSession({ sub: "a", roles: ["ancient"], name: "A" }, CFG.sessionSecret);
+  const res = mockRes();
+  const consumed = await handleAuthRoute(reqWith(cookie(SESSION_COOKIE, good)), res, new URL("https://d/auth/refresh"), CFG);
+  assert.equal(consumed, true);
+  assert.equal(res.statusCode, 200);
+  const setCookie = String(res.headers["set-cookie"] || "");
+  assert.ok(setCookie.includes(SESSION_COOKIE + "="), "sets a fresh session cookie");
+  const j = JSON.parse(res.body);
+  assert.equal(j.ok, true);
+  assert.equal(j.authenticated, true);
+  assert.ok(j.expiresAt > Date.now(), "returns a future expiry for the countdown");
+  // The re-issued cookie must itself verify as this user's session (roles/sub preserved).
+  const { session } = await readSessionFromHeader(setCookie.split(";")[0], CFG.sessionSecret);
+  assert.equal(session.sub, "a");
+  assert.deepEqual(session.roles, ["ancient"]);
+});
+
+test("/auth/refresh refuses with 401 when there is no valid session — never forges a login", async () => {
+  const res = mockRes();
+  const consumed = await handleAuthRoute(reqWith(), res, new URL("https://d/auth/refresh"), CFG);
+  assert.equal(consumed, true);
+  assert.equal(res.statusCode, 401);
+  assert.equal(JSON.parse(res.body).ok, false);
+  assert.ok(!res.headers["set-cookie"], "issues no cookie to an unauthenticated caller");
 });

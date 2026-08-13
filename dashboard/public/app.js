@@ -175,7 +175,11 @@ function renderIdentity() {
   const nameB = el("b", {}); nameB.textContent = ME.name || ME.sub || "signed in";
   // The "Signed in as" prefix is wrapped so mobile CSS can drop it (and truncate the name) to keep
   // a long email from overflowing the header — see the mobile block in styles.css.
-  host.replaceChildren(el("span", { class: "ph-id-name" }, [el("span", { class: "ph-id-prefix" }, ["Signed in as "]), nameB]), roleBadge(isAncient ? "ancient" : ((ME.roles || [])[0] || "member")), adminLink(isAncient), el("a", { class: "ph-btn --ghost --sm ph-logout", href: "/auth/logout" }, ["Log out"]));
+  // A small session pill: shows how long you're kept logged in (auto-renews while the tab is used), or
+  // "session ended" if the login lapsed. Filled by renderSessionPill (also ticked on a timer).
+  const sessionPill = el("span", { id: "phSession", class: "ph-session" }, []);
+  host.replaceChildren(el("span", { class: "ph-id-name" }, [el("span", { class: "ph-id-prefix" }, ["Signed in as "]), nameB]), roleBadge(isAncient ? "ancient" : ((ME.roles || [])[0] || "member")), sessionPill, adminLink(isAncient), el("a", { class: "ph-btn --ghost --sm ph-logout", href: "/auth/logout" }, ["Log out"]));
+  renderSessionPill();
 }
 // ---- Collapse the whole top app header (.ph) to reclaim vertical working area. Implemented as a
 // body class so a single flag hides the header everywhere; the toggle buttons live BELOW the header
@@ -324,12 +328,17 @@ async function boot() {
   // /api/me so the banner and action buttons track the live connection state; when it
   // flips, re-render the current view so buttons appear/disappear accordingly.
   if (ME.mode === "live") {
+    sessionStartKeepAlive();   // slide the login while this tab is used; surface the countdown + expiry
     setInterval(async () => {
       let next; try { next = await (await fetch("/api/me", { cache: "no-store" })).json(); } catch { return; }
       const flipped = next.localConnected !== ME.localConnected || next.localActionsAvailable !== ME.localActionsAvailable;
       next._fetchedAt = Date.now();
       ME = next;
+      // Track login health from the poll too, so a silent expiry is caught WITHOUT waiting for a send.
+      if (typeof next.sessionExpiresAt === "number") SESSION_EXP = next.sessionExpiresAt;
+      sessionSetExpired(next.authenticated === false);
       renderHeader();
+      renderSessionPill();
       if (flipped) render();
     }, 10_000);
     // A faster tick just for the "updated Xs ago" freshness on the receiving-end pill.
@@ -2287,8 +2296,115 @@ function viewActivity() {
    Online + ancient only. A repo-scoped chat: prompts go down, the session streams back
    over SSE (assistant text, tool-uses, results). Each risky tool pops approve/deny unless
    trusted mode is on. Usage + cost shown; new folder/repo creation; session switching. */
-const wsPost = (action, body) => fetch("/api/workspace/" + action, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) }).then((r) => r.json()).catch(() => ({ ok: false }));
+const wsPost = (action, body) => fetch("/api/workspace/" + action, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) })
+  .then(async (r) => {
+    let j = {}; try { j = await r.json(); } catch {}
+    // Normalize `ok` to the HTTP status so senders can trust it. A 401 (expired login) or 403/503
+    // returns a JSON error BODY with no `ok` field, which used to read as "sent" — the exact reason a
+    // rejected prompt was silently dropped. `_status`/`_offline` let the send paths distinguish
+    // "login/permission" (retry after re-login) from "network" (retry when back online).
+    if (!r.ok) { j.ok = false; j._status = r.status; }
+    else if (typeof j.ok === "undefined") j.ok = true;
+    return j;
+  })
+  .catch(() => ({ ok: false, _status: 0, _offline: true }));
 const wsUuid = () => (crypto.randomUUID ? crypto.randomUUID() : "s-" + Date.now() + "-" + Math.random().toString(36).slice(2));
+
+// ===== SESSION KEEP-ALIVE — sliding login, a visible countdown, and non-silent expiry =====
+// Our login is a first-party cookie we fully control. Without a refresh it dies on a fixed timer and the
+// page only discovers it when a prompt is rejected (and, in the Pact chat, silently dropped). This slides
+// the cookie while the tab is used, shows the time left, and — if it ever DOES lapse — surfaces a
+// non-destructive banner instead of eating your work. Live mode only (local mode has no login).
+let SESSION_EXP = null;        // epoch ms the current cookie expires (from /api/me or /auth/refresh)
+let SESSION_EXPIRED = false;   // true once a refresh returns 401 — drives the banner + pill
+let SESSION_KA_TIMER = null;
+async function sessionRefresh() {
+  if (ME.mode !== "live") return true;
+  try {
+    const r = await fetch("/auth/refresh", { method: "POST", cache: "no-store" });
+    if (r.ok) {
+      const j = await r.json().catch(() => ({}));
+      if (j.expiresAt) SESSION_EXP = j.expiresAt;
+      sessionSetExpired(false);
+      pactOutboxFlush();   // login is healthy again — release anything that failed to send while it wasn't
+      renderSessionPill();
+      return true;
+    }
+    if (r.status === 401) { sessionSetExpired(true); return false; }
+  } catch { /* offline blip — the /api/me poll + heartbeat catch a real drop; don't flip to expired here */ }
+  return false;
+}
+function sessionStartKeepAlive() {
+  if (ME.mode !== "live") return;
+  if (typeof ME.sessionExpiresAt === "number") SESSION_EXP = ME.sessionExpiresAt;
+  clearInterval(SESSION_KA_TIMER);
+  SESSION_KA_TIMER = setInterval(sessionRefresh, 20 * 60 * 1000);   // slide every 20 min of an open tab
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) sessionRefresh(); });
+  window.addEventListener("online", () => { sessionRefresh(); });
+  setInterval(renderSessionPill, 30 * 1000);
+  sessionRefresh();   // slide immediately so a nearly-dead cookie from a long-idle tab renews at once
+}
+function sessionSetExpired(expired) {
+  const was = SESSION_EXPIRED; SESSION_EXPIRED = !!expired;
+  if (was !== SESSION_EXPIRED) { renderSessionBanner(); renderSessionPill(); }
+}
+function sessionFmtRemaining(ms) {
+  if (!(ms > 0)) return null;
+  const m = Math.floor(ms / 60000);
+  if (m < 60) return m + "m";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + "h";
+  return Math.floor(h / 24) + "d";
+}
+function renderSessionPill() {
+  const host = document.getElementById("phSession"); if (!host) return;
+  if (ME.mode !== "live" || !ME.authenticated) { host.hidden = true; return; }
+  host.hidden = false; host.onclick = () => sessionRefresh();
+  if (SESSION_EXPIRED) { host.textContent = "🔒 session ended"; host.className = "ph-session --bad"; host.title = "Your login expired — click Re-login below. Unsent messages are saved."; return; }
+  const remMs = SESSION_EXP ? SESSION_EXP - Date.now() : null;
+  const rem = remMs != null ? sessionFmtRemaining(remMs) : null;
+  host.textContent = "🔒 " + (rem || "active");
+  host.className = "ph-session" + (remMs != null && remMs < 3600000 ? " --warn" : "");
+  host.title = "You're kept logged in while you use this tab (auto-renews). Click to renew now.";
+}
+function renderSessionBanner() {
+  let bar = document.getElementById("sessionBanner");
+  if (!SESSION_EXPIRED) { if (bar) bar.remove(); return; }
+  if (bar) return;
+  bar = el("div", { id: "sessionBanner", class: "session-banner" }, [
+    el("span", {}, ["⚠ Your login expired. Re-login to keep working — your unsent messages are saved and retry automatically."]),
+    el("a", { class: "ph-btn --primary --sm", href: "/auth/login" }, ["Re-login"]),
+  ]);
+  document.body.appendChild(bar);
+}
+// ===== end SESSION KEEP-ALIVE =====
+
+// ===== PACT CHAT OUTBOX — never lose a prompt =====
+// A prompt that fails to send (offline, or the login lapsed) is kept here — in localStorage, so it
+// survives a reload/relogin — and auto-retried when the connection/login is healthy again. This is what
+// stops "I typed a long prompt, the tunnel was down, and it vanished on reload."
+const PACT_OUTBOX_KEY = "pact.chat.outbox.v1";
+function pactOutboxLoad() { try { const a = JSON.parse(localStorage.getItem(PACT_OUTBOX_KEY) || "[]"); return Array.isArray(a) ? a : []; } catch { return []; } }
+function pactOutboxSave(list) { try { localStorage.setItem(PACT_OUTBOX_KEY, JSON.stringify(list.slice(-20))); } catch {} }
+function pactOutboxAdd(sessionKey, text, images) {
+  if (!text) return null;
+  const entry = { id: wsUuid(), sessionKey, text, images: (images || []).map((a) => ({ mediaType: a.mediaType, base64Data: a.base64Data, dataUrl: a.dataUrl })), ts: Date.now() };
+  const list = pactOutboxLoad(); list.push(entry);
+  try { localStorage.setItem(PACT_OUTBOX_KEY, JSON.stringify(list.slice(-20))); }
+  catch { entry.images = []; pactOutboxSave(list); }   // images blew the quota → keep at least the text
+  return entry.id;
+}
+function pactOutboxRemove(id) { if (id) pactOutboxSave(pactOutboxLoad().filter((e) => e.id !== id)); }
+function pactOutboxFlush() {
+  if (!PACT_CHAT) return;
+  for (const e of pactOutboxLoad()) {
+    const t = pactChatByKey(e.sessionKey);
+    if (!t || pactChatBusy(t)) continue;   // tab not open (retry later) or busy (its own queue owns it)
+    pactOutboxRemove(e.id);
+    pactChatDispatch(t, e.text, e.images || []);   // re-adds itself to the outbox if it fails again
+  }
+}
+// ===== end PACT CHAT OUTBOX =====
 // The workspace id a pane attaches to: repo + worktree. TWO terminals selecting the same repo
 // (and worktree) derive the SAME key, so they drive — and watch — the one shared conversation.
 const wsWorkspaceId = (repo, worktree) => (repo ? repo + "@" + (worktree || "main") : null);
@@ -3948,7 +4064,7 @@ function pactChatOpenStream() {
   // every open tab on anything its previous connection silently missed. A turn that FINISHED while
   // disconnected emitted its live events into a dead stream and is otherwise lost to the UI; the
   // resync re-fetches the now-persisted reply. Mirrors the Core cockpit's resyncOpenPanes() on `hello`.
-  es.addEventListener("hello", () => pactChatResyncAll());
+  es.addEventListener("hello", () => { pactChatResyncAll(); pactOutboxFlush(); });
   es.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } pactChatRoute(m); };
 }
 // Ask the server for the CURRENT authoritative state of every keyed tab's session — the same
@@ -4180,7 +4296,7 @@ function pactMergeQueued(items, imgCap) {
 // item (pactChatDrainQueue) can be sent identically once the tab goes idle, not only a prompt typed
 // while the tab was already free. First-message preamble/auto-name + resume handling live here so both
 // entry points inherit them.
-function pactChatDispatch(t, text, images) {
+async function pactChatDispatch(t, text, images) {
   if (!PACT_CHAT || !t) return;
   images = images || [];
   let payload = text;
@@ -4194,8 +4310,10 @@ function pactChatDispatch(t, text, images) {
   }
   // Stash the just-sent images on the local user message as raw dataUrls (the server won't echo
   // this prompt back to us — see the "user" event's `by` guard — so this render is authoritative
-  // until a reload replaces it with the persisted turn's /api/workspace/image paths).
-  t.msgs.push({ role: "user", text, images: images.length ? images.map((a) => ({ dataUrl: a.dataUrl })) : undefined });
+  // until a reload replaces it with the persisted turn's /api/workspace/image paths). Held by
+  // reference so a failed send can RETRACT it (it was never really sent).
+  const userMsg = { role: "user", text, images: images.length ? images.map((a) => ({ dataUrl: a.dataUrl })) : undefined };
+  t.msgs.push(userMsg);
   t.status = "thinking"; t.live = "";
   // Safety net for a busy race: if the server refuses THIS dispatch with `busy` (its turn lock caught a
   // turn we couldn't yet see), pactChatRoute's `busy` case needs the exact text + images back to
@@ -4209,7 +4327,28 @@ function pactChatDispatch(t, text, images) {
   // from history (Resume / Load-into-box). Ignored server-side once a live session for the key exists.
   const body = { sessionKey: t.key, repo: PACT_REPO, worktree: "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id, resume: t.resume || undefined };
   if (images.length) body.images = images.map((a) => ({ mediaType: a.mediaType, base64Data: a.base64Data }));
-  wsPost("prompt", body);
+  const r = await wsPost("prompt", body);
+  if (!r || r.ok === false) {
+    // The prompt NEVER reached the work machine (offline, or the login lapsed). Don't leave a bubble
+    // that looks sent, and don't lose the text: retract the optimistic bubble, stash it in the outbox
+    // (survives reload/relogin, auto-retries when healthy), refill the compose box, and show an
+    // actionable note with Retry. `started` is rolled back if this was the very first message so its
+    // orienting preamble is re-added on the eventual successful send.
+    t.msgs = t.msgs.filter((m) => m !== userMsg);
+    if (firstMsg) t.started = false;
+    t.status = "idle"; t.live = ""; t._pendingText = null; t._pendingImages = null;
+    const boxId = pactOutboxAdd(t.key, text, images);
+    const why = (r && r._status === 401)
+      ? "Your login expired — this message was NOT sent, but it's saved. Re-login and it retries automatically."
+      : (r && r._offline)
+        ? "Not connected — this message was NOT sent, but it's saved and retries when you're back online."
+        : "This message couldn't be sent, but it's saved. It'll retry automatically — or press Retry.";
+    t.msgs.push({ kind: "error", text: why, retry: () => { pactOutboxRemove(boxId); pactChatDispatch(t, text, images); } });
+    const ta = PACT_CHAT.host && PACT_CHAT.host.querySelector(".pc-input");
+    if (ta && !ta.value.trim()) { ta.value = text; t.draft = text; pactChatAutosize(ta); pactStateSave(); }
+    t._forceBottom = true; pactChatPaint(t);
+    if (r && r._status === 401) sessionSetExpired(true);
+  }
 }
 function pactChatSend(t) {
   if (!PACT_CHAT || !t) return;
@@ -4287,7 +4426,11 @@ function pactChatMsgNode(m) {
     return el("div", { class: "pc-msg pc-asst" }, [body]);
   }
   if (m.kind === "tool_use") return el("div", { class: "pc-tool" }, ["⚙ " + ((m.tools || []).map((x) => x.name).join(", ") || "tool")]);
-  if (m.kind === "error") return el("div", { class: "pc-err" }, ["⚠ " + m.text]);
+  if (m.kind === "error") {
+    const kids = ["⚠ " + m.text];
+    if (typeof m.retry === "function") { const b = el("button", { class: "pc-retry", type: "button" }, ["Retry"]); b.addEventListener("click", (e) => { e.stopPropagation(); m.retry(); }); kids.push(b); }
+    return el("div", { class: "pc-err" }, kids);
+  }
   if (m.kind === "note") return el("div", { class: "pc-note" }, [m.text]);
   return el("div", {}, []);
 }

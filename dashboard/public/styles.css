@@ -78,6 +78,17 @@ body.ph-collapsed.ws-full .ph { display: none; }
 .role-badge { font-size: 10.5px; font-weight: 700; text-transform: lowercase; letter-spacing: .03em;
   border: 1px solid var(--line); color: var(--ink-soft); border-radius: 999px; padding: 2px 8px; }
 .role-badge.is-ancient { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+/* Session keep-alive pill (header) — time left on the sliding login; renews on click. */
+.ph-session { font-size: 10.5px; font-weight: 600; color: var(--ink-mute); border: 1px solid var(--line);
+  border-radius: 999px; padding: 2px 8px; cursor: pointer; white-space: nowrap; }
+.ph-session[hidden] { display: none; }
+.ph-session.--warn { color: #e2b04a; border-color: color-mix(in srgb, #e2b04a 55%, transparent); }
+.ph-session.--bad { color: #f87171; border-color: color-mix(in srgb, #f87171 60%, transparent); }
+/* Non-destructive "login expired" banner — fixed at the top, never redirects you away. */
+.session-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 9999; display: flex; gap: 12px;
+  align-items: center; justify-content: center; flex-wrap: wrap; padding: 8px 14px;
+  background: color-mix(in srgb, #f87171 22%, var(--bg, #12101c)); color: var(--ink, #e8e6f0);
+  border-bottom: 1px solid color-mix(in srgb, #f87171 55%, transparent); font-size: 13px; }
 
 /* Legacy .ghost (still used by in-view buttons) */
 .ghost { background: var(--panel-2); color: var(--ink); border: 1px solid var(--line);
@@ -1369,7 +1380,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pc-asst-body p { margin: 5px 0; } .pc-asst-body pre { background: #0b0f14; border: 1px solid var(--line); border-radius: 7px; padding: 8px; overflow: auto; }
 .pc-asst-body code { font: 11.5px ui-monospace, monospace; }
 .pc-tool { align-self: flex-start; font-size: 11px; color: var(--ink-dim); font-family: ui-monospace, monospace; }
-.pc-err { align-self: flex-start; color: #f87171; font-size: 12px; }
+.pc-err { align-self: flex-start; color: #f87171; font-size: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pc-retry { font-size: 11px; font-weight: 600; color: var(--accent); background: transparent;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 6px;
+  padding: 1px 8px; cursor: pointer; }
+.pc-retry:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .pc-note { align-self: center; color: var(--ink-mute); font-size: 11px; }
 /* A message typed while the agent was mid-turn: held (dim/pending) until the turn finishes, then
    auto-sent. Mirrors the Core cockpit's .ws-queued styling (orange, pink during deep work). */

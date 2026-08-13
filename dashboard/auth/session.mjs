@@ -9,7 +9,10 @@ export const LOGIN_COOKIE = "cm_admin_login";
 export const SESSION_COOKIE = "cm_admin_session";
 
 const LOGIN_TTL_SECONDS = 10 * 60;        // login round-trips are short
-const SESSION_TTL_SECONDS = 8 * 60 * 60;  // re-login is cheap (bounce through /authorize)
+// 30-day SLIDING window. It is re-issued on activity by /auth/refresh (see routes.mjs), so an in-use
+// tab never gets logged out mid-work; only ~30 days of TOTAL inactivity forces a fresh hub login. This
+// is our own first-party cookie — the hub is only involved at initial login — so we fully control it.
+const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 const key = (secret) => new TextEncoder().encode(secret);
 
