@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.6] - 2026-08-14
+
+### Added
+- **Drag file tabs — reorder and move between boxes.** Pact editor tabs are now draggable like Chrome
+  tabs: drag within a box to reorder, or drop onto another box's tab row to move the file there. The whole
+  tab moves — its editor and any unsaved edits come along — and the destination box becomes active. Guards
+  a no-op drop and refuses a cross-box move onto a box that already has that file open (never duplicates).
+
 ## [1.4.5] - 2026-08-14
 
 ### Changed

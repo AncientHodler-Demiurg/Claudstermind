@@ -1168,6 +1168,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-tab2-name { overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
 .pact-tab2-x { color: var(--ink-mute); font-size: 14px; line-height: 1; padding: 0 3px; border-radius: 4px; }
 .pact-tab2-x:hover { color: var(--ink); background: var(--line); }
+/* v1.4.6 — Chrome-style tab drag (reorder in a box / move between boxes). */
+.pact-tab2 { cursor: grab; }
+.pact-tab2.--dragging { opacity: .45; }
+.pact-tab2.--drop-before { box-shadow: inset 3px 0 0 var(--accent); }   /* insertion marker to the left */
+.pact-ed-hd.--dnd-over { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); outline: 1px dashed color-mix(in srgb, var(--accent) 50%, transparent); outline-offset: -2px; }
 .pact-ed-ico { flex: 0 0 auto; padding: 2px 8px; border-radius: 6px; background: var(--chip);
   border: 1px solid var(--line); color: var(--ink-dim); font-size: 13px; cursor: pointer; }
 .pact-ed-ico:hover { color: var(--ink); }

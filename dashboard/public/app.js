@@ -2782,6 +2782,65 @@ function pactEdCloseTab(g, path) {
   pactEdRenderGroup(g);
   pactStateSave();
 }
+// ===== PACT TAB-MOVE — pure helper (unit-tested via lib/pactTabMove.test.mjs) =====
+// Chrome-style tab drag: reorder within a box, or move a tab BETWEEN boxes. Given the source/target boxes'
+// path lists, the dragged `path`, and the path it was dropped BEFORE (null = drop at the end), returns the
+// resulting path lists. Blocks a no-op (dropped on itself) and a cross-box move onto a box that already has
+// that file open (which would duplicate it). For a same-box reorder, `from`/`to` are the one new order.
+function pactTabMovePlan(fromPaths, toPaths, path, beforePath, sameGroup) {
+  const src0 = Array.isArray(fromPaths) ? fromPaths.slice() : [];
+  const tgt0 = sameGroup ? src0.slice() : (Array.isArray(toPaths) ? toPaths.slice() : []);
+  if (!src0.includes(path)) return { from: src0, to: sameGroup ? src0 : tgt0, blocked: true };
+  if (sameGroup && beforePath === path) return { from: src0, to: src0, blocked: true };   // dropped on itself
+  if (!sameGroup && tgt0.includes(path)) return { from: src0, to: tgt0, blocked: true };   // already open there
+  const src = src0.filter((p) => p !== path);
+  const tgt = sameGroup ? src : tgt0.slice();
+  let j = tgt.length;
+  if (beforePath != null && beforePath !== path) { const bi = tgt.indexOf(beforePath); if (bi >= 0) j = bi; }
+  tgt.splice(j, 0, path);
+  return sameGroup ? { from: tgt, to: tgt, blocked: false } : { from: src, to: tgt, blocked: false };
+}
+// ===== end PACT TAB-MOVE pure helper =====
+// Apply a tab move to the live editor model (moves the whole tab OBJECT — its CodeMirror + unsaved content
+// ride along), then relayout. `beforePath` is the drop target (null = end of the destination box).
+function pactEdMoveTab(fromGid, path, toGid, beforePath) {
+  const fromG = PACT_ED.groups.find((g) => g.id === fromGid);
+  const toG = PACT_ED.groups.find((g) => g.id === toGid);
+  if (!fromG || !toG) return;
+  const sameGroup = fromG === toG;
+  const plan = pactTabMovePlan(fromG.tabs.map((t) => t.path), sameGroup ? null : toG.tabs.map((t) => t.path), path, beforePath, sameGroup);
+  if (plan.blocked) return;
+  const tab = fromG.tabs.find((t) => t.path === path);
+  if (!tab) return;
+  if (sameGroup) {
+    fromG.tabs = plan.from.map((p) => fromG.tabs.find((t) => t.path === p));
+    fromG.active = path;
+  } else {
+    fromG.tabs = plan.from.map((p) => fromG.tabs.find((t) => t.path === p));
+    if (!fromG.tabs.some((t) => t.path === fromG.active)) fromG.active = fromG.tabs.length ? fromG.tabs[0].path : null;
+    toG.tabs = plan.to.map((p) => (p === path ? tab : toG.tabs.find((t) => t.path === p)));
+    toG.active = path; PACT_ED.activeId = toG.id;
+  }
+  pactEdLayout();
+  pactStateSave();
+}
+// The path the drop would land BEFORE, from the pointer x over a box's tab header (null = at the end).
+function pactEdDropBefore(headerEl, clientX) {
+  for (const t of headerEl.querySelectorAll(".pact-tab2")) {
+    const r = t.getBoundingClientRect();
+    if (clientX < r.left + r.width / 2) return t.dataset.path || null;
+  }
+  return null;
+}
+// Clear any drag-over affordance across all boxes.
+function pactEdClearDropCue() {
+  if (!PACT_ED) return;
+  for (const g of PACT_ED.groups) {
+    if (!g.tabsEl) continue;
+    g.tabsEl.classList.remove("--dnd-over");
+    for (const t of g.tabsEl.querySelectorAll(".pact-tab2.--drop-before")) t.classList.remove("--drop-before");
+  }
+}
 // The split ladder (point 6): how the N boxes distribute into rows. Each entry is the box count per
 // row, top-to-bottom. Under-filled last rows (5→[3,2], 7→[4,3]) simply share their row equally.
 const PACT_ED_ROWS = { 1: [1], 2: [2], 3: [3], 4: [4], 5: [3, 2], 6: [3, 3], 7: [4, 3], 8: [4, 4] };
@@ -2876,11 +2935,44 @@ function pactEdRenderGroup(g) {
     ]);
     tb._tabEl = tab;
     tab.addEventListener("click", () => { PACT_ED.activeId = g.id; g.active = tb.path; pactEdLayout(); });
+    // Chrome-style drag: reorder within this box, or drop onto another box's tab row to move the file
+    // there (the whole tab — its editor + unsaved edits — moves with it). See pactEdMoveTab. (v1.4.6)
+    tab.setAttribute("draggable", "true");
+    tab.dataset.path = tb.path;
+    tab.addEventListener("dragstart", (e) => {
+      PACT_ED._drag = { gid: g.id, path: tb.path };
+      try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", tb.path); } catch {}
+      tab.classList.add("--dragging");
+    });
+    tab.addEventListener("dragend", () => { PACT_ED._drag = null; tab.classList.remove("--dragging"); pactEdClearDropCue(); });
     return tab;
   });
   const active = g.tabs.find((t) => t.path === g.active);
   // The tab row is now JUST the file tabs — full width, so many open files aren't crushed by the buttons.
   g.tabsEl.replaceChildren(el("div", { class: "pact-tabs2" }, tabs));
+  // Make this box's tab row a drop target (bound once per freshly-built header node). Dropping a dragged
+  // tab here moves it into THIS box at the pointer position (or the end).
+  if (!g.tabsEl._dndBound) {
+    g.tabsEl._dndBound = true;
+    g.tabsEl.addEventListener("dragover", (e) => {
+      if (!PACT_ED._drag) return;
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = "move"; } catch {}
+      g.tabsEl.classList.add("--dnd-over");
+      const before = pactEdDropBefore(g.tabsEl, e.clientX);
+      for (const t of g.tabsEl.querySelectorAll(".pact-tab2.--drop-before")) t.classList.remove("--drop-before");
+      if (before) { const bt = [...g.tabsEl.querySelectorAll(".pact-tab2")].find((t) => t.dataset.path === before); if (bt) bt.classList.add("--drop-before"); }
+    });
+    g.tabsEl.addEventListener("dragleave", (e) => { if (!g.tabsEl.contains(e.relatedTarget)) { g.tabsEl.classList.remove("--dnd-over"); for (const t of g.tabsEl.querySelectorAll(".pact-tab2.--drop-before")) t.classList.remove("--drop-before"); } });
+    g.tabsEl.addEventListener("drop", (e) => {
+      if (!PACT_ED._drag) return;
+      e.preventDefault(); e.stopPropagation();
+      const d = PACT_ED._drag; PACT_ED._drag = null;
+      const before = pactEdDropBefore(g.tabsEl, e.clientX);
+      pactEdClearDropCue();
+      pactEdMoveTab(d.gid, d.path, g.id, before);
+    });
+  }
 
   // All box controls live on a slim bottom strip (footer): contextual Run/preview on the left; font,
   // split, close, and the Find/Replace toggles on the right. Keeps the header clean for file names. (v1.4.5)
