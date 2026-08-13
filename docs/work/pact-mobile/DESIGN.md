@@ -1,5 +1,7 @@
 # Pact workspace — mobile view (ship as v1.3.0)
 
+> **Status: COMPLETE (shipped v1.3.0, 2026-08-12).** All stages M1–M5 done.
+
 A bespoke phone view for the Pact workspace: a fixed app-shell that shows exactly ONE full-screen
 element at a time, chosen from a left slide-menu (Twitter/X-style). Same underlying state (`PACT_ED`
 boxes/tabs + `PACT_CHAT` conversations) — this is an alternative RENDER at the mobile breakpoint, not a
@@ -85,8 +87,15 @@ menu** selects the element. Everything below is a RENDER of existing `PACT_ED`/`
   ＋New row (`pactChatNewTab`), row-tap switch, and × close (`pactChatCloseTab`); 🕐 fetches + lists the saved
   sessions (`PACT_CHAT.sessions`) with the desktop row data (name/snippet/msg-count/updated-at, via the pure
   `pactChatMsgLabel`) and resumes a row into the chat with `pactChatOpenSaved(row, true)`.
-- **M5 Polish + 1.3.0** — min-h-0 audit, real-device extremes (360px phone + tablet), touch gotchas,
-  bottom-padding for risers; bump to 1.3.0 with a CHANGELOG summary.
+- **M5 Polish + 1.3.0** ✅ Done (v1.2.15 fixes + v1.3.0 cut). Code audit of M1–M4 against the mobile README:
+  verified the `min-h-0`/bounded-height chain end-to-end (frame `body.ws-full` concrete height → `#main` →
+  `#view` → `.pactm` → `.pactm-stage` → each stage child), so only inner zones scroll. Fixed a robust
+  `onTap()` for the ghost-tap double-fire + scroll-then-tap misfire on every menu item / dismiss / sheet row;
+  hid the dead desktop chat ▾ collapse button; grew the risers to ≥ 40px tap targets with matching bottom
+  bands so they clear the tab bar + compose row on a 360px phone; capped the donut at `58vh` for landscape;
+  and dropped the mobile-only hooks on a breakpoint cross. Bumped to **1.3.0** with a user-facing CHANGELOG
+  summary of the whole feature. (Live-phone confirmation still recommended for the exact fit at 360px / on a
+  tablet and in landscape — see the audit notes; nothing else is outstanding.)
 
 ## Discipline
 - No-build vanilla JS (single classic `dashboard/public/app.js`, `styles.css`). Desktop `viewPact()`

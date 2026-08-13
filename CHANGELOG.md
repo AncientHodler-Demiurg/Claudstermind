@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.3.0] - 2026-08-12
+
+### Added
+- **A dedicated mobile view for the Pact workspace.** On a phone, the Pact workspace now renders as a fixed
+  native-app shell instead of a squeezed desktop page: a left slide-menu selects one full-screen element at a
+  time — the file tree, any of up to 8 editor boxes (with a per-box file switcher), or the chat/REPL. Opening
+  a tree file offers a donut box-picker to choose (or create) which box it lands in; the chat gets
+  conversation and history switchers. It's a re-layout of the same workspace state, not a separate mode — the
+  tree, editors, chat and REPL are the real ones, and the desktop view is unchanged. Shipped across stages
+  M1–M5 (v1.2.11–v1.2.15): the fixed shell + slide-menu + stage routing, the per-box file up-arrow list, the
+  tree→double-donut box picker, the chat conversation + history up-arrows, and a final polish pass (robust
+  touch handling, ≥ 40px tap targets, dead desktop chrome hidden, a verified bounded-height layout chain so
+  only inner zones scroll).
+
 ## [1.2.15] - 2026-08-12
 
 ### Fixed
