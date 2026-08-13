@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.4] - 2026-08-14
+
+### Fixed
+- **Core workspace lost your typed-but-unsent message on a view switch.** Typing in a Core pane's compose,
+  navigating away (e.g. to the Pact workspace) and back cleared the text, because the pane layout persisted
+  everything *except* the draft. The compose draft is now saved per pane (debounced) and restored on
+  re-mount / reload, and cleared once the message is sent.
+
 ## [1.4.3] - 2026-08-14
 
 ### Fixed

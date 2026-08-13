@@ -5248,7 +5248,9 @@ function viewWorkspace() {
   // deliberately abandoned (cleared, or repointed to a different repo/worktree) — a
   // pendingOpens entry captures the pane's gen at request time, so a reply that arrives
   // after the pane moved on can tell it no longer applies (see beginPendingOpen).
-  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", worktree: "main", mode: st.defaultMode, model: null, effort: null, fastMode: false, transcript: [], usage: {}, status: "idle", readonly: false, resume: null, _gen: 0, _expandedGroups: new Set(), attachedImages: [], contextUsage: null });
+  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", worktree: "main", mode: st.defaultMode, model: null, effort: null, fastMode: false, transcript: [], usage: {}, status: "idle", readonly: false, resume: null, draft: "", _gen: 0, _expandedGroups: new Set(), attachedImages: [], contextUsage: null });
+  let _draftTimer = 0;
+  const saveDraftsSoon = () => { clearTimeout(_draftTimer); _draftTimer = setTimeout(saveLayout, 400); };   // persist typed-but-unsent compose text so a view switch doesn't lose it
   // Every pane with a repo runs under a shared, deterministic key (repo@worktree). Panes still
   // waiting for a repo keep their random placeholder so they never collide before use.
   function keyForPane(p) { return p.repo ? wsWorkspaceId(p.repo, p.worktree) : p.sessionKey; }
@@ -5264,7 +5266,7 @@ function viewWorkspace() {
     try {
       localStorage.setItem(WS_STORE_KEY, JSON.stringify({
         v: 1, cols: st.cols, rows: st.rows, sidebarMode: st.sidebarMode, defaultMode: st.defaultMode, activeId: st.activeId,
-        panes: st.panes.map((p) => ({ id: p.id, sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree || "main", mode: p.mode })),
+        panes: st.panes.map((p) => ({ id: p.id, sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree || "main", mode: p.mode, draft: p.draft || "" })),
       }));
     } catch { /* private mode / quota — the workspace still works, it just forgets */ }
   }
@@ -5278,7 +5280,7 @@ function viewWorkspace() {
     st.panes = s.panes.slice(0, st.cols * st.rows).map((p) => ({
       ...newPane(),
       id: p.id || wsUuid(), sessionKey: p.sessionKey || wsUuid(), repo: p.repo || "", worktree: p.worktree || "main",
-      mode: WS_MODE_IDS.has(p.mode) ? p.mode : st.defaultMode,
+      mode: WS_MODE_IDS.has(p.mode) ? p.mode : st.defaultMode, draft: typeof p.draft === "string" ? p.draft : "",
     }));
     while (st.panes.length < st.cols * st.rows) st.panes.push(newPane());
     st.activeId = st.panes.some((p) => p.id === s.activeId) ? s.activeId : st.panes[0].id;
@@ -5892,6 +5894,7 @@ function viewWorkspace() {
     // smoothly a frame later.
     let _resizeRAF = 0;
     promptEl.addEventListener("input", () => {
+      p.draft = promptEl.value; saveDraftsSoon();   // remember typed-but-unsent text across a view switch
       if (_resizeRAF) return;
       _resizeRAF = (window.requestAnimationFrame || ((fn) => setTimeout(fn, 16)))(() => { _resizeRAF = 0; wsAutoResizePrompt(promptEl); });
     });
@@ -6034,6 +6037,7 @@ function viewWorkspace() {
     // controller can insert its relative wrapper in place around it.
     const stick = attachStickController(transcriptEl, { wrapClass: "stick-wrap-ws" });
     paneUI.set(p.id, { root: paneRoot, transcriptEl, stick, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, stopBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
+    if (p.draft) { promptEl.value = p.draft; wsAutoResizePrompt(promptEl); }   // restore the saved compose draft after a view switch / reload
     return paneRoot;
   }
 
@@ -7059,6 +7063,7 @@ function viewWorkspace() {
       if (images && images.length) { p.attachedImages = images; wsPaintAttachment(p); }
       const ui = paneUI.get(p.id);
       if (ui && ui.promptEl.value === "") { ui.promptEl.value = p._pendingText || ""; wsAutoResizePrompt(ui.promptEl); }
+      p.draft = ui ? ui.promptEl.value : (p._pendingText || ""); saveDraftsSoon();   // keep the restored text across a view switch too
       p._pendingText = null; p._pendingImages = null;
       p.status = "idle";
       p.transcript.push({ kind: "error", text: r.message || "Could not reach the work machine." });
@@ -7096,6 +7101,7 @@ function viewWorkspace() {
     // (if any) are a one-shot per send, never left over for the next message.
     const attachedImages = p.attachedImages || [];
     ui.promptEl.value = ""; wsAutoResizePrompt(ui.promptEl); p.attachedImages = []; wsPaintAttachment(p);
+    p.draft = ""; saveDraftsSoon();   // the draft was just sent — don't resurrect it on the next view switch
     // While a turn is already running, don't even attempt the round-trip (the server would refuse
     // it with `busy` anyway) — queue it locally instead: shown as its own orange box in the
     // transcript, sent automatically the instant the current turn actually finishes. Mirrors
