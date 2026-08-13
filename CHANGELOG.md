@@ -4,6 +4,12 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.3.2] - 2026-08-12
+
+### Changed
+- **Thicker scrollbar change-ruler.** Doubled the width of the green/red/amber change bands on both the
+  CodeMirror editor scrollbar and the agent-diff overview ruler (5px → 10px) so they read at a glance.
+
 ## [1.3.1] - 2026-08-12
 
 ### Added

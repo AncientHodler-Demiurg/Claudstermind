@@ -1168,8 +1168,8 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    change density at a glance (the editable view gets CodeMirror's own scrollbar ruler). */
 .pact-diff-scrollwrap { position: relative; flex: 1; min-height: 0; display: flex; }
 .pact-diff-scrollwrap > .pact-editor-scroll { flex: 1; min-width: 0; }
-.pact-diff-ovr { position: absolute; top: 0; right: 0; bottom: 0; width: 6px; pointer-events: none; z-index: 3; }
-.pact-diff-ovr > div { position: absolute; right: 0; width: 5px; min-height: 2px; border-radius: 2px; }
+.pact-diff-ovr { position: absolute; top: 0; right: 0; bottom: 0; width: 12px; pointer-events: none; z-index: 3; }
+.pact-diff-ovr > div { position: absolute; right: 0; width: 10px; min-height: 2px; border-radius: 2px; }
 .pact-diff-ovr-add { background: #34d399; }
 .pact-diff-ovr-del { background: #ef5350; }
 .pact-diff-row { display: block; white-space: pre; }
@@ -1266,7 +1266,7 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    and only narrow the width to a thin band on the scrollbar's right edge, so the +/- stripes show AND
    the gray thumb stays visible in the rest. (add=green, del=red, mod=amber, vs git HEAD.) */
 .pact-cm-host .cm-change-add, .pact-cm-host .cm-change-del, .pact-cm-host .cm-change-mod {
-  width: 5px !important; border-radius: 2px; }
+  width: 10px !important; border-radius: 2px; }
 
 /* StoicSyntax token colors for CodeMirror (it prefixes mode styles with `cm-`, so `pk-write` → `cm-pk-write`).
    SAME hex values as `.pact-code .pk-*` above — the editable view must look identical to the read-only one. */
