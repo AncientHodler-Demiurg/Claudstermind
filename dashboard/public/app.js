@@ -3903,6 +3903,22 @@ function pactTranscriptToMsgs(transcript) {
   }
   return out;
 }
+// ===== PACT PRESERVE-ELAPSED — pure helper (unit-tested via lib/pactPreserveElapsed.test.mjs) =====
+// Carry a live-stamped "Thought for …" duration across a resync/rehydrate. The persisted transcript is
+// authoritative for TEXT, but a duration stamped from a live turn can be lost if the daemon that persisted
+// the turn predates the duration-persist change (it just hasn't been restarted since the deploy). Copy
+// elapsedMs from the CURRENT assistant messages onto the incoming ones by ordinal position, but only where
+// the incoming lacks it — so a real persisted duration always wins, and an un-persisted one still survives.
+function pactPreserveElapsed(prevMsgs, incoming) {
+  if (!Array.isArray(prevMsgs) || !Array.isArray(incoming)) return incoming;
+  const prevA = prevMsgs.filter((m) => m && m.role === "assistant");
+  const inA = incoming.filter((m) => m && m.role === "assistant");
+  for (let i = 0; i < inA.length && i < prevA.length; i++) {
+    if (inA[i].elapsedMs == null && prevA[i].elapsedMs != null) inA[i].elapsedMs = prevA[i].elapsedMs;
+  }
+  return incoming;
+}
+// ===== end PACT PRESERVE-ELAPSED pure helper =====
 // ===== PACT RESYNC DECISION — pure helper (sliced out for unit tests; see lib/pactResync.test.mjs)
 // A resync reply is the server's AUTHORITATIVE current state for a session — its persisted transcript
 // plus the live status. Reconciling it with what a chat tab already shows has two pure parts (no DOM,
@@ -4173,8 +4189,8 @@ function pactChatRoute({ kind, sessionKey, data }) {
         // the start of the local tail — drop the duplicate so the prompt shows exactly once.
         const lastIn = incoming[incoming.length - 1];
         if (lastIn && tail[0] && lastIn.role === tail[0].role && (lastIn.text || "") === (tail[0].text || "")) tail = tail.slice(1);
-        tt.msgs = incoming.concat(tail);
-      } else if (incoming.length >= tt.msgs.length) tt.msgs = incoming;
+        tt.msgs = pactPreserveElapsed(tt.msgs, incoming).concat(tail);
+      } else if (incoming.length >= tt.msgs.length) tt.msgs = pactPreserveElapsed(tt.msgs, incoming);
       // Likewise don't yank a mid-turn tab back to idle — a live turn in flight owns the status.
       if (tt.status !== "thinking" && tt.status !== "deepwork" && tt.status !== "awaiting-permission") tt.status = "idle";
       tt._forceBottom = true;
@@ -4202,7 +4218,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
     case "resync": {
       const incoming = pactTranscriptToMsgs(d.transcript);
       const dec = pactResyncDecision(t.msgs.length, incoming.length, d.status, d.live);
-      if (dec.replace) t.msgs = incoming;
+      if (dec.replace) t.msgs = pactPreserveElapsed(t.msgs, incoming);   // keep a live-stamped "Thought for …" the daemon hasn't persisted yet
       if (d.usage) t.usage = d.usage;
       if (d.status) t.status = d.status;
       pactChatMarkTurnBusy(t);   // restored mid-turn (e.g. after reload) → show the timer here too

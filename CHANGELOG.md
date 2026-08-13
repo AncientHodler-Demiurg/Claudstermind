@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.3] - 2026-08-14
+
+### Fixed
+- **"Thought for …" was getting wiped by a resync.** A live reply stamped its duration correctly, but the
+  reconnect/rehydrate catch-up (frequent on the live site — it fires ~1.5s after a reload) replaced the
+  messages with the persisted transcript, which lacks the duration until the always-on `sessiond` daemon
+  is restarted with the new persist code. A resync/rehydrate now carries a live-stamped duration onto the
+  refreshed messages (`pactPreserveElapsed`), so the label survives — even before the daemon restart.
+  (Surviving a full page reload still needs the daemon restarted once, since that's where the duration is
+  written to disk.)
+
 ## [1.4.2] - 2026-08-13
 
 ### Added
