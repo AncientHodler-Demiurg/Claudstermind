@@ -4,6 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.2.13] - 2026-08-12
+
+### Added
+- **Pact workspace — mobile view, stage M3 (tree → double-donut box picker).** Tapping a FILE in the phone's
+  full-screen file tree no longer opens straight into the active box — it now pops a full-screen double-donut
+  selector: a ring with an empty center split into 8 wedge segments (one per possible view box, matching
+  `pactEdLayout`'s max). A new pure, unit-tested helper `pactDonutSegments(boxCount)` drives the wedge states
+  (1-based): `1..boxCount` are `'open'` (tap opens the file into that existing box), `boxCount+1` (if ≤ 8) is
+  `'next'` (tap CREATES that box via `pactEdAddGroup`, then opens the file there), and the rest are
+  `'disabled'` (rendered but not tappable). The donut is drawn as an SVG — open boxes highlighted, the next
+  creatable box accented with a ＋, disabled wedges dimmed, each wedge labelled with its roman numeral; the
+  empty center cancels. Tapping an enabled wedge resolves/creates the target box, opens the file into that
+  SPECIFIC box (reusing `pactEdOpenInto`), and navigates the stage to the now-populated full-screen box.
+  Degrades gracefully (0 boxes → only wedge 1 is `'next'`; counts clamp to the 8 cap). Desktop `viewPact()`
+  is untouched.
+
 ## [1.2.12] - 2026-08-12
 
 ### Added

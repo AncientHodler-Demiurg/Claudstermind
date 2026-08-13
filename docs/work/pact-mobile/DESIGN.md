@@ -77,8 +77,9 @@ menu** selects the element. Everything below is a RENDER of existing `PACT_ED`/`
   active file only.)
 - **M2 View-box file up-arrow list** ✅ Done (v1.2.12). The full-screen "files in this box" sheet
   (switch/close), opened from an up-arrow riser at the bottom of a full-screen box.
-- **M3 Tree → double-donut box picker** — the 8-wedge selector with existing/next/disabled states; opens
-  the file into the chosen (or newly-created) box.
+- **M3 Tree → double-donut box picker** ✅ Done (v1.2.13). The 8-wedge selector with open/next/disabled
+  states (pure `pactDonutSegments`); opens the file into the chosen (or newly-created via `pactEdAddGroup`)
+  box using `pactEdOpenInto`, then navigates to that full-screen box.
 - **M4 Chat conversation up-arrow + history up-arrow** — the two full-screen sheets (open conversations +
   ＋New; and the history selector for an empty chat).
 - **M5 Polish + 1.3.0** — min-h-0 audit, real-device extremes (360px phone + tablet), touch gotchas,

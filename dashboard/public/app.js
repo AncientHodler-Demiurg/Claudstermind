@@ -2547,9 +2547,16 @@ function pactNode(it) {
   const row = el("div", { class: "pact-node pact-file", title: it.path }, [
     el("span", { class: "pact-chev" }, [""]), el("span", { class: "pact-node-ic" }, [pactFileIcon(it.name)]), el("span", { class: "pact-node-name" }, [it.name]),
   ]);
-  row.addEventListener("click", () => pactEdOpen(it.path, row));
+  // Desktop: tap opens into the active box. Mobile: viewPactMobile installs PACT_MOBILE_FILE_TAP, which
+  // pops the double-donut box picker instead (M3). Read the hook at click time so the (cached, warmed-once)
+  // tree always routes to the CURRENT mobile view — and falls back to pactEdOpen after a rotate to desktop.
+  row.addEventListener("click", () => {
+    if (pactIsMobile() && typeof PACT_MOBILE_FILE_TAP === "function") PACT_MOBILE_FILE_TAP(it.path, row);
+    else pactEdOpen(it.path, row);
+  });
   return row;
 }
+let PACT_MOBILE_FILE_TAP = null;   // (path,row)=>… set by viewPactMobile; the tree's file tap → donut picker
 // ---- Pact .repl terminal runner: stream `pact <file>.repl` over SSE into the right-column terminal.
 let PACT_RUN_ES = null;
 function pactTermEl() { return document.querySelector(".pact-terminal"); }
@@ -2596,6 +2603,21 @@ function pactMobileDefaultSel(groups, activeId) {
   const withFile = list.find((g) => g && g.active);
   if (withFile) return { kind: "box", boxId: withFile.id };
   return { kind: "tree" };
+}
+// pactDonutSegments: the wedge states for the mobile tree's double-donut file-open picker. Always 8 wedges
+// (1-based indices), one per POSSIBLE view box (pactEdLayout caps at 8). Given the number of open boxes:
+//   1..boxCount        → 'open'     (tap opens the file into that EXISTING box)
+//   boxCount+1 (if ≤8) → 'next'     (tap CREATES that box via pactEdAddGroup, then opens the file there)
+//   the rest           → 'disabled' (rendered but not tappable)
+// Junk/negative counts clamp to 0; counts > 8 clamp to 8 (all 'open', no 'next'). Pure — the SVG render
+// (viewPactMobile) consumes it.
+function pactDonutSegments(boxCount) {
+  const n = Math.max(0, Math.min(8, Number.isInteger(boxCount) ? boxCount : 0));
+  const out = [];
+  for (let i = 1; i <= 8; i++) {
+    out.push({ index: i, state: i <= n ? "open" : (i === n + 1 ? "next" : "disabled") });
+  }
+  return out;
 }
 // ===== end PACT MOBILE pure helpers =====
 // The Pact workspace has a bespoke phone re-layout (viewPactMobile). Gate it on the SAME 900px breakpoint
@@ -4471,7 +4493,7 @@ function viewPactMobile() {
   function treeStage() {
     if (!cache.tree) {
       const body = el("div", { class: "pactm-tree" }, [el("div", { class: "hint", style: "padding:8px" }, ["Loading tree…"])]);
-      loadPactDir("", body);   // reuse the tree loader; a file tap opens into the ACTIVE box (pactEdOpen). The double-donut picker is M3.
+      loadPactDir("", body);   // reuse the tree loader; on mobile a file tap opens the double-donut box picker (PACT_MOBILE_FILE_TAP → openDonut)
       cache.tree = body;
     }
     return cache.tree;
@@ -4533,6 +4555,69 @@ function viewPactMobile() {
     openSheet("Box " + pactRoman(i + 1) + " — files", list);
     rebuild();
   }
+  // ---- M3: the double-donut box picker. Tapping a FILE in the tree opens this instead of opening straight
+  // into the active box. 8 wedges around an empty center; state per pactDonutSegments (open/next/disabled).
+  const SVGNS = "http://www.w3.org/2000/svg";
+  const svgNode = (tag, attrs) => { const nn = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs || {})) nn.setAttribute(k, v); return nn; };
+  const donutPolar = (cx, cy, rad, angDeg) => { const a = (angDeg - 90) * Math.PI / 180; return [cx + rad * Math.cos(a), cy + rad * Math.sin(a)]; };
+  // Open `path` into the box a wedge names — creating it first when the wedge is the 'next' one — then
+  // navigate the stage to that full-screen box. Reuses pactEdOpenInto (box-targeted open); no fork.
+  async function onWedge(seg, path) {
+    let g;
+    if (seg.state === "next") { pactEdAddGroup(); g = PACT_ED.groups[PACT_ED.groups.length - 1]; }
+    else if (seg.state === "open") { g = PACT_ED.groups[seg.index - 1]; }
+    if (!g) return;
+    userPicked = true;
+    PACT_ED.activeId = g.id;
+    PACT_ED._mobileSel = { kind: "box", boxId: g.id };
+    closeSheet();
+    renderMenu();
+    renderStage();                                // navigate to the box now (empty/Loading placeholder)
+    await pactEdOpenInto(g, path, true, false);   // open the file INTO that specific box (fetch + render into its mounted body)
+    if (!root.isConnected) return;
+    renderStage();                                // re-mount with the loaded file (correct CM + riser count)
+  }
+  function openDonut(path) {
+    const n = PACT_ED ? PACT_ED.groups.length : 0;
+    const segs = pactDonutSegments(n);
+    const cx = 150, cy = 150, R = 140, r0 = 60;
+    const svg = svgNode("svg", { viewBox: "0 0 300 300", class: "pactm-donut", role: "img", "aria-label": "Choose a view box for " + path.split("/").pop() });
+    segs.forEach((seg) => {
+      const a0 = (seg.index - 1) * 45, a1 = seg.index * 45, am = (a0 + a1) / 2;
+      const [x1, y1] = donutPolar(cx, cy, R, a0), [x2, y2] = donutPolar(cx, cy, R, a1);
+      const [x3, y3] = donutPolar(cx, cy, r0, a1), [x4, y4] = donutPolar(cx, cy, r0, a0);
+      const d = `M${x1.toFixed(2)} ${y1.toFixed(2)} A${R} ${R} 0 0 1 ${x2.toFixed(2)} ${y2.toFixed(2)} `
+        + `L${x3.toFixed(2)} ${y3.toFixed(2)} A${r0} ${r0} 0 0 0 ${x4.toFixed(2)} ${y4.toFixed(2)} Z`;
+      const enabled = seg.state === "open" || seg.state === "next";
+      const wedge = svgNode("path", { d, class: "pactm-wedge --" + seg.state });
+      const [lx, ly] = donutPolar(cx, cy, (R + r0) / 2, am);
+      const label = svgNode("text", { x: lx.toFixed(2), y: ly.toFixed(2), class: "pactm-wedge-lbl --" + seg.state, "text-anchor": "middle", "dominant-baseline": "central" });
+      label.textContent = seg.state === "next" ? "＋" + (pactRoman(seg.index) || seg.index) : (pactRoman(seg.index) || String(seg.index));
+      if (enabled) {
+        const act = (e) => { if (e) e.preventDefault(); onWedge(seg, path); };
+        wedge.addEventListener("click", act);
+        wedge.addEventListener("touchend", act);
+        label.addEventListener("click", act);
+        label.addEventListener("touchend", act);
+      }
+      svg.appendChild(wedge);
+      svg.appendChild(label);
+    });
+    // Empty center = cancel/dismiss.
+    const center = svgNode("circle", { cx, cy, r: r0 - 4, class: "pactm-donut-hole" });
+    const centerX = svgNode("text", { x: cx, y: cy, class: "pactm-donut-hole-x", "text-anchor": "middle", "dominant-baseline": "central" });
+    centerX.textContent = "✕";
+    const cancel = (e) => { if (e) e.preventDefault(); closeSheet(); };
+    center.addEventListener("click", cancel); center.addEventListener("touchend", cancel);
+    centerX.addEventListener("click", cancel); centerX.addEventListener("touchend", cancel);
+    svg.appendChild(center); svg.appendChild(centerX);
+    const wrap = el("div", { class: "pactm-donut-wrap" }, [
+      svg,
+      el("div", { class: "pactm-donut-hint" }, ["Tap a box number to open here · the accented ＋ box creates a new one · center to cancel."]),
+    ]);
+    openSheet("Open " + path.split("/").pop() + " in…", wrap, "pactm-donut-panel");
+  }
+  PACT_MOBILE_FILE_TAP = (path) => openDonut(path);
   function chatStage() { return chatHost; }   // pactChatInit already rendered chat here (messages + compose + send/stop). The conversation/history up-arrows are M4.
   function termStage() {
     if (!cache.term) {

@@ -1513,4 +1513,23 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .pactm-frow-x { flex: 0 0 auto; min-width: 34px; min-height: 34px; background: transparent; border: none;
     color: var(--ink-dim); font-size: 20px; line-height: 1; cursor: pointer;
     -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+
+  /* M3 — the double-donut box picker (tree file tap → choose/create a view box). 8 wedges around an empty
+     center: 'open' boxes highlighted, the 'next' creatable box accented, higher 'disabled' wedges dimmed. */
+  .pactm-donut-panel { align-items: center; }
+  .pactm-donut-wrap { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 14px 12px 22px; }
+  .pactm-donut { width: min(78vw, 320px); height: auto; touch-action: manipulation; }
+  .pactm-wedge { stroke: var(--panel2); stroke-width: 2; }
+  .pactm-wedge.--open { fill: color-mix(in srgb, var(--accent) 32%, var(--panel)); cursor: pointer; }
+  .pactm-wedge.--open:hover { fill: color-mix(in srgb, var(--accent) 46%, var(--panel)); }
+  .pactm-wedge.--next { fill: var(--accent); cursor: pointer; }
+  .pactm-wedge.--next:hover { fill: color-mix(in srgb, var(--accent) 82%, #fff); }
+  .pactm-wedge.--disabled { fill: var(--chip); opacity: .5; cursor: default; }
+  .pactm-wedge-lbl { font-size: 20px; font-weight: 800; fill: var(--ink); user-select: none; -webkit-user-select: none; }
+  .pactm-wedge-lbl.--next { fill: #fff; font-size: 17px; }
+  .pactm-wedge-lbl.--disabled { fill: var(--ink-mute); opacity: .6; }
+  .pactm-donut-hole { fill: var(--panel2); stroke: var(--line); stroke-width: 1.5; cursor: pointer; }
+  .pactm-donut-hole-x { font-size: 26px; font-weight: 700; fill: var(--ink-dim); cursor: pointer;
+    user-select: none; -webkit-user-select: none; }
+  .pactm-donut-hint { max-width: 320px; text-align: center; font-size: 12px; color: var(--ink-dim); line-height: 1.5; }
 }
