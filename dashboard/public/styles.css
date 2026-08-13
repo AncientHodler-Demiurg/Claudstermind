@@ -1142,7 +1142,7 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-ed-gutter-y::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 2px; transform: translateY(-50%);
   background: var(--line); border-radius: 2px; transition: background .12s; }
 .pact-ed-gutter-x:hover::after, .pact-ed-gutter-y:hover::after { background: var(--accent); }
-.pact-ed-group { display: flex; flex-direction: column; min-width: 0; min-height: 0;
+.pact-ed-group { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative;
   background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .pact-ed-group.--active { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); }
 .pact-ed-hd { display: flex; align-items: center; gap: 6px; padding: 4px 6px; min-height: 34px;
@@ -1173,6 +1173,23 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-ed-ico:hover { color: var(--ink); }
 .pact-ed-ico.--on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
 .pact-ed-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* v1.4.5 — per-box control strip at the bottom (font/split/close/find/replace), so the tab row stays
+   full-width for file names instead of the buttons crushing them. */
+.pact-ed-foot { flex: 0 0 auto; display: flex; align-items: center; gap: 5px; padding: 3px 6px;
+  border-top: 1px solid var(--line); background: var(--panel); }
+.pact-ed-foot .pact-run-btn { padding: 2px 8px; }
+/* Floating Find/Replace panel — anchored to THIS box (bottom-right, above the footer), driving this box's
+   active file's CodeMirror. */
+.pact-ed-search { position: absolute; right: 8px; bottom: 40px; z-index: 20; display: flex; flex-direction: column; gap: 5px;
+  padding: 8px; min-width: 260px; max-width: calc(100% - 16px);
+  background: var(--panel); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 10px; box-shadow: 0 8px 26px rgba(0,0,0,.45); }
+.pact-search-row { display: flex; align-items: center; gap: 5px; }
+.pact-search-in { flex: 1 1 auto; min-width: 0; padding: 5px 8px; font-size: 12.5px; color: var(--ink);
+  background: var(--chip); border: 1px solid var(--line); border-radius: 7px; }
+.pact-search-in:focus { outline: none; border-color: var(--accent); }
+.pact-search-count { flex: 0 0 auto; font-size: 10.5px; color: var(--ink-mute); white-space: nowrap; min-width: 62px; text-align: right; }
+.cm-pact-search-match { background: rgba(245,197,66,.32); border-radius: 2px; }
 .pact-editor-empty { padding: 16px; }
 .pact-editor-scroll { flex: 1; min-height: 0; overflow: auto; }
 .pact-code { margin: 0; padding: 12px 14px; font: 12.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre; tab-size: 2; color: #d2d3d4; }

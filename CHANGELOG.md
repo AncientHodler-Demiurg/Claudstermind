@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.5] - 2026-08-14
+
+### Changed
+- **Pact editor box controls moved off the tab row.** The A-/A+ font, split (⊞), and close (×) buttons no
+  longer share the header with the file tabs (where they crushed the names into a wrapped, space-eating
+  row). They now sit on a slim control strip at the **bottom** of each box, so the tab row is full-width
+  for file names.
+
+### Added
+- **Per-box Find & Replace.** Each editor box has its own 🔍 Find and ⇄ Replace (also Ctrl/⌘-F and
+  Ctrl/⌘-H) that open a floating panel **tied to that box** — highlight-all with a live match count,
+  next/prev, match-case, replace, and replace-all, driving the box's currently-visible file's editor.
+  Switch the file shown in that box and the search **re-applies to the new file automatically**.
+
 ## [1.4.4] - 2026-08-14
 
 ### Fixed

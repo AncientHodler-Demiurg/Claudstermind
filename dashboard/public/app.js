@@ -2825,7 +2825,8 @@ function pactEdLayout() {
   for (const g of PACT_ED.groups) {
     g.tabsEl = el("div", { class: "pact-ed-hd" });
     g.bodyEl = el("div", { class: "pact-ed-body" });
-    g.el = el("div", { class: "pact-ed-group" + (g.id === PACT_ED.activeId ? " --active" : "") }, [g.tabsEl, g.bodyEl]);
+    g.footEl = el("div", { class: "pact-ed-foot" });   // per-box control strip (font/split/close/search) — keeps the tab row full-width for file names
+    g.el = el("div", { class: "pact-ed-group" + (g.id === PACT_ED.activeId ? " --active" : "") }, [g.tabsEl, g.bodyEl, g.footEl]);
     g.el.style.flex = (g.flex || 1) + " 1 0";
     g.el.addEventListener("mousedown", () => {
       if (PACT_ED.activeId !== g.id) { PACT_ED.activeId = g.id; for (const gg of PACT_ED.groups) gg.el.classList.toggle("--active", gg.id === PACT_ED.activeId); }
@@ -2878,33 +2879,166 @@ function pactEdRenderGroup(g) {
     return tab;
   });
   const active = g.tabs.find((t) => t.path === g.active);
-  const actions = [];
+  // The tab row is now JUST the file tabs — full width, so many open files aren't crushed by the buttons.
+  g.tabsEl.replaceChildren(el("div", { class: "pact-tabs2" }, tabs));
+
+  // All box controls live on a slim bottom strip (footer): contextual Run/preview on the left; font,
+  // split, close, and the Find/Replace toggles on the right. Keeps the header clean for file names. (v1.4.5)
+  const ctx = [];
   if (active && active.name.toLowerCase().endsWith(".repl")) {
     const run = el("button", { class: "pact-run-btn", title: "Run this .repl and stream the output" }, ["▶ Run"]);
     run.addEventListener("click", (e) => { e.stopPropagation(); pactRunRepl(active.path); });
-    actions.push(run);
+    ctx.push(run);
   }
   if (active && active.name.toLowerCase().endsWith(".md")) {
     const md = el("button", { class: "pact-ed-ico", title: active.editing ? "Preview the rendered markdown" : "Edit the raw markdown" }, [active.editing ? "👁" : "✎"]);
     md.addEventListener("click", (e) => { e.stopPropagation(); active.editing = !active.editing; pactEdRenderGroup(g); });
-    actions.push(md);
+    ctx.push(md);
   }
+  const s = pactEdSearchState(g);
+  const findBtn = el("button", { class: "pact-ed-ico" + (s.open && !s.replaceMode ? " --on" : ""), title: "Find in this box (Ctrl/⌘-F)" }, ["🔍"]);
+  findBtn.addEventListener("click", (e) => { e.stopPropagation(); pactEdToggleSearch(g, false); });
+  const replBtn = el("button", { class: "pact-ed-ico" + (s.open && s.replaceMode ? " --on" : ""), title: "Find & replace in this box (Ctrl/⌘-H)" }, ["⇄"]);
+  replBtn.addEventListener("click", (e) => { e.stopPropagation(); pactEdToggleSearch(g, true); });
   const fMinus = el("button", { class: "pact-ed-ico", title: "Smaller font (this box)" }, ["A-"]);
   const fPlus = el("button", { class: "pact-ed-ico", title: "Bigger font (this box)" }, ["A+"]);
   fMinus.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.max(9, (g.fontPx || 12.5) - 1); pactEdRenderGroup(g); pactStateSave(); });
   fPlus.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.min(22, (g.fontPx || 12.5) + 1); pactEdRenderGroup(g); pactStateSave(); });
-  actions.push(fMinus, fPlus);
-  // Folding is now native + inline (CodeMirror fold gutter) — the old ⊟/✎ read-only fold-view toggle is gone.
   const split = el("button", { class: "pact-ed-ico", title: "Split — open another editor box (up to 8)" }, ["⊞"]);
   split.addEventListener("click", (e) => { e.stopPropagation(); pactEdAddGroup(); });
-  actions.push(split);
+  const right = [findBtn, replBtn, fMinus, fPlus, split];
   if (PACT_ED.groups.length > 1) {
     const closeG = el("button", { class: "pact-ed-ico", title: "Close this editor box" }, ["×"]);
     closeG.addEventListener("click", (e) => { e.stopPropagation(); pactEdCloseGroup(g.id); });
-    actions.push(closeG);
+    right.push(closeG);
   }
-  g.tabsEl.replaceChildren(el("div", { class: "pact-tabs2" }, tabs), el("span", { class: "ws-spacer" }, []), ...actions);
+  g.footEl.replaceChildren(...ctx, el("span", { class: "ws-spacer" }, []), ...right);
   pactEdRenderBody(g, active);
+  // Re-attach the Find/Replace panel (if open) to the freshly-rendered box, and re-run the query against
+  // the NOW-visible file — so switching files in this box carries the search over automatically.
+  if (s.open) pactEdSyncSearchPanel(g, false);
+}
+
+// ===== PACT EDITOR SEARCH/REPLACE — a per-box find panel tied to that box's active CodeMirror =====
+// Each editor box (group `g`) keeps its own { find, replace, cs, open, replaceMode } on `g._search`. The
+// panel drives the box's ACTIVE file's CM: highlight-all via an overlay, prev/next via the searchcursor
+// addon, replace / replace-all, and a live match count. When the box switches files the panel stays and
+// re-runs against the newly-visible file (see pactEdRenderGroup's tail).
+// ===== PACT SEARCH-COUNT — pure helper (unit-tested via lib/pactSearchCount.test.mjs) =====
+function pactCountOccurrences(text, query, caseSensitive) {
+  if (query == null || query === "") return 0;
+  const h = caseSensitive ? String(text) : String(text).toLowerCase();
+  const q = caseSensitive ? String(query) : String(query).toLowerCase();
+  let n = 0, i = 0;
+  while ((i = h.indexOf(q, i)) !== -1) { n++; i += q.length; }
+  return n;
+}
+// ===== end PACT SEARCH-COUNT pure helper =====
+function pactEdSearchState(g) { return g._search || (g._search = { find: "", replace: "", cs: false, open: false, replaceMode: false }); }
+function pactEdActiveCm(g) { const a = g.tabs.find((t) => t.path === g.active); return (a && a.loaded && !a.agentDiff && a._cm) ? a._cm : null; }
+function pactEdSearchClear(g) {
+  if (g._searchOverlay && g._searchCm) { try { g._searchCm.removeOverlay(g._searchOverlay); } catch {} }
+  g._searchOverlay = null; g._searchCm = null;
+}
+// A CM overlay that highlights every occurrence of a plain-string query (class cm-pact-search-match).
+function pactMakeSearchOverlay(query, cs) {
+  const q = cs ? query : String(query).toLowerCase();
+  return { token(stream) {
+    if (!q) { stream.skipToEnd(); return null; }
+    const line = cs ? stream.string : stream.string.toLowerCase();
+    const idx = line.indexOf(q, stream.pos);
+    if (idx === stream.pos) { stream.pos += q.length; return "pact-search-match"; }
+    if (idx === -1) { stream.skipToEnd(); return null; }
+    stream.pos = idx; return null;
+  } };
+}
+function pactEdSearchApply(g) {
+  const s = pactEdSearchState(g);
+  pactEdSearchClear(g);
+  const cm = pactEdActiveCm(g);
+  const count = g._searchPanel && g._searchPanel.querySelector(".pact-search-count");
+  if (!cm || !s.find) { if (count) count.textContent = ""; return; }
+  const ov = pactMakeSearchOverlay(s.find, s.cs);
+  cm.addOverlay(ov); g._searchOverlay = ov; g._searchCm = cm;
+  if (count) { const n = pactCountOccurrences(cm.getValue(), s.find, s.cs); count.textContent = n + (n === 1 ? " match" : " matches"); }
+}
+function pactEdSearchNav(g, dir) {
+  const s = pactEdSearchState(g); const cm = pactEdActiveCm(g);
+  if (!cm || !s.find) return;
+  const start = dir > 0 ? cm.getCursor("to") : cm.getCursor("from");
+  let cur = cm.getSearchCursor(s.find, start, !s.cs);
+  let ok = dir > 0 ? cur.findNext() : cur.findPrevious();
+  if (!ok) { cur = cm.getSearchCursor(s.find, dir > 0 ? { line: 0, ch: 0 } : { line: cm.lineCount(), ch: 0 }, !s.cs); ok = dir > 0 ? cur.findNext() : cur.findPrevious(); }
+  if (ok) { cm.setSelection(cur.from(), cur.to()); cm.scrollIntoView({ from: cur.from(), to: cur.to() }, 80); }
+}
+function pactEdSearchReplaceOne(g) {
+  const s = pactEdSearchState(g); const cm = pactEdActiveCm(g);
+  if (!cm || !s.find) return;
+  const sel = cm.getSelection();
+  const isMatch = sel && (s.cs ? sel === s.find : sel.toLowerCase() === s.find.toLowerCase());
+  if (isMatch) cm.replaceSelection(s.replace);
+  pactEdSearchNav(g, 1);
+  pactEdSearchApply(g);
+}
+function pactEdSearchReplaceAll(g) {
+  const s = pactEdSearchState(g); const cm = pactEdActiveCm(g);
+  if (!cm || !s.find) return;
+  cm.operation(() => { const cur = cm.getSearchCursor(s.find, { line: 0, ch: 0 }, !s.cs); while (cur.findNext()) cur.replace(s.replace); });
+  pactEdSearchApply(g);
+}
+function pactEdToggleSearch(g, replaceMode) {
+  const s = pactEdSearchState(g);
+  if (s.open && s.replaceMode === !!replaceMode) s.open = false;   // same button again → close
+  else { s.open = true; s.replaceMode = !!replaceMode; }
+  pactEdRenderGroupFooter(g);   // reflect the --on state without rebuilding the CM
+  pactEdSyncSearchPanel(g, true);
+}
+// Rebuild ONLY the footer button --on state (cheap; avoids a full CM rebuild on a search toggle).
+function pactEdRenderGroupFooter(g) {
+  const s = pactEdSearchState(g);
+  const find = g.footEl && g.footEl.querySelector('[title^="Find in this box"]');
+  const repl = g.footEl && g.footEl.querySelector('[title^="Find & replace"]');
+  if (find) find.classList.toggle("--on", s.open && !s.replaceMode);
+  if (repl) repl.classList.toggle("--on", s.open && s.replaceMode);
+}
+// Build/replace the floating Find/Replace panel on the box and apply the query to the visible file.
+function pactEdSyncSearchPanel(g, focus) {
+  const s = pactEdSearchState(g);
+  if (g._searchPanel) { g._searchPanel.remove(); g._searchPanel = null; }
+  if (!s.open) { pactEdSearchClear(g); return; }
+  const findIn = el("input", { class: "pact-search-in", type: "text", placeholder: "Find", value: s.find });
+  const count = el("span", { class: "pact-search-count" }, []);
+  const prev = el("button", { class: "pact-ed-ico", title: "Previous (Shift-Enter)" }, ["▲"]);
+  const next = el("button", { class: "pact-ed-ico", title: "Next (Enter)" }, ["▼"]);
+  const csBtn = el("button", { class: "pact-ed-ico" + (s.cs ? " --on" : ""), title: "Match case" }, ["Aa"]);
+  const closeB = el("button", { class: "pact-ed-ico", title: "Close (Esc)" }, ["×"]);
+  prev.addEventListener("click", (e) => { e.stopPropagation(); pactEdSearchNav(g, -1); });
+  next.addEventListener("click", (e) => { e.stopPropagation(); pactEdSearchNav(g, 1); });
+  csBtn.addEventListener("click", (e) => { e.stopPropagation(); s.cs = !s.cs; csBtn.classList.toggle("--on", s.cs); pactEdSearchApply(g); });
+  closeB.addEventListener("click", (e) => { e.stopPropagation(); s.open = false; pactEdRenderGroupFooter(g); pactEdSyncSearchPanel(g, false); });
+  findIn.addEventListener("input", () => { s.find = findIn.value; pactEdSearchApply(g); });
+  findIn.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); pactEdSearchNav(g, e.shiftKey ? -1 : 1); }
+    else if (e.key === "Escape") { e.preventDefault(); s.open = false; pactEdRenderGroupFooter(g); pactEdSyncSearchPanel(g, false); const cm = pactEdActiveCm(g); if (cm) cm.focus(); }
+  });
+  const findRow = el("div", { class: "pact-search-row" }, [findIn, count, prev, next, csBtn, closeB]);
+  const rows = [findRow];
+  if (s.replaceMode) {
+    const replIn = el("input", { class: "pact-search-in", type: "text", placeholder: "Replace", value: s.replace });
+    replIn.addEventListener("input", () => { s.replace = replIn.value; });
+    const one = el("button", { class: "pact-ed-ico", title: "Replace this match" }, ["Replace"]);
+    const all = el("button", { class: "pact-ed-ico", title: "Replace all matches" }, ["All"]);
+    one.addEventListener("click", (e) => { e.stopPropagation(); pactEdSearchReplaceOne(g); });
+    all.addEventListener("click", (e) => { e.stopPropagation(); pactEdSearchReplaceAll(g); });
+    replIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); pactEdSearchReplaceOne(g); } });
+    rows.push(el("div", { class: "pact-search-row" }, [replIn, one, all]));
+  }
+  const panel = el("div", { class: "pact-ed-search" }, rows);
+  panel.addEventListener("mousedown", (e) => e.stopPropagation());   // clicking the panel shouldn't re-activate/scroll the box
+  g._searchPanel = panel;
+  g.el.appendChild(panel);
+  pactEdSearchApply(g);
+  if (focus) findIn.focus();
 }
 function pactEdRenderBody(g, tab) {
   if (!tab) { g.bodyEl.replaceChildren(el("div", { class: "pact-editor-empty hint" }, ["Empty box — pick a file from the tree."])); return; }
@@ -3316,15 +3450,15 @@ function pactEdInstallFindShortcut() {
     if (!g) return;
     const active = g.tabs.find((t) => t.path === g.active);
     if (!active) return;
-    const ext = active.path.toLowerCase();
-    const mdPreview = ext.endsWith(".md") && !active.editing && typeof window.mdRender === "function";
-    const cm = (active.loaded && !active.agentDiff && !mdPreview) ? active._cm : null;
-    // Take over Ctrl/⌘-F/H inside a Pact editor box so the browser page-search never hijacks it (incl.
-    // the read-only diff view, where there's no CM). stopPropagation is REQUIRED: otherwise the same
-    // keydown ALSO reaches CM's own Ctrl-F keymap and the second findPersistent toggled the dialog shut.
+    // Take over Ctrl/⌘-F/H inside a Pact editor box so the browser page-search never hijacks it, and open
+    // the box's own Find/Replace panel (tied to this box's active file). stopPropagation keeps CM's own
+    // Ctrl-F keymap from also firing and toggling a second dialog shut.
     e.preventDefault();
     e.stopPropagation();
-    if (cm) { cm.focus(); cm.execCommand(k === "h" ? "replace" : "findPersistent"); }
+    const s = pactEdSearchState(g);   // Ctrl-F/H always OPENS (+ focuses) the box's panel, never toggles it shut
+    s.open = true; s.replaceMode = (k === "h");
+    pactEdRenderGroupFooter(g);
+    pactEdSyncSearchPanel(g, true);
   }, true);
 }
 
