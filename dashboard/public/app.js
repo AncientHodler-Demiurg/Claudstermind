@@ -2678,6 +2678,7 @@ function pactNode(it) {
 }
 let PACT_MOBILE_FILE_TAP = null;   // (path,row)=>… set by viewPactMobile; the tree's file tap → donut picker
 let PACT_MOBILE_SESSIONS_CB = null;   // ()=>… set by viewPactMobile while its history sheet is open; re-renders it when a `sessions` fetch lands
+let PACT_MOBILE_PAINT_CB = null;      // ()=>… set by viewPactMobile's chatStage; syncs the mobile control bar's send/stop + chat count to the active tab (called at the end of pactChatPaint)
 // ---- Pact .repl terminal runner: stream `pact <file>.repl` over SSE into the right-column terminal.
 let PACT_RUN_ES = null;
 function pactTermEl() { return document.querySelector(".pact-terminal"); }
@@ -2753,7 +2754,7 @@ if (PACT_MOBILE_MQ.addEventListener) PACT_MOBILE_MQ.addEventListener("change", (
   if (typeof PACT_CHAT !== "undefined" && PACT_CHAT) pactChatStop();   // close the old chat stream before the rebuild reopens one
   // Drop the mobile-only hooks so the discarded stage's closures (a gone donut / history sheet) can't fire
   // into detached DOM after the swap; viewPactMobile re-installs its own on the way back.
-  PACT_MOBILE_FILE_TAP = null; PACT_MOBILE_SESSIONS_CB = null;
+  PACT_MOBILE_FILE_TAP = null; PACT_MOBILE_SESSIONS_CB = null; PACT_MOBILE_PAINT_CB = null;
   render();
 });
 let PACT_TREE_FONT = 12.5;   // tree font size (px), adjustable via the tree header A-/A+
@@ -4558,6 +4559,8 @@ function pactChatPaint(t) {
     }
     if (stop) stop.hidden = !busy;
   }
+  // Sync the mobile control bar's send/stop + chat count to this tab (no-op on desktop).
+  if (typeof PACT_MOBILE_PAINT_CB === "function") PACT_MOBILE_PAINT_CB();
 }
 function pactChatPaintLive(t) {
   if (!PACT_CHAT || t.id !== PACT_CHAT.activeId) return;
@@ -4943,15 +4946,35 @@ function viewPactMobile() {
   // ---- M4: the full-screen CHAT gets TWO up-arrow risers (conversations 💬 + history 🕐). Both are pure
   // re-layouts of the desktop chat's ＋/tab list and 🕐 history — same PACT_CHAT state + helpers, no fork.
   function chatStage() {
-    // chatHost is the same node pactChatInit rendered into (reused across selection swaps). Wrap it with
-    // the two risers each render; a little bottom padding on the compose keeps them from crowding.
-    const convoRiser = el("button", { class: "pactm-riser pactm-riser-chat", type: "button", "aria-label": "Conversations" },
-      ["💬 Chats (" + ((PACT_CHAT && PACT_CHAT.tabs.length) || 0) + ")"]);
-    const histRiser = el("button", { class: "pactm-riser pactm-riser-hist", type: "button", "aria-label": "Chat history" }, ["🕐 History"]);
-    const bind = (btn, fn) => { btn.addEventListener("click", fn); btn.addEventListener("touchend", (e) => { e.preventDefault(); fn(); }); };   // README §9: kill the ghost-tap double-fire
-    bind(convoRiser, openChatConvos);
-    bind(histRiser, openChatHistory);
-    return el("div", { class: "pactm-chatwrap" }, [chatHost, convoRiser, histRiser]);
+    // chatHost is the same node pactChatInit rendered into (reused across selection swaps). Instead of the
+    // two big floating risers (which ate vertical space) + the in-compose 📎/Send (which ate the
+    // textarea's width), a SINGLE compact control row holds everything: menu · upload · chats · history ·
+    // stop · send. The in-compose 📎/Send/Stop are hidden on mobile (via .pactm-chatwrap CSS) and driven
+    // from here, so the textarea gets the full width. (v1.3.7)
+    const tbtn = (label, title, fn, cls) => {
+      const b = el("button", { class: "pactm-cbtn" + (cls ? " " + cls : ""), type: "button", "aria-label": title, title }, [label]);
+      b.addEventListener("click", fn); b.addEventListener("touchend", (e) => { e.preventDefault(); fn(); });   // README §9: kill the ghost-tap double-fire
+      return b;
+    };
+    const menuB = tbtn("☰", "Menu", toggleMenu);
+    const upB = tbtn("📎", "Attach image", () => { const inp = chatHost.querySelector(".pc-img-input"); if (inp) inp.click(); });
+    const chatsB = tbtn("💬", "Conversations", openChatConvos, "pactm-cbtn-chats");
+    chatsB.dataset.n = String((PACT_CHAT && PACT_CHAT.tabs.length) || 0);
+    const histB = tbtn("🕐", "History", openChatHistory);
+    const stopB = tbtn("■", "Stop", () => { const a = pactChatActive(); if (a && a.key) wsPost("stop", { sessionKey: a.key }); }, "pactm-cbtn-stop");
+    stopB.hidden = true;
+    const sendB = tbtn("➤", "Send", () => pactChatSend(pactChatActive()), "pactm-cbtn-send");
+    const bar = el("div", { class: "pactm-cbar" }, [menuB, upB, chatsB, histB, el("span", { class: "ws-spacer" }, []), stopB, sendB]);
+    // Keep send/stop + the chat count in step with the active tab's live state — pactChatPaint fires this.
+    PACT_MOBILE_PAINT_CB = () => {
+      const a = pactChatActive(); const busy = !!(a && pactChatBusy(a)); const deep = !!(a && a.status === "deepwork");
+      sendB.textContent = deep ? "🔴" : busy ? "…" : "➤";
+      sendB.classList.toggle("busy", busy);
+      stopB.hidden = !busy;
+      chatsB.dataset.n = String((PACT_CHAT && PACT_CHAT.tabs.length) || 0);
+    };
+    PACT_MOBILE_PAINT_CB();
+    return el("div", { class: "pactm-chatwrap" }, [chatHost, bar]);
   }
   // Riser #1 — the OPEN conversations (PACT_CHAT.tabs): a ＋New row, then one row per conversation (active
   // highlighted); tapping switches the active tab, the × closes it (reusing pactChatCloseTab so desktop +

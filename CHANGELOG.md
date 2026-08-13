@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.3.7] - 2026-08-13
+
+### Changed
+- **Mobile Pact chat — one compact control row.** The two big floating "Chats"/"History" risers and the
+  in-compose 📎/Send buttons (which ate the textarea's width and stacked onto extra lines) are replaced by
+  a single row beneath the compose: **menu · 📎 upload · 💬 chats · 🕐 history · ■ stop · ➤ send**. The
+  chats button carries a small unread-style count badge, and the compose textarea now spans the full
+  width. Frees the vertical + horizontal space the old layout wasted.
+
 ## [1.3.6] - 2026-08-13
 
 ### Fixed
