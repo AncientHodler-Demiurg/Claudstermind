@@ -4034,6 +4034,10 @@ function pactChatInit(host) {
   clearInterval(PACT_TICK_TIMER);
   PACT_TICK_TIMER = setInterval(pactChatTickTimer, 1000);   // live "thinking… M:SS" elapsed readout
 }
+// Start the response clock on ANY client the first time it sees this tab busy — the turn may have begun
+// on another device, or been restored after a reload — so the timer shows everywhere, not only on the
+// device that sent the prompt. Cleared on "result" (which also stamps the reply's total time).
+function pactChatMarkTurnBusy(t) { if (t && (t.status === "thinking" || t.status === "deepwork") && !t._turnStartedAt) t._turnStartedAt = Date.now(); }
 // Update the active tab's live elapsed timer in place (no full repaint) once a second while it's busy.
 function pactChatTickTimer() {
   if (!PACT_CHAT || !PACT_CHAT.host) return;
@@ -4172,7 +4176,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
   }
   const t = sessionKey ? pactChatByKey(sessionKey) : null;
   if (!t) return;
-  if (kind === "state") { if (data && data.session) { if (data.session.status) t.status = data.session.status; if (data.session.usage) t.usage = data.session.usage; pactChatPaint(t); } return; }
+  if (kind === "state") { if (data && data.session) { if (data.session.status) t.status = data.session.status; if (data.session.usage) t.usage = data.session.usage; pactChatMarkTurnBusy(t); pactChatPaint(t); } return; }
   if (kind === "permission") { t.perm = { requestId: data.requestId, tool: data.tool || data.name || data.title || "a tool" }; t.status = "awaiting-permission"; pactChatPaint(t); return; }
   if (kind !== "event") return;
   const d = data || {};
@@ -4191,6 +4195,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       if (dec.replace) t.msgs = incoming;
       if (d.usage) t.usage = d.usage;
       if (d.status) t.status = d.status;
+      pactChatMarkTurnBusy(t);   // restored mid-turn (e.g. after reload) → show the timer here too
       if (!dec.keepLive) t.live = "";
       if (d.sessionId && !t.resume) t.resume = d.sessionId;
       if (PACT_CHAT._pendingOpen && PACT_CHAT._pendingOpen[t.key] != null) delete PACT_CHAT._pendingOpen[t.key];
@@ -4199,10 +4204,12 @@ function pactChatRoute({ kind, sessionKey, data }) {
       pactChatDrainQueue(t);   // a turn that finished during downtime just landed — release any queued follow-up
       return;
     }
-    case "user": if (!(d.by && d.by === PACT_CHAT.conn.id)) { t.msgs.push({ role: "user", text: d.text || "", images: d.images || [], workspaceId: d.workspaceId || PACT_WORKSPACE_ID }); pactChatPaint(t); } return;
-    case "assistant_delta": t.live = (t.live || "") + (d.text || ""); pactChatPaintLive(t); return;
+    // A prompt echoed from ANOTHER device (own sends are guarded out) → a turn is starting here: (re)start
+    // the response clock so the timer shows on this client too, not only where it was typed.
+    case "user": if (!(d.by && d.by === PACT_CHAT.conn.id)) { t._turnStartedAt = Date.now(); t.msgs.push({ role: "user", text: d.text || "", images: d.images || [], workspaceId: d.workspaceId || PACT_WORKSPACE_ID }); pactChatPaint(t); } return;
+    case "assistant_delta": if (!t._turnStartedAt) t._turnStartedAt = Date.now(); t.live = (t.live || "") + (d.text || ""); pactChatPaintLive(t); return;
     case "assistant": t.live = ""; t._pendingText = null; t._pendingImages = null; t.msgs.push({ role: "assistant", text: d.text || "" }); pactChatPaint(t); return;
-    case "tool_use": t.live = ""; t.msgs.push({ kind: "tool_use", tools: d.tools || [] }); pactChatPaint(t); return;
+    case "tool_use": if (!t._turnStartedAt) t._turnStartedAt = Date.now(); t.live = ""; t.msgs.push({ kind: "tool_use", tools: d.tools || [] }); pactChatPaint(t); return;
     case "result":
       t.live = ""; t.status = "idle"; t._pendingText = null; t._pendingImages = null;
       // Stamp the total turn time onto this turn's reply so you can see "how long did it take" at a

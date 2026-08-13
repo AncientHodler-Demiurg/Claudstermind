@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.1] - 2026-08-13
+
+### Fixed
+- **Pact chat response timer now shows on every device, not just the one that sent the prompt.** The turn
+  clock was started only in the send path, so a client watching the same conversation over the stream (a
+  phone while you typed on desktop) — or a desktop after a mid-turn reload — showed a blank timer. It now
+  starts the moment any client sees the turn begin (the prompt echo, first token/tool, or a status/resync
+  frame) and still clears + stamps the total on the reply.
+
 ## [1.4.0] - 2026-08-13
 
 ### Changed
