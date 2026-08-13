@@ -4483,9 +4483,55 @@ function viewPactMobile() {
     const active = g.tabs.find((t) => t.path === g.active);
     // Reuses the shared body renderer: CM for code, markdown preview for .md, the empty-box hint otherwise.
     // pactEdRenderBody schedules cm.refresh() on a requestAnimationFrame — by which point `body` is live in
-    // the stage, so CM sizes correctly. The per-box file up-arrow list is M2.
+    // the stage, so CM sizes correctly.
     pactEdRenderBody(g, active);
-    return body;
+    // M2 — an up-arrow riser bulging up from the bottom; tap opens the full-screen "files in this box" list.
+    const riser = el("button", { class: "pactm-riser", type: "button", "aria-label": "Files in this box" },
+      ["▲ Files (" + g.tabs.length + ")"]);
+    const openFiles = () => openBoxFiles(g);
+    riser.addEventListener("click", openFiles);
+    riser.addEventListener("touchend", (e) => { e.preventDefault(); openFiles(); });   // README §9: kill the ghost-tap double-fire
+    return el("div", { class: "pactm-boxwrap" }, [body, riser]);
+  }
+  // ---- M2: full-screen sheet (overlays the stage; reused by the donut picker in M3). ----
+  let sheetEl = null;
+  function closeSheet() { if (sheetEl) { sheetEl.remove(); sheetEl = null; } }
+  // Mount a full-screen sheet over the stage. `bodyEl` is the sheet's scrollable content; `panelClass`
+  // lets the donut opt out of the default list padding. A backdrop tap or the ✕ dismisses it.
+  function openSheet(titleText, bodyEl, panelClass) {
+    closeSheet();
+    const x = el("button", { class: "pactm-sheet-x", type: "button", "aria-label": "Close" }, ["✕"]);
+    const dismiss = () => closeSheet();
+    x.addEventListener("click", dismiss);
+    x.addEventListener("touchend", (e) => { e.preventDefault(); dismiss(); });
+    const hd = el("div", { class: "pactm-sheet-hd" }, [el("span", { class: "pactm-sheet-ttl" }, [titleText]), x]);
+    const back = el("div", { class: "pactm-sheet-back" }, []);
+    back.addEventListener("click", dismiss);
+    const panel = el("div", { class: "pactm-sheet-panel" + (panelClass ? " " + panelClass : "") }, [hd, bodyEl]);
+    sheetEl = el("div", { class: "pactm-sheet" }, [back, panel]);
+    stage.appendChild(sheetEl);   // absolute inset:0 → sits above the mounted box, doesn't disturb the flex chain
+    return sheetEl;
+  }
+  // The per-box file list: each row switches the box's active file; the × closes it (reusing pactEdCloseTab
+  // so desktop + mobile stay consistent). Rebuilds in place on close so the sheet stays open.
+  function openBoxFiles(g) {
+    const list = el("div", { class: "pactm-sheet-list" }, []);
+    const rebuild = () => {
+      if (!g.tabs.length) { list.replaceChildren(el("div", { class: "pactm-empty" }, ["This box has no open files."])); return; }
+      list.replaceChildren(...g.tabs.map((t) => {
+        const name = el("span", { class: "pactm-frow-name" }, [t.name || t.path.split("/").pop()]);
+        const x = el("button", { class: "pactm-frow-x", type: "button", "aria-label": "Close file" }, ["×"]);
+        const closeFile = (e) => { e.stopPropagation(); pactEdCloseTab(g, t.path); rebuild(); };   // pactEdCloseTab re-renders the mounted box body + saves
+        x.addEventListener("click", closeFile);
+        x.addEventListener("touchend", (e) => { e.preventDefault(); closeFile(e); });
+        const row = el("div", { class: "pactm-frow" + (t.path === g.active ? " --active" : "") }, [name, x]);
+        row.addEventListener("click", () => { g.active = t.path; PACT_ED.activeId = g.id; closeSheet(); renderStage(); pactStateSave(); });
+        return row;
+      }));
+    };
+    const i = PACT_ED.groups.indexOf(g);
+    openSheet("Box " + pactRoman(i + 1) + " — files", list);
+    rebuild();
   }
   function chatStage() { return chatHost; }   // pactChatInit already rendered chat here (messages + compose + send/stop). The conversation/history up-arrows are M4.
   function termStage() {

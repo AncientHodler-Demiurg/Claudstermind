@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.2.12] - 2026-08-12
+
+### Added
+- **Pact workspace — mobile view, stage M2 (per-box file up-arrow list).** When a VIEW BOX is shown
+  full-screen on the phone, a small up-arrow riser now bulges up from the bottom of the stage (it reserves
+  no space and sits above the app's bottom chrome). Tapping it opens a full-screen sheet listing every file
+  open in THAT box: each row shows the file name (the active one highlighted) and a close ×. Tapping a row
+  makes it the box's active file, re-mounts that tab's CodeMirror full-screen and dismisses the sheet;
+  tapping × closes the file in the box (reusing the desktop `pactEdCloseTab` so state stays consistent — a
+  sensible new active tab is picked, and an emptied box keeps its empty state). The sheet reuses a new
+  shared full-screen-sheet + backdrop helper (which M3's donut picker will reuse), with the ghost-tap
+  `onTouchEnd preventDefault` guard on the riser and close buttons. Desktop `viewPact()` is untouched.
+
 ## [1.2.11] - 2026-08-12
 
 ### Added

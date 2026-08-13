@@ -75,7 +75,8 @@ menu** selects the element. Everything below is a RENDER of existing `PACT_ED`/`
   stage routing that shows the selected element full-screen. Tree browsable full-screen; a view box shows
   its active file; Chat and REPL full-screen. (No donut / up-arrow lists yet — selecting a box shows its
   active file only.)
-- **M2 View-box file up-arrow list** — the full-screen "files in this box" sheet (switch/close).
+- **M2 View-box file up-arrow list** ✅ Done (v1.2.12). The full-screen "files in this box" sheet
+  (switch/close), opened from an up-arrow riser at the bottom of a full-screen box.
 - **M3 Tree → double-donut box picker** — the 8-wedge selector with existing/next/disabled states; opens
   the file into the chosen (or newly-created) box.
 - **M4 Chat conversation up-arrow + history up-arrow** — the two full-screen sheets (open conversations +
