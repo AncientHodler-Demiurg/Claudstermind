@@ -1164,6 +1164,14 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 /* inline-block view + block rows sized to content (white-space:pre) so a row's background spans the
    FULL line width — the whole line tints, not just the part that fits the viewport when scrolled. */
 .pact-diff-view { margin: 0; padding: 8px 0; font: 12.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; tab-size: 2; color: #d2d3d4; display: inline-block; min-width: 100%; box-sizing: border-box; }
+/* Overview ruler on the diff view's scroll container: green(add)/red(del) bands so a long diff shows
+   change density at a glance (the editable view gets CodeMirror's own scrollbar ruler). */
+.pact-diff-scrollwrap { position: relative; flex: 1; min-height: 0; display: flex; }
+.pact-diff-scrollwrap > .pact-editor-scroll { flex: 1; min-width: 0; }
+.pact-diff-ovr { position: absolute; top: 0; right: 0; bottom: 0; width: 6px; pointer-events: none; z-index: 3; }
+.pact-diff-ovr > div { position: absolute; right: 0; width: 5px; min-height: 2px; border-radius: 2px; }
+.pact-diff-ovr-add { background: #34d399; }
+.pact-diff-ovr-del { background: #ef5350; }
 .pact-diff-row { display: block; white-space: pre; }
 .pact-diff-row .pd-lineno { display: inline-block; min-width: var(--pk-lineno-w, 2ch); text-align: right; padding-right: 8px;
   color: var(--ink-dim); user-select: none; -webkit-user-select: none;

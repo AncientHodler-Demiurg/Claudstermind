@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.3.1] - 2026-08-12
+
+### Added
+- **Change-ruler on the agent-edit diff view.** The read-only diff (green/red line backgrounds) now also
+  shows green (added) / red (removed) bands on its scrollbar, so a long agent edit shows change density at
+  a glance — matching the CodeMirror editor's scrollbar ruler (the diff view isn't CodeMirror, so it uses
+  a plain overlay).
+
 ## [1.3.0] - 2026-08-12
 
 ### Added

@@ -2820,7 +2820,17 @@ function pactEdRenderBody(g, tab) {
     }));
     const dkids = [];   // band legend now lives once in the shared toolbar (viewPact), not per box
     dkids.push(el("div", { class: "pact-diff-hd" }, [el("span", { class: "pd-badge pd-badge-add" }, ["+" + tab.agentDiff.add]), el("span", { class: "pd-badge pd-badge-del" }, ["−" + tab.agentDiff.del]), el("span", { class: "hint", style: "margin-left:8px" }, ["agent edit — Keep All to accept + resume editing"])]));
-    dkids.push(el("div", { class: "pact-editor-scroll" }, [view]));
+    const diffScroll = el("div", { class: "pact-editor-scroll" }, [view]);
+    // Overview ruler: green/red bands for the add/del rows across the whole diff height, so long diffs
+    // show change density at a glance (the editable view has CodeMirror's scrollbar ruler; the diff view
+    // isn't CodeMirror, so it's a plain overlay on its scroll container).
+    const diffOvr = el("div", { class: "pact-diff-ovr", "aria-hidden": "true" });
+    for (const b of pactDiffOvrBands(tab.agentDiff.rows)) {
+      const tick = el("div", { class: "pact-diff-ovr-" + b.type });
+      tick.style.top = b.top + "%"; tick.style.height = b.height + "%";
+      diffOvr.append(tick);
+    }
+    dkids.push(el("div", { class: "pact-diff-scrollwrap" }, [diffScroll, diffOvr]));
     g.bodyEl.replaceChildren(...dkids);
     return;
   }
@@ -3204,6 +3214,21 @@ function pactEdInstallFindShortcut() {
 // ===== PACT CHANGE-MARKS — pure diff→ruler helper (sliced out for unit tests; see lib/pactChangeMarks.test.mjs)
 // pactDiffLines + pactChangeMarks are wrapped in one sentinel block so the test can eval them together
 // (pactChangeMarks calls pactDiffLines). No DOM, no side effects.
+// pactDiffOvrBands: diff rows → overview-ruler bands (merge adjacent add/del runs into {type,top%,height%}).
+function pactDiffOvrBands(rows) {
+  rows = Array.isArray(rows) ? rows : [];
+  const total = rows.length || 1, out = [];
+  let i = 0;
+  while (i < rows.length) {
+    const t = rows[i] && rows[i].type;
+    if (t === "add" || t === "del") {
+      let j = i; while (j < rows.length && rows[j] && rows[j].type === t) j++;
+      out.push({ type: t, top: (i / total) * 100, height: Math.max(0.5, ((j - i) / total) * 100) });
+      i = j;
+    } else i++;
+  }
+  return out;
+}
 function pactDiffLines(before, after) {
   const A = String(before).split("\n"), B = String(after).split("\n");
   const rows = [];
