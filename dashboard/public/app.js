@@ -2597,17 +2597,12 @@ function pactRoman(n) {
   const R = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII"];
   return Number.isInteger(n) && n >= 1 && n <= 8 ? R[n] : "";
 }
-// pactMobileDefaultSel: the default full-screen selection for the phone shell, given the editor boxes and
-// which is active. Prefer the active box IF it has an open file, else the first box that has a file, else
-// the file tree. Takes plain { id, active } group snapshots; returns { kind:'box', boxId } or
-// { kind:'tree' }. Pure — the DOM render (viewPactMobile) consumes it.
+// pactMobileDefaultSel: the default full-screen selection for the phone shell. Always the agent Chat —
+// the user's primary entry point on load/reload (the prime conversation, scrolled to its latest message).
+// Takes the { id, active } box snapshots for signature/back-compat but ignores them: Chat is the deliberate
+// default (v1.3.4). Pure — the DOM render (viewPactMobile) consumes it.
 function pactMobileDefaultSel(groups, activeId) {
-  const list = Array.isArray(groups) ? groups : [];
-  const active = list.find((g) => g && g.id === activeId);
-  if (active && active.active) return { kind: "box", boxId: active.id };
-  const withFile = list.find((g) => g && g.active);
-  if (withFile) return { kind: "box", boxId: withFile.id };
-  return { kind: "tree" };
+  return { kind: "chat" };
 }
 // pactDonutSegments: the wedge states for the mobile tree's double-donut file-open picker. Always 8 wedges
 // (1-based indices), one per POSSIBLE view box (pactEdLayout caps at 8). Given the number of open boxes:
@@ -3610,7 +3605,7 @@ function pactStateSnapshot() {
     rowFlex: Array.isArray(PACT_ED.rowFlex) ? PACT_ED.rowFlex.slice() : null,
   };
   const chat = {
-    tabs: PACT_CHAT.tabs.map((t) => ({ key: t.key, name: t.name, draft: t.draft || "", resume: t.resume || null })),
+    tabs: PACT_CHAT.tabs.map((t) => ({ key: t.key, name: t.name, draft: t.draft || "", resume: t.resume || null, prime: !!t.prime })),
     activeIndex: Math.max(0, PACT_CHAT.tabs.findIndex((t) => t.id === PACT_CHAT.activeId)),
   };
   const right = document.querySelector(".pact-right");
@@ -3658,8 +3653,11 @@ function pactRestoreChat(ch) {
       // don't re-inject it on the next message. (Full transcript rehydration + resume is P3.)
       started: true, perm: null, draft: typeof ts.draft === "string" ? ts.draft : "",
       // a resumed/loaded tab keeps its SDK resume target across reloads so continuing still has context
-      resume: (typeof ts.resume === "string" && ts.resume) ? ts.resume : null };
+      resume: (typeof ts.resume === "string" && ts.resume) ? ts.resume : null,
+      // the prime (undeletable) conversation flag survives reloads; ensurePrime backfills older layouts
+      prime: !!ts.prime };
   });
+  pactChatEnsurePrime();
   const ai = Number.isInteger(ch.activeIndex) && ch.activeIndex >= 0 && ch.activeIndex < PACT_CHAT.tabs.length ? ch.activeIndex : 0;
   PACT_CHAT.activeId = PACT_CHAT.tabs[ai].id;
   pactChatRender();
@@ -3893,6 +3891,16 @@ function pactChatInit(host) {
   if (!PACT_UNLOAD_HOOKED) { PACT_UNLOAD_HOOKED = true; window.addEventListener("pagehide", () => { if (PACT_STATE_READY) pactStateFlush(true); }); }
   pactChatOpenStream();
   pactChatNewTab();
+  pactChatEnsurePrime();   // the fresh tab becomes the prime (undeletable) conversation
+  pactChatRender();        // re-render so the prime marker (★, no ×) shows immediately
+}
+// The Pact chat ALWAYS has exactly one "prime" conversation: it can never be closed, so there is never a
+// state with zero conversations (a chat box always has one discussion open). If none is flagged yet (fresh
+// init, or an older saved layout without the field), the first tab becomes prime. Called after any tab
+// add / close / restore.
+function pactChatEnsurePrime() {
+  if (!PACT_CHAT || !PACT_CHAT.tabs.length) return;
+  if (!PACT_CHAT.tabs.some((t) => t.prime)) PACT_CHAT.tabs[0].prime = true;
 }
 function pactChatStop() {
   // Persist the live draft/layout NOW before tearing down — otherwise the clearTimeout below cancels a
@@ -3917,10 +3925,12 @@ function pactChatNewTab() {
 }
 function pactChatCloseTab(id) {
   const t = PACT_CHAT.tabs.find((x) => x.id === id);
-  if (t && t.key) wsPost("control", { action: "delete", args: { sessionKeys: [t.key] } });   // let its session finish + save
+  if (!t || t.prime) return;   // the prime conversation can never be closed — never a zero-chat state
+  if (t.key) wsPost("control", { action: "delete", args: { sessionKeys: [t.key] } });   // let its session finish + save
   PACT_CHAT.tabs = PACT_CHAT.tabs.filter((x) => x.id !== id);
-  if (!PACT_CHAT.tabs.length) { pactChatNewTab(); return; }
+  if (!PACT_CHAT.tabs.length) { pactChatNewTab(); pactChatEnsurePrime(); return; }
   if (PACT_CHAT.activeId === id) PACT_CHAT.activeId = PACT_CHAT.tabs[0].id;
+  pactChatEnsurePrime();
   pactChatRender();
   pactStateSave();
 }
@@ -4360,13 +4370,15 @@ function pactChatRender() {
   if (!PACT_CHAT) return;
   const host = PACT_CHAT.host;
   const tabs = PACT_CHAT.tabs.map((t) => {
-    const x = el("span", { class: "pc-tab-x", title: "Close chat" }, ["×"]);
-    x.addEventListener("click", (e) => { e.stopPropagation(); pactChatCloseTab(t.id); });
     const dot = el("span", { class: "pc-tab-dot" + (t.status === "thinking" || t.status === "deepwork" ? " busy" : "") });
     const label = (t.key && PACT_CHAT_NAMES[t.key]) || t.name;
     const nameEl = el("span", { class: "pc-tab-name", title: "Double-click to rename this chat" }, [label]);
     nameEl.addEventListener("dblclick", (e) => { e.stopPropagation(); pactChatRenameTab(t); });
-    const tab = el("div", { class: "pc-tab" + (t.id === PACT_CHAT.activeId ? " --active" : "") }, [dot, nameEl, x]);
+    // The prime conversation can't be closed — show a ★ marker instead of the × close.
+    let tail;
+    if (t.prime) { tail = el("span", { class: "pc-tab-prime", title: "Prime conversation — always open, can't be closed" }, ["★"]); }
+    else { tail = el("span", { class: "pc-tab-x", title: "Close chat" }, ["×"]); tail.addEventListener("click", (e) => { e.stopPropagation(); pactChatCloseTab(t.id); }); }
+    const tab = el("div", { class: "pc-tab" + (t.id === PACT_CHAT.activeId ? " --active" : "") + (t.prime ? " --prime" : "") }, [dot, nameEl, tail]);
     tab.addEventListener("click", () => { if (t.id === PACT_CHAT.activeId) return; pactChatSaveDraft(); PACT_CHAT.activeId = t.id; pactChatRender(); pactStateSave(); });
     return tab;
   });
@@ -4386,7 +4398,7 @@ function pactChatRender() {
   usageEl.hidden = true;
   const head = el("div", { class: "pact-zone-hd pc-head" }, [el("div", { class: "pc-tabs" }, tabs), add, hist, el("span", { class: "ws-spacer" }, []), usageEl, modeSel, chatCollapse]);
   const scroll = el("div", { class: "pc-scroll" }, []);
-  const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (Enter to send)" });
+  const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (⌘/Ctrl+Enter to send)" });
   const send = el("button", { class: "pc-send" }, ["Send"]);
   // "■ Stop" — interrupt the active tab's in-flight turn without ending the conversation, mirroring
   // the Core cockpit's stop button (same "stop" control → SDK interrupt in lib/workspace.mjs).
@@ -4398,7 +4410,9 @@ function pactChatRender() {
   const active = pactChatActive();
   if (active) input.value = active.draft || "";   // restore this tab's saved compose draft
   send.addEventListener("click", () => pactChatSend(active));
-  input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); pactChatSend(pactChatActive()); } });
+  // Enter inserts a newline (default textarea behavior) — sending is the button, or ⌘/Ctrl+Enter. This
+  // matches the Core cockpit compose exactly so Enter behaves the same everywhere (v1.3.4).
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); pactChatSend(pactChatActive()); } });
   input.addEventListener("input", () => { pactChatAutosize(input); const a = pactChatActive(); if (a) { a.draft = input.value; pactStateSave(); } });
   // Image attach: a hidden file input + 📎 button, plus paste (on the textarea) and drag-drop (onto
   // the compose row) — all three funnel into pactAttachImageFiles → the exact same attached state.
@@ -4750,11 +4764,16 @@ function viewPactMobile() {
       (PACT_CHAT.tabs || []).forEach((t) => {
         const label = (t.key && PACT_CHAT_NAMES[t.key]) || t.name;
         const name = el("span", { class: "pactm-frow-name" }, [label]);
-        const x = el("button", { class: "pactm-frow-x", type: "button", "aria-label": "Close conversation" }, ["×"]);
-        const closeConv = (e) => { e.stopPropagation(); pactChatCloseTab(t.id); rebuild(); };   // pactChatCloseTab re-renders the chat + saves; may spawn a fresh tab if it was the last
-        x.addEventListener("click", closeConv);
-        x.addEventListener("touchend", (e) => { e.preventDefault(); closeConv(e); });
-        const row = el("div", { class: "pactm-frow" + (t.id === PACT_CHAT.activeId ? " --active" : "") }, [name, x]);
+        // The prime conversation can't be closed — a ★ marker replaces the × close button.
+        let tail;
+        if (t.prime) { tail = el("span", { class: "pactm-frow-prime", title: "Prime conversation" }, ["★"]); }
+        else {
+          tail = el("button", { class: "pactm-frow-x", type: "button", "aria-label": "Close conversation" }, ["×"]);
+          const closeConv = (e) => { e.stopPropagation(); pactChatCloseTab(t.id); rebuild(); };   // pactChatCloseTab re-renders the chat + saves
+          tail.addEventListener("click", closeConv);
+          tail.addEventListener("touchend", (e) => { e.preventDefault(); closeConv(e); });
+        }
+        const row = el("div", { class: "pactm-frow" + (t.id === PACT_CHAT.activeId ? " --active" : "") + (t.prime ? " --prime" : "") }, [name, tail]);
         onTap(row, () => { if (t.id !== PACT_CHAT.activeId) { pactChatSaveDraft(); PACT_CHAT.activeId = t.id; pactChatRender(); pactStateSave(); } closeSheet(); renderStage(); });
         rows.push(row);
       });
@@ -4822,6 +4841,14 @@ function viewPactMobile() {
     }
     title.textContent = label;
     stage.replaceChildren(content);
+    // Moving chatHost into the stage resets its scroll to the TOP — so when Chat is shown, jump the active
+    // conversation to its latest message (its natural resting place), not the beginning. Deferred a frame so
+    // the freshly-mounted node has a real scrollHeight. A later async transcript rehydrate keeps the tail via
+    // its own _forceBottom (see pactChatRoute).
+    if (sel.kind === "chat") {
+      const a = pactChatActive();
+      if (a) { a._forceBottom = true; requestAnimationFrame(() => { const cur = pactChatActive(); if (cur && cur.id === a.id) pactChatPaint(cur); }); }
+    }
   }
 
   // ---- boot: SAME state init as desktop — this is a re-layout, not a fork ----
@@ -4835,7 +4862,12 @@ function viewPactMobile() {
   // the restored boxes — unless the user has already picked something in the meantime.
   pactRestoreState().then(() => {
     if (!root.isConnected || !PACT_ED) return;
-    if (!userPicked) PACT_ED._mobileSel = pactMobileDefaultSel(PACT_ED.groups, PACT_ED.activeId);
+    if (!userPicked) {
+      PACT_ED._mobileSel = pactMobileDefaultSel(PACT_ED.groups, PACT_ED.activeId);
+      // Present the prime conversation (not whichever tab was last active) on reload, scrolled to latest.
+      const prime = PACT_CHAT && PACT_CHAT.tabs.find((t) => t.prime);
+      if (prime && PACT_CHAT.activeId !== prime.id) { PACT_CHAT.activeId = prime.id; pactChatRender(); }
+    }
     renderMenu();
     if (!userPicked) renderStage();
   });

@@ -1341,6 +1341,8 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pc-tab-dot.busy { background: #f59e0b; }
 .pc-tab-x { color: var(--ink-mute); font-size: 13px; line-height: 1; padding: 0 2px; }
 .pc-tab-x:hover { color: var(--ink); }
+/* Prime conversation — always open, can't be closed. A ★ marker replaces the × close. */
+.pc-tab-prime { color: var(--accent); font-size: 11px; line-height: 1; padding: 0 2px; cursor: default; }
 .pc-mode { flex: 0 0 auto; max-width: 96px; }
 .pc-usage { flex: 0 0 auto; font-size: 10.5px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
 .pc-usage[hidden] { display: none; }
@@ -1535,6 +1537,9 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .pactm-frow-x { flex: 0 0 auto; min-width: 34px; min-height: 34px; background: transparent; border: none;
     color: var(--ink-dim); font-size: 20px; line-height: 1; cursor: pointer;
     -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  /* Prime conversation marker in the mobile conversation sheet — no close, a ★ instead. */
+  .pactm-frow-prime { flex: 0 0 auto; min-width: 34px; text-align: center; color: var(--accent);
+    font-size: 15px; line-height: 1; }
 
   /* M3 — the double-donut box picker (tree file tap → choose/create a view box). 8 wedges around an empty
      center: 'open' boxes highlighted, the 'next' creatable box accented, higher 'disabled' wedges dimmed. */

@@ -4,6 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.3.4] - 2026-08-13
+
+### Added
+- **Prime conversation (always one chat open).** The Pact chat now always has exactly one *prime*
+  conversation that can never be closed — there's no longer any state with zero conversations open. It's
+  marked with a ★ (in place of the × close) on both the desktop chat tabs and the mobile conversation
+  sheet, and the flag persists across reloads (older saved layouts backfill the first conversation as
+  prime).
+
+### Changed
+- **Mobile Pact workspace opens on Chat.** On phone, reloading the Pact workspace now presents the agent
+  Chat by default (was: the first document box), on the prime conversation, scrolled to its latest message
+  (was: scrolled to the top of a long history).
+- **Enter is a newline everywhere in the Pact chat.** Pressing Enter in the Pact compose box now inserts a
+  newline instead of sending; send with the button or ⌘/Ctrl+Enter — matching the Core cockpit compose so
+  the key behaves the same in both chats.
+
 ## [1.3.3] - 2026-08-12
 
 ### Added
