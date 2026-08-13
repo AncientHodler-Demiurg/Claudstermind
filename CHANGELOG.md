@@ -4,6 +4,13 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.3.8] - 2026-08-13
+
+### Added
+- **Collapse the mobile compose to one line.** A new toggle in the control row pins the compose textarea
+  to a single line, so a long draft stops expanding upward and eating into the transcript — handy for
+  reading more of the conversation while a big prompt sits in the box. The choice persists across reloads.
+
 ## [1.3.7] - 2026-08-13
 
 ### Changed

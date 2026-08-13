@@ -1611,6 +1611,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .pactm-chatwrap .pc-compose .pc-stop { display: none; }
   .pactm-chatwrap .pc-head .pact-ed-ico { display: none; }
   .pactm-chatwrap .pc-input { width: 100%; }
+  /* v1.3.8 — collapse the compose to a single line (overrides pactChatAutosize's inline height) so a long
+     draft stops expanding upward into the transcript. The transcript gets the reclaimed height. */
+  .pactm-compose-collapsed .pc-input { height: 40px !important; min-height: 40px !important; max-height: 40px !important; overflow-y: auto !important; }
+  .pactm-cbtn-collapse { font-size: 15px; }
+  .pactm-compose-collapsed .pactm-cbtn-collapse { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
   .pactm-frow-new { border-color: var(--accent); color: var(--accent); font-weight: 700; }
   .pactm-frow-new .pactm-frow-name { color: var(--accent); }
   /* History rows stack name + meta + first-prompt snippet (mirrors the desktop 🕐 row content). */

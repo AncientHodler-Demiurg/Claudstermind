@@ -2679,6 +2679,9 @@ function pactNode(it) {
 let PACT_MOBILE_FILE_TAP = null;   // (path,row)=>… set by viewPactMobile; the tree's file tap → donut picker
 let PACT_MOBILE_SESSIONS_CB = null;   // ()=>… set by viewPactMobile while its history sheet is open; re-renders it when a `sessions` fetch lands
 let PACT_MOBILE_PAINT_CB = null;      // ()=>… set by viewPactMobile's chatStage; syncs the mobile control bar's send/stop + chat count to the active tab (called at the end of pactChatPaint)
+// Whether the mobile compose box is pinned to a single line (so a long draft stops eating into the
+// transcript). Persisted so the choice survives reloads. Toggled from the control bar (v1.3.8).
+let PACT_COMPOSE_COLLAPSED = (() => { try { return localStorage.getItem("pact.compose.collapsed") === "1"; } catch { return false; } })();
 // ---- Pact .repl terminal runner: stream `pact <file>.repl` over SSE into the right-column terminal.
 let PACT_RUN_ES = null;
 function pactTermEl() { return document.querySelector(".pact-terminal"); }
@@ -4964,7 +4967,20 @@ function viewPactMobile() {
     const stopB = tbtn("■", "Stop", () => { const a = pactChatActive(); if (a && a.key) wsPost("stop", { sessionKey: a.key }); }, "pactm-cbtn-stop");
     stopB.hidden = true;
     const sendB = tbtn("➤", "Send", () => pactChatSend(pactChatActive()), "pactm-cbtn-send");
-    const bar = el("div", { class: "pactm-cbar" }, [menuB, upB, chatsB, histB, el("span", { class: "ws-spacer" }, []), stopB, sendB]);
+    const spacer = el("span", { class: "ws-spacer" }, []);
+    const bar = el("div", { class: "pactm-cbar" }, [menuB, upB, chatsB, histB, spacer, stopB, sendB]);
+    // v1.3.8 — pin the compose to a single line so a long draft stops expanding upward into the
+    // transcript. Toggle sits just before the send cluster; state persists across reloads.
+    const wrap = el("div", { class: "pactm-chatwrap" + (PACT_COMPOSE_COLLAPSED ? " pactm-compose-collapsed" : "") }, [chatHost, bar]);
+    const collapseB = tbtn(PACT_COMPOSE_COLLAPSED ? "⌃" : "⌄", PACT_COMPOSE_COLLAPSED ? "Expand the compose box" : "Collapse the compose box to one line", () => {
+      PACT_COMPOSE_COLLAPSED = !PACT_COMPOSE_COLLAPSED;
+      try { localStorage.setItem("pact.compose.collapsed", PACT_COMPOSE_COLLAPSED ? "1" : "0"); } catch {}
+      wrap.classList.toggle("pactm-compose-collapsed", PACT_COMPOSE_COLLAPSED);
+      collapseB.textContent = PACT_COMPOSE_COLLAPSED ? "⌃" : "⌄";
+      collapseB.title = PACT_COMPOSE_COLLAPSED ? "Expand the compose box" : "Collapse the compose box to one line";
+      const ta = chatHost.querySelector(".pc-input"); if (ta) pactChatAutosize(ta);
+    }, "pactm-cbtn-collapse");
+    bar.insertBefore(collapseB, spacer);
     // Keep send/stop + the chat count in step with the active tab's live state — pactChatPaint fires this.
     PACT_MOBILE_PAINT_CB = () => {
       const a = pactChatActive(); const busy = !!(a && pactChatBusy(a)); const deep = !!(a && a.status === "deepwork");
@@ -4974,7 +4990,7 @@ function viewPactMobile() {
       chatsB.dataset.n = String((PACT_CHAT && PACT_CHAT.tabs.length) || 0);
     };
     PACT_MOBILE_PAINT_CB();
-    return el("div", { class: "pactm-chatwrap" }, [chatHost, bar]);
+    return wrap;
   }
   // Riser #1 — the OPEN conversations (PACT_CHAT.tabs): a ＋New row, then one row per conversation (active
   // highlighted); tapping switches the active tab, the × closes it (reusing pactChatCloseTab so desktop +
