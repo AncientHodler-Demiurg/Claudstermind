@@ -1533,15 +1533,17 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
     text-align: right; font-size: 11.5px; color: var(--ink-dim); }
   .pactm-empty { padding: 8px 12px; font-size: 12.5px; color: var(--ink-dim); }
 
-  /* M2 — a full-screen VIEW BOX: the mounted editor fills the wrap; a small up-arrow riser bulges up from
-     the bottom (absolute, reserves no space) and opens the "files in this box" sheet. A little bottom
-     padding keeps the editor content from crowding into the riser band. */
-  .pactm-boxwrap { display: flex; flex-direction: column; min-height: 0; position: relative; padding-bottom: 6px; }
+  /* M2 / v1.4.0 — a full-screen VIEW BOX: the mounted editor fills the wrap; an Ouronet-style handle (a
+     slim full-width bar with a centered grabber + label) sits IN-FLOW in the reserved strip above the tab
+     bar and expands the "files in this box" sheet. Uses the previously-dead strip instead of floating. */
+  .pactm-boxwrap { display: flex; flex-direction: column; min-height: 0; position: relative; }
   .pactm-boxwrap > .pactm-box { flex: 1 1 auto; min-height: 0; }
-  .pactm-riser { position: absolute; right: 12px; bottom: 8px; z-index: 15; min-height: 40px; padding: 6px 14px;
-    display: inline-flex; align-items: center; gap: 6px; background: var(--accent); color: #fff; border: none;
-    border-radius: 999px; font-size: 12.5px; font-weight: 700; box-shadow: 0 3px 10px rgba(0,0,0,.35);
+  .pactm-handle { flex: 0 0 auto; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: 5px 10px 7px; border: none; border-top: 1px solid var(--line); background: var(--bg); color: var(--ink-soft);
     cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  .pactm-handle:active { background: var(--chip); }
+  .pactm-handle-grip { width: 42px; height: 4px; border-radius: 999px; background: var(--ink-mute); opacity: .55; }
+  .pactm-handle-lbl { font-size: 11.5px; font-weight: 600; }
 
   /* Full-screen sheet (up-arrow lists + the M3 donut): overlays only the stage, ✕ or backdrop dismisses. */
   .pactm-sheet { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; }

@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.0] - 2026-08-13
+
+### Changed
+- **Ouronet-style "Files" handle in the box view.** The floating "▲ Files (N)" pill is replaced by a slim,
+  full-width handle bar (a centered grabber + label, like Ouronet's control slider) that sits in the
+  previously-empty strip above the bottom tab bar and expands the full-screen file list. Uses the dead
+  space instead of overlaying the editor.
+
 ## [1.3.9] - 2026-08-13
 
 ### Changed

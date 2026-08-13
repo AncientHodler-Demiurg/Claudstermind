@@ -4835,9 +4835,13 @@ function viewPactMobile() {
     // pactEdRenderBody schedules cm.refresh() on a requestAnimationFrame — by which point `body` is live in
     // the stage, so CM sizes correctly.
     pactEdRenderBody(g, active);
-    // M2 — an up-arrow riser bulging up from the bottom; tap opens the full-screen "files in this box" list.
-    const riser = el("button", { class: "pactm-riser", type: "button", "aria-label": "Files in this box" },
-      ["▲ Files (" + g.tabs.length + ")"]);
+    // An Ouronet-style handle in the reserved strip above the tab bar (v1.4.0): a slim full-width bar with
+    // a centered grabber + label; tap expands the full-screen "files in this box" list. Replaces the old
+    // floating pill and uses the previously-dead strip.
+    const riser = el("button", { class: "pactm-handle", type: "button", "aria-label": "Files in this box" }, [
+      el("span", { class: "pactm-handle-grip" }, []),
+      el("span", { class: "pactm-handle-lbl" }, ["▲ Files (" + g.tabs.length + ")"]),
+    ]);
     const openFiles = () => openBoxFiles(g);
     riser.addEventListener("click", openFiles);
     riser.addEventListener("touchend", (e) => { e.preventDefault(); openFiles(); });   // README §9: kill the ghost-tap double-fire
