@@ -1488,6 +1488,9 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .pactm { display: flex; flex-direction: column; height: 100%; min-height: 0; position: relative; overflow: hidden; }
   .pactm-top { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 6px 10px;
     border-bottom: 1px solid var(--line); background: var(--panel); }
+  /* v1.3.9 — chat has its own ☰ in the control row, so drop the whole top bar in chat and give that
+     height to the transcript. */
+  .pactm[data-stage="chat"] .pactm-top { display: none; }
   .pactm-hb { flex: 0 0 auto; min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center;
     background: var(--chip); border: 1px solid var(--line); color: var(--ink); border-radius: 9px; font-size: 19px; cursor: pointer;
     -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
@@ -1616,6 +1619,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .pactm-compose-collapsed .pc-input { height: 40px !important; min-height: 40px !important; max-height: 40px !important; overflow-y: auto !important; }
   .pactm-cbtn-collapse { font-size: 15px; }
   .pactm-compose-collapsed .pactm-cbtn-collapse { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+  /* v1.3.9 — use the wasted right-side space: let bubbles run nearly full width on a phone (assistant
+     bubbles were capped at 92% and left a dead strip on the right). */
+  .pactm-chatwrap .pc-asst, .pactm-chatwrap .pc-tool { max-width: 100%; }
+  .pactm-chatwrap .pc-user { max-width: 96%; }
+  .pactm-chatwrap .pc-scroll { padding-left: 8px; padding-right: 8px; }
   .pactm-frow-new { border-color: var(--accent); color: var(--accent); font-weight: 700; }
   .pactm-frow-new .pactm-frow-name { color: var(--accent); }
   /* History rows stack name + meta + first-prompt snippet (mirrors the desktop 🕐 row content). */

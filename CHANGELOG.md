@@ -4,6 +4,13 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.3.9] - 2026-08-13
+
+### Changed
+- **More room for the mobile chat.** The top "☰ Chat" bar is dropped in the chat view (its menu button
+  already lives in the control row), and message bubbles now run nearly full width instead of stopping at
+  92% — reclaiming both the top strip and the dead space on the right of the transcript.
+
 ## [1.3.8] - 2026-08-13
 
 ### Added

@@ -5082,6 +5082,7 @@ function viewPactMobile() {
       label = "Box " + pactRoman(i + 1) + (g && g.active ? " · " + g.active.split("/").pop() : "");
     }
     title.textContent = label;
+    root.dataset.stage = sel.kind || "box";   // CSS drops the top bar in chat (its menu lives in the control row)
     stage.replaceChildren(content);
     // Moving chatHost into the stage resets its scroll to the TOP — so when Chat is shown, jump the active
     // conversation to its latest message (its natural resting place), not the beginning. Deferred a frame so
