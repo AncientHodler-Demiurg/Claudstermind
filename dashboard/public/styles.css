@@ -1532,4 +1532,21 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .pactm-donut-hole-x { font-size: 26px; font-weight: 700; fill: var(--ink-dim); cursor: pointer;
     user-select: none; -webkit-user-select: none; }
   .pactm-donut-hint { max-width: 320px; text-align: center; font-size: 12px; color: var(--ink-dim); line-height: 1.5; }
+
+  /* M4 — the full-screen CHAT: the reused chat pane fills the wrap; TWO up-arrow risers bulge up from the
+     bottom (conversations 💬 bottom-left, history 🕐 bottom-right). The wrap reserves a bottom band so the
+     compose/send row doesn't crowd into the risers. */
+  .pactm-chatwrap { display: flex; flex-direction: column; min-height: 0; position: relative; padding-bottom: 46px; }
+  .pactm-chatwrap > .pact-chat { flex: 1 1 auto; min-height: 0; }
+  .pactm-riser-hist { right: 12px; }
+  .pactm-riser-chat { right: auto; left: 12px; }
+  .pactm-frow-new { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+  .pactm-frow-new .pactm-frow-name { color: var(--accent); }
+  /* History rows stack name + meta + first-prompt snippet (mirrors the desktop 🕐 row content). */
+  .pactm-hrow { align-items: flex-start; }
+  .pactm-hrow-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .pactm-hrow-name { font-size: 14px; font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pactm-hrow-meta { font-size: 11.5px; color: var(--ink-dim); }
+  .pactm-hrow-first { font-size: 12.5px; color: var(--ink-mute); overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal; }
 }

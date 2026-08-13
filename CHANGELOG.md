@@ -4,6 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.2.14] - 2026-08-12
+
+### Added
+- **Pact workspace — mobile view, stage M4 (chat conversation + history up-arrows).** The phone's full-screen
+  CHAT now carries TWO up-arrow risers at the bottom of the stage (💬 Chats and 🕐 History), each opening a
+  full-screen sheet — a mobile re-layout of the desktop chat's `＋`/tab list and 🕐 history, reusing the same
+  `PACT_CHAT` state and helpers (no fork). The **Conversations** sheet lists the open conversations
+  (`PACT_CHAT.tabs`, active highlighted): a `＋ New conversation` row runs `pactChatNewTab()` and enters it;
+  tapping a row switches the active conversation (`pactChatSaveDraft` + `PACT_CHAT.activeId` + `pactChatRender`);
+  its × closes it via the shared `pactChatCloseTab`. The **History** sheet fetches the saved-session list over
+  the workspace stream and renders `PACT_CHAT.sessions` with the same row data as desktop (name, first-prompt
+  snippet, msg count, updated-at); tapping a row resumes it into the chat via `pactChatOpenSaved(row, true)`
+  (adopt + rehydrate), primarily to continue a past conversation from an empty chat. A new pure, unit-tested
+  helper `pactChatMsgLabel(turns)` formats the "N msg(s)" count. Both sheets take the ghost-tap `touchend`
+  `preventDefault` fix and degrade gracefully (no conversations → just `＋New`; no history → "No saved
+  conversations"). Desktop `viewPact()` and the desktop chat are unchanged.
+
 ## [1.2.13] - 2026-08-12
 
 ### Added

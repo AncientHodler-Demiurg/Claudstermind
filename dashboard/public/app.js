@@ -2557,6 +2557,7 @@ function pactNode(it) {
   return row;
 }
 let PACT_MOBILE_FILE_TAP = null;   // (path,row)=>… set by viewPactMobile; the tree's file tap → donut picker
+let PACT_MOBILE_SESSIONS_CB = null;   // ()=>… set by viewPactMobile while its history sheet is open; re-renders it when a `sessions` fetch lands
 // ---- Pact .repl terminal runner: stream `pact <file>.repl` over SSE into the right-column terminal.
 let PACT_RUN_ES = null;
 function pactTermEl() { return document.querySelector(".pact-terminal"); }
@@ -2618,6 +2619,12 @@ function pactDonutSegments(boxCount) {
     out.push({ index: i, state: i <= n ? "open" : (i === n + 1 ? "next" : "disabled") });
   }
   return out;
+}
+// pactChatMsgLabel: the "N msg"/"N msgs" count shown on a history row (mobile history sheet). Mirrors the
+// desktop 🕐 row's `${turns} msg${…}` wording. Junk/negative → "0 msgs". Pure — the sheet render consumes it.
+function pactChatMsgLabel(turns) {
+  const n = Number.isFinite(turns) && turns > 0 ? Math.floor(turns) : 0;
+  return n + " msg" + (n === 1 ? "" : "s");
 }
 // ===== end PACT MOBILE pure helpers =====
 // The Pact workspace has a bespoke phone re-layout (viewPactMobile). Gate it on the SAME 900px breakpoint
@@ -3874,7 +3881,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
     return;
   }
   // The per-session history list (state frame, no sessionKey) — refresh the history panel.
-  if (kind === "state" && data && Array.isArray(data.pactSessions)) { PACT_CHAT.sessions = data.pactSessions; pactChatRenderHistory(); return; }
+  if (kind === "state" && data && Array.isArray(data.pactSessions)) { PACT_CHAT.sessions = data.pactSessions; pactChatRenderHistory(); if (typeof PACT_MOBILE_SESSIONS_CB === "function") PACT_MOBILE_SESSIONS_CB(); return; }
   // A saved chat's transcript arriving to rehydrate a Resume / Load-into-box tab. The frame is keyed
   // by the session's OWN id; a "Load into new box" tab has a different key, so correlate via the
   // pending-open map first, then fall back to a direct key match (Resume, whose key IS the sessionId).
@@ -4618,7 +4625,78 @@ function viewPactMobile() {
     openSheet("Open " + path.split("/").pop() + " in…", wrap, "pactm-donut-panel");
   }
   PACT_MOBILE_FILE_TAP = (path) => openDonut(path);
-  function chatStage() { return chatHost; }   // pactChatInit already rendered chat here (messages + compose + send/stop). The conversation/history up-arrows are M4.
+  // ---- M4: the full-screen CHAT gets TWO up-arrow risers (conversations 💬 + history 🕐). Both are pure
+  // re-layouts of the desktop chat's ＋/tab list and 🕐 history — same PACT_CHAT state + helpers, no fork.
+  function chatStage() {
+    // chatHost is the same node pactChatInit rendered into (reused across selection swaps). Wrap it with
+    // the two risers each render; a little bottom padding on the compose keeps them from crowding.
+    const convoRiser = el("button", { class: "pactm-riser pactm-riser-chat", type: "button", "aria-label": "Conversations" },
+      ["💬 Chats (" + ((PACT_CHAT && PACT_CHAT.tabs.length) || 0) + ")"]);
+    const histRiser = el("button", { class: "pactm-riser pactm-riser-hist", type: "button", "aria-label": "Chat history" }, ["🕐 History"]);
+    const bind = (btn, fn) => { btn.addEventListener("click", fn); btn.addEventListener("touchend", (e) => { e.preventDefault(); fn(); }); };   // README §9: kill the ghost-tap double-fire
+    bind(convoRiser, openChatConvos);
+    bind(histRiser, openChatHistory);
+    return el("div", { class: "pactm-chatwrap" }, [chatHost, convoRiser, histRiser]);
+  }
+  // Riser #1 — the OPEN conversations (PACT_CHAT.tabs): a ＋New row, then one row per conversation (active
+  // highlighted); tapping switches the active tab, the × closes it (reusing pactChatCloseTab so desktop +
+  // mobile stay consistent). Rebuilds in place so the sheet stays open after a close.
+  function openChatConvos() {
+    if (!PACT_CHAT) return;
+    const list = el("div", { class: "pactm-sheet-list" }, []);
+    const rebuild = () => {
+      const rows = [];
+      const add = el("div", { class: "pactm-frow pactm-frow-new" }, [el("span", { class: "pactm-frow-name" }, ["＋ New conversation"])]);
+      add.addEventListener("click", () => { pactChatNewTab(); closeSheet(); renderStage(); });
+      rows.push(add);
+      (PACT_CHAT.tabs || []).forEach((t) => {
+        const label = (t.key && PACT_CHAT_NAMES[t.key]) || t.name;
+        const name = el("span", { class: "pactm-frow-name" }, [label]);
+        const x = el("button", { class: "pactm-frow-x", type: "button", "aria-label": "Close conversation" }, ["×"]);
+        const closeConv = (e) => { e.stopPropagation(); pactChatCloseTab(t.id); rebuild(); };   // pactChatCloseTab re-renders the chat + saves; may spawn a fresh tab if it was the last
+        x.addEventListener("click", closeConv);
+        x.addEventListener("touchend", (e) => { e.preventDefault(); closeConv(e); });
+        const row = el("div", { class: "pactm-frow" + (t.id === PACT_CHAT.activeId ? " --active" : "") }, [name, x]);
+        row.addEventListener("click", () => { if (t.id !== PACT_CHAT.activeId) { pactChatSaveDraft(); PACT_CHAT.activeId = t.id; pactChatRender(); pactStateSave(); } closeSheet(); renderStage(); });
+        rows.push(row);
+      });
+      list.replaceChildren(...rows);
+    };
+    openSheet("Conversations", list);
+    rebuild();
+  }
+  // Riser #2 — the saved-chat HISTORY (same 🕐 data as desktop). Fetch the session list over the workspace
+  // stream, render PACT_CHAT.sessions with the SAME row data (name, first-prompt snippet, msg count,
+  // updated-at); tapping a row resumes it INTO the chat via pactChatOpenSaved(row, true) — adopt+rehydrate,
+  // mirroring desktop Resume — then closes the sheet and re-renders. Primarily to pick a past chat to
+  // continue from an empty conversation.
+  function openChatHistory() {
+    if (!PACT_CHAT) return;
+    const list = el("div", { class: "pactm-sheet-list" }, []);
+    const rebuild = () => {
+      const rows = (PACT_CHAT && PACT_CHAT.sessions) || null;
+      if (!rows) { list.replaceChildren(el("div", { class: "pactm-empty" }, ["Loading saved conversations…"])); return; }
+      if (!rows.length) { list.replaceChildren(el("div", { class: "pactm-empty" }, ["No saved conversations."])); return; }
+      list.replaceChildren(...rows.map((r) => {
+        const name = el("div", { class: "pactm-hrow-name" }, [pactHistName(r)]);
+        const meta = el("div", { class: "pactm-hrow-meta" }, [pactChatMsgLabel(r.turns) + (r.updatedAt ? " · " + pactAgo(r.updatedAt) : "") + (r.realSessionId ? "" : " · no resume")]);
+        const first = el("div", { class: "pactm-hrow-first" }, [r.firstPrompt || "(no prompt)"]);
+        const row = el("div", { class: "pactm-frow pactm-hrow" }, [el("div", { class: "pactm-hrow-main" }, [name, meta, first])]);
+        row.addEventListener("click", () => { pactChatOpenSaved(r, true); closeSheet(); renderStage(); });   // Resume — adopt the saved session key + rehydrate its transcript into a tab
+        return row;
+      }));
+    };
+    openSheet("Chat history", list);
+    rebuild();
+    PACT_MOBILE_SESSIONS_CB = () => { if (sheetEl) rebuild(); };   // re-render when the sessions frame lands
+    // If the sheet is dismissed, drop the callback so a later fetch doesn't touch a gone sheet.
+    const back = sheetEl && sheetEl.querySelector(".pactm-sheet-back");
+    const xBtn = sheetEl && sheetEl.querySelector(".pactm-sheet-x");
+    const drop = () => { PACT_MOBILE_SESSIONS_CB = null; };
+    if (back) back.addEventListener("click", drop);
+    if (xBtn) { xBtn.addEventListener("click", drop); xBtn.addEventListener("touchend", drop); }
+    wsPost("control", { action: "sessions", args: { repo: PACT_REPO } });   // trigger the fetch → pactChatRoute sets PACT_CHAT.sessions + fires PACT_MOBILE_SESSIONS_CB
+  }
   function termStage() {
     if (!cache.term) {
       const out = el("pre", { class: "pact-terminal" }, ["Open a .repl file and press ▶ Run to stream it here.\n"]);

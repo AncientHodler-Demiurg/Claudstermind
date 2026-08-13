@@ -80,8 +80,11 @@ menu** selects the element. Everything below is a RENDER of existing `PACT_ED`/`
 - **M3 Tree → double-donut box picker** ✅ Done (v1.2.13). The 8-wedge selector with open/next/disabled
   states (pure `pactDonutSegments`); opens the file into the chosen (or newly-created via `pactEdAddGroup`)
   box using `pactEdOpenInto`, then navigates to that full-screen box.
-- **M4 Chat conversation up-arrow + history up-arrow** — the two full-screen sheets (open conversations +
-  ＋New; and the history selector for an empty chat).
+- **M4 Chat conversation up-arrow + history up-arrow** ✅ Done (v1.2.14). Two up-arrow risers on the
+  full-screen CHAT: 💬 opens a sheet of the open conversations (`PACT_CHAT.tabs`, active highlighted) with a
+  ＋New row (`pactChatNewTab`), row-tap switch, and × close (`pactChatCloseTab`); 🕐 fetches + lists the saved
+  sessions (`PACT_CHAT.sessions`) with the desktop row data (name/snippet/msg-count/updated-at, via the pure
+  `pactChatMsgLabel`) and resumes a row into the chat with `pactChatOpenSaved(row, true)`.
 - **M5 Polish + 1.3.0** — min-h-0 audit, real-device extremes (360px phone + tablet), touch gotchas,
   bottom-padding for risers; bump to 1.3.0 with a CHANGELOG summary.
 
