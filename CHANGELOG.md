@@ -4,6 +4,24 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.2.11] - 2026-08-12
+
+### Added
+- **Pact workspace — mobile view, stage M1 (shell + menu + stage routing).** At the app's existing 900px
+  mobile breakpoint `viewPact()` now branches to a bespoke phone re-layout (`viewPactMobile`); the desktop
+  view is untouched. It renders a fixed app-shell — a top bar with a ☰ hamburger, ONE full-screen stage,
+  and a left slide-menu (Twitter/X-style, overlay + backdrop, closes on select/backdrop-tap) — that shows
+  exactly one element at a time. The menu lists three categories: **Tree** (File tree), **View boxes** (the
+  currently-open editor boxes as roman numerals I…VIII, with the box's active file name as a subtitle), and
+  **Chat + REPL**. Selecting a menu item swaps the whole stage: the browsable file tree (a tap opens the
+  file into the active box), a box's active file in the CodeMirror editor (refreshed on mount), the active
+  chat conversation (messages + compose + send/stop), or the REPL terminal. This is a re-layout of the same
+  `PACT_ED`/`PACT_CHAT` state — the tree, editor, chat and terminal logic are reused, not forked. The
+  selection is tracked on `PACT_ED._mobileSel` and defaults to the active box (if one has a file) or the
+  tree. New pure helpers `pactRoman` + `pactMobileDefaultSel` (unit-tested). The per-box file up-arrow (M2),
+  the tree→double-donut box picker (M3) and the chat/history up-arrows (M4) are left as seams — the final
+  M5 polish stage ships v1.3.0.
+
 ## [1.2.10] - 2026-08-12
 
 ### Fixed

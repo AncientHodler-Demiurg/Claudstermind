@@ -1433,4 +1433,50 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .pc-send, .pc-stop { font-size: 0; padding: 8px 12px; }
   .pc-send::after { content: "➤"; font-size: 17px; line-height: 1; }
   .pc-stop::after { content: "■"; font-size: 14px; line-height: 1; }
+
+  /* ===== Pact workspace — MOBILE re-layout (v1.3.0 track; see viewPactMobile in app.js). A fixed
+     app-shell: a top bar (☰ + title), ONE full-screen stage, and a left slide-menu drawer. Fills #view,
+     which is already bounded by the body.ws-full height chain — so nothing scrolls the page. The
+     min-h-0 chain runs: body.ws-full (concrete height) → #main (min-h:0) → #view (flex:1 min-h:0) →
+     .pactm (height:100% min-h:0) → .pactm-stage (flex:1 min-h:0) → the stage child (flex:1 min-h:0). */
+  .pactm { display: flex; flex-direction: column; height: 100%; min-height: 0; position: relative; overflow: hidden; }
+  .pactm-top { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 6px 10px;
+    border-bottom: 1px solid var(--line); background: var(--panel); }
+  .pactm-hb { flex: 0 0 auto; min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center;
+    background: var(--chip); border: 1px solid var(--line); color: var(--ink); border-radius: 9px; font-size: 19px; cursor: pointer;
+    -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  .pactm-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; font-size: 13.5px; color: var(--ink); }
+  .pactm-stage { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+  .pactm-stage > * { flex: 1 1 auto; min-height: 0; }   /* whatever element the stage swaps in fills it (keeps the chain unbroken) */
+  .pactm-tree { overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 8px 6px; }
+  .pactm-tree .pact-node { font-size: 14px; padding: 6px 8px; }   /* bigger tap targets on a phone */
+  .pactm-pane { min-height: 0; }
+
+  /* Left slide-menu drawer (Twitter/X-style): overlay + backdrop, slides from the left, closes on a pick
+     or a backdrop tap. Scoped to .pactm so it overlays only the stage, never the app's bottom tab bar. */
+  .pactm-backdrop { position: absolute; inset: 0; z-index: 20; background: rgba(0,0,0,.5);
+    opacity: 0; pointer-events: none; transition: opacity .2s ease; }
+  .pactm.pactm-open .pactm-backdrop { opacity: 1; pointer-events: auto; }
+  .pactm-drawer { position: absolute; top: 0; left: 0; bottom: 0; z-index: 21; width: 82vw; max-width: 340px;
+    display: flex; flex-direction: column; background: var(--panel2); border-right: 1px solid var(--line);
+    transform: translateX(-102%); transition: transform .22s ease; overflow: hidden; }
+  .pactm.pactm-open .pactm-drawer { transform: translateX(0); }
+  .pactm-drawer-hd { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 14px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: 13px; }
+  .pactm-drawer-x { min-width: 34px; min-height: 34px; background: transparent; border: none; color: var(--ink-dim);
+    font-size: 22px; line-height: 1; cursor: pointer; }
+  .pactm-menu { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain; padding: 6px 8px 14px; }
+  .pactm-cat { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--ink-mute); padding: 12px 8px 4px; }
+  .pactm-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; min-height: 44px;
+    padding: 8px 10px; background: transparent; border: 1px solid transparent; border-radius: 10px; color: var(--ink);
+    cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .pactm-item:hover { background: var(--chip); }
+  .pactm-item.--active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .pactm-item-ic { flex: 0 0 auto; width: 26px; text-align: center; font-size: 15px; font-weight: 700; color: var(--ink-dim); }
+  .pactm-item-name { flex: 0 0 auto; font-size: 14px; font-weight: 600; }
+  .pactm-item-sub { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    text-align: right; font-size: 11.5px; color: var(--ink-dim); }
+  .pactm-empty { padding: 8px 12px; font-size: 12.5px; color: var(--ink-dim); }
 }

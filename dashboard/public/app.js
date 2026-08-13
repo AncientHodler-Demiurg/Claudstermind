@@ -2579,6 +2579,36 @@ function pactRunRepl(rel) {
 // file into the ACTIVE box; ⊞ splits (adds a box), × closes it. Content is fetched once per tab and
 // cached, so switching tabs is instant. Files render per type: .pact/.repl → StoicSyntax coloring,
 // .md → markdown, else plain monospace.
+// ===== PACT MOBILE — pure helpers (sliced out for unit tests; see lib/pactMobile.test.mjs). No DOM.
+// pactRoman: 1..8 → the roman numeral shown for a "View boxes" menu entry (I…VIII). Out of range → "".
+function pactRoman(n) {
+  const R = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII"];
+  return Number.isInteger(n) && n >= 1 && n <= 8 ? R[n] : "";
+}
+// pactMobileDefaultSel: the default full-screen selection for the phone shell, given the editor boxes and
+// which is active. Prefer the active box IF it has an open file, else the first box that has a file, else
+// the file tree. Takes plain { id, active } group snapshots; returns { kind:'box', boxId } or
+// { kind:'tree' }. Pure — the DOM render (viewPactMobile) consumes it.
+function pactMobileDefaultSel(groups, activeId) {
+  const list = Array.isArray(groups) ? groups : [];
+  const active = list.find((g) => g && g.id === activeId);
+  if (active && active.active) return { kind: "box", boxId: active.id };
+  const withFile = list.find((g) => g && g.active);
+  if (withFile) return { kind: "box", boxId: withFile.id };
+  return { kind: "tree" };
+}
+// ===== end PACT MOBILE pure helpers =====
+// The Pact workspace has a bespoke phone re-layout (viewPactMobile). Gate it on the SAME 900px breakpoint
+// the rest of the dashboard's mobile chrome uses (WS_MOBILE_MQ), so the JS branch and the CSS
+// `@media (max-width:900px)` rules never disagree at the edge. Re-render on a cross so rotating a device
+// swaps the desktop⇄mobile layout cleanly.
+const PACT_MOBILE_MQ = window.matchMedia ? window.matchMedia("(max-width: 900px)") : { matches: false, addEventListener() {} };
+function pactIsMobile() { return !!PACT_MOBILE_MQ.matches; }
+if (PACT_MOBILE_MQ.addEventListener) PACT_MOBILE_MQ.addEventListener("change", () => {
+  if (VIEW !== "pact") return;
+  if (typeof PACT_CHAT !== "undefined" && PACT_CHAT) pactChatStop();   // close the old chat stream before the rebuild reopens one
+  render();
+});
 let PACT_TREE_FONT = 12.5;   // tree font size (px), adjustable via the tree header A-/A+
 let PACT_ED = null;   // { host, groups:[group], activeId, seq }; group = { id, tabs:[{path,name,loaded,content,error}], active, fontPx }
 function pactEdInit(host) { PACT_ED = { host, groups: [], activeId: null, seq: 0 }; pactEdAddGroup(); }
@@ -4287,6 +4317,7 @@ function pactChatRender() {
   if (active) { pactChatPaint(active); pactPaintAttachment(active); }   // restore any attachments when switching tabs
 }
 function viewPact() {
+  if (pactIsMobile()) return viewPactMobile();   // phone re-layout (v1.3.0 track) — desktop path below is unchanged
   const editorEl = el("div", { class: "pact-editor" });
   const treeBody = el("div", { class: "pact-tree-body" }, [el("div", { class: "hint", style: "padding:6px 8px" }, ["Loading tree…"])]);
   const treeFontBtns = (() => {
@@ -4352,6 +4383,155 @@ function viewPact() {
   // then arm persistence. Async + fire-and-forget so the view returns immediately; a fresh/empty or
   // unreachable store just leaves the default one-box / one-chat view and still arms saving.
   pactRestoreState();
+  return root;
+}
+
+// ---- Pact workspace — MOBILE re-layout (v1.3.0 track). SAME PACT_ED/PACT_CHAT state as desktop
+// viewPact(), rendered as a fixed app-shell: a top bar with a ☰ hamburger, ONE full-screen stage, and a
+// left slide-menu (Twitter/X-style) that swaps the whole stage. Discrete — one element at a time. This is
+// a re-LAYOUT of existing state, not a fork: the tree (loadPactDir), the editor (pactEdRenderBody/CM), the
+// chat (pactChatRender) and the REPL terminal are all reused. M1 = shell + menu + stage routing. The
+// per-box file up-arrow (M2), the tree→double-donut picker (M3) and the chat/history up-arrows (M4) are
+// left as seams — see docs/work/pact-mobile/DESIGN.md.
+function viewPactMobile() {
+  PACT_STATE_READY = false;   // suppress persistence until restore has rebuilt the layout
+  pactEdInstallFindShortcut();
+  const edHost = el("div", { class: "pactm-edhost" });          // detached: PACT_ED lays its boxes out here; a box's CM is mounted into the stage on demand
+  const chatHost = el("div", { class: "pact-chat pactm-pane" }); // PACT_CHAT renders into this; it moves in/out of the stage as selected
+
+  const stage = el("div", { class: "pactm-stage" }, []);
+  const title = el("span", { class: "pactm-title" }, ["Pact"]);
+  const hb = el("button", { class: "pactm-hb", type: "button", "aria-label": "Menu" }, ["☰"]);
+  const menu = el("div", { class: "pactm-menu" }, []);
+  const drawerX = el("button", { class: "pactm-drawer-x", type: "button", "aria-label": "Close menu" }, ["×"]);
+  const drawer = el("div", { class: "pactm-drawer" }, [
+    el("div", { class: "pactm-drawer-hd" }, [el("span", { class: "pactm-drawer-ttl" }, ["Pact workspace"]), drawerX]),
+    menu,
+  ]);
+  const backdrop = el("div", { class: "pactm-backdrop" }, []);
+  const top = el("div", { class: "pactm-top" }, [hb, title]);
+  const root = el("div", { class: "pactm" }, [top, stage, backdrop, drawer]);
+
+  const openMenu = () => { renderMenu(); root.classList.add("pactm-open"); };
+  const closeMenu = () => root.classList.remove("pactm-open");
+  const toggleMenu = () => (root.classList.contains("pactm-open") ? closeMenu() : openMenu());
+  hb.addEventListener("click", toggleMenu);
+  hb.addEventListener("touchend", (e) => { e.preventDefault(); toggleMenu(); });   // README §9: preventDefault kills the ghost-tap double-fire (open-then-close on a quick tap)
+  drawerX.addEventListener("click", closeMenu);
+  backdrop.addEventListener("click", closeMenu);
+
+  // Reused stage elements so their state (tree expansion, terminal output, chat DOM) survives selection
+  // swaps instead of being rebuilt from scratch each time.
+  const cache = {};
+  let userPicked = false;   // once the user taps a menu item, don't let the async restore reset their choice
+
+  function currentSel() {
+    if (!PACT_ED) return { kind: "tree" };
+    const s = PACT_ED._mobileSel;
+    const ok = s && (s.kind !== "box" || PACT_ED.groups.some((g) => g.id === s.boxId));
+    if (!ok) PACT_ED._mobileSel = pactMobileDefaultSel(PACT_ED.groups, PACT_ED.activeId);
+    return PACT_ED._mobileSel;
+  }
+  function select(sel) {
+    userPicked = true;
+    PACT_ED._mobileSel = sel;
+    if (sel.kind === "box") PACT_ED.activeId = sel.boxId;
+    closeMenu();
+    renderStage();
+  }
+
+  function menuItem(icon, name, sub, active, onSel) {
+    const kids = [el("span", { class: "pactm-item-ic" }, [icon]), el("span", { class: "pactm-item-name" }, [name])];
+    if (sub) kids.push(el("span", { class: "pactm-item-sub" }, [sub]));
+    const b = el("button", { class: "pactm-item" + (active ? " --active" : ""), type: "button" }, kids);
+    b.addEventListener("click", onSel);
+    return b;
+  }
+  function renderMenu() {
+    if (!PACT_ED) return;
+    const sel = currentSel();
+    const items = [];
+    // 1) Tree
+    items.push(el("div", { class: "pactm-cat" }, ["Tree"]));
+    items.push(menuItem("📁", "File tree", "", sel.kind === "tree", () => select({ kind: "tree" })));
+    // 2) View boxes — the existing editor boxes as roman numerals I…VIII (max 8)
+    items.push(el("div", { class: "pactm-cat" }, ["View boxes"]));
+    if (!PACT_ED.groups.length) items.push(el("div", { class: "pactm-empty" }, ["No boxes open."]));
+    PACT_ED.groups.slice(0, 8).forEach((g, i) => {
+      const sub = g.active ? g.active.split("/").pop() : "empty box";
+      items.push(menuItem(pactRoman(i + 1), "Box " + pactRoman(i + 1), sub, sel.kind === "box" && sel.boxId === g.id, () => select({ kind: "box", boxId: g.id })));
+    });
+    // 3) Chat + REPL
+    items.push(el("div", { class: "pactm-cat" }, ["Chat + REPL"]));
+    items.push(menuItem("💬", "Chat", "", sel.kind === "chat", () => select({ kind: "chat" })));
+    items.push(menuItem("❯", "REPL", "", sel.kind === "repl", () => select({ kind: "repl" })));
+    menu.replaceChildren(...items);
+  }
+
+  function treeStage() {
+    if (!cache.tree) {
+      const body = el("div", { class: "pactm-tree" }, [el("div", { class: "hint", style: "padding:8px" }, ["Loading tree…"])]);
+      loadPactDir("", body);   // reuse the tree loader; a file tap opens into the ACTIVE box (pactEdOpen). The double-donut picker is M3.
+      cache.tree = body;
+    }
+    return cache.tree;
+  }
+  function boxStage(g) {
+    if (!g) return el("div", { class: "pactm-empty" }, ["This box is gone."]);
+    const body = el("div", { class: "pact-ed-body pactm-box" });
+    g.bodyEl = body;   // repoint the group's body at the mounted editor (the desktop grid isn't shown on mobile)
+    const active = g.tabs.find((t) => t.path === g.active);
+    // Reuses the shared body renderer: CM for code, markdown preview for .md, the empty-box hint otherwise.
+    // pactEdRenderBody schedules cm.refresh() on a requestAnimationFrame — by which point `body` is live in
+    // the stage, so CM sizes correctly. The per-box file up-arrow list is M2.
+    pactEdRenderBody(g, active);
+    return body;
+  }
+  function chatStage() { return chatHost; }   // pactChatInit already rendered chat here (messages + compose + send/stop). The conversation/history up-arrows are M4.
+  function termStage() {
+    if (!cache.term) {
+      const out = el("pre", { class: "pact-terminal" }, ["Open a .repl file and press ▶ Run to stream it here.\n"]);
+      const clear = el("button", { class: "pact-term-clear", type: "button", title: "Clear the terminal" }, ["clear"]);
+      clear.addEventListener("click", () => out.replaceChildren());
+      cache.term = el("div", { class: "pact-term pactm-pane" }, [
+        el("div", { class: "pact-zone-hd" }, ["❯ REPL terminal", el("span", { class: "ws-spacer" }, []), clear]),
+        out,
+      ]);
+    }
+    return cache.term;
+  }
+  function renderStage() {
+    if (!PACT_ED) return;
+    const sel = currentSel();
+    let content, label;
+    if (sel.kind === "tree") { content = treeStage(); label = "File tree"; }
+    else if (sel.kind === "chat") { content = chatStage(); label = "Chat"; }
+    else if (sel.kind === "repl") { content = termStage(); label = "REPL terminal"; }
+    else {
+      const g = PACT_ED.groups.find((x) => x.id === sel.boxId) || PACT_ED.groups[0];
+      const i = PACT_ED.groups.indexOf(g);
+      content = boxStage(g);
+      label = "Box " + pactRoman(i + 1) + (g && g.active ? " · " + g.active.split("/").pop() : "");
+    }
+    title.textContent = label;
+    stage.replaceChildren(content);
+  }
+
+  // ---- boot: SAME state init as desktop — this is a re-layout, not a fork ----
+  pactEdInit(edHost);
+  pactChatInit(chatHost);
+  PACT_ED._mobileSel = pactMobileDefaultSel(PACT_ED.groups, PACT_ED.activeId);
+  renderMenu();
+  renderStage();
+  treeStage();   // warm the tree (loads once) so it's instant when first opened
+  // Restore the shared server-side layout (open boxes/tabs, chat tabs), then re-sync the menu + stage to
+  // the restored boxes — unless the user has already picked something in the meantime.
+  pactRestoreState().then(() => {
+    if (!root.isConnected || !PACT_ED) return;
+    if (!userPicked) PACT_ED._mobileSel = pactMobileDefaultSel(PACT_ED.groups, PACT_ED.activeId);
+    renderMenu();
+    if (!userPicked) renderStage();
+  });
   return root;
 }
 
