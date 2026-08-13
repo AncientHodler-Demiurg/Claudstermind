@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.2] - 2026-08-13
+
+### Added
+- **"Thought for …" on every Pact reply, persisted.** Each finished response now shows a "💭 Thought for
+  1m 23s" header (like ChatGPT/Claude) instead of a small footer badge. It uses the SDK's own turn
+  duration (authoritative + identical on every device), which the server now stamps onto the persisted
+  assistant turn — so the label **survives reloads** and stays with each reply going forward. (Replies
+  from before this deploy have no stored duration and simply won't show the label.)
+
 ## [1.4.1] - 2026-08-13
 
 ### Fixed

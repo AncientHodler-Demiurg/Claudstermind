@@ -3835,12 +3835,22 @@ let PACT_STREAM_LAST_MSG_AT = 0;
 let PACT_STREAM_STALE_TIMER = null;
 let PACT_TICK_TIMER = null;
 // ===== PACT DURATION — pure helper (unit-tested via lib/pactDuration.test.mjs) =====
-// M:SS (or H:MM:SS past an hour) for the response timer. Junk/negative → "0:00".
+// M:SS (or H:MM:SS past an hour) for the LIVE ticking timer. Junk/negative → "0:00".
 function pactFmtDuration(ms) {
   const s = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
   const mm = h ? String(m).padStart(2, "0") : String(m);
   return (h ? h + ":" : "") + mm + ":" + String(sec).padStart(2, "0");
+}
+// Human phrasing for the "Thought for …" label on a finished reply: "23s" / "1m 23s" / "1h 5m". Rounds to
+// the nearest second. Junk/negative → "0s".
+function pactFmtThought(ms) {
+  const s = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+  if (s < 60) return s + "s";
+  const m = Math.floor(s / 60), sec = s % 60;
+  if (m < 60) return sec ? m + "m " + sec + "s" : m + "m";
+  const h = Math.floor(m / 60), mm = m % 60;
+  return mm ? h + "h " + mm + "m" : h + "h";
 }
 // ===== end PACT DURATION pure helper =====
 // Collapse one right-zone pane (chat / REPL) so the other fills the whole column. Mutually
@@ -3888,7 +3898,7 @@ function pactTranscriptToMsgs(transcript) {
   for (const m of Array.isArray(transcript) ? transcript : []) {
     if (!m) continue;
     if (m.role === "user") out.push({ role: "user", text: m.text || "", images: m.images || (m.image ? [m.image] : []), workspaceId: m.workspaceId || PACT_WORKSPACE_ID });
-    else if (m.role === "assistant") out.push({ role: "assistant", text: m.text || "" });
+    else if (m.role === "assistant") out.push({ role: "assistant", text: m.text || "", elapsedMs: (typeof m.durationMs === "number" ? m.durationMs : (typeof m.elapsedMs === "number" ? m.elapsedMs : undefined)) });
     else if (m.kind === "tool_use") out.push({ kind: "tool_use", tools: m.tools || [] });
   }
   return out;
@@ -4212,10 +4222,15 @@ function pactChatRoute({ kind, sessionKey, data }) {
     case "tool_use": if (!t._turnStartedAt) t._turnStartedAt = Date.now(); t.live = ""; t.msgs.push({ kind: "tool_use", tools: d.tools || [] }); pactChatPaint(t); return;
     case "result":
       t.live = ""; t.status = "idle"; t._pendingText = null; t._pendingImages = null;
-      // Stamp the total turn time onto this turn's reply so you can see "how long did it take" at a
-      // glance (and diagnose a slow turn). Only when WE started the turn (a resync-restored turn has no
-      // local start time). Attaches to the last assistant bubble; the tool rounds sit above it.
-      if (t._turnStartedAt) { const last = [...t.msgs].reverse().find((m) => m.role === "assistant"); if (last) last.elapsedMs = Date.now() - t._turnStartedAt; t._turnStartedAt = null; }
+      // Stamp the turn time onto this turn's reply ("Thought for …"). Prefer the SDK's own duration (from
+      // the result event — authoritative + identical on every device + the same value the server persists,
+      // so it matches after a reload); fall back to our local clock if it's absent. Attaches to the last
+      // assistant bubble; the tool rounds sit above it.
+      {
+        const dur = (typeof d.durationMs === "number") ? d.durationMs : (t._turnStartedAt ? Date.now() - t._turnStartedAt : null);
+        if (dur != null) { const last = [...t.msgs].reverse().find((m) => m.role === "assistant"); if (last) last.elapsedMs = dur; }
+        t._turnStartedAt = null;
+      }
       if (d.usageTotal) t.usage = d.usageTotal;
       // Context usage changes every turn — refresh it once a turn actually finishes (not on every
       // streamed chunk), exactly like the Core cockpit (see paintPane's contextUsage request).
@@ -4475,11 +4490,13 @@ function pactChatMsgNode(m) {
     return el("div", { class: "pc-msg pc-user" }, kids);
   }
   if (m.role === "assistant") {
+    const kids = [];
+    // "Thought for …" header above the reply (like ChatGPT/Claude) — the total time this turn took,
+    // stamped when it finished (see the "result" case) and persisted so it survives a reload.
+    if (m.elapsedMs != null) kids.push(el("div", { class: "pc-thought", title: "Total time for this response" }, ["💭 Thought for " + pactFmtThought(m.elapsedMs)]));
     const body = el("div", { class: "pc-asst-body" });
     if (typeof window.mdRender === "function") body.innerHTML = window.mdRender(m.text); else body.textContent = m.text;
-    const kids = [body];
-    // Total time this response took — stamped on the reply when its turn finished (see the "result" case).
-    if (m.elapsedMs != null) kids.push(el("div", { class: "pc-elapsed", title: "Total time for this response" }, ["⏱ " + pactFmtDuration(m.elapsedMs)]));
+    kids.push(body);
     return el("div", { class: "pc-msg pc-asst" }, kids);
   }
   if (m.kind === "tool_use") {
