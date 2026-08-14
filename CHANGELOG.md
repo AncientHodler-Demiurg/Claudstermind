@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.17] - 2026-08-14
+
+### Fixed
+- **Queued (pending) messages no longer vanish on a deploy/reload.** A queued (orange) message lived only
+  in memory, so reloading after a deploy lost it (and Core lost failed ones the same way). Now on a real
+  unload each workspace preserves them: the **Pact chat** folds queued messages into its durable outbox and
+  auto-sends them on the way back (text + images), and the **Core cockpit** folds queued text into the
+  pane's persisted compose draft so it's waiting in the box after reload. (Pact's failed/red messages
+  already survived via the outbox; this closes the queued/orange gap in both.)
+
 ## [1.4.16] - 2026-08-14
 
 ### Changed

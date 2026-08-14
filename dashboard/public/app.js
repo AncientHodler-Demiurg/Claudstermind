@@ -2404,6 +2404,15 @@ function pactOutboxFlush() {
     pactChatDispatch(t, e.text, e.images || []);   // re-adds itself to the outbox if it fails again
   }
 }
+// On unload (deploy/reload), fold every tab's still-QUEUED (orange, not-yet-sent) message into the
+// durable outbox — otherwise it lived only in memory and vanished on the reload. On the way back the
+// outbox auto-sends them (flush on hello / turn-end), exactly like a failed send.
+function pactOutboxAbsorbQueues() {
+  if (!PACT_CHAT) return;
+  for (const t of PACT_CHAT.tabs) {
+    if (t.key && t._queue && t._queue.length) { for (const q of t._queue) pactOutboxAdd(t.key, q.text, q.images); t._queue = null; }
+  }
+}
 // ===== end PACT CHAT OUTBOX =====
 // The workspace id a pane attaches to: repo + worktree. TWO terminals selecting the same repo
 // (and worktree) derive the SAME key, so they drive — and watch — the one shared conversation.
@@ -4440,7 +4449,7 @@ function pactChatInit(host) {
   PACT_CHAT = { host, tabs: [], activeId: null, seq: 0, es: null, mode: "bypassPermissions", conn: connIdentity() };
   // Flush the draft/layout on a page refresh or close too (keepalive lets the PUT outlive the page),
   // so a prompt typed right before reloading isn't lost. Registered once.
-  if (!PACT_UNLOAD_HOOKED) { PACT_UNLOAD_HOOKED = true; window.addEventListener("pagehide", () => { if (PACT_STATE_READY) pactStateFlush(true); }); }
+  if (!PACT_UNLOAD_HOOKED) { PACT_UNLOAD_HOOKED = true; window.addEventListener("pagehide", (e) => { if (PACT_STATE_READY) { if (!e.persisted) pactOutboxAbsorbQueues(); pactStateFlush(true); } }); }
   pactChatOpenStream();
   pactChatNewTab();
   pactChatEnsurePrime();   // the fresh tab becomes the prime (undeletable) conversation
@@ -4644,6 +4653,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       wsPost("control", { action: "contextUsage", args: { sessionKey: t.key } });
       pactChatPaint(t); pactEdCheckAgentEdits(); pactEdCheckChangedFiles();
       pactChatDrainQueue(t);   // turn done → release anything typed mid-turn, merged into one prompt
+      pactOutboxFlush();       // …and any queue recovered from a deploy/reload that was waiting on this turn
       return;
     // Context-window usage answer for this tab's session — store + repaint the header indicator.
     case "contextUsage": t.contextUsage = d.usage; pactChatPaint(t); return;
@@ -5572,6 +5582,10 @@ function viewPactMobile() {
   return root;
 }
 
+// On a real unload (deploy/reload), fold each Core pane's still-QUEUED (orange) message into its persisted
+// compose draft so it isn't lost — the draft is restored to the compose box on the way back. Set per mount
+// (captures the live `st`/saveLayout); the listener is registered once.
+let WS_PAGEHIDE_FN = null, WS_PAGEHIDE_HOOKED = false;
 function viewWorkspace() {
   // The workspace runs on the local dashboard (direct, this machine) and on the online relay
   // (via the bridge tunnel). Only bail for a mode that has neither backend.
@@ -7583,6 +7597,19 @@ function viewWorkspace() {
 
   // ---- boot ----------------------------------------------------------------------
   if (!loadLayout()) { st.panes = [newPane()]; st.activeId = st.panes[0].id; }
+  // Fold any still-queued (orange) messages into the pane draft on a real unload, so a deploy/reload
+  // doesn't lose them — they come back in the compose box. (Core has no outbox; the draft is persisted.)
+  WS_PAGEHIDE_FN = () => {
+    for (const p of st.panes) {
+      if (p._queue && p._queue.length) {
+        const q = p._queue.map((x) => x && x.text).filter(Boolean).join("\n\n");
+        if (q) p.draft = p.draft ? (p.draft + "\n\n" + q) : q;
+        p._queue = null;
+      }
+    }
+    saveLayout();
+  };
+  if (!WS_PAGEHIDE_HOOKED) { WS_PAGEHIDE_HOOKED = true; window.addEventListener("pagehide", (e) => { if (!e.persisted && typeof WS_PAGEHIDE_FN === "function") { try { WS_PAGEHIDE_FN(); } catch {} } }); }
   defaultModeSel.value = st.defaultMode;   // the picker was built before the saved layout loaded
   renderLayoutPicker(); renderModeToggle(); rebuildGrid(); renderSidebar(); renderHistory(); setUsageTotal();
   openStream();   // primeControls() fires from the hello handler once the stream is subscribed
