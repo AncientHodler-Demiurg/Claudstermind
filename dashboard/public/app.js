@@ -4774,6 +4774,13 @@ function pactChatSend(t) {
 // fired as N separate turns. Draining one-at-a-time would answer each queued message in isolation,
 // missing the context the later ones added. `t._draining` guards against a re-entrant route/paint
 // draining the same queue twice.
+// Remove one message still sitting in the queue (mis-sent / no longer wanted) before it's dispatched.
+function pactChatUnqueue(t, q) {
+  if (!t || !t._queue) return;
+  t._queue = t._queue.filter((x) => x !== q);
+  if (!t._queue.length) t._queue = null;
+  pactChatPaint(t);
+}
 function pactChatDrainQueue(t) {
   if (!t || pactChatBusy(t) || !t._queue || !t._queue.length || t._draining) return;
   t._draining = true;
@@ -4878,8 +4885,11 @@ function pactChatPaint(t) {
     const cls = "pc-msg pc-user pc-queued" + (t.status === "deepwork" ? " pc-queued-deep" : "");
     for (const q of t._queue) {
       const kids = [];
+      // A × to delete this queued message before it sends — for a mis-sent / no-longer-wanted one.
+      const del = el("button", { class: "pc-queued-x", type: "button", title: "Remove this queued message" }, ["×"]);
+      del.addEventListener("click", (e) => { e.stopPropagation(); pactChatUnqueue(t, q); });
       if (q.images && q.images.length) kids.push(el("div", { class: "pc-user-images" }, q.images.map((img) => el("img", { class: "pc-user-image", src: img.dataUrl, alt: "attached image (queued)" }, []))));
-      kids.push(q.text, el("span", { class: "pc-queued-tag" }, [tag]));
+      kids.push(del, q.text, el("span", { class: "pc-queued-tag" }, [tag]));
       nodes.push(el("div", { class: cls }, kids));
     }
   }

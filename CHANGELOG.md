@@ -4,6 +4,12 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.11] - 2026-08-14
+
+### Added
+- **Delete a queued Pact chat message.** A queued (orange, not-yet-sent) message now has a × to remove it
+  before it's dispatched — for a mis-sent one. Removing the last queued message clears the queue.
+
 ## [1.4.10] - 2026-08-14
 
 ### Fixed
