@@ -4,6 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.18] - 2026-08-14
+
+### Fixed
+- **Pact chat scroll now truly locks when you scroll up.** The "follow the tail" stickiness is strict —
+  auto-scroll happens ONLY when the transcript is at its exact bottom. The moment you scroll up even a
+  little, nothing (new message, tool use, deepwork, resync) can move you; use the "↓ New output" pill to
+  return. (Core cockpit unchanged.)
+- **The Send button no longer lies "ready" while the agent is mid-round.** A session can keep working after
+  the visible turn ends (deepwork / background), and its status event could lag or drop — so the button
+  read "Send" but a send got refused (queued orange). Now a refused (busy) send immediately reflects the
+  busy state and re-syncs the authoritative status, and the active tab re-checks its true status shortly
+  after a turn — so "Working…/Deep Work…" shows when it should, and settles to idle the instant it's done.
+- **Send button no longer stuck on "Working…" after deleting a queued message.** Deleting the pending
+  (orange) message now leaves the button reflecting the session's real state (via the busy re-sync), not a
+  stale optimistic "Working…".
+
 ## [1.4.17] - 2026-08-14
 
 ### Fixed

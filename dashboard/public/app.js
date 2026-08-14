@@ -2566,7 +2566,10 @@ function attachStickController(scrollEl, opts = {}) {
   wrap.appendChild(scrollEl);
   const pill = el("button", { class: "stick-pill", type: "button", title: "Jump to the latest output" }, ["↓ New output"]);
   wrap.appendChild(pill);
-  const atBottom = () => (scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight) < WS_SCROLL_NEAR_BOTTOM_PX;
+  // How close to the bottom still counts as "following the tail". Callers can force STRICT (~exact bottom)
+  // so that the instant you scroll up even a little, nothing may auto-scroll you back down.
+  const nearPx = typeof opts.nearPx === "number" ? opts.nearPx : WS_SCROLL_NEAR_BOTTOM_PX;
+  const atBottom = () => (scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight) < nearPx;
   const ctrl = {
     pinned: true, scrollEl, wrap, pill,
     // Read the live position. Call BEFORE replacing/growing content, when scrollTop still reflects
@@ -4555,8 +4558,15 @@ function pactChatRoute({ kind, sessionKey, data }) {
     // (the resync just confirms it). Mirrors the Core cockpit's heartbeat self-heal (WS_HEAL_QUIET_MS).
     const now = Date.now();
     for (const t of PACT_CHAT.tabs) {
-      if (t.key && pactChatBusy(t) && (now - (t._lastEventAt || 0)) > WS_HEAL_QUIET_MS) {
-        t._lastEventAt = now;   // don't re-fire every heartbeat while the resync round-trips
+      if (!t.key) continue;
+      if (pactChatBusy(t) && (now - (t._lastEventAt || 0)) > WS_HEAL_QUIET_MS) {
+        t._lastEventAt = now;   // stuck "Working…" → don't re-fire every heartbeat while the resync round-trips
+        wsPost("control", { action: "resync", args: { sessionKey: t.key } });
+      } else if (t.id === PACT_CHAT.activeId && !pactChatBusy(t) && (now - (t._lastResultAt || 0)) < 120_000 && (now - (t._statusSyncAt || 0)) > WS_HEAL_QUIET_MS) {
+        // The active tab LOOKS idle shortly after a turn, but may still be mid-round — a deepwork/background
+        // phase whose status event dropped (the "Send says ready yet a send gets refused" case). Ask for the
+        // authoritative status so the busy indicator can't silently lie. Bounded to the post-turn window.
+        t._statusSyncAt = now;
         wsPost("control", { action: "resync", args: { sessionKey: t.key } });
       }
     }
@@ -4651,6 +4661,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       // Context usage changes every turn — refresh it once a turn actually finishes (not on every
       // streamed chunk), exactly like the Core cockpit (see paintPane's contextUsage request).
       wsPost("control", { action: "contextUsage", args: { sessionKey: t.key } });
+      t._lastResultAt = Date.now();   // a deepwork/background phase can follow a "result" — see the heartbeat
       pactChatPaint(t); pactEdCheckAgentEdits(); pactEdCheckChangedFiles();
       pactChatDrainQueue(t);   // turn done → release anything typed mid-turn, merged into one prompt
       pactOutboxFlush();       // …and any queue recovered from a deploy/reload that was waiting on this turn
@@ -4666,6 +4677,12 @@ function pactChatRoute({ kind, sessionKey, data }) {
     // drain the re-queued message.
     case "busy":
       t.live = "";
+      // A `busy` refusal PROVES the session is mid-round even though the visible turn may have looked done
+      // (the "Send button says ready but a send got refused" case). Reflect that so the indicator stops
+      // lying, and ask the server for its authoritative status so the button settles on the truth (Deep
+      // Work… while it keeps producing, or idle the instant it finishes) instead of a stuck "Working…".
+      if (!pactChatBusy(t)) t.status = "deepwork";
+      wsPost("control", { action: "resync", args: { sessionKey: t.key } });
       if (t._pendingText != null) {
         // The optimistic bubble dispatch pushed was NOT accepted (the server had a turn running) — retract
         // it so the message appears ONCE, as the queued bubble below, instead of twice (the double-send
@@ -5000,7 +5017,7 @@ function pactChatPaint(t) {
   // "Read at your own pace" through the shared controller. This render REPLACES all children, so the
   // pinned-ness must be measured BEFORE replaceChildren (afterwards scrollTop is meaningless); a
   // just-sent message forces the tail via t._forceBottom.
-  const stick = attachStickController(scroll, { wrapClass: "stick-wrap-pc" });
+  const stick = attachStickController(scroll, { wrapClass: "stick-wrap-pc", nearPx: 4 });
   const force = t._forceBottom; t._forceBottom = false;
   const wasNearBottom = force || stick.sample();
   scroll.replaceChildren(...(nodes.length ? nodes : [el("div", { class: "hint", style: "padding:10px" }, ["Ask the agent to explore, write, or test Pact in the Ouronet repo."])]));
@@ -5031,7 +5048,7 @@ function pactChatPaintLive(t) {
   const scroll = PACT_CHAT.host.querySelector(".pc-scroll"); if (!scroll) return;
   let live = scroll.querySelector(".pc-live .pc-asst-body");
   if (!live) { pactChatPaint(t); return; }
-  const stick = attachStickController(scroll, { wrapClass: "stick-wrap-pc" });
+  const stick = attachStickController(scroll, { wrapClass: "stick-wrap-pc", nearPx: 4 });
   const wasNearBottom = stick.sample();   // measure before the live text grows the node
   live.textContent = t.live;
   stick.apply(wasNearBottom);
@@ -5111,7 +5128,7 @@ function pactChatRender() {
   });
   const composeExtras = el("div", { class: "pc-compose-extras" }, [imgPreview, imgErr]);
   host.replaceChildren(head, scroll, composeExtras, compose);
-  attachStickController(scroll, { wrapClass: "stick-wrap-pc" });   // wrap now so the pill exists from the first paint
+  attachStickController(scroll, { wrapClass: "stick-wrap-pc", nearPx: 4 });   // wrap now so the pill exists from the first paint
   requestAnimationFrame(() => pactChatAutosize(input));   // size to any restored draft once the pane has real layout
   pactSyncCollapseBtns();
   if (active) { pactChatPaint(active); pactPaintAttachment(active); }   // restore any attachments when switching tabs
