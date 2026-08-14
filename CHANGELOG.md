@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.20] - 2026-08-14
+
+### Fixed
+- **Agent-created files now appear in the Pact tree.** The tree cached each folder's contents on first
+  expand and never re-scanned, so a file the agent created (or removed) never showed up. After a turn, if a
+  new/removed file affects a folder you have open (or the root), the tree re-scans itself — reloading the
+  root and re-opening the folders you had expanded, so nothing collapses. Added a ↻ refresh button to the
+  tree header as a manual fallback. (Collapsed folders already pick up new files on their next expand.)
+
 ## [1.4.19] - 2026-08-14
 
 ### Fixed

@@ -2661,18 +2661,24 @@ async function loadPactDir(rel, container) {
 }
 function pactNode(it) {
   if (it.type === "dir") {
-    const kids = el("div", { class: "pact-node-kids" }); kids.hidden = true;
+    const kids = el("div", { class: "pact-node-kids" }); kids.hidden = true; kids.dataset.path = it.path;
     let loaded = false;
     const chev = el("span", { class: "pact-chev" }, ["▸"]);
     const row = el("div", { class: "pact-node pact-dir" }, [chev, el("span", { class: "pact-node-ic" }, ["📁"]), el("span", { class: "pact-node-name" }, [it.name])]);
     row.dataset.path = it.path;   // so pactTreeApplyChangeColors can give it a "changes below" hint
-    row.addEventListener("click", async () => {
-      const opening = kids.hidden;
-      kids.hidden = !opening;
-      chev.textContent = opening ? "▾" : "▸";
-      if (opening && !loaded) { loaded = true; await loadPactDir(it.path, kids); }   // loadPactDir re-colors on completion
-    });
-    return el("div", { class: "pact-node-wrap" }, [row, kids]);
+    const wrap = el("div", { class: "pact-node-wrap" }, [row, kids]);
+    wrap.dataset.path = it.path;
+    // Track which folders are open (PACT_ED.treeExpanded) so a post-turn re-scan can restore them, and
+    // expose _expand() so that re-scan can re-open this folder programmatically.
+    const setOpen = async (open) => {
+      kids.hidden = !open;
+      chev.textContent = open ? "▾" : "▸";
+      if (PACT_ED && PACT_ED.treeExpanded) { if (open) PACT_ED.treeExpanded.add(it.path); else PACT_ED.treeExpanded.delete(it.path); }
+      if (open && !loaded) { loaded = true; await loadPactDir(it.path, kids); }   // loadPactDir re-colors on completion
+    };
+    wrap._expand = () => setOpen(true);
+    row.addEventListener("click", () => setOpen(kids.hidden));
+    return wrap;
   }
   const row = el("div", { class: "pact-node pact-file", title: it.path }, [
     el("span", { class: "pact-chev" }, [""]), el("span", { class: "pact-node-ic" }, [pactFileIcon(it.name)]), el("span", { class: "pact-node-name" }, [it.name]),
@@ -2774,7 +2780,7 @@ if (PACT_MOBILE_MQ.addEventListener) PACT_MOBILE_MQ.addEventListener("change", (
 });
 let PACT_TREE_FONT = 12.5;   // tree font size (px), adjustable via the tree header A-/A+
 let PACT_ED = null;   // { host, groups:[group], activeId, seq }; group = { id, tabs:[{path,name,loaded,content,error}], active, fontPx }
-function pactEdInit(host) { PACT_ED = { host, groups: [], activeId: null, seq: 0 }; pactEdAddGroup(); }
+function pactEdInit(host) { PACT_ED = { host, groups: [], activeId: null, seq: 0, treeExpanded: new Set() }; pactEdAddGroup(); }
 function pactEdAddGroup() {
   if (!PACT_ED || PACT_ED.groups.length >= 8) return;
   PACT_ED.groups.push({ id: ++PACT_ED.seq, tabs: [], active: null });
@@ -3955,6 +3961,26 @@ function pactTreeApplyChangeColors() {
   for (const row of PACT_ED.treeBody.querySelectorAll(".pact-node.pact-dir"))
     row.classList.toggle("pact-node--dirty-dir", !!(row.dataset.path && dirty.has(row.dataset.path)));
 }
+// Re-scan the tree so agent-created / removed files appear, WITHOUT collapsing what you have open: reload
+// the root, then re-expand every folder that was open (shallowest first, so a parent is rendered before
+// its child is re-opened). Guarded against re-entry.
+let PACT_TREE_REFRESHING = false;
+async function pactTreeRefresh() {
+  if (!PACT_ED || !PACT_ED.treeBody || PACT_TREE_REFRESHING) return;
+  PACT_TREE_REFRESHING = true;
+  try {
+    const want = [...(PACT_ED.treeExpanded || [])].sort((a, b) => a.split("/").length - b.split("/").length);
+    PACT_ED.treeExpanded = new Set();   // repopulated as we re-expand below
+    await loadPactDir("", PACT_ED.treeBody);
+    for (const p of want) await pactTreeExpandPath(p);
+    pactTreeApplyChangeColors();
+  } finally { PACT_TREE_REFRESHING = false; }
+}
+async function pactTreeExpandPath(path) {
+  if (!PACT_ED || !PACT_ED.treeBody) return;
+  const wrap = [...PACT_ED.treeBody.querySelectorAll(".pact-node-wrap")].find((w) => w.dataset.path === path);
+  if (wrap && typeof wrap._expand === "function") await wrap._expand();
+}
 // Swap the tree column between its "Files" tree and the "Changed" list without touching either's
 // scroll/font state — just toggle visibility and the active-tab underline.
 function pactTreeSwitchTab(which) {
@@ -3973,6 +3999,22 @@ async function pactEdCheckChangedFiles() {
   PACT_CHANGED = d.files;
   pactEdRenderChanged();
   pactTreeApplyChangeColors();   // reflect the fresh list on the tree live (a file becoming changed/committed re-colors without collapsing)
+  // The agent may have CREATED files. The tree caches a folder's contents on first expand, so a new file
+  // never appears on its own. If a changed file is new-and-not-shown inside an OPEN folder (or at the root),
+  // or a removed file is still shown, re-scan the tree (open folders preserved). Collapsed folders pick up
+  // new files on their next expand, so we don't refresh for those.
+  if (PACT_ED.treeBody) {
+    const rendered = new Set([...PACT_ED.treeBody.querySelectorAll(".pact-node[data-path]")].map((n) => n.dataset.path));
+    const parentOf = (p) => p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
+    const needsRefresh = (PACT_CHANGED || []).some((c) => {
+      if (!c || !c.path) return false;
+      if (c.status === "D") return rendered.has(c.path);                                   // removed file still shown → prune
+      if (rendered.has(c.path)) return false;                                              // already in the tree
+      const par = parentOf(c.path);
+      return par === "" || (PACT_ED.treeExpanded && PACT_ED.treeExpanded.has(par));        // new file at root / in an open folder
+    });
+    if (needsRefresh) pactTreeRefresh();
+  }
 }
 function pactEdRenderChanged() {
   const list = PACT_ED && PACT_ED.changedList;
@@ -5159,10 +5201,12 @@ function viewPact() {
   const tabChangedBtn = el("button", { class: "pact-tree-tab", title: "Files changed by the agent (working tree vs HEAD)" }, ["Changed"]);
   tabFilesBtn.addEventListener("click", () => pactTreeSwitchTab("files"));
   tabChangedBtn.addEventListener("click", () => pactTreeSwitchTab("changed"));
+  const treeRefreshBtn = el("button", { class: "pact-ed-ico", title: "Re-scan the file tree (pick up newly created/removed files)" }, ["↻"]);
+  treeRefreshBtn.addEventListener("click", () => pactTreeRefresh());
   const changedList = el("div", { class: "pact-changed-list" }, [el("div", { class: "hint", style: "padding:8px 10px" }, ["No changes vs HEAD."])]);
   changedList.style.display = "none";
   const treeEl = el("aside", { class: "pact-tree" }, [
-    el("div", { class: "pact-tree-hd pact-tree-tabs" }, [tabFilesBtn, tabChangedBtn, el("span", { class: "ws-spacer" }, []), ...treeFontBtns]),
+    el("div", { class: "pact-tree-hd pact-tree-tabs" }, [tabFilesBtn, tabChangedBtn, el("span", { class: "ws-spacer" }, []), treeRefreshBtn, ...treeFontBtns]),
     treeBody,
     changedList,
   ]);
