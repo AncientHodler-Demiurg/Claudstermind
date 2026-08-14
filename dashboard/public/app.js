@@ -3052,13 +3052,18 @@ function pactEdRenderGroup(g) {
   findBtn.addEventListener("click", (e) => { e.stopPropagation(); pactEdToggleSearch(g, false); });
   const replBtn = el("button", { class: "pact-ed-ico" + (s.open && s.replaceMode ? " --on" : ""), title: "Find & replace in this box (Ctrl/⌘-H)" }, ["⇄"]);
   replBtn.addEventListener("click", (e) => { e.stopPropagation(); pactEdToggleSearch(g, true); });
-  const fMinus = el("button", { class: "pact-ed-ico", title: "Smaller font (this box)" }, ["A-"]);
-  const fPlus = el("button", { class: "pact-ed-ico", title: "Bigger font (this box)" }, ["A+"]);
-  fMinus.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.max(9, (g.fontPx || 12.5) - 1); pactEdRenderGroup(g); pactStateSave(); });
-  fPlus.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.min(22, (g.fontPx || 12.5) + 1); pactEdRenderGroup(g); pactStateSave(); });
+  // Font size as a single stepper: ◀ <px> ▶ — the number shows this box's exact font size so you always
+  // know how big each box is. Clicking snaps to whole px going forward. (v1.4.9)
+  const curPx = Math.round(g.fontPx || 12.5);
+  const fDown = el("button", { class: "pact-font-arrow", title: "Smaller font (this box)" }, ["◀"]);
+  const fNum = el("span", { class: "pact-font-num", title: "Font size for this box (px)" }, [String(curPx)]);
+  const fUp = el("button", { class: "pact-font-arrow", title: "Bigger font (this box)" }, ["▶"]);
+  fDown.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.max(9, curPx - 1); pactEdRenderGroup(g); pactStateSave(); });
+  fUp.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.min(22, curPx + 1); pactEdRenderGroup(g); pactStateSave(); });
+  const fontStep = el("div", { class: "pact-font-step", title: "Font size for this box" }, [fDown, fNum, fUp]);
   const split = el("button", { class: "pact-ed-ico", title: "Split — open another editor box (up to 8)" }, ["⊞"]);
   split.addEventListener("click", (e) => { e.stopPropagation(); pactEdAddGroup(); });
-  const right = [findBtn, replBtn, fMinus, fPlus, split];
+  const right = [findBtn, replBtn, fontStep, split];
   if (PACT_ED.groups.length > 1) {
     const closeG = el("button", { class: "pact-ed-ico", title: "Close this editor box" }, ["×"]);
     closeG.addEventListener("click", (e) => { e.stopPropagation(); pactEdCloseGroup(g.id); });

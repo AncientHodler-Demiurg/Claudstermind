@@ -4,6 +4,13 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.9] - 2026-08-14
+
+### Changed
+- **Font size is now a stepper showing the number.** The Pact editor box's two A-/A+ buttons are replaced
+  by a single `◀ <px> ▶` control — the number in the middle shows that box's exact font size, so you can
+  see how big each box is at a glance. The arrows step it (clicking snaps to whole pixels).
+
 ## [1.4.8] - 2026-08-14
 
 ### Added
