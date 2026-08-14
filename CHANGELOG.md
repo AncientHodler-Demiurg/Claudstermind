@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.16] - 2026-08-14
+
+### Changed
+- **Scrollbar stripes cleaned up — only what you asked for.** Removed the git-vs-HEAD change ruler from the
+  editable editor (it painted the whole bar gold on an uncommitted file and marked lines green that weren't
+  fresh edits — pure noise). Now the scrollbar shows change stripes **only in the agent-edit diff view**:
+  green where the agent added code, red where it removed code. The yellow intermittent search stripes still
+  work in any view. No more amber "modified vs commit" band anywhere.
+
 ## [1.4.15] - 2026-08-14
 
 ### Changed

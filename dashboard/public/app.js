@@ -3247,8 +3247,10 @@ function pactEdRenderBody(g, tab) {
   const fontPx = g.fontPx || 12.5;
   cm.getWrapperElement().style.fontSize = fontPx + "px";
   g.bodyEl.replaceChildren(tab._cmHost);
-  requestAnimationFrame(() => { cm.refresh(); pactEdUpdateRuler(tab); });   // CM needs a laid-out host to size itself + paint the ruler
-  if (typeof tab.headContent !== "string") pactEdFetchHead(tab);   // keep the git HEAD baseline for the change ruler (S4)
+  requestAnimationFrame(() => { cm.refresh(); });   // CM needs a laid-out host to size itself
+  // No git-vs-HEAD scrollbar ruler on the editable view (it painted the whole bar gold on an uncommitted
+  // file — noise). Change stripes appear ONLY in the agent-edit diff (green added / red removed); the
+  // scrollbar otherwise shows just the yellow search-match stripes. (v1.4.16)
 }
 // ---- Auto-reveal the cursor after you scroll away and go idle (per editor box) ----
 const PACT_ED_CURSOR_REVEAL_MS = 15000;   // idle-since-last-scroll before smoothly revealing the cursor
@@ -3329,7 +3331,7 @@ function pactEdBuildCm(g, tab, ext) {
     foldOptions: isPact ? { rangeFinder: pactCmRangeFinder } : undefined,
     extraKeys,
   });
-  cm.on("change", () => { tab.content = cm.getValue(); pactEdMarkDirty(g, tab); pactEdScheduleRuler(tab); });
+  cm.on("change", () => { tab.content = cm.getValue(); pactEdMarkDirty(g, tab); });
   // Remember this box's cursor as it moves, so every open file always has a position (survives content
   // swaps, tab switches, font changes) and the auto-reveal always has a target.
   cm.on("cursorActivity", () => { tab._cursor = cm.getCursor(); });
@@ -3339,7 +3341,6 @@ function pactEdBuildCm(g, tab, ext) {
   cm.setCursor(pactEdClampPos(cm, tab._cursor));   // guarantee a valid cursor from the moment the file opens
   tab._cursor = cm.getCursor();
   tab._cm = cm; tab._cmHost = host;
-  tab._ovrUpdate = () => pactEdUpdateRuler(tab);   // pactEdFetchHead re-paints the ruler once HEAD lands
   return cm;
 }
 // Build (or reuse) a READ-ONLY CodeMirror for the agent-edit diff. The doc is the NEW file (so the
@@ -3480,7 +3481,6 @@ async function pactEdSaveTab(tab) {
     tab.saved = snapshot;
     tab.dirty = tab.content !== tab.saved;   // may have kept typing during the request
     if (tab._tabEl) tab._tabEl.classList.toggle("--dirty", tab.dirty);
-    pactEdFetchHead(tab);   // re-baseline the overview ruler against HEAD (in case a commit landed)
     pactTreeApplyChangeColors();   // reflect the save on the tree row promptly (uses the current change map)
     if (!tab.dirty) pactEdSaveStatus("✓ saved " + tab.name, false); else pactEdScheduleAutosave(tab);
   } else {
