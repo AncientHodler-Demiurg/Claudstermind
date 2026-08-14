@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.7] - 2026-08-14
+
+### Fixed
+- **Editor scrollbar was a solid opaque bar that hid the knob.** The change-ruler stripes (green added /
+  red removed / amber modified vs git HEAD) are now **semi-transparent** and a thinner band at the right
+  edge, so the scroll knob shows through/beside them even when a whole file is changed. Line endings are
+  normalized before the diff, so a CRLF-vs-LF mismatch no longer paints every line "modified" (the
+  amber-everywhere bug).
+- **Wider scrollbar + bigger knob.** The editor's vertical scrollbar is wider with a taller, rounder,
+  more-visible thumb.
+
+### Added
+- **Search stripes on the scrollbar.** The per-box Find now paints yellow match stripes down the scrollbar
+  (matchesonscrollbar), so you can see where matches are at a glance — not just the in-text highlights.
+
 ## [1.4.6] - 2026-08-14
 
 ### Added

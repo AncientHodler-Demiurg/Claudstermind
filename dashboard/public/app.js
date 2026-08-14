@@ -3030,6 +3030,7 @@ function pactEdSearchState(g) { return g._search || (g._search = { find: "", rep
 function pactEdActiveCm(g) { const a = g.tabs.find((t) => t.path === g.active); return (a && a.loaded && !a.agentDiff && a._cm) ? a._cm : null; }
 function pactEdSearchClear(g) {
   if (g._searchOverlay && g._searchCm) { try { g._searchCm.removeOverlay(g._searchOverlay); } catch {} }
+  if (g._searchScroll) { try { g._searchScroll.clear(); } catch {} g._searchScroll = null; }   // scrollbar stripes
   g._searchOverlay = null; g._searchCm = null;
 }
 // A CM overlay that highlights every occurrence of a plain-string query (class cm-pact-search-match).
@@ -3052,6 +3053,8 @@ function pactEdSearchApply(g) {
   if (!cm || !s.find) { if (count) count.textContent = ""; return; }
   const ov = pactMakeSearchOverlay(s.find, s.cs);
   cm.addOverlay(ov); g._searchOverlay = ov; g._searchCm = cm;
+  // Yellow intermittent stripes on the scrollbar for each match (matchesonscrollbar addon).
+  if (typeof cm.showMatchesOnScrollbar === "function") { try { g._searchScroll = cm.showMatchesOnScrollbar(s.find, !s.cs, { className: "CodeMirror-search-match" }); } catch {} }
   if (count) { const n = pactCountOccurrences(cm.getValue(), s.find, s.cs); count.textContent = n + (n === 1 ? " match" : " matches"); }
 }
 function pactEdSearchNav(g, dir) {
@@ -3256,7 +3259,10 @@ function pactEdUpdateRuler(tab) {
   if (!cm._ann) cm._ann = { add: cm.annotateScrollbar("cm-change-add"), del: cm.annotateScrollbar("cm-change-del"), mod: cm.annotateScrollbar("cm-change-mod") };
   const ann = cm._ann;
   if (typeof tab.headContent !== "string") { ann.add.update([]); ann.del.update([]); ann.mod.update([]); return; }
-  const ranges = pactChangeAnnRanges(pactChangeMarks(tab.headContent, cm.getValue()));
+  // Normalize line endings on BOTH sides — a CRLF (or a lone CR) in the git HEAD blob against the editor's
+  // LF would otherwise differ on EVERY line and paint the whole ruler "modified" (the amber-everywhere bug).
+  const norm = (str) => String(str).replace(/\r\n?/g, "\n");
+  const ranges = pactChangeAnnRanges(pactChangeMarks(norm(tab.headContent), norm(cm.getValue())));
   ann.add.update(ranges.add); ann.del.update(ranges.del); ann.mod.update(ranges.mod);
 }
 // CodeMirror fold RangeFinder for .pact/.repl: given a start Pos, return the {from,to} of the foldable
