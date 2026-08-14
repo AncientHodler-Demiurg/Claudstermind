@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.8] - 2026-08-14
+
+### Added
+- **Right-click menu on editor tabs (desktop).** Right-clicking a Pact file tab opens a menu: **Clone to**
+  and **Move to** (each a submenu of the open boxes plus "＋ New box"), **Text size A+/A−**, and
+  **Find / Replace…**. Clone opens the same file in another box; Move relocates the tab (with its editor
+  and unsaved edits) — the same engine as tab drag.
+
 ## [1.4.7] - 2026-08-14
 
 ### Fixed

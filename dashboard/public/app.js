@@ -2824,6 +2824,64 @@ function pactEdMoveTab(fromGid, path, toGid, beforePath) {
   pactEdLayout();
   pactStateSave();
 }
+// ---- Tab right-click context menu (desktop) ----------------------------------------------------
+let PACT_CTX_EL = null;
+function pactCloseCtxMenu() {
+  if (!PACT_CTX_EL) return;
+  PACT_CTX_EL.remove(); PACT_CTX_EL = null;
+  document.removeEventListener("mousedown", pactCtxOutside, true);
+  document.removeEventListener("keydown", pactCtxKey, true);
+  window.removeEventListener("blur", pactCloseCtxMenu);
+}
+function pactCtxOutside(e) { if (PACT_CTX_EL && !PACT_CTX_EL.contains(e.target)) pactCloseCtxMenu(); }
+function pactCtxKey(e) { if (e.key === "Escape") pactCloseCtxMenu(); }
+// items: [{ label, onClick?, submenu?:[...], disabled? }]. A `---` string is a separator.
+function pactCtxItemNode(it) {
+  if (it === "---") return el("div", { class: "pact-ctx-sep" }, []);
+  const hasSub = Array.isArray(it.submenu) && it.submenu.length;
+  const row = el("div", { class: "pact-ctx-item" + (hasSub ? " --has-sub" : "") + (it.disabled ? " --disabled" : "") }, [
+    el("span", { class: "pact-ctx-label" }, [it.label]),
+    hasSub ? el("span", { class: "pact-ctx-arrow" }, ["▸"]) : "",
+  ]);
+  if (it.disabled) return row;
+  if (hasSub) { row.appendChild(el("div", { class: "pact-ctx-sub" }, it.submenu.map(pactCtxItemNode))); }
+  else { row.addEventListener("click", (e) => { e.stopPropagation(); const fn = it.onClick; pactCloseCtxMenu(); if (fn) fn(); }); }
+  return row;
+}
+function pactShowCtxMenu(x, y, items) {
+  pactCloseCtxMenu();
+  const menu = el("div", { class: "pact-ctx-menu" }, items.map(pactCtxItemNode));
+  document.body.appendChild(menu);
+  PACT_CTX_EL = menu;
+  const r = menu.getBoundingClientRect();
+  const left = Math.max(6, Math.min(x, window.innerWidth - r.width - 6));
+  menu.style.left = left + "px";
+  menu.style.top = Math.max(6, Math.min(y, window.innerHeight - r.height - 6)) + "px";
+  if (left + r.width + 176 > window.innerWidth) menu.classList.add("--left");   // open submenus leftward near the right edge
+  setTimeout(() => {   // defer so the opening right-click's own mouseup/mousedown doesn't instantly close it
+    document.addEventListener("mousedown", pactCtxOutside, true);
+    document.addEventListener("keydown", pactCtxKey, true);
+    window.addEventListener("blur", pactCloseCtxMenu);
+  }, 0);
+}
+// Build + show the per-tab menu: clone/move to another box (submenu of boxes + New box), font size, find.
+function pactEdTabMenu(clientX, clientY, g, tb) {
+  const label = (gg) => "Box " + (PACT_ED.groups.indexOf(gg) + 1) + (gg.active ? " · " + gg.active.split("/").pop() : "");
+  const others = PACT_ED.groups.filter((gg) => gg.id !== g.id);
+  const cloneSub = others.map((gg) => ({ label: label(gg), onClick: () => pactEdOpenInto(gg, tb.path, true, true) }));
+  cloneSub.push({ label: "＋ New box", onClick: () => { pactEdAddGroup(); const ng = PACT_ED.groups[PACT_ED.groups.length - 1]; pactEdOpenInto(ng, tb.path, true, true); } });
+  const moveSub = others.map((gg) => ({ label: label(gg), onClick: () => pactEdMoveTab(g.id, tb.path, gg.id, null) }));
+  moveSub.push({ label: "＋ New box", onClick: () => { pactEdAddGroup(); const ng = PACT_ED.groups[PACT_ED.groups.length - 1]; pactEdMoveTab(g.id, tb.path, ng.id, null); } });
+  pactShowCtxMenu(clientX, clientY, [
+    { label: "Clone to", submenu: cloneSub },
+    { label: "Move to", submenu: moveSub },
+    "---",
+    { label: "Text size  A+", onClick: () => { g.fontPx = Math.min(22, (g.fontPx || 12.5) + 1); pactEdRenderGroup(g); pactStateSave(); } },
+    { label: "Text size  A−", onClick: () => { g.fontPx = Math.max(9, (g.fontPx || 12.5) - 1); pactEdRenderGroup(g); pactStateSave(); } },
+    "---",
+    { label: "Find / Replace…", onClick: () => { PACT_ED.activeId = g.id; g.active = tb.path; pactEdLayout(); const gg = PACT_ED.groups.find((x) => x.id === g.id); if (gg) { const s = pactEdSearchState(gg); s.open = true; s.replaceMode = true; pactEdRenderGroupFooter(gg); pactEdSyncSearchPanel(gg, true); } } },
+  ]);
+}
 // The path the drop would land BEFORE, from the pointer x over a box's tab header (null = at the end).
 function pactEdDropBefore(headerEl, clientX) {
   for (const t of headerEl.querySelectorAll(".pact-tab2")) {
@@ -2945,6 +3003,8 @@ function pactEdRenderGroup(g) {
       tab.classList.add("--dragging");
     });
     tab.addEventListener("dragend", () => { PACT_ED._drag = null; tab.classList.remove("--dragging"); pactEdClearDropCue(); });
+    // Desktop right-click menu: clone/move to another box, font size, find/replace.
+    tab.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); pactEdTabMenu(e.clientX, e.clientY, g, tb); });
     return tab;
   });
   const active = g.tabs.find((t) => t.path === g.active);

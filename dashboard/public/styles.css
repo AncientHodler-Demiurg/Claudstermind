@@ -1173,6 +1173,20 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-tab2.--dragging { opacity: .45; }
 .pact-tab2.--drop-before { box-shadow: inset 3px 0 0 var(--accent); }   /* insertion marker to the left */
 .pact-ed-hd.--dnd-over { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); outline: 1px dashed color-mix(in srgb, var(--accent) 50%, transparent); outline-offset: -2px; }
+/* v1.4.8 — desktop right-click tab menu (clone/move to a box, font size, find). */
+.pact-ctx-menu, .pact-ctx-sub { position: fixed; z-index: 1000; min-width: 168px; padding: 4px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+.pact-ctx-sub { position: absolute; left: 100%; top: -5px; display: none; }
+.pact-ctx-menu.--left .pact-ctx-sub { left: auto; right: 100%; }
+.pact-ctx-item { position: relative; display: flex; align-items: center; gap: 8px; padding: 6px 9px;
+  font-size: 12.5px; color: var(--ink-soft); border-radius: 6px; cursor: pointer; white-space: nowrap; }
+.pact-ctx-item:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--ink); }
+.pact-ctx-item.--has-sub:hover > .pact-ctx-sub { display: block; }
+.pact-ctx-item.--disabled { color: var(--ink-mute); cursor: default; }
+.pact-ctx-item.--disabled:hover { background: transparent; color: var(--ink-mute); }
+.pact-ctx-label { flex: 1 1 auto; }
+.pact-ctx-arrow { flex: 0 0 auto; color: var(--ink-mute); font-size: 11px; }
+.pact-ctx-sep { height: 1px; margin: 4px 6px; background: var(--line); }
 .pact-ed-ico { flex: 0 0 auto; padding: 2px 8px; border-radius: 6px; background: var(--chip);
   border: 1px solid var(--line); color: var(--ink-dim); font-size: 13px; cursor: pointer; }
 .pact-ed-ico:hover { color: var(--ink); }
