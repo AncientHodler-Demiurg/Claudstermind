@@ -3250,6 +3250,37 @@ function pactEdRenderBody(g, tab) {
   requestAnimationFrame(() => { cm.refresh(); pactEdUpdateRuler(tab); });   // CM needs a laid-out host to size itself + paint the ruler
   if (typeof tab.headContent !== "string") pactEdFetchHead(tab);   // keep the git HEAD baseline for the change ruler (S4)
 }
+// ---- Auto-reveal the cursor after you scroll away and go idle (per editor box) ----
+const PACT_ED_CURSOR_REVEAL_MS = 2500;   // idle-since-last-scroll before smoothly revealing the cursor
+function pactEdSmoothScrollTo(cm, targetTop) {
+  const sc = cm.getScrollerElement(); if (!sc) return;
+  const start = sc.scrollTop, dist = Math.max(0, targetTop) - start;
+  if (Math.abs(dist) < 4) return;
+  cm._autoScrollCancel = false; cm._autoScrolling = true;
+  const dur = 420, t0 = performance.now();
+  const step = (now) => {
+    if (cm._autoScrollCancel) { cm._autoScrolling = false; return; }
+    const p = Math.min(1, (now - t0) / dur);
+    const e = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;   // easeInOutQuad
+    sc.scrollTop = start + dist * e;
+    if (p < 1) requestAnimationFrame(step); else cm._autoScrolling = false;
+  };
+  requestAnimationFrame(step);
+}
+function pactEdScheduleCursorReveal(cm) {
+  if (cm._autoScrolling) return;      // our own animation is moving the scroll — ignore its scroll events
+  cm._autoScrollCancel = true;        // any fresh (user) scroll cancels an in-flight auto-reveal
+  clearTimeout(cm._revealT);
+  cm._revealT = setTimeout(() => {
+    try {
+      const sc = cm.getScrollerElement(); if (!sc) return;
+      const cc = cm.charCoords(cm.getCursor(), "local");
+      const top = sc.scrollTop, bottom = top + sc.clientHeight;
+      if (cc.top >= top && cc.bottom <= bottom) return;   // cursor already visible — leave the view alone
+      pactEdSmoothScrollTo(cm, cc.top - sc.clientHeight / 2 + (cc.bottom - cc.top) / 2);   // center the cursor
+    } catch {}
+  }, PACT_ED_CURSOR_REVEAL_MS);
+}
 // Build (or reuse) the CodeMirror editor for a tab. One CM instance per tab, cached on `tab._cm` with its
 // host node on `tab._cmHost`, so switching tabs / bumping the font just re-appends the same editor (undo +
 // caret survive). `.pact`/`.repl` get the StoicSyntax mode + fold gutter; everything else is plain text.
@@ -3288,6 +3319,9 @@ function pactEdBuildCm(g, tab, ext) {
     extraKeys,
   });
   cm.on("change", () => { tab.content = cm.getValue(); pactEdMarkDirty(g, tab); pactEdScheduleRuler(tab); });
+  // After you scroll away and go idle, smoothly bring the cursor back into view — each box tracks its own
+  // (blinking) cursor. Only fires when the cursor is actually off-screen, and a fresh scroll cancels it.
+  cm.on("scroll", () => pactEdScheduleCursorReveal(cm));
   tab._cm = cm; tab._cmHost = host;
   tab._ovrUpdate = () => pactEdUpdateRuler(tab);   // pactEdFetchHead re-paints the ruler once HEAD lands
   return cm;
@@ -4563,7 +4597,10 @@ function pactChatRoute({ kind, sessionKey, data }) {
       if (!dec.keepLive) t.live = "";
       if (d.sessionId && !t.resume) t.resume = d.sessionId;
       if (PACT_CHAT._pendingOpen && PACT_CHAT._pendingOpen[t.key] != null) delete PACT_CHAT._pendingOpen[t.key];
-      t._forceBottom = true;
+      // Do NOT force the bottom here. A resync fires mid-session (stream reconnect, the stale-stream
+      // watchdog, the heartbeat self-heal on a long/quiet turn) — forcing the tail yanked a reader who'd
+      // scrolled up back down on every one. Let the stick controller decide: if they were at the bottom,
+      // it follows the tail; if they'd scrolled up, it stays put and lights the "↓ New output" pill.
       pactChatPaint(t);
       pactChatDrainQueue(t);   // a turn that finished during downtime just landed — release any queued follow-up
       return;

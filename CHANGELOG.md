@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.14] - 2026-08-14
+
+### Fixed
+- **Pact chat no longer yanks your scroll on a resync.** When you'd scrolled up to read, a mid-session
+  resync (stream reconnect, the stale-stream watchdog, or the heartbeat self-heal during a long/quiet turn)
+  forced the view back to the bottom. Resync now respects your position: if you were at the bottom it
+  follows the tail; if you'd scrolled up it stays put and lights the "↓ New output" pill — nothing below
+  (new message, tool use, result) moves you. (Your own sends and a fresh load still land at the bottom.)
+
+### Added
+- **Editor boxes smoothly return to the cursor after you idle.** Scroll away in a view box and, after a
+  short pause, it smoothly scrolls back to that box's cursor (each box tracks its own). Only fires when the
+  cursor is actually off-screen, and a fresh scroll cancels it.
+
 ## [1.4.13] - 2026-08-14
 
 ### Changed
