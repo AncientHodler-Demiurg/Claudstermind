@@ -1246,10 +1246,14 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    change density at a glance (the editable view gets CodeMirror's own scrollbar ruler). */
 .pact-diff-scrollwrap { position: relative; flex: 1; min-height: 0; display: flex; }
 .pact-diff-scrollwrap > .pact-editor-scroll { flex: 1; min-width: 0; }
-.pact-diff-ovr { position: absolute; top: 0; right: 0; bottom: 0; width: 12px; pointer-events: none; z-index: 3; }
-.pact-diff-ovr > div { position: absolute; right: 0; width: 10px; min-height: 2px; border-radius: 2px; }
-.pact-diff-ovr-add { background: #34d399; }
-.pact-diff-ovr-del { background: #ef5350; }
+.pact-diff-scrollwrap > .pact-cm-host { flex: 1; min-width: 0; }
+/* Proportional overview ruler over the diff's scrollbar: bands sized by the number of added/removed rows
+   across the whole diff, positioned where they occur. Semi-transparent + a thin band at the right edge so
+   the scroll thumb stays visible beside them. */
+.pact-diff-ovr { position: absolute; top: 0; right: 0; bottom: 0; width: 16px; pointer-events: none; z-index: 6; }
+.pact-diff-ovr > div { position: absolute; right: 0; width: 6px; min-height: 2px; border-radius: 2px; }
+.pact-diff-ovr-add { background: rgba(52, 211, 153, .60); }
+.pact-diff-ovr-del { background: rgba(239, 83, 80, .65); }
 .pact-diff-row { display: block; white-space: pre; }
 .pact-diff-row .pd-lineno { display: inline-block; min-width: var(--pk-lineno-w, 2ch); text-align: right; padding-right: 8px;
   color: var(--ink-dim); user-select: none; -webkit-user-select: none;

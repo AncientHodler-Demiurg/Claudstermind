@@ -3239,7 +3239,17 @@ function pactEdRenderBody(g, tab) {
       el("span", { class: "pd-badge pd-badge-del" }, ["−" + tab.agentDiff.del]),
       el("span", { class: "hint", style: "margin-left:8px" }, ["agent edit — Keep All to accept + resume editing"]),
     ]);
-    g.bodyEl.replaceChildren(hd, tab._diffHost);
+    // Proportional overview ruler: green/red bands sized + placed by the ADDED/REMOVED runs across the
+    // WHOLE diff (every row), so a 176-line deletion shows a tall red band at the right spot. CM's own
+    // scrollbar annotation can't do this — deleted lines are widgets, not document lines, so it collapsed
+    // any deletion to a single-line stripe. (v1.4.19)
+    const ovr = el("div", { class: "pact-diff-ovr", "aria-hidden": "true" });
+    for (const b of pactDiffOvrBands(tab.agentDiff.rows)) {
+      const tick = el("div", { class: "pact-diff-ovr-" + b.type });
+      tick.style.top = b.top + "%"; tick.style.height = b.height + "%";
+      ovr.append(tick);
+    }
+    g.bodyEl.replaceChildren(hd, el("div", { class: "pact-diff-scrollwrap" }, [tab._diffHost, ovr]));
     requestAnimationFrame(() => cm.refresh());   // CM needs a laid-out host to size itself
     return;
   }
@@ -3403,12 +3413,9 @@ function pactEdBuildDiffCm(g, tab, ext) {
       if (r.type === "add") { addLines.push(afterIdx); cm.addLineClass(afterIdx, "background", "pd-add-line"); cm.setGutterMarker(afterIdx, "pact-diff-sign", el("span", { class: "pd-gsign pd-gadd" }, ["+"])); }
     }
     if (pending.length) flush(Math.max(0, cm.lineCount() - 1), false);
-    if (typeof cm.annotateScrollbar === "function") {
-      cm._diffAnnAdd = cm._diffAnnAdd || cm.annotateScrollbar("cm-change-add");
-      cm._diffAnnDel = cm._diffAnnDel || cm.annotateScrollbar("cm-change-del");
-      cm._diffAnnAdd.update(addLines.map((l) => ({ from: { line: l, ch: 0 }, to: { line: l, ch: 0 } })));
-      cm._diffAnnDel.update(delLines.map((l) => ({ from: { line: l, ch: 0 }, to: { line: l, ch: 0 } })));
-    }
+    // NOTE: no annotateScrollbar here — a deletion is a widget, not a document line, so CM's scrollbar
+    // annotation collapsed every deletion to a single-line stripe. The proportional green/red bands are
+    // painted by the .pact-diff-ovr overview ruler in pactEdRenderBody instead (sized by row count).
   });
   return cm;
 }

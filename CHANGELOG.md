@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.19] - 2026-08-14
+
+### Fixed
+- **Diff scrollbar stripes are now proportional to the change size.** In the agent-diff view a big deletion
+  (e.g. −176 lines) showed only a tiny red stripe, because the v1.4.13 CodeMirror diff renders deleted
+  lines as widgets (not document lines) and CM's scrollbar annotation is anchored to document lines — so it
+  collapsed any deletion to one line. Replaced it with a proportional overview ruler (green added / red
+  removed) sized by the number of rows across the whole diff and placed where they occur, so a 176-line
+  deletion is a tall red band at the right spot.
+
 ## [1.4.18] - 2026-08-14
 
 ### Fixed
