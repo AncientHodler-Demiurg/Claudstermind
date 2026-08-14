@@ -4563,6 +4563,10 @@ function pactChatRoute({ kind, sessionKey, data }) {
     case "busy":
       t.live = "";
       if (t._pendingText != null) {
+        // The optimistic bubble dispatch pushed was NOT accepted (the server had a turn running) — retract
+        // it so the message appears ONCE, as the queued bubble below, instead of twice (the double-send
+        // the UI showed). Roll back the first-message flag so the preamble is re-added on the real send.
+        if (t._optimisticUserMsg) { t.msgs = t.msgs.filter((m) => m !== t._optimisticUserMsg); if (t._optimisticFirst) t.started = false; t._optimisticUserMsg = null; t._optimisticFirst = false; }
         t._queue = t._queue || [];
         t._queue.push({ text: t._pendingText, images: t._pendingImages || [] });
         t._pendingText = null; t._pendingImages = null;
@@ -4695,6 +4699,11 @@ async function pactChatDispatch(t, text, images) {
   // reference so a failed send can RETRACT it (it was never really sent).
   const userMsg = { role: "user", text, images: images.length ? images.map((a) => ({ dataUrl: a.dataUrl })) : undefined };
   t.msgs.push(userMsg);
+  // Track this optimistic bubble so a server `busy` refusal (a race — a turn was already running) can
+  // RETRACT it: the message wasn't accepted, it's being re-queued, and it must show once (as the queued
+  // bubble), not twice. `_optimisticFirst` rolls back the first-message flag on retract so the orienting
+  // preamble is re-added when the queued copy actually sends.
+  t._optimisticUserMsg = userMsg; t._optimisticFirst = firstMsg;
   t.status = "thinking"; t.live = "";
   t._turnStartedAt = Date.now();   // start the response timer (ticks live; final elapsed shown on the reply)
   // Safety net for a busy race: if the server refuses THIS dispatch with `busy` (its turn lock caught a
@@ -4717,6 +4726,7 @@ async function pactChatDispatch(t, text, images) {
     // actionable note with Retry. `started` is rolled back if this was the very first message so its
     // orienting preamble is re-added on the eventual successful send.
     t.msgs = t.msgs.filter((m) => m !== userMsg);
+    t._optimisticUserMsg = null; t._optimisticFirst = false;
     if (firstMsg) t.started = false;
     t.status = "idle"; t.live = ""; t._pendingText = null; t._pendingImages = null;
     const boxId = pactOutboxAdd(t.key, text, images);

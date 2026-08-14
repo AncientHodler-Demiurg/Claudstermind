@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.10] - 2026-08-14
+
+### Fixed
+- **Pact chat message appearing sent twice.** When you sent a message while the client thought the tab was
+  idle but the work machine still had a turn running (a race), the message showed as an optimistic (blue)
+  bubble AND then, after the server's `busy` refusal re-queued it, as a queued (orange) bubble — looking
+  double-sent. The optimistic bubble is now retracted on the `busy` re-queue, so the message appears once
+  (as the queued bubble) and is sent a single time when the running turn finishes. No double execution
+  occurred — this was a display duplicate — but it's now correct.
+
 ## [1.4.9] - 2026-08-14
 
 ### Changed
