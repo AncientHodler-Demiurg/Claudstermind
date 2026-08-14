@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.12] - 2026-08-14
+
+### Fixed
+- **Search now works in the agent green/red diff view.** Find did nothing while a file showed the agent's
+  uncommitted edit diff (that view is read-only DOM, not CodeMirror) — exactly when you want to jump to
+  what the agent changed. Find now searches the diff's rows: it highlights and counts matching lines and
+  navigates between them (Enter / ▲▼), scrolling each into view. Replace stays disabled there (read-only)
+  with a "Keep All first" hint; it works as before once you accept the edit.
+
 ## [1.4.11] - 2026-08-14
 
 ### Added

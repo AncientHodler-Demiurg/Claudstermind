@@ -3093,10 +3093,15 @@ function pactCountOccurrences(text, query, caseSensitive) {
 // ===== end PACT SEARCH-COUNT pure helper =====
 function pactEdSearchState(g) { return g._search || (g._search = { find: "", replace: "", cs: false, open: false, replaceMode: false }); }
 function pactEdActiveCm(g) { const a = g.tabs.find((t) => t.path === g.active); return (a && a.loaded && !a.agentDiff && a._cm) ? a._cm : null; }
+// The active tab is the read-only agent green/red diff view (no CodeMirror) → search its rendered rows.
+function pactEdActiveDiff(g) { const a = g.tabs.find((t) => t.path === g.active); return (a && a.agentDiff) ? a : null; }
+function pactEdDiffRows(g) { return (g.bodyEl && pactEdActiveDiff(g)) ? [...g.bodyEl.querySelectorAll(".pact-diff-row")] : null; }
 function pactEdSearchClear(g) {
   if (g._searchOverlay && g._searchCm) { try { g._searchCm.removeOverlay(g._searchOverlay); } catch {} }
   if (g._searchScroll) { try { g._searchScroll.clear(); } catch {} g._searchScroll = null; }   // scrollbar stripes
   g._searchOverlay = null; g._searchCm = null;
+  if (g._diffHits) { for (const r of g._diffHits) { try { r.classList.remove("pact-diff-hit", "pact-diff-hit-current"); } catch {} } }
+  g._diffHits = null; g._diffHitIdx = -1;
 }
 // A CM overlay that highlights every occurrence of a plain-string query (class cm-pact-search-match).
 function pactMakeSearchOverlay(query, cs) {
@@ -3115,16 +3120,46 @@ function pactEdSearchApply(g) {
   pactEdSearchClear(g);
   const cm = pactEdActiveCm(g);
   const count = g._searchPanel && g._searchPanel.querySelector(".pact-search-count");
-  if (!cm || !s.find) { if (count) count.textContent = ""; return; }
+  if (!cm) { pactEdDiffSearchApply(g, count); return; }   // agent green/red diff view (no CM) — search its rows
+  if (!s.find) { if (count) count.textContent = ""; return; }
   const ov = pactMakeSearchOverlay(s.find, s.cs);
   cm.addOverlay(ov); g._searchOverlay = ov; g._searchCm = cm;
   // Yellow intermittent stripes on the scrollbar for each match (matchesonscrollbar addon).
   if (typeof cm.showMatchesOnScrollbar === "function") { try { g._searchScroll = cm.showMatchesOnScrollbar(s.find, !s.cs, { className: "CodeMirror-search-match" }); } catch {} }
   if (count) { const n = pactCountOccurrences(cm.getValue(), s.find, s.cs); count.textContent = n + (n === 1 ? " match" : " matches"); }
 }
+// Search the agent-diff view (read-only, no CM): highlight every ROW whose text contains the query, count
+// them, and jump to the first — so you can find exactly what the agent touched. Nav moves between rows.
+function pactEdDiffSearchApply(g, count) {
+  const s = pactEdSearchState(g);
+  const rows = pactEdDiffRows(g);
+  if (!rows || !s.find) { if (count) count.textContent = ""; return; }
+  const cs = s.cs, q = cs ? s.find : s.find.toLowerCase();
+  const hits = [];
+  for (const row of rows) {
+    const t = ((row.querySelector(".pd-text") || row).textContent || "");
+    if ((cs ? t : t.toLowerCase()).indexOf(q) !== -1) { row.classList.add("pact-diff-hit"); hits.push(row); }
+  }
+  g._diffHits = hits; g._diffHitIdx = -1;
+  if (count) count.textContent = hits.length + (hits.length === 1 ? " match" : " matches");
+  if (hits.length) pactEdDiffSearchNav(g, 1);
+}
+function pactEdDiffSearchNav(g, dir) {
+  const hits = g._diffHits;
+  if (!hits || !hits.length) return;
+  if (hits[g._diffHitIdx]) hits[g._diffHitIdx].classList.remove("pact-diff-hit-current");
+  let idx = (g._diffHitIdx < 0) ? (dir > 0 ? 0 : hits.length - 1) : g._diffHitIdx + (dir > 0 ? 1 : -1);
+  if (idx < 0) idx = hits.length - 1;
+  if (idx >= hits.length) idx = 0;
+  g._diffHitIdx = idx;
+  const row = hits[idx];
+  row.classList.add("pact-diff-hit-current");
+  try { row.scrollIntoView({ block: "center" }); } catch { row.scrollIntoView(); }
+}
 function pactEdSearchNav(g, dir) {
   const s = pactEdSearchState(g); const cm = pactEdActiveCm(g);
-  if (!cm || !s.find) return;
+  if (!s.find) return;
+  if (!cm) { pactEdDiffSearchNav(g, dir); return; }   // diff view → row navigation
   const start = dir > 0 ? cm.getCursor("to") : cm.getCursor("from");
   let cur = cm.getSearchCursor(s.find, start, !s.cs);
   let ok = dir > 0 ? cur.findNext() : cur.findPrevious();
@@ -3183,7 +3218,9 @@ function pactEdSyncSearchPanel(g, focus) {
   });
   const findRow = el("div", { class: "pact-search-row" }, [findIn, count, prev, next, csBtn, closeB]);
   const rows = [findRow];
-  if (s.replaceMode) {
+  const isDiff = !!pactEdActiveDiff(g);   // agent green/red diff is read-only → find only, no replace
+  if (isDiff) rows.push(el("div", { class: "pact-search-hint" }, ["Find in the agent diff — Keep All first to edit/replace."]));
+  if (s.replaceMode && !isDiff) {
     const replIn = el("input", { class: "pact-search-in", type: "text", placeholder: "Replace", value: s.replace });
     replIn.addEventListener("input", () => { s.replace = replIn.value; });
     const one = el("button", { class: "pact-ed-ico", title: "Replace this match" }, ["Replace"]);
