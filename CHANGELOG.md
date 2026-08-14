@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.15] - 2026-08-14
+
+### Changed
+- **Cursor auto-reveal delay is now 15s** (was 2.5s) — an editor box only glides back to its cursor after
+  15 seconds of scroll-idle.
+
+### Fixed
+- **Every open file always has a cursor position.** Each editor box now guarantees a valid caret from the
+  moment a file opens, remembers it as it moves, and restores it (clamped to the current text) after a
+  content swap like Keep All — so a box can never be left with no cursor for the auto-reveal to target.
+
 ## [1.4.14] - 2026-08-14
 
 ### Fixed

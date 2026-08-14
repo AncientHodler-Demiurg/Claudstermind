@@ -3251,7 +3251,16 @@ function pactEdRenderBody(g, tab) {
   if (typeof tab.headContent !== "string") pactEdFetchHead(tab);   // keep the git HEAD baseline for the change ruler (S4)
 }
 // ---- Auto-reveal the cursor after you scroll away and go idle (per editor box) ----
-const PACT_ED_CURSOR_REVEAL_MS = 2500;   // idle-since-last-scroll before smoothly revealing the cursor
+const PACT_ED_CURSOR_REVEAL_MS = 15000;   // idle-since-last-scroll before smoothly revealing the cursor
+// Clamp a (possibly stale) saved cursor to a valid position in the CM's current doc — so an open file
+// ALWAYS has a real cursor position, even after its content was swapped (e.g. Keep-All) or a saved line
+// no longer exists. Junk → the very start.
+function pactEdClampPos(cm, pos) {
+  const last = Math.max(0, cm.lineCount() - 1);
+  const line = (pos && Number.isFinite(pos.line)) ? Math.max(0, Math.min(pos.line, last)) : 0;
+  const ch = (pos && Number.isFinite(pos.ch)) ? Math.max(0, Math.min(pos.ch, cm.getLine(line).length)) : 0;
+  return { line, ch };
+}
 function pactEdSmoothScrollTo(cm, targetTop) {
   const sc = cm.getScrollerElement(); if (!sc) return;
   const start = sc.scrollTop, dist = Math.max(0, targetTop) - start;
@@ -3287,7 +3296,9 @@ function pactEdScheduleCursorReveal(cm) {
 function pactEdBuildCm(g, tab, ext) {
   if (tab._cm) {
     // Reuse: only force the doc if it diverged out-of-band (e.g. Keep-All swapped in the on-disk content).
-    if (tab._cm.getValue() !== tab.content) { tab._cm.setValue(tab.content); tab._cm.clearHistory(); }
+    // setValue resets the caret to the top, so restore the tab's remembered cursor (clamped) — an open
+    // file must never be left without a cursor position.
+    if (tab._cm.getValue() !== tab.content) { tab._cm.setValue(tab.content); tab._cm.clearHistory(); tab._cm.setCursor(pactEdClampPos(tab._cm, tab._cursor)); }
     return tab._cm;
   }
   const isPact = ext.endsWith(".pact") || ext.endsWith(".repl");
@@ -3319,9 +3330,14 @@ function pactEdBuildCm(g, tab, ext) {
     extraKeys,
   });
   cm.on("change", () => { tab.content = cm.getValue(); pactEdMarkDirty(g, tab); pactEdScheduleRuler(tab); });
+  // Remember this box's cursor as it moves, so every open file always has a position (survives content
+  // swaps, tab switches, font changes) and the auto-reveal always has a target.
+  cm.on("cursorActivity", () => { tab._cursor = cm.getCursor(); });
   // After you scroll away and go idle, smoothly bring the cursor back into view — each box tracks its own
   // (blinking) cursor. Only fires when the cursor is actually off-screen, and a fresh scroll cancels it.
   cm.on("scroll", () => pactEdScheduleCursorReveal(cm));
+  cm.setCursor(pactEdClampPos(cm, tab._cursor));   // guarantee a valid cursor from the moment the file opens
+  tab._cursor = cm.getCursor();
   tab._cm = cm; tab._cmHost = host;
   tab._ovrUpdate = () => pactEdUpdateRuler(tab);   // pactEdFetchHead re-paints the ruler once HEAD lands
   return cm;
