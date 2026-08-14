@@ -1218,10 +1218,18 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-search-count { flex: 0 0 auto; font-size: 10.5px; color: var(--ink-mute); white-space: nowrap; min-width: 62px; text-align: right; }
 .pact-search-hint { font-size: 10px; color: var(--ink-mute); padding: 0 2px; }
 .cm-pact-search-match { background: rgba(245,197,66,.32); border-radius: 2px; }
-/* Search hits in the read-only agent-diff view (row-level, since it isn't CodeMirror). A translucent
-   amber overlay shows over the green/red rows; the current match is brighter + outlined. */
-.pact-diff-row.pact-diff-hit { box-shadow: inset 0 0 0 9999px rgba(250,214,90,.13); }
-.pact-diff-row.pact-diff-hit-current { box-shadow: inset 0 0 0 9999px rgba(250,214,90,.30); outline: 1px solid rgba(250,214,90,.75); outline-offset: -1px; }
+/* v1.4.13 — agent-diff view rendered in a READ-ONLY CodeMirror (new file): added lines green, deleted
+   lines shown as red inline markers, +/− in a sign gutter. */
+.pact-diff-cm .CodeMirror-linebackground.pd-add-line { background: rgba(52, 211, 153, .15); }
+.pact-diff-cm .CodeMirror-gutter.pact-diff-sign { width: 15px; }
+.pact-diff-cm .pd-gsign { display: inline-block; width: 15px; text-align: center; font-weight: 700; }
+.pact-diff-cm .pd-gadd { color: #34d399; }
+.pact-diff-cm .pd-gdel { color: #ef5350; }
+.pact-diff-del-widget { background: rgba(239, 83, 80, .13); }
+.pact-diff-del-line { display: flex; align-items: baseline; gap: 4px; color: #e6a9a9; white-space: pre;
+  padding-left: 2px; }
+.pact-diff-del-line .pd-gsign { flex: 0 0 auto; color: #ef5350; }
+.pact-diff-del-line .pd-text { flex: 1 1 auto; opacity: .92; }
 .pact-editor-empty { padding: 16px; }
 .pact-editor-scroll { flex: 1; min-height: 0; overflow: auto; }
 .pact-code { margin: 0; padding: 12px 14px; font: 12.5px/1.55 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre; tab-size: 2; color: #d2d3d4; }

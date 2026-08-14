@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.13] - 2026-08-14
+
+### Changed
+- **Agent diff view is now a real (read-only) CodeMirror.** The green/red agent-edit view renders the NEW
+  file in a CodeMirror instance — added lines highlighted green (with a "+" gutter), deleted lines shown as
+  red inline markers — instead of a custom DOM. So it gets everything the editor has: native find/replace
+  (Replace stays off — it's read-only), the scrollbar with green/red change bands, correct multi-line
+  syntax highlighting (the doc is the real new file, so multi-line strings never mangle). Deleted lines are
+  shown as markers, so their text is visible but isn't part of the searchable document (search the new
+  content). Replaced v1.4.12's row-based diff search.
+
 ## [1.4.12] - 2026-08-14
 
 ### Fixed

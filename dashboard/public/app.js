@@ -3092,16 +3092,20 @@ function pactCountOccurrences(text, query, caseSensitive) {
 }
 // ===== end PACT SEARCH-COUNT pure helper =====
 function pactEdSearchState(g) { return g._search || (g._search = { find: "", replace: "", cs: false, open: false, replaceMode: false }); }
-function pactEdActiveCm(g) { const a = g.tabs.find((t) => t.path === g.active); return (a && a.loaded && !a.agentDiff && a._cm) ? a._cm : null; }
-// The active tab is the read-only agent green/red diff view (no CodeMirror) → search its rendered rows.
+// The mounted editor for the active tab — the editable CM, or the read-only diff CM when it's an agent
+// edit. Native find/replace targets it (replace is gated off for the read-only diff via pactEdActiveDiff).
+function pactEdActiveCm(g) {
+  const a = g.tabs.find((t) => t.path === g.active);
+  if (!a) return null;
+  if (a.agentDiff) return a._diffCm || null;
+  return (a.loaded && a._cm) ? a._cm : null;
+}
+// True when the active tab is the read-only agent diff (so the panel hides Replace).
 function pactEdActiveDiff(g) { const a = g.tabs.find((t) => t.path === g.active); return (a && a.agentDiff) ? a : null; }
-function pactEdDiffRows(g) { return (g.bodyEl && pactEdActiveDiff(g)) ? [...g.bodyEl.querySelectorAll(".pact-diff-row")] : null; }
 function pactEdSearchClear(g) {
   if (g._searchOverlay && g._searchCm) { try { g._searchCm.removeOverlay(g._searchOverlay); } catch {} }
   if (g._searchScroll) { try { g._searchScroll.clear(); } catch {} g._searchScroll = null; }   // scrollbar stripes
   g._searchOverlay = null; g._searchCm = null;
-  if (g._diffHits) { for (const r of g._diffHits) { try { r.classList.remove("pact-diff-hit", "pact-diff-hit-current"); } catch {} } }
-  g._diffHits = null; g._diffHitIdx = -1;
 }
 // A CM overlay that highlights every occurrence of a plain-string query (class cm-pact-search-match).
 function pactMakeSearchOverlay(query, cs) {
@@ -3120,46 +3124,16 @@ function pactEdSearchApply(g) {
   pactEdSearchClear(g);
   const cm = pactEdActiveCm(g);
   const count = g._searchPanel && g._searchPanel.querySelector(".pact-search-count");
-  if (!cm) { pactEdDiffSearchApply(g, count); return; }   // agent green/red diff view (no CM) — search its rows
-  if (!s.find) { if (count) count.textContent = ""; return; }
+  if (!cm || !s.find) { if (count) count.textContent = ""; return; }
   const ov = pactMakeSearchOverlay(s.find, s.cs);
   cm.addOverlay(ov); g._searchOverlay = ov; g._searchCm = cm;
   // Yellow intermittent stripes on the scrollbar for each match (matchesonscrollbar addon).
   if (typeof cm.showMatchesOnScrollbar === "function") { try { g._searchScroll = cm.showMatchesOnScrollbar(s.find, !s.cs, { className: "CodeMirror-search-match" }); } catch {} }
   if (count) { const n = pactCountOccurrences(cm.getValue(), s.find, s.cs); count.textContent = n + (n === 1 ? " match" : " matches"); }
 }
-// Search the agent-diff view (read-only, no CM): highlight every ROW whose text contains the query, count
-// them, and jump to the first — so you can find exactly what the agent touched. Nav moves between rows.
-function pactEdDiffSearchApply(g, count) {
-  const s = pactEdSearchState(g);
-  const rows = pactEdDiffRows(g);
-  if (!rows || !s.find) { if (count) count.textContent = ""; return; }
-  const cs = s.cs, q = cs ? s.find : s.find.toLowerCase();
-  const hits = [];
-  for (const row of rows) {
-    const t = ((row.querySelector(".pd-text") || row).textContent || "");
-    if ((cs ? t : t.toLowerCase()).indexOf(q) !== -1) { row.classList.add("pact-diff-hit"); hits.push(row); }
-  }
-  g._diffHits = hits; g._diffHitIdx = -1;
-  if (count) count.textContent = hits.length + (hits.length === 1 ? " match" : " matches");
-  if (hits.length) pactEdDiffSearchNav(g, 1);
-}
-function pactEdDiffSearchNav(g, dir) {
-  const hits = g._diffHits;
-  if (!hits || !hits.length) return;
-  if (hits[g._diffHitIdx]) hits[g._diffHitIdx].classList.remove("pact-diff-hit-current");
-  let idx = (g._diffHitIdx < 0) ? (dir > 0 ? 0 : hits.length - 1) : g._diffHitIdx + (dir > 0 ? 1 : -1);
-  if (idx < 0) idx = hits.length - 1;
-  if (idx >= hits.length) idx = 0;
-  g._diffHitIdx = idx;
-  const row = hits[idx];
-  row.classList.add("pact-diff-hit-current");
-  try { row.scrollIntoView({ block: "center" }); } catch { row.scrollIntoView(); }
-}
 function pactEdSearchNav(g, dir) {
   const s = pactEdSearchState(g); const cm = pactEdActiveCm(g);
-  if (!s.find) return;
-  if (!cm) { pactEdDiffSearchNav(g, dir); return; }   // diff view → row navigation
+  if (!cm || !s.find) return;
   const start = dir > 0 ? cm.getCursor("to") : cm.getCursor("from");
   let cur = cm.getSearchCursor(s.find, start, !s.cs);
   let ok = dir > 0 ? cur.findNext() : cur.findPrevious();
@@ -3242,46 +3216,19 @@ function pactEdRenderBody(g, tab) {
   if (tab.error) { g.bodyEl.replaceChildren(el("div", { class: "hint", style: "padding:10px;color:#f87171" }, ["⚠ " + tab.error])); return; }
   if (!tab.loaded) { g.bodyEl.replaceChildren(el("div", { class: "hint", style: "padding:10px" }, ["Loading…"])); return; }
   const ext = tab.path.toLowerCase();
-  // Agent edited this file: show a read-only green/red line diff until Keep All accepts it.
+  // Agent edited this file: a READ-ONLY CodeMirror of the new file — added lines green, deleted lines as
+  // red inline markers — until Keep All accepts it. Real CM ⇒ native find/scrollbar work here too.
   if (tab.agentDiff) {
-    const view = el("div", { class: "pact-diff-view pact-code" });   // pact-code so the .pact-code .pk-* band colors actually apply in the diff
-    if (g.fontPx) view.style.fontSize = g.fontPx + "px";
-    const diffIsPact = ext.endsWith(".pact") || ext.endsWith(".repl");
-    // Best-effort line numbers: number the rendered rows sequentially (a diff interleaves old/new, so
-    // there's no single true line — sequential keeps it simple). Dim + user-select:none so copy skips them.
-    view.style.setProperty("--pk-lineno-w", pactGutterWidthCh(tab.agentDiff.rows.length) + "ch");
-    // Highlight with FULL multi-line context (not per-line): reconstruct the before/after files from the
-    // rows and run pactHighlightLines (re-opens spans across newlines) so multi-line @doc strings colour
-    // correctly — per-line highlighting mangled every line after such a string.
-    const canHl = diffIsPact && typeof window.pactHighlight === "function";
-    const afterHl = canHl ? pactHighlightLines(tab.agentDiff.rows.filter((r) => r.type !== "del").map((r) => r.text).join("\n"), tab.path) : null;
-    const beforeHl = canHl ? pactHighlightLines(tab.agentDiff.rows.filter((r) => r.type !== "add").map((r) => r.text).join("\n"), tab.path) : null;
-    let ai = 0, bi = 0;
-    view.append(...tab.agentDiff.rows.map((r, i) => {
-      const row = el("div", { class: "pact-diff-row " + (r.type === "add" ? "pd-add" : r.type === "del" ? "pd-del" : "pd-same") });
-      const text = el("span", { class: "pd-text" });
-      const html = canHl ? (r.type === "del" ? beforeHl[ai] : afterHl[bi]) : null;
-      if (html != null) text.innerHTML = html === "" ? "&nbsp;" : html;
-      else text.textContent = r.text === "" ? " " : r.text;
-      if (r.type !== "del") bi++;
-      if (r.type !== "add") ai++;
-      row.append(el("span", { class: "pd-lineno", "aria-hidden": "true" }, [String(i + 1)]), el("span", { class: "pd-sign" }, [r.type === "add" ? "+" : r.type === "del" ? "−" : " "]), text);
-      return row;
-    }));
-    const dkids = [];   // band legend now lives once in the shared toolbar (viewPact), not per box
-    dkids.push(el("div", { class: "pact-diff-hd" }, [el("span", { class: "pd-badge pd-badge-add" }, ["+" + tab.agentDiff.add]), el("span", { class: "pd-badge pd-badge-del" }, ["−" + tab.agentDiff.del]), el("span", { class: "hint", style: "margin-left:8px" }, ["agent edit — Keep All to accept + resume editing"])]));
-    const diffScroll = el("div", { class: "pact-editor-scroll" }, [view]);
-    // Overview ruler: green/red bands for the add/del rows across the whole diff height, so long diffs
-    // show change density at a glance (the editable view has CodeMirror's scrollbar ruler; the diff view
-    // isn't CodeMirror, so it's a plain overlay on its scroll container).
-    const diffOvr = el("div", { class: "pact-diff-ovr", "aria-hidden": "true" });
-    for (const b of pactDiffOvrBands(tab.agentDiff.rows)) {
-      const tick = el("div", { class: "pact-diff-ovr-" + b.type });
-      tick.style.top = b.top + "%"; tick.style.height = b.height + "%";
-      diffOvr.append(tick);
-    }
-    dkids.push(el("div", { class: "pact-diff-scrollwrap" }, [diffScroll, diffOvr]));
-    g.bodyEl.replaceChildren(...dkids);
+    const cm = pactEdBuildDiffCm(g, tab, ext);
+    g._cm = cm;   // so Ctrl/⌘-F + the search panel target this diff (pactEdActiveCm returns it)
+    cm.getWrapperElement().style.fontSize = (g.fontPx || 12.5) + "px";
+    const hd = el("div", { class: "pact-diff-hd" }, [
+      el("span", { class: "pd-badge pd-badge-add" }, ["+" + tab.agentDiff.add]),
+      el("span", { class: "pd-badge pd-badge-del" }, ["−" + tab.agentDiff.del]),
+      el("span", { class: "hint", style: "margin-left:8px" }, ["agent edit — Keep All to accept + resume editing"]),
+    ]);
+    g.bodyEl.replaceChildren(hd, tab._diffHost);
+    requestAnimationFrame(() => cm.refresh());   // CM needs a laid-out host to size itself
     return;
   }
   // Markdown renders as a preview by default; ✎ toggles a raw editor (tab.editing).
@@ -3343,6 +3290,63 @@ function pactEdBuildCm(g, tab, ext) {
   cm.on("change", () => { tab.content = cm.getValue(); pactEdMarkDirty(g, tab); pactEdScheduleRuler(tab); });
   tab._cm = cm; tab._cmHost = host;
   tab._ovrUpdate = () => pactEdUpdateRuler(tab);   // pactEdFetchHead re-paints the ruler once HEAD lands
+  return cm;
+}
+// Build (or reuse) a READ-ONLY CodeMirror for the agent-edit diff. The doc is the NEW file (so the
+// StoicSyntax mode highlights it correctly — feeding it the interleaved old+new text would mangle
+// multi-line strings), ADDED lines get a green background + a "+" gutter, and DELETED lines are shown as
+// red inline markers (line widgets) at their position. This makes the diff a real editor: native find,
+// the scrollbar, etc. Deleted text lives in the widgets (visible, but not part of the searchable doc).
+function pactEdBuildDiffCm(g, tab, ext) {
+  const rows = (tab.agentDiff && tab.agentDiff.rows) || [];
+  const isPact = ext.endsWith(".pact") || ext.endsWith(".repl");
+  const after = rows.filter((r) => r.type !== "del").map((r) => r.text).join("\n");
+  const canHl = isPact && typeof window.pactHighlight === "function";
+  const beforeHl = canHl ? pactHighlightLines(rows.filter((r) => r.type !== "add").map((r) => r.text).join("\n"), tab.path) : null;
+  let cm = tab._diffCm;
+  if (!cm) {
+    const host = el("div", { class: "pact-cm-host pact-diff-cm" });
+    cm = window.CodeMirror(host, {
+      value: after, mode: isPact ? "stoicpact" : null,
+      lineNumbers: true, lineWrapping: false, tabSize: 2, indentUnit: 2,
+      readOnly: true, matchBrackets: false,
+      gutters: ["CodeMirror-linenumbers", "pact-diff-sign"],
+    });
+    tab._diffCm = cm; tab._diffHost = host;
+  } else if (cm.getValue() !== after) { cm.setValue(after); }
+  cm.operation(() => {
+    if (tab._diffWidgets) for (const w of tab._diffWidgets) { try { w.clear(); } catch {} }
+    tab._diffWidgets = [];
+    for (let i = 0; i < cm.lineCount(); i++) { cm.removeLineClass(i, "background", "pd-add-line"); cm.setGutterMarker(i, "pact-diff-sign", null); }
+    const addLines = [], delLines = [];
+    let afterIdx = -1, beforeIdx = -1, pending = [];
+    const flush = (line, above) => {
+      if (!pending.length) return;
+      const wrap = el("div", { class: "pact-diff-del-widget" });
+      for (const p of pending) {
+        const txt = el("span", { class: "pd-text" });
+        if (p.hl != null) txt.innerHTML = p.hl === "" ? "&nbsp;" : p.hl; else txt.textContent = p.text === "" ? " " : p.text;
+        wrap.append(el("div", { class: "pact-diff-del-line" }, [el("span", { class: "pd-gsign pd-gdel" }, ["−"]), txt]));
+      }
+      tab._diffWidgets.push(cm.addLineWidget(line, wrap, { above: !!above }));
+      delLines.push(line);
+      pending = [];
+    };
+    for (const r of rows) {
+      if (r.type === "del") { beforeIdx++; pending.push({ text: r.text, hl: beforeHl ? beforeHl[beforeIdx] : null }); continue; }
+      afterIdx++;
+      if (r.type === "same") beforeIdx++;
+      if (pending.length) flush(afterIdx, true);
+      if (r.type === "add") { addLines.push(afterIdx); cm.addLineClass(afterIdx, "background", "pd-add-line"); cm.setGutterMarker(afterIdx, "pact-diff-sign", el("span", { class: "pd-gsign pd-gadd" }, ["+"])); }
+    }
+    if (pending.length) flush(Math.max(0, cm.lineCount() - 1), false);
+    if (typeof cm.annotateScrollbar === "function") {
+      cm._diffAnnAdd = cm._diffAnnAdd || cm.annotateScrollbar("cm-change-add");
+      cm._diffAnnDel = cm._diffAnnDel || cm.annotateScrollbar("cm-change-del");
+      cm._diffAnnAdd.update(addLines.map((l) => ({ from: { line: l, ch: 0 }, to: { line: l, ch: 0 } })));
+      cm._diffAnnDel.update(delLines.map((l) => ({ from: { line: l, ch: 0 }, to: { line: l, ch: 0 } })));
+    }
+  });
   return cm;
 }
 // ===== PACT CHANGE RULER — git-diff scrollbar decorations on the CM editor (S4). Reuses the pure
