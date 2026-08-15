@@ -8573,26 +8573,39 @@ if ("serviceWorker" in navigator && (location.protocol === "https:" || location.
   window.addEventListener("load", () => { navigator.serviceWorker.register("/sw.js").catch(() => {}); });
 }
 
-// PWA install: browsers fire `beforeinstallprompt` when the app is installable (and not already installed).
-// Capture it and surface an in-app "⬇ Install" button in the header, so you don't have to dig through the
-// browser's menu. Clicking it opens the native install dialog. Hidden once installed or if never offered
-// (e.g. iOS Safari, or already running as the installed app — then use the browser's own Share → Add).
+// PWA install. Browsers fire `beforeinstallprompt` when the app is installable — but Chrome SUPPRESSES that
+// event for a while right after you uninstall the app (anti-nag), and iOS Safari never fires it at all. So
+// the in-app "⬇ Install" button is shown WHENEVER we're not already running as the installed app, and
+// clicking it either fires the native dialog (if the event was captured) or shows the manual menu steps —
+// so there's always a discoverable way to (re)install.
 let DEFERRED_INSTALL_PROMPT = null;
+function pwaIsInstalled() {
+  return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+}
 function pwaSyncInstall() {
   const existing = document.getElementById("pwaInstallBtn");
-  if (!DEFERRED_INSTALL_PROMPT) { if (existing) existing.remove(); return; }
+  if (pwaIsInstalled()) { if (existing) existing.remove(); return; }   // already running as the installed app
   if (existing) return;
   const host = document.querySelector("#phIdentity");
   if (!host || !host.parentNode) return;
   const btn = el("button", { id: "pwaInstallBtn", class: "ph-btn --ghost --sm", title: "Install Claudstermind as an app on this device (always runs the latest version)" }, ["⬇ Install"]);
-  btn.addEventListener("click", async () => {
-    if (!DEFERRED_INSTALL_PROMPT) return;
-    try { DEFERRED_INSTALL_PROMPT.prompt(); await DEFERRED_INSTALL_PROMPT.userChoice; } catch {}
-    DEFERRED_INSTALL_PROMPT = null; pwaSyncInstall();
-  });
+  btn.addEventListener("click", () => pwaDoInstall());
   host.parentNode.insertBefore(btn, host);
 }
+async function pwaDoInstall() {
+  if (DEFERRED_INSTALL_PROMPT) {
+    try { DEFERRED_INSTALL_PROMPT.prompt(); await DEFERRED_INSTALL_PROMPT.userChoice; } catch {}
+    DEFERRED_INSTALL_PROMPT = null; pwaSyncInstall();
+    return;
+  }
+  // No native prompt available — guide to the manual path (works even when Chrome hides the auto-prompt).
+  const ios = /iP(hone|ad|od)/.test(navigator.userAgent || "");
+  alert(ios
+    ? "To install:\n\n1) Tap the Share button (the box with an ↑).\n2) Choose “Add to Home Screen.”\n\n(The installed app always runs the latest version.)"
+    : "To install:\n\n1) Open your browser menu (⋮ / ≡, usually top-right).\n2) Choose “Install app” (or “Add to Home screen”).\n\nIf it isn't listed, your browser may be briefly hiding it after a recent uninstall — reload and try again in a moment. (The installed app always runs the latest version.)");
+}
 window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); DEFERRED_INSTALL_PROMPT = e; pwaSyncInstall(); });
-window.addEventListener("appinstalled", () => { DEFERRED_INSTALL_PROMPT = null; pwaSyncInstall(); });
+window.addEventListener("appinstalled", () => { DEFERRED_INSTALL_PROMPT = null; const b = document.getElementById("pwaInstallBtn"); if (b) b.remove(); });
+pwaSyncInstall();   // show the button immediately (don't wait for a beforeinstallprompt that Chrome may withhold)
 
 boot();

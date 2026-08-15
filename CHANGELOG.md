@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.26] - 2026-08-15
+
+### Changed
+- **"⬇ Install" button is now always visible (until installed).** Chrome withholds the `beforeinstallprompt`
+  event for a while after you uninstall a PWA (and iOS Safari never fires it), so the earlier button often
+  never appeared. It now shows whenever the app isn't already running as the installed app: clicking it
+  fires the native install dialog when available, otherwise it shows the exact manual steps (Chrome: ⋮ →
+  Install app; iOS: Share → Add to Home Screen). Hides once installed.
+
 ## [1.4.25] - 2026-08-15
 
 ### Added
