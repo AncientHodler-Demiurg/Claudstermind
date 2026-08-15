@@ -291,6 +291,7 @@ function relayStatus() {
 // conversation history is one unified store across both surfaces. Local mode only — the live
 // relay (OIDC set) never drives a local workspace; it has no local disk to act on.
 let WORKSPACE = null;
+let WORKSPACE_ENGINE = "in-process";   // "sessiond" | "in-process" — reported in /api/version so the UI can flag a split-engine desync
 // connId → { write, label, origin }. Was a bare Set of writer fns; it now carries per-connection
 // metadata so the server is the authoritative "which terminals are connected" list. The work
 // machine is the ONLY place that sees both localhost terminals and (via the bridge) the relay's.
@@ -380,6 +381,10 @@ if (!OIDC) {
     makeInProcess,
     makeClient: (sock) => new SessiondClient({ socketPath: sock, root: MASTER_ROOT, send: wsSend }),
   });
+  // Surfaced in /api/version so the UI can show which engine THIS dashboard runs — "sessiond" (shared with
+  // every other client on the daemon) vs "in-process" (this process only; a prompt here won't reach other
+  // clients live until it's persisted). The at-a-glance way to catch a desync-causing split.
+  WORKSPACE_ENGINE = (WORKSPACE instanceof SessiondClient) ? "sessiond" : "in-process";
 }
 
 // ---- Deploy pipeline state (ships THIS repo to the live box; see lib/deploy.mjs) ----
@@ -651,7 +656,7 @@ const handler = async (req, res) => {
   // lib/selfRestart.mjs's runPreflight can tell a genuine candidate apart from some other
   // process that happened to answer 200 on the scratch port (review finding D, defense in depth
   // alongside randomScratchPort's collision-avoidance re-roll below). ----
-  if (path === "/api/version") { res.setHeader("cache-control", "no-store"); return sendJSON(res, 200, { ...readVersion(), preflight: process.env.CM_PREFLIGHT === "1" }); }
+  if (path === "/api/version") { res.setHeader("cache-control", "no-store"); return sendJSON(res, 200, { ...readVersion(), preflight: process.env.CM_PREFLIGHT === "1", engine: WORKSPACE_ENGINE }); }
 
   // ---- who am I: PUBLIC by design, and answered BEFORE the gate — the UI has to be
   // able to discover that it is logged out in order to render the login button. ----

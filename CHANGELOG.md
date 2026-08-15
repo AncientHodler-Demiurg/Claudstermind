@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.29] - 2026-08-15
+
+### Added
+- **Engine indicator — spot a split-engine desync at a glance.** `/api/version` now reports which agent
+  engine the dashboard is on (`sessiond` = shared with every client, or `in-process` = this process only),
+  shown in the version pill's tooltip. When it's `in-process`, a **"⚠ local-only engine"** badge appears
+  next to the version — that's the state where a prompt sent here isn't visible to your other clients (e.g.
+  your phone) until the turn finishes and saves. It means this dashboard is running older code / didn't
+  auto-join the daemon: restart it with the latest code and the badge clears once it's on `sessiond`.
+
 ## [1.4.28] - 2026-08-15
 
 ### Fixed

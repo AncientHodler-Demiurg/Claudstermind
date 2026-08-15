@@ -78,6 +78,9 @@ body.ph-collapsed.ws-full .ph { display: none; }
 .role-badge { font-size: 10.5px; font-weight: 700; text-transform: lowercase; letter-spacing: .03em;
   border: 1px solid var(--line); color: var(--ink-soft); border-radius: 999px; padding: 2px 8px; }
 .role-badge.is-ancient { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+/* "local-only engine" warning badge next to the version pill (this dashboard isn't on the shared daemon). */
+.ph-engine-badge { font-size: 10px; font-weight: 700; color: #e2b04a; border: 1px solid color-mix(in srgb, #e2b04a 55%, transparent);
+  border-radius: 999px; padding: 2px 8px; white-space: nowrap; cursor: help; }
 /* Session keep-alive pill (header) — time left on the sliding login; renews on click. */
 .ph-session { font-size: 10.5px; font-weight: 600; color: var(--ink-mute); border: 1px solid var(--line);
   border-radius: 999px; padding: 2px 8px; cursor: pointer; white-space: nowrap; }

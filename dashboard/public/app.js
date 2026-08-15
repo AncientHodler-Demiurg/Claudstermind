@@ -181,6 +181,19 @@ function renderIdentity() {
   host.replaceChildren(el("span", { class: "ph-id-name" }, [el("span", { class: "ph-id-prefix" }, ["Signed in as "]), nameB]), roleBadge(isAncient ? "ancient" : ((ME.roles || [])[0] || "member")), sessionPill, adminLink(isAncient), el("a", { class: "ph-btn --ghost --sm ph-logout", href: "/auth/logout" }, ["Log out"]));
   renderSessionPill();
 }
+// Show a "local-only engine" badge next to the version pill when THIS dashboard runs its OWN in-process
+// agent engine (not the shared sessiond daemon) — the state that makes a prompt sent here invisible to your
+// other clients (e.g. your phone) until the turn finishes and persists. Cleared on sessiond, or when the
+// field is absent (e.g. the relay). The at-a-glance diagnostic for the localhost↔remote desync.
+function showEngineBadge(engine) {
+  const existing = document.getElementById("phEngineBadge");
+  if (existing) existing.remove();
+  if (engine !== "in-process") return;
+  const vc = document.getElementById("phVer");
+  if (!vc || !vc.parentNode) return;
+  const b = el("span", { id: "phEngineBadge", class: "ph-engine-badge", title: "This dashboard runs its OWN in-process agent engine — prompts sent from HERE are not shared live with your other clients (e.g. your phone) until the turn finishes and saves. Restart this dashboard with the latest code so it auto-joins the shared sessiond daemon; then this warning disappears." }, ["⚠ local-only engine"]);
+  vc.parentNode.insertBefore(b, vc.nextSibling);
+}
 // ---- Collapse the whole top app header (.ph) to reclaim vertical working area. Implemented as a
 // body class so a single flag hides the header everywhere; the toggle buttons live BELOW the header
 // (Pact toolbar, Core workspace controls) so they stay reachable when it's hidden. Persisted across
@@ -309,7 +322,7 @@ async function boot() {
   if (ME.mode === "live" && !ME.canRead) return renderDenied();
 
   // Version chip in the medallion (§10) — public, so it shows on every surface.
-  try { const v = await (await fetch("/api/version", { cache: "no-store" })).json(); const vc = $("#phVer"); if (vc) { vc.textContent = "v" + v.version; vc.title = `v${v.version}${v.gitSha ? " · " + v.gitSha : ""}${v.builtAt ? " · " + v.builtAt : ""}`; } } catch {}
+  try { const v = await (await fetch("/api/version", { cache: "no-store" })).json(); const vc = $("#phVer"); if (vc) { vc.textContent = "v" + v.version; vc.title = `v${v.version}${v.gitSha ? " · " + v.gitSha : ""}${v.builtAt ? " · " + v.builtAt : ""}${v.engine ? " · engine: " + v.engine : ""}`; } showEngineBadge(v.engine); } catch {}
 
   applyPhCollapsed(phHeaderCollapsed());   // restore the collapsed-header preference before first paint
   renderHeader();
