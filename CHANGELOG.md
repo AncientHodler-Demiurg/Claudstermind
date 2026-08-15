@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.25] - 2026-08-15
+
+### Added
+- **In-app "⬇ Install" button.** When the browser reports the app is installable (Chrome/Edge on Android
+  or desktop), a header Install button appears and opens the native "Add to Home screen" dialog directly —
+  no digging through the browser menu. It hides once installed. (The installed app always loads the latest
+  build; the service worker fetches the shell network-only, so it can't get stuck on an old version.)
+
 ## [1.4.24] - 2026-08-15
 
 ### Added

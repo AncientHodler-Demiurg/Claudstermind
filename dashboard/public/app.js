@@ -8573,4 +8573,26 @@ if ("serviceWorker" in navigator && (location.protocol === "https:" || location.
   window.addEventListener("load", () => { navigator.serviceWorker.register("/sw.js").catch(() => {}); });
 }
 
+// PWA install: browsers fire `beforeinstallprompt` when the app is installable (and not already installed).
+// Capture it and surface an in-app "⬇ Install" button in the header, so you don't have to dig through the
+// browser's menu. Clicking it opens the native install dialog. Hidden once installed or if never offered
+// (e.g. iOS Safari, or already running as the installed app — then use the browser's own Share → Add).
+let DEFERRED_INSTALL_PROMPT = null;
+function pwaSyncInstall() {
+  const existing = document.getElementById("pwaInstallBtn");
+  if (!DEFERRED_INSTALL_PROMPT) { if (existing) existing.remove(); return; }
+  if (existing) return;
+  const host = document.querySelector("#phIdentity");
+  if (!host || !host.parentNode) return;
+  const btn = el("button", { id: "pwaInstallBtn", class: "ph-btn --ghost --sm", title: "Install Claudstermind as an app on this device (always runs the latest version)" }, ["⬇ Install"]);
+  btn.addEventListener("click", async () => {
+    if (!DEFERRED_INSTALL_PROMPT) return;
+    try { DEFERRED_INSTALL_PROMPT.prompt(); await DEFERRED_INSTALL_PROMPT.userChoice; } catch {}
+    DEFERRED_INSTALL_PROMPT = null; pwaSyncInstall();
+  });
+  host.parentNode.insertBefore(btn, host);
+}
+window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); DEFERRED_INSTALL_PROMPT = e; pwaSyncInstall(); });
+window.addEventListener("appinstalled", () => { DEFERRED_INSTALL_PROMPT = null; pwaSyncInstall(); });
+
 boot();
