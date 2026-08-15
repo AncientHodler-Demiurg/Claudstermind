@@ -4,6 +4,13 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.24] - 2026-08-15
+
+### Added
+- **"Sync now" (↻) on mobile too.** The Pact chat's reconnect/re-sync button is now in the mobile control
+  row (next to Stop/Send), not just the desktop header — so a behind/stuck client can be brought current on
+  the phone without reloading the page.
+
 ## [1.4.23] - 2026-08-15
 
 ### Changed

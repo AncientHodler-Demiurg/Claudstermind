@@ -5544,11 +5544,12 @@ function viewPactMobile() {
     const chatsB = tbtn("💬", "Conversations", openChatConvos, "pactm-cbtn-chats");
     chatsB.dataset.n = String((PACT_CHAT && PACT_CHAT.tabs.length) || 0);
     const histB = tbtn("🕐", "History", openChatHistory);
+    const syncB = tbtn("↻", "Sync now — re-fetch the latest state (no page reload)", () => pactChatForceResync());
     const stopB = tbtn("■", "Stop", () => { const a = pactChatActive(); if (a && a.key) wsPost("stop", { sessionKey: a.key }); }, "pactm-cbtn-stop");
     stopB.hidden = true;
     const sendB = tbtn("➤", "Send", () => pactChatSend(pactChatActive()), "pactm-cbtn-send");
     const spacer = el("span", { class: "ws-spacer" }, []);
-    const bar = el("div", { class: "pactm-cbar" }, [menuB, upB, chatsB, histB, spacer, stopB, sendB]);
+    const bar = el("div", { class: "pactm-cbar" }, [menuB, upB, chatsB, histB, spacer, syncB, stopB, sendB]);
     // v1.3.8 — pin the compose to a single line so a long draft stops expanding upward into the
     // transcript. Toggle sits just before the send cluster; state persists across reloads.
     const wrap = el("div", { class: "pactm-chatwrap" + (PACT_COMPOSE_COLLAPSED ? " pactm-compose-collapsed" : "") }, [chatHost, bar]);
