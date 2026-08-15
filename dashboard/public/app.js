@@ -4314,6 +4314,7 @@ let PACT_CHAT = null;   // { host, tabs:[t], activeId, seq, es, mode, conn }
 let PACT_STREAM_LAST_MSG_AT = 0;
 let PACT_STREAM_STALE_TIMER = null;
 let PACT_TICK_TIMER = null;
+let PACT_HEAL_TIMER = null;   // heartbeat-INDEPENDENT self-heal — recovers a stuck "Working…" tab even if the stream goes silent (no heartbeats)
 // ===== PACT DURATION — pure helper (unit-tested via lib/pactDuration.test.mjs) =====
 // M:SS (or H:MM:SS past an hour) for the LIVE ticking timer. Junk/negative → "0:00".
 function pactFmtDuration(ms) {
@@ -4539,6 +4540,35 @@ function pactChatInit(host) {
   pactChatRender();        // re-render so the prime marker (★, no ×) shows immediately
   clearInterval(PACT_TICK_TIMER);
   PACT_TICK_TIMER = setInterval(pactChatTickTimer, 1000);   // live "thinking… M:SS" elapsed readout
+  clearInterval(PACT_HEAL_TIMER);
+  PACT_HEAL_TIMER = setInterval(pactChatSelfHeal, 8000);    // recover a stuck tab even if the stream stops delivering heartbeats
+}
+// Ask the server for the authoritative state of any tab that's stuck (marked busy but silent), or the
+// active tab that looks idle right after a turn (a dropped deepwork status). Runs on the SSE heartbeat AND
+// a local timer, so a desync between two clients (one stuck on "Working…", the other showing the finished
+// reply) self-corrects even when this client's stream went quiet. Cheap + idempotent (resync just confirms
+// when the tab really is still working).
+function pactChatSelfHeal() {
+  if (!PACT_CHAT) return;
+  const now = Date.now();
+  for (const t of PACT_CHAT.tabs) {
+    if (!t.key) continue;
+    if (pactChatBusy(t) && (now - (t._lastEventAt || 0)) > WS_HEAL_QUIET_MS && (now - (t._healAt || 0)) > WS_HEAL_QUIET_MS) {
+      t._healAt = now;
+      wsPost("control", { action: "resync", args: { sessionKey: t.key } });
+    } else if (t.id === PACT_CHAT.activeId && !pactChatBusy(t) && (now - (t._lastResultAt || 0)) < 120_000 && (now - (t._statusSyncAt || 0)) > WS_HEAL_QUIET_MS) {
+      t._statusSyncAt = now;
+      wsPost("control", { action: "resync", args: { sessionKey: t.key } });
+    }
+  }
+}
+// Manual "sync now" — force the active conversation to re-fetch the server's authoritative state (for when
+// you spot a desync between two open clients). Also flushes the outbox in case anything's pending.
+function pactChatForceResync() {
+  if (!PACT_CHAT) return;
+  const t = pactChatActive();
+  if (t && t.key) wsPost("control", { action: "resync", args: { sessionKey: t.key } });
+  pactOutboxFlush();
 }
 // Start the response clock on ANY client the first time it sees this tab busy — the turn may have begun
 // on another device, or been restored after a reload — so the timer shows everywhere, not only on the
@@ -4565,6 +4595,7 @@ function pactChatStop() {
   if (PACT_STATE_READY) pactStateFlush();
   PACT_STATE_READY = false; clearTimeout(PACT_STATE_TIMER);   // leaving Pact — stop persisting a torn-down layout
   clearInterval(PACT_STREAM_STALE_TIMER);   // the watchdog is per-stream — reopen re-arms it
+  clearInterval(PACT_HEAL_TIMER);
   if (PACT_CHAT && PACT_CHAT.es) { try { PACT_CHAT.es.close(); } catch {} PACT_CHAT.es = null; }
 }
 function pactChatActive() { return PACT_CHAT && PACT_CHAT.tabs.find((t) => t.id === PACT_CHAT.activeId); }
@@ -4631,25 +4662,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
   if (!PACT_CHAT) return;
   if (kind === "presence") return;
   if (kind === "heartbeat") {
-    // Self-heal a tab whose end-of-turn we missed: a live turn streams events constantly, so a tab
-    // still marked busy yet silent this long is almost certainly one whose "result" was dropped
-    // (e.g. the SSE subscriber was briefly evicted across a deploy) — ask the server for its true
-    // current state rather than spin on "Working…" forever. Harmless if it really is still working
-    // (the resync just confirms it). Mirrors the Core cockpit's heartbeat self-heal (WS_HEAL_QUIET_MS).
-    const now = Date.now();
-    for (const t of PACT_CHAT.tabs) {
-      if (!t.key) continue;
-      if (pactChatBusy(t) && (now - (t._lastEventAt || 0)) > WS_HEAL_QUIET_MS) {
-        t._lastEventAt = now;   // stuck "Working…" → don't re-fire every heartbeat while the resync round-trips
-        wsPost("control", { action: "resync", args: { sessionKey: t.key } });
-      } else if (t.id === PACT_CHAT.activeId && !pactChatBusy(t) && (now - (t._lastResultAt || 0)) < 120_000 && (now - (t._statusSyncAt || 0)) > WS_HEAL_QUIET_MS) {
-        // The active tab LOOKS idle shortly after a turn, but may still be mid-round — a deepwork/background
-        // phase whose status event dropped (the "Send says ready yet a send gets refused" case). Ask for the
-        // authoritative status so the busy indicator can't silently lie. Bounded to the post-turn window.
-        t._statusSyncAt = now;
-        wsPost("control", { action: "resync", args: { sessionKey: t.key } });
-      }
-    }
+    pactChatSelfHeal();   // also runs on a local timer (PACT_HEAL_TIMER) so a silent stream still self-heals
     return;
   }
   // The per-session history list (state frame, no sessionKey) — refresh the history panel.
@@ -5153,6 +5166,8 @@ function pactChatRender() {
   add.addEventListener("click", () => pactChatNewTab());
   const hist = el("button", { class: "pact-ed-ico", title: "Pact chat history — resume a past conversation" }, ["🕐"]);
   hist.addEventListener("click", () => pactChatToggleHistory());
+  const sync = el("button", { class: "pact-ed-ico", title: "Sync now — re-fetch this conversation's authoritative state (fixes a desync between two open clients)" }, ["↻"]);
+  sync.addEventListener("click", () => pactChatForceResync());
   const modeSel = el("select", { class: "wsel wsel-sm pc-mode", title: "Permission mode for these Pact sessions" },
     WS_MODES.map((m) => el("option", { value: m.id }, [m.short])));
   modeSel.value = PACT_CHAT.mode;
@@ -5163,7 +5178,7 @@ function pactChatRender() {
   // badge (wsUsageLabel). Hidden until this tab actually has usage data; filled by pactChatPaint.
   const usageEl = el("span", { class: "pc-usage" }, []);
   usageEl.hidden = true;
-  const head = el("div", { class: "pact-zone-hd pc-head" }, [el("div", { class: "pc-tabs" }, tabs), add, hist, el("span", { class: "ws-spacer" }, []), usageEl, modeSel, chatCollapse]);
+  const head = el("div", { class: "pact-zone-hd pc-head" }, [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, el("span", { class: "ws-spacer" }, []), usageEl, modeSel, chatCollapse]);
   const scroll = el("div", { class: "pc-scroll" }, []);
   const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (⌘/Ctrl+Enter to send)" });
   const send = el("button", { class: "pc-send" }, ["Send"]);

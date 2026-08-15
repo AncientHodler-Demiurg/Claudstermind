@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.22] - 2026-08-15
+
+### Fixed
+- **Pact chat desync between two open clients self-heals.** If one client (e.g. localhost) got stuck on
+  "Working…/thinking" while another (e.g. the remote) already showed the finished reply, it stayed stuck
+  because the self-heal only ran when an SSE heartbeat arrived — if that client's stream went silent, a
+  stuck tab was never re-synced until the 65s reconnect watchdog. The self-heal now also runs on a local
+  8s timer (heartbeat-independent), so a stuck tab re-fetches the authoritative state on its own within
+  ~30s. Added a **↻ "Sync now"** button to the chat header to force it instantly.
+
 ## [1.4.21] - 2026-08-15
 
 ### Added
