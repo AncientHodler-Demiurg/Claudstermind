@@ -162,10 +162,33 @@ export function createSessiond(opts = {}) {
   return { workspace, server, subscribers, socketPath, handleRequest, onConnection };
 }
 
+/** Top-level resilience handlers. The daemon OWNS every live agent turn for every viewer, so it must
+ *  never die because ONE session's SDK transport hiccuped — e.g. the Claude Agent SDK throwing
+ *  "ProcessTransport is not ready for writing" when a follow-up prompt is pushed to an agent whose
+ *  subprocess has just exited. That surfaces as an UNHANDLED REJECTION out-of-band from the session's
+ *  own `for await` try/catch (it's in the SDK's input pump, not the turn iteration), and Node's
+ *  default is to terminate the process — which drops every OTHER live session's stream mid-turn and
+ *  crash-loops under systemd. We instead log with context and keep the daemon (and all other
+ *  sessions) alive; the affected session's own loop still settles to `error`/`ended` on its next tick
+ *  and its viewers see that, but the daemon survives. Factored out (pure) so it's unit-testable
+ *  without attaching real global handlers. */
+export function crashGuards(log = console.error) {
+  const fmt = (e) => (e && (e.stack || e.message)) || String(e);
+  return {
+    unhandledRejection: (reason) => log("[sessiond] unhandledRejection — kept alive:", fmt(reason)),
+    uncaughtException: (err) => log("[sessiond] uncaughtException — kept alive:", fmt(err)),
+  };
+}
+
 /** Real-process entrypoint: unlink a stale socket (a unix `listen` fails EADDRINUSE if the path
  *  already exists from a previous run), start the daemon, log where it's listening, and keep the
  *  event loop alive. */
 function main() {
+  // Install the resilience guards FIRST, before any session can start — a single agent's transport
+  // failure must degrade to a log line, never a daemon crash that takes every viewer down with it.
+  const guards = crashGuards();
+  process.on("unhandledRejection", guards.unhandledRejection);
+  process.on("uncaughtException", guards.uncaughtException);
   const socketPath = defaultSocketPath();
   if (existsSync(socketPath)) {
     try { unlinkSync(socketPath); } catch { /* not ours / in use — listen will report it */ }

@@ -4,6 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.30] - 2026-08-15
+
+### Fixed
+- **The session daemon no longer crash-loops mid-turn — this was the real cause of "I sent a prompt but
+  never saw it working on the other client."** The journal showed `claudstermind-sessiond` dying with an
+  *unhandled* `Error: ProcessTransport is not ready for writing` (the Claude Agent SDK throwing when a
+  follow-up prompt is pushed to an agent whose subprocess had just exited) — and because the daemon owns
+  **every** live turn for **every** viewer, one such failure took the whole engine down (restart counter hit
+  5 under systemd). Each crash silently killed the live event stream for all clients, so a turn started on
+  localhost would vanish from your phone until you pull-to-refreshed. The daemon now installs top-level
+  `unhandledRejection` / `uncaughtException` guards: a single agent's transport hiccup degrades to a log
+  line, the affected session settles to `error`/`ended` on its own, and **every other session and the daemon
+  itself stay alive**. (This also clears the deploy panel's intermittent "Process list unavailable" — that
+  was the panel probing the engine while the daemon was mid-crash/restart.)
+  - **Takes effect once `sessiond` restarts on the new code** (it's a daemon-path change, so Deploy's plan
+    flags "restarts the agent engine"; a plain web Reload does not restart the daemon).
+
 ## [1.4.29] - 2026-08-15
 
 ### Added

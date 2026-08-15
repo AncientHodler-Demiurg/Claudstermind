@@ -2,7 +2,24 @@
 // against a STUB engine over an in-memory connection. No real Claude subprocess, no real socket.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createSessiond, buildWorkspace, liveSummaries, defaultSocketPath } from "./sessiond.mjs";
+import { createSessiond, buildWorkspace, liveSummaries, defaultSocketPath, crashGuards } from "./sessiond.mjs";
+
+// ---- crashGuards: the daemon must never die because one agent's SDK transport failed ----
+test("crashGuards: handlers log with context and never re-throw (daemon stays alive)", () => {
+  const logged = [];
+  const g = crashGuards((...a) => logged.push(a));
+  // The exact shape that was crash-looping the live daemon: an out-of-band rejection from the SDK's
+  // input pump. The handler must swallow it (return, not throw) so the process keeps running.
+  assert.doesNotThrow(() => g.unhandledRejection(new Error("ProcessTransport is not ready for writing")));
+  assert.doesNotThrow(() => g.uncaughtException(new Error("boom")));
+  // Non-Error reasons (a rejected string/undefined) must also be tolerated, not blow up formatting.
+  assert.doesNotThrow(() => g.unhandledRejection("bare string reason"));
+  assert.doesNotThrow(() => g.unhandledRejection(undefined));
+  assert.equal(logged.length, 4);
+  assert.match(String(logged[0][1]), /ProcessTransport is not ready/);
+  assert.match(String(logged[0][0]), /unhandledRejection/);
+  assert.match(String(logged[1][0]), /uncaughtException/);
+});
 
 /** A minimal in-memory duplex end matching lib/sessionIpc's wrapConnection surface: frames the test
  *  "sends" are delivered to the daemon's registered onFrame handlers; frames the daemon sends back
