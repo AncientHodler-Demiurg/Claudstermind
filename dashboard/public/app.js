@@ -4567,9 +4567,23 @@ function pactChatSelfHeal() {
 // behind/stuck client catches up AND future events flow again (a dead stream is the usual cause). The
 // resync is driven from `hello` (fired only once the fresh stream is subscribed, so its reply can't be
 // dropped racing an unsubscribed stream).
-function pactChatForceResync() {
+function pactChatForceResync(btn) {
   if (!PACT_CHAT) return;
+  // Visible feedback that the tap registered (the resync is async and may be a no-op if the server has no
+  // newer state) — spin the button briefly and flash a transient note.
+  if (btn) { btn.classList.add("pc-syncing"); setTimeout(() => btn.classList.remove("pc-syncing"), 1500); }
+  pactChatFlashNote("↻ Syncing…");
   pactChatOpenStream();
+}
+// A tiny transient toast inside the active chat scroll (bottom), so an action like Sync gives feedback even
+// when nothing visibly changes. Auto-removes.
+function pactChatFlashNote(text) {
+  if (!PACT_CHAT || !PACT_CHAT.host) return;
+  const scroll = PACT_CHAT.host.querySelector(".pc-scroll"); if (!scroll) return;
+  const wrap = scroll.parentNode || scroll;
+  const n = el("div", { class: "pc-flash" }, [text]);
+  (wrap.classList && wrap.classList.contains("stick-wrap-pc") ? wrap : scroll).appendChild(n);
+  setTimeout(() => { try { n.remove(); } catch {} }, 1800);
 }
 // Start the response clock on ANY client the first time it sees this tab busy — the turn may have begun
 // on another device, or been restored after a reload — so the timer shows everywhere, not only on the
@@ -5168,7 +5182,7 @@ function pactChatRender() {
   const hist = el("button", { class: "pact-ed-ico", title: "Pact chat history — resume a past conversation" }, ["🕐"]);
   hist.addEventListener("click", () => pactChatToggleHistory());
   const sync = el("button", { class: "pact-ed-ico", title: "Sync now — re-fetch this conversation's authoritative state (fixes a desync between two open clients)" }, ["↻"]);
-  sync.addEventListener("click", () => pactChatForceResync());
+  sync.addEventListener("click", () => pactChatForceResync(sync));
   const modeSel = el("select", { class: "wsel wsel-sm pc-mode", title: "Permission mode for these Pact sessions" },
     WS_MODES.map((m) => el("option", { value: m.id }, [m.short])));
   modeSel.value = PACT_CHAT.mode;
@@ -5544,7 +5558,7 @@ function viewPactMobile() {
     const chatsB = tbtn("💬", "Conversations", openChatConvos, "pactm-cbtn-chats");
     chatsB.dataset.n = String((PACT_CHAT && PACT_CHAT.tabs.length) || 0);
     const histB = tbtn("🕐", "History", openChatHistory);
-    const syncB = tbtn("↻", "Sync now — re-fetch the latest state (no page reload)", () => pactChatForceResync());
+    const syncB = tbtn("↻", "Sync now — re-fetch the latest state (no page reload)", () => pactChatForceResync(syncB));
     const stopB = tbtn("■", "Stop", () => { const a = pactChatActive(); if (a && a.key) wsPost("stop", { sessionKey: a.key }); }, "pactm-cbtn-stop");
     stopB.hidden = true;
     const sendB = tbtn("➤", "Send", () => pactChatSend(pactChatActive()), "pactm-cbtn-send");

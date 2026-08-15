@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.27] - 2026-08-15
+
+### Added
+- **"Sync now" (↻) gives visible feedback.** Tapping the Pact chat's ↻ now spins the button and flashes a
+  transient "↻ Syncing…" toast, so you can tell the press registered — even when the resync is a no-op
+  because the server has no newer state (the usual sign that the other client is on a *different* session
+  engine; see below). Desktop + mobile.
+
 ## [1.4.26] - 2026-08-15
 
 ### Changed
