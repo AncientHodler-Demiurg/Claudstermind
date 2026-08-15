@@ -12,6 +12,23 @@
   if (typeof window === "undefined" || !window.CodeMirror) return;
   var CodeMirror = window.CodeMirror;
 
+  // Doubled prefixes CC_ / AA_ get the SAME band color as the single C_ / A_ (client / admin). The base
+  // classifier (pact-highlight.js) only matches the single-letter bands, so wrap the global once here so
+  // both the editable CM and anything else reading window.pactClassifyWord pick it up. Same lead/trail
+  // boundary as the base BANDS (segment start `^|[|.:>]`, optional write-count `\d*`, then `_ > |`).
+  (function wrapCcAa() {
+    var base = window.pactClassifyWord;
+    if (typeof base !== "function" || base._ccaaWrapped) return;
+    var CC = /(?:^|[|.:>])CC\d*[_>|]/, AA = /(?:^|[|.:>])AA\d*[_>|]/;
+    var wrapped = function (w) {
+      var r = base(w);
+      if (r == null) { if (CC.test(w)) return "pk-client"; if (AA.test(w)) return "pk-admin"; }
+      return r;
+    };
+    wrapped._ccaaWrapped = true;
+    window.pactClassifyWord = wrapped;
+  })();
+
   // Same character class the highlighter uses for identifier / number / prefix words.
   var WORD = /[A-Za-z0-9_|<>.\-]/;
 

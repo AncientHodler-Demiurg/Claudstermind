@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.21] - 2026-08-15
+
+### Added
+- **Find shows position "5/7".** The Pact editor's Find readout is now the current match index / total (e.g.
+  "5/7") instead of a bare count, and it updates as you page with Enter / ▲▼.
+- **Selecting text then opening Find prefills the query.** Select a word/expression in the editor and press
+  Ctrl/⌘-F (or the 🔍/⇄ button) — the selection is dropped straight into the Find field (and selected, so
+  you can retype over it). Find lands on that occurrence and shows its position.
+
+### Changed
+- **CC_ / AA_ functions now color like C_ / A_.** The StoicSyntax highlighter's client/admin bands now also
+  cover the doubled prefixes CC_ and AA_, so they get the same colors as C_ and A_.
+
 ## [1.4.20] - 2026-08-14
 
 ### Fixed

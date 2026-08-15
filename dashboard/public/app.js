@@ -3137,6 +3137,23 @@ function pactMakeSearchOverlay(query, cs) {
     stream.pos = idx; return null;
   } };
 }
+// The 1-based index of the match at the current selection + the total — for the "5/7" readout.
+function pactEdSearchPos(cm, query, cs) {
+  if (!query) return { current: 0, total: 0 };
+  const from = cm.getCursor("from");
+  let total = 0, current = 0;
+  const cur = cm.getSearchCursor(query, { line: 0, ch: 0 }, !cs);
+  while (cur.findNext()) { total++; const f = cur.from(); if (!current && f.line === from.line && f.ch === from.ch) current = total; }
+  return { current, total };
+}
+function pactEdSearchUpdateCount(g) {
+  const count = g._searchPanel && g._searchPanel.querySelector(".pact-search-count");
+  if (!count) return;
+  const cm = pactEdActiveCm(g), s = pactEdSearchState(g);
+  if (!cm || !s.find) { count.textContent = ""; return; }
+  const p = pactEdSearchPos(cm, s.find, s.cs);
+  count.textContent = p.total ? (p.current + "/" + p.total) : "0/0";
+}
 function pactEdSearchApply(g) {
   const s = pactEdSearchState(g);
   pactEdSearchClear(g);
@@ -3147,7 +3164,12 @@ function pactEdSearchApply(g) {
   cm.addOverlay(ov); g._searchOverlay = ov; g._searchCm = cm;
   // Yellow intermittent stripes on the scrollbar for each match (matchesonscrollbar addon).
   if (typeof cm.showMatchesOnScrollbar === "function") { try { g._searchScroll = cm.showMatchesOnScrollbar(s.find, !s.cs, { className: "CodeMirror-search-match" }); } catch {} }
-  if (count) { const n = pactCountOccurrences(cm.getValue(), s.find, s.cs); count.textContent = n + (n === 1 ? " match" : " matches"); }
+  // Reveal the first match at/after the cursor (stays put if the cursor is already on one) so the readout
+  // is a live position "cur/total" rather than a static count — and Enter pages from there.
+  const rc = cm.getSearchCursor(s.find, cm.getCursor("from"), !s.cs);
+  if (rc.findNext()) { cm.setSelection(rc.from(), rc.to()); cm.scrollIntoView({ from: rc.from(), to: rc.to() }, 80); }
+  else { const w = cm.getSearchCursor(s.find, { line: 0, ch: 0 }, !s.cs); if (w.findNext()) { cm.setSelection(w.from(), w.to()); cm.scrollIntoView({ from: w.from(), to: w.to() }, 80); } }
+  pactEdSearchUpdateCount(g);
 }
 function pactEdSearchNav(g, dir) {
   const s = pactEdSearchState(g); const cm = pactEdActiveCm(g);
@@ -3157,6 +3179,14 @@ function pactEdSearchNav(g, dir) {
   let ok = dir > 0 ? cur.findNext() : cur.findPrevious();
   if (!ok) { cur = cm.getSearchCursor(s.find, dir > 0 ? { line: 0, ch: 0 } : { line: cm.lineCount(), ch: 0 }, !s.cs); ok = dir > 0 ? cur.findNext() : cur.findPrevious(); }
   if (ok) { cm.setSelection(cur.from(), cur.to()); cm.scrollIntoView({ from: cur.from(), to: cur.to() }, 80); }
+  pactEdSearchUpdateCount(g);
+}
+// Seed the Find field from the editor's current selection when opening search (single-line selections
+// only — a multi-line selection isn't a sensible query).
+function pactEdSeedFindFromSelection(g) {
+  const cm = pactEdActiveCm(g); if (!cm) return;
+  const sel = cm.getSelection();
+  if (sel && sel.length && sel.indexOf("\n") === -1) pactEdSearchState(g).find = sel;
 }
 function pactEdSearchReplaceOne(g) {
   const s = pactEdSearchState(g); const cm = pactEdActiveCm(g);
@@ -3176,7 +3206,7 @@ function pactEdSearchReplaceAll(g) {
 function pactEdToggleSearch(g, replaceMode) {
   const s = pactEdSearchState(g);
   if (s.open && s.replaceMode === !!replaceMode) s.open = false;   // same button again → close
-  else { s.open = true; s.replaceMode = !!replaceMode; }
+  else { s.open = true; s.replaceMode = !!replaceMode; pactEdSeedFindFromSelection(g); }   // opening → prefill from the editor selection
   pactEdRenderGroupFooter(g);   // reflect the --on state without rebuilding the CM
   pactEdSyncSearchPanel(g, true);
 }
@@ -3227,7 +3257,7 @@ function pactEdSyncSearchPanel(g, focus) {
   g._searchPanel = panel;
   g.el.appendChild(panel);
   pactEdSearchApply(g);
-  if (focus) findIn.focus();
+  if (focus) { findIn.focus(); findIn.select(); }   // prefilled text is selected so you can retype over it immediately
 }
 function pactEdRenderBody(g, tab) {
   if (!tab) { g.bodyEl.replaceChildren(el("div", { class: "pact-editor-empty hint" }, ["Empty box — pick a file from the tree."])); return; }
@@ -3736,6 +3766,7 @@ function pactEdInstallFindShortcut() {
     e.stopPropagation();
     const s = pactEdSearchState(g);   // Ctrl-F/H always OPENS (+ focuses) the box's panel, never toggles it shut
     s.open = true; s.replaceMode = (k === "h");
+    pactEdSeedFindFromSelection(g);   // selected text in the editor → seeds the Find field
     pactEdRenderGroupFooter(g);
     pactEdSyncSearchPanel(g, true);
   }, true);
