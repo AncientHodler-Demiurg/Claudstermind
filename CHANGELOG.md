@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.23] - 2026-08-15
+
+### Changed
+- **"Sync now" (↻) is now a full reconnect.** The Pact chat's ↻ button reconnects the live stream rather
+  than a single-tab resync, so its `hello` re-fetches every conversation's authoritative state, flushes the
+  outbox, and — crucially — restores the live event flow. That fixes a behind/stuck client (in either
+  direction) and keeps it updating, without reloading the page.
+
 ## [1.4.22] - 2026-08-15
 
 ### Fixed

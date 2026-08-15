@@ -4562,13 +4562,14 @@ function pactChatSelfHeal() {
     }
   }
 }
-// Manual "sync now" — force the active conversation to re-fetch the server's authoritative state (for when
-// you spot a desync between two open clients). Also flushes the outbox in case anything's pending.
+// Manual "sync now" — the page-reload-equivalent WITHOUT reloading: reconnect the live SSE stream, whose
+// `hello` re-fetches every tab's authoritative state (pactChatResyncAll) and flushes the outbox — so a
+// behind/stuck client catches up AND future events flow again (a dead stream is the usual cause). The
+// resync is driven from `hello` (fired only once the fresh stream is subscribed, so its reply can't be
+// dropped racing an unsubscribed stream).
 function pactChatForceResync() {
   if (!PACT_CHAT) return;
-  const t = pactChatActive();
-  if (t && t.key) wsPost("control", { action: "resync", args: { sessionKey: t.key } });
-  pactOutboxFlush();
+  pactChatOpenStream();
 }
 // Start the response clock on ANY client the first time it sees this tab busy — the turn may have begun
 // on another device, or been restored after a reload — so the timer shows everywhere, not only on the
