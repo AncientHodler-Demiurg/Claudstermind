@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.28] - 2026-08-15
+
+### Fixed
+- **Localhost and remote now share ONE session engine automatically — no env var.** The root cause of the
+  desync (a live turn showing on one client but not the other) was two separate engines: a manually-started
+  localhost dashboard ran its own in-process engine while the live/remote side used the `sessiond` daemon,
+  so a turn on one wasn't visible on the other. The dashboard now **auto-detects a running `sessiond`** at
+  the well-known socket paths (e.g. `/run/claudstermind/sessiond.sock`) and uses it by default, so every
+  dashboard on the work machine joins the same engine and all clients see the same live view — the only
+  delay is the tunnel. Falls back to in-process when no daemon is present (dev boxes unaffected), an
+  explicit `SESSIOND_SOCK` still takes priority, and the probe only runs on a real server launch (never when
+  a test imports the module).
+
 ## [1.4.27] - 2026-08-15
 
 ### Added

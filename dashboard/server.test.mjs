@@ -470,6 +470,48 @@ test("selectWorkspace: SESSIOND_SOCK set but daemon UNREACHABLE → in-process f
   assert.ok(logs.some((l) => /unreachable/.test(l)), "warns that it fell back");
 });
 
+test("selectWorkspace: AUTO-DETECT — no SESSIOND_SOCK, but a default daemon socket exists + answers → the client (shared engine)", async () => {
+  const client = { probe: async () => true, close() {} };
+  const seen = [];
+  const ws = await selectWorkspace({
+    env: {},                                                   // no explicit flag
+    socketPaths: ["/run/claudstermind/sessiond.sock"],        // a known default path
+    exists: (p) => { seen.push(p); return p === "/run/claudstermind/sessiond.sock"; },
+    makeInProcess: () => ({ kind: "in-process" }),
+    makeClient: (sock) => { client._sock = sock; return client; },
+    log: {},
+  });
+  assert.equal(ws, client, "an auto-detected reachable daemon must be used even without SESSIOND_SOCK");
+  assert.equal(client._sock, "/run/claudstermind/sessiond.sock", "the client is dialed at the detected socket");
+});
+
+test("selectWorkspace: AUTO-DETECT — no daemon socket present anywhere → in-process, client never constructed", async () => {
+  let madeClient = false;
+  const ws = await selectWorkspace({
+    env: {},
+    socketPaths: ["/run/claudstermind/sessiond.sock", "/run/claudstermind-sessiond.sock"],
+    exists: () => false,                                       // no socket files → daemon isn't on this box
+    makeInProcess: () => ({ kind: "in-process" }),
+    makeClient: () => { madeClient = true; return {}; },
+    log: {},
+  });
+  assert.deepEqual(ws, { kind: "in-process" });
+  assert.equal(madeClient, false, "with no socket file present, the client must not be constructed");
+});
+
+test("selectWorkspace: SESSIOND_SOCK takes priority over the auto-detect candidates", async () => {
+  const client = { probe: async () => true, close() {} };
+  const ws = await selectWorkspace({
+    env: { SESSIOND_SOCK: "/custom/sock" },
+    socketPaths: ["/run/claudstermind/sessiond.sock"],
+    exists: undefined,                                         // no existence gate → try in order
+    makeInProcess: () => ({ kind: "in-process" }),
+    makeClient: (sock) => { client._sock = sock; return client; },
+    log: {},
+  });
+  assert.equal(client._sock, "/custom/sock", "the explicit flag is dialed first");
+});
+
 test("selectWorkspace: a throwing client constructor still falls back to in-process (never crashes)", async () => {
   const inproc = { kind: "in-process" };
   const ws = await selectWorkspace({

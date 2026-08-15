@@ -16,7 +16,7 @@
 // for the 'claudstermind' project entry, falling back to 3020 so it still runs
 // standalone if LocalHost is ever moved/absent.
 import http from "node:http";
-import { readFile, readFileSync } from "node:fs";
+import { readFile, readFileSync, existsSync } from "node:fs";
 import { readFile as readFileAsync } from "node:fs/promises";
 import { spawn, spawnSync } from "node:child_process";
 import { join, extname, resolve, dirname } from "node:path";
@@ -318,20 +318,33 @@ function localListRepos() {
 // fallback: a flag that's unset, or set-but-unreachable, runs the exact in-process path as before,
 // so the running app can never regress just because the env var is (or isn't) present. Every seam
 // is injectable so dashboard/server.test.mjs proves all three branches without opening a socket.
-export async function selectWorkspace({ env = process.env, makeInProcess, makeClient, log = console } = {}) {
-  if (!env.SESSIOND_SOCK) return makeInProcess();     // no flag → today's in-process engine, unchanged
-  let client = null;
-  try {
-    client = makeClient();
-    if (await client.probe()) {
-      log.log?.(`  Session engine: sessiond daemon at ${env.SESSIOND_SOCK} (SESSIOND_SOCK) — agents survive a web restart`);
-      return client;
+export async function selectWorkspace({ env = process.env, makeInProcess, makeClient, socketPaths, exists, log = console } = {}) {
+  // Candidate daemon sockets, in order: the explicit `SESSIOND_SOCK` (if set), then the well-known default
+  // paths. AUTO-DETECT is the key: any dashboard on the work machine (the live one OR a manually-started
+  // localhost one) joins the SAME running `sessiond` without needing an env var — so localhost and the
+  // remote share ONE engine and can never show a different live view. A unix socket only ever connects to a
+  // daemon on THIS machine; if none is present/reachable, we fall back to the in-process engine exactly as
+  // before (a dev box with no daemon is unaffected).
+  const cands = [];
+  if (env.SESSIOND_SOCK) cands.push(env.SESSIOND_SOCK);
+  for (const p of (socketPaths || [])) if (p) cands.push(p);
+  const seen = new Set();
+  for (const sock of cands) {
+    if (seen.has(sock)) continue; seen.add(sock);
+    if (typeof exists === "function" && !exists(sock)) continue;   // no socket file here → daemon not on this box; no probe/log noise
+    let client = null;
+    try {
+      client = makeClient(sock);
+      if (await client.probe()) {
+        log.log?.(`  Session engine: sessiond daemon at ${sock}${env.SESSIOND_SOCK === sock ? " (SESSIOND_SOCK)" : " (auto-detected)"} — ONE shared engine for localhost + remote; agents also survive a web restart`);
+        return client;
+      }
+      log.warn?.(`  Session engine: sessiond at ${sock} present but unreachable — trying the next candidate / in-process`);
+    } catch (e) {
+      log.warn?.(`  Session engine: sessiond client at ${sock} failed to init (${e && e.message || e}) — trying the next candidate / in-process`);
     }
-    log.warn?.(`  Session engine: SESSIOND_SOCK=${env.SESSIOND_SOCK} set but the daemon is unreachable — falling back to the in-process engine`);
-  } catch (e) {
-    log.warn?.(`  Session engine: sessiond client init failed (${e && e.message || e}) — falling back to the in-process engine`);
+    try { client?.close?.(); } catch {}
   }
-  try { client?.close?.(); } catch {}
   return makeInProcess();
 }
 
@@ -344,15 +357,29 @@ if (!OIDC) {
     model: process.env.CLAUDE_WORKSPACE_MODEL || undefined,
     send: wsSend,
   });
-  // The `await` is reached ONLY when SESSIOND_SOCK is set; with it unset (the live app today, and
-  // every test) this is the plain synchronous in-process construction — byte-for-byte as before.
-  WORKSPACE = process.env.SESSIOND_SOCK
-    ? await selectWorkspace({
-        env: process.env,
-        makeInProcess,
-        makeClient: () => new SessiondClient({ socketPath: process.env.SESSIOND_SOCK, root: MASTER_ROOT, send: wsSend }),
-      })
-    : makeInProcess();
+  // Auto-detect a running `sessiond` at the well-known socket paths (deploy/claudstermind-sessiond.service
+  // binds `/run/claudstermind/sessiond.sock`) so a manually-started localhost dashboard shares the SAME
+  // engine as the live/remote one WITHOUT any env var — the desync fix. If no daemon socket exists here,
+  // `selectWorkspace` returns the in-process engine, so a dev box (or any machine without the daemon) is
+  // unaffected. `SESSIOND_SOCK`, if set, still takes priority.
+  // Auto-detect ONLY when server.mjs is the actual entry point (a real dashboard launch). When a test (or
+  // any other module) merely imports server.mjs for its exports, we must NOT probe/connect to a live daemon
+  // — that would open a real socket + reconnect timers and hang the process. Tests therefore take the plain
+  // in-process path (no auto-detect candidates); an explicit SESSIOND_SOCK is still honored if set.
+  const SERVER_IS_MAIN = process.argv[1] === fileURLToPath(import.meta.url);
+  const SESSIOND_CANDIDATES = [];
+  if (SERVER_IS_MAIN) {
+    SESSIOND_CANDIDATES.push("/run/claudstermind/sessiond.sock");
+    if (process.env.XDG_RUNTIME_DIR) SESSIOND_CANDIDATES.push(join(process.env.XDG_RUNTIME_DIR, "claudstermind-sessiond.sock"));
+    SESSIOND_CANDIDATES.push("/run/claudstermind-sessiond.sock");
+  }
+  WORKSPACE = await selectWorkspace({
+    env: process.env,
+    socketPaths: SESSIOND_CANDIDATES,
+    exists: (p) => { try { return existsSync(p); } catch { return false; } },
+    makeInProcess,
+    makeClient: (sock) => new SessiondClient({ socketPath: sock, root: MASTER_ROOT, send: wsSend }),
+  });
 }
 
 // ---- Deploy pipeline state (ships THIS repo to the live box; see lib/deploy.mjs) ----
