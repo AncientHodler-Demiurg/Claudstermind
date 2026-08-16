@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.44] - 2026-08-16
+
+### Fixed
+- **The agent no longer "asks a question you can't see."** When the agent used the interactive
+  `AskUserQuestion` tool (Claude Code's multiple-choice "question card"), that card can't render in the
+  embedded web console — there's no clickable card and no way to send a selection back. In bypass it was
+  auto-allowed with no answer, so the agent concluded you never replied ("the question card isn't capturing
+  your selection") and stalled the decision. `AskUserQuestion` is now disallowed for web-console sessions, so
+  the agent asks in **plain text** instead — which renders normally and you answer with an ordinary message.
+
 ## [1.4.43] - 2026-08-16
 
 ### Fixed
