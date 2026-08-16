@@ -4,6 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.48] - 2026-08-16
+
+### Fixed
+- **A Pact chat can NEVER answer as another conversation again — the engine itself won't cross the streams.**
+  "SWP answered as the AQP/Master audit" happened because, with no explicit `resume`, the engine auto-resumed
+  the **workspace's latest** session — and since every Pact tab shares one workspace id, "the latest" is a
+  sibling (usually Master). This was only papered over by client flags before. Now the engine's auto-resume
+  is structural: a **`scoped`** turn (any Pact tab) auto-resumes **only that tab's OWN saved session** (via
+  the session's real Claude id, newly exposed by `findSession`), or starts blank if it has none — it will
+  **never** borrow the workspace-latest sibling. The Core cockpit (one conversation per repo, keyed by the
+  workspace id) still auto-resumes the workspace-latest, unchanged. The client also now marks a turn `fresh`
+  only on a tab's genuinely-first message, so a restored/continuing tab resumes ITS own chat instead of
+  forcing blank. Regression tests cover scoped-resumes-own, scoped-with-no-session-starts-blank, and the
+  unchanged Core path.
+  - **Engine change — requires the `sessiond` restart to take effect** (which is what was running stale code).
+
 ## [1.4.47] - 2026-08-16
 
 ### Fixed

@@ -5082,19 +5082,14 @@ async function pactChatDispatch(t, text, images) {
   pactStateFlush();   // persist the just-sent tab/key IMMEDIATELY so it's restorable even if you navigate away at once
   t._forceBottom = true;   // your own just-sent message lands at the bottom + re-pins, even if you'd scrolled up
   pactChatPaint(t);
-  // `resume` continues a specific saved session with full SDK context — set when this tab was opened
-  // from history (Resume / Load-into-box). Ignored server-side once a live session for the key exists.
-  // `fresh` is the Pact-specific opt-out: every chat tab shares ONE workspace id (Ouronet@main), so
-  // without this the server's per-workspace auto-resume would seed each brand-new tab with the
-  // workspace's latest session — i.e. Master — making "new chat" silently continue Master instead of
-  // starting blank. A tab with its OWN saved `resume` continues that; a tab without one starts truly
-  // empty. (The Core cockpit sends no `fresh`, so its intended one-conversation-per-repo auto-resume
-  // is unchanged.)
-  // `scoped: true` — a Pact tab is ALWAYS one specific conversation; the engine must seed/replay only
-  // this session's own turns, never the merged workspace history (which, since every Pact tab shares one
-  // workspace id, would re-flood the tab with Master + every other chat). `fresh` = start blank (a
-  // brand-new tab); a tab with its own saved `resume` continues just that.
-  const body = { sessionKey: t.key, repo: PACT_REPO, worktree: "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id, resume: t.resume || undefined, fresh: !t.resume, scoped: true };
+  // `scoped: true` — a Pact tab is ALWAYS one specific conversation. The engine must seed/replay AND
+  // auto-resume ONLY this session's own turns, never the merged/latest workspace session (which, since
+  // every Pact tab shares one workspace id, is a SIBLING like Master — that's what made SWP answer as
+  // the AQP/Master audit). `resume` continues a specific saved session (set when opened from history);
+  // `fresh: firstMsg` is true ONLY on a tab's genuinely-first message so a brand-new conversation starts
+  // blank — a restored/existing tab (firstMsg=false) lets the engine auto-resume its OWN saved session,
+  // so continuing a chat keeps ITS context, never a sibling's. (Core sends no scoped/fresh — unchanged.)
+  const body = { sessionKey: t.key, repo: PACT_REPO, worktree: "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id, resume: t.resume || undefined, fresh: firstMsg, scoped: true };
   if (images.length) body.images = images.map((a) => ({ mediaType: a.mediaType, base64Data: a.base64Data }));
   const r = await wsPost("prompt", body);
   if (!r || r.ok === false) {
