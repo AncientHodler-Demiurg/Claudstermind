@@ -4224,6 +4224,16 @@ function wsIsPactRow(h, pactRepo) {
 // /api/workspace/image URL for attached images on persisted turns (the server strips per-turn
 // workspaceId, same as Core; see wsBackfillTurnWorkspace).
 const PACT_WORKSPACE_ID = wsWorkspaceId(PACT_REPO, "main");
+// ===== PACT RESUME-ID — pure helper (sliced for lib/pactResumeId.test.mjs) =====
+// A tab's `resume` must be a REAL Claude Code session id — NEVER its own workspace key. When a session
+// is interrupted (e.g. by a daemon restart) before Claude Code stamps its real session id, the store
+// falls back to the tab KEY as the "sessionId", which then leaks into `resume`; resuming that key fails
+// forever with "No conversation found with session ID: <key>". Reject any resume value that is empty or
+// equals the tab key, so such a tab just starts a fresh session on its next prompt instead of dead-ending.
+function pactResumeIdOk(sessionId, key) {
+  return (typeof sessionId === "string" && sessionId && sessionId !== key) ? sessionId : null;
+}
+// ===== end PACT RESUME-ID pure helper =====
 // ---- Shared, server-side IDE-state (P1 store) — so the Pact workspace reopens exactly where it was
 // left AND state is identical on localhost and the remote website (it lives on the machine, not in
 // localStorage). `PACT_STATE_READY` gates saves so the initial build + restore don't echo back over
@@ -4312,8 +4322,9 @@ function pactRestoreChat(ch) {
       // A restored tab's backend session already received the orienting preamble in its prior life —
       // don't re-inject it on the next message. (Full transcript rehydration + resume is P3.)
       started: true, perm: null, draft: typeof ts.draft === "string" ? ts.draft : "",
-      // a resumed/loaded tab keeps its SDK resume target across reloads so continuing still has context
-      resume: (typeof ts.resume === "string" && ts.resume) ? ts.resume : null,
+      // a resumed/loaded tab keeps its SDK resume target across reloads so continuing still has context —
+      // but never a resume equal to the tab's own key (a bogus id that fails "No conversation found")
+      resume: pactResumeIdOk(ts.resume, key),
       // the prime (undeletable) conversation flag survives reloads; ensurePrime backfills older layouts
       prime: !!ts.prime };
   });
@@ -4560,7 +4571,7 @@ function pactChatOpenSaved(r, adopt) {
   const id = ++PACT_CHAT.seq;
   const key = adopt ? r.sessionId : wsUuid();
   const name = pactHistName(r);
-  const t = { id, name, key, msgs: [], live: "", status: "idle", started: true, perm: null, draft: "", resume: r.realSessionId || null };
+  const t = { id, name, key, msgs: [], live: "", status: "idle", started: true, perm: null, draft: "", resume: pactResumeIdOk(r.realSessionId, key) };
   if (key) PACT_CHAT_NAMES[key] = name;
   PACT_CHAT.tabs.push(t);
   PACT_CHAT.activeId = id;
@@ -4816,7 +4827,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       // Likewise don't yank a mid-turn tab back to idle — a live turn in flight owns the status.
       if (tt.status !== "thinking" && tt.status !== "deepwork" && tt.status !== "awaiting-permission") tt.status = "idle";
       tt._forceBottom = true;
-      if (data && data.sessionId && !tt.resume) tt.resume = data.sessionId;
+      if (data && data.sessionId && !tt.resume) { const rid = pactResumeIdOk(data.sessionId, tt.key); if (rid) tt.resume = rid; }
       pactChatPaint(tt);
     }
     if (PACT_CHAT._pendingOpen) delete PACT_CHAT._pendingOpen[sessionKey];
@@ -4845,7 +4856,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       if (d.status) t.status = d.status;
       pactChatMarkTurnBusy(t);   // restored mid-turn (e.g. after reload) → show the timer here too
       if (!dec.keepLive) t.live = "";
-      if (d.sessionId && !t.resume) t.resume = d.sessionId;
+      if (d.sessionId && !t.resume) { const rid = pactResumeIdOk(d.sessionId, t.key); if (rid) t.resume = rid; }
       if (PACT_CHAT._pendingOpen && PACT_CHAT._pendingOpen[t.key] != null) delete PACT_CHAT._pendingOpen[t.key];
       // Do NOT force the bottom here. A resync fires mid-session (stream reconnect, the stale-stream
       // watchdog, the heartbeat self-heal on a long/quiet turn) — forcing the tail yanked a reader who'd

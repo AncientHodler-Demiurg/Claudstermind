@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.47] - 2026-08-16
+
+### Fixed
+- **The SWP Audit chat (and any tab whose `resume` got corrupted to its own key) works again.** Root cause of
+  the persistent "No conversation found with session ID: …": the tab's `resume` had been set to its **own
+  workspace key** (a uuid), not a real Claude Code session id. That happens when a session is interrupted
+  before Claude stamps its real id — the store falls back to the tab key as the "sessionId", which then leaks
+  into `resume`; resuming a key always fails, and a resync kept re-supplying it so it never recovered. Now the
+  client **rejects any `resume` that equals the tab key** (on load, on every set-from-server, and on
+  Resume/Load-into-box), so such a tab drops the bogus id and starts a fresh session on its next prompt (or
+  resumes a genuinely valid id if one exists). The engine adds the same guard as last-line defense
+  (`resume === sessionKey` is never handed to the SDK). Pure helper `pactResumeIdOk` + tests.
+
 ## [1.4.46] - 2026-08-16
 
 ### Fixed
