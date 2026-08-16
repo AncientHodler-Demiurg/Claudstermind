@@ -30,6 +30,13 @@ test("tunnelGateOpen: crosses when a remote browser is watching — the localhos
   assert.equal(tunnelGateOpen("event", "sess", { remoteTouched: false, remoteWatching: true }), true);
   assert.equal(tunnelGateOpen("state", "sess", { remoteWatching: true }), true);
 });
+
+test("tunnelGateOpen: a resync reply always crosses (explicit catch-up read), even with no watcher", () => {
+  // The manual Resync button must work regardless of presence timing — same as an `open`/transcript.
+  assert.equal(tunnelGateOpen("event", "sess", { remoteTouched: false, remoteWatching: false, eventKind: "resync" }), true);
+  // But a live turn event (not a resync) for an untouched, unwatched session is still withheld.
+  assert.equal(tunnelGateOpen("event", "sess", { remoteTouched: false, remoteWatching: false, eventKind: "assistant" }), false);
+});
 import { FRAME } from "../lib/protocol.mjs";
 import { WorkspaceManager } from "../lib/workspace.mjs";
 import { appendTurn, workspaceId } from "../lib/workspaceStore.mjs";

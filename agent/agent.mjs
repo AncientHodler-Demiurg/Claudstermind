@@ -67,8 +67,13 @@ const GATED_KINDS = new Set(["event", "state", "permission"]);
  *  what makes a prompt typed ON LOCALHOST mirror to the remote view LIVE (not only after a refresh),
  *  while a purely-local chat with no remote viewer still never crosses the wire. Keyless frames
  *  (workspace-wide reads) and non-gated kinds always pass. Pure + exported for unit testing. */
-export function tunnelGateOpen(kind, sessionKey, { remoteTouched = false, remoteWatching = false } = {}) {
+export function tunnelGateOpen(kind, sessionKey, { remoteTouched = false, remoteWatching = false, eventKind = null } = {}) {
   if (!sessionKey || !GATED_KINDS.has(kind)) return true;
+  // A `resync` reply is an explicit catch-up READ the remote requested for THIS session (it named the
+  // key to ask) — same category as a `transcript` reply, which is already ungated. So it always
+  // crosses, independent of presence: the manual Resync button must work even if the presence frame
+  // hasn't landed yet. Live turn content (user/assistant/state/permission) still needs a watcher.
+  if (eventKind === "resync") return true;
   return remoteTouched || remoteWatching;
 }
 
@@ -132,7 +137,7 @@ export function createBridge(opts = {}) {
   // view LIVE — the fix for "I prompt on localhost but the remote page doesn't update until I refresh."
   let remoteBrowsers = 0;
   const tunnelSink = (kind, sessionKey, data) => {
-    if (!tunnelGateOpen(kind, sessionKey, { remoteTouched: remoteTouched.has(sessionKey), remoteWatching: remoteBrowsers > 0 })) return;
+    if (!tunnelGateOpen(kind, sessionKey, { remoteTouched: remoteTouched.has(sessionKey), remoteWatching: remoteBrowsers > 0, eventKind: data && data.kind })) return;
     wsSend(kind, sessionKey, data);
   };
   const workspace = opts.workspace ?? new WorkspaceManager({

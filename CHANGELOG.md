@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.43] - 2026-08-16
+
+### Fixed
+- **The manual Resync button now works from the remote too.** The resync *reply* is itself a gated tunnel
+  frame (`_resync` sends it as `event`/`resync`), so for a session only ever prompted on localhost it was
+  withheld from the remote — clicking Resync on mobile brought nothing back. A resync is an explicit
+  catch-up read the remote requested for a named session (the same category as the already-ungated
+  `transcript`/open reply), so it now always crosses the tunnel, independent of presence timing. Live turn
+  content (user/assistant/state/permission) still requires a connected remote watcher (1.4.42).
+
 ## [1.4.42] - 2026-08-16
 
 ### Fixed
