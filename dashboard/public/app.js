@@ -4209,6 +4209,17 @@ async function pactEdOpenInto(g, path, makeActive, relayout) {
 // with repo=Ouronet) streamed back over /api/workspace/stream and routed here by sessionKey. So the
 // agent runs in the repo cwd (writes Pact, runs REPLs) exactly like the Core cockpit, just embedded.
 const PACT_REPO = "OuroborosNetwork/_onchain/Ouronet";
+// ===== WS PACT ROW — pure helper (sliced for lib/wsPactRow.test.mjs) =====
+// True when a Core history/search row belongs to the Ouronet Pact repo — which is worked ONLY from the
+// Pact workspace (skilled agent + StoicSyntax discipline). The Core cockpit hides that repo from its
+// repo picker (already filtered on tree load) AND its history/search, so it's segregated from Core.
+// Matches by `repo` OR by a `workspaceId` prefix, so either row shape is caught.
+function wsIsPactRow(h, pactRepo) {
+  if (!h) return false;
+  if (h.repo === pactRepo) return true;
+  return typeof h.workspaceId === "string" && h.workspaceId.indexOf(pactRepo + "@") === 0;
+}
+// ===== end WS PACT ROW pure helper =====
 // The single workspace id every Pact chat session lives under (repo@worktree) — used to build the
 // /api/workspace/image URL for attached images on persisted turns (the server strips per-turn
 // workspaceId, same as Core; see wsBackfillTurnWorkspace).
@@ -7381,12 +7392,14 @@ function viewWorkspace() {
         renderSidebar();
       }
       if (Array.isArray(data.history)) {
-        st.history = data.history; renderHistory();
+        // Segregate the Ouronet Pact repo out of Core: its conversations are worked only from the Pact
+        // workspace, so they never appear in the Core history (matches the repo-picker filter above).
+        st.history = data.history.filter((h) => !wsIsPactRow(h, PACT_REPO)); renderHistory();
         // First history payload after boot — now we know which saved keys exist, so restored
         // panes can re-attach without guessing.
         if (bootRestorePending) { bootRestorePending = false; restorePanes(); }
       }
-      if (Array.isArray(data.search)) { st.searchResults = data.search; renderHistory(); }
+      if (Array.isArray(data.search)) { st.searchResults = data.search.filter((h) => !wsIsPactRow(h, PACT_REPO)); renderHistory(); }
       if (Array.isArray(data.dataSizes)) { st.dataSizes = Object.fromEntries(data.dataSizes.map((d) => [d.repo, d])); renderSidebar(); }
       // The model catalog — ONE global list (see st.models above); a fresh answer replaces it and
       // every pane's selector is repainted so a newly-available model shows up everywhere at once,

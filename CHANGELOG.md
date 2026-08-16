@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.41] - 2026-08-16
+
+### Fixed
+- **The Ouronet Pact repo is now fully segregated out of the Core cockpit — including its history.** Core's
+  repo picker + sidebar already excluded it (it's meant to be worked only from the Pact workspace, with the
+  skilled StoicSyntax agent), but its saved conversations still showed up in Core's **history** (and would in
+  search). Core now filters the Pact repo out of history and search too, so `OuroborosNetwork/_onchain/Ouronet`
+  is reachable only from the Pact workspace. Matches by repo or workspace-id prefix; pure helper `wsIsPactRow`
+  + `lib/wsPactRow.test.mjs`.
+
 ## [1.4.40] - 2026-08-16
 
 ### Added
