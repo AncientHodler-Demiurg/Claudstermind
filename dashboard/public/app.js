@@ -970,10 +970,12 @@ function viewDeploy() {
   const restartBanner = el("div", { class: "deploy-restart-banner" }, [el("div", { class: "hint" }, ["Checking what this deploy restarts…"])]);
   // Reload's own "what this restarts" banner — a reload always interrupts local agents, so it's a
   // fixed statement (unlike Deploy's, which depends on the changed files' plan).
-  const reloadBanner = el("div", { class: "deploy-restart-banner --warn" }, [
-    el("div", { class: "deploy-restart-hd" }, ["⚠ What a Reload restarts"]),
-    el("div", { class: "deploy-restart-txt" }, ["Reload restarts BOTH the web dashboard and the session engine (sessiond) on this machine, so it picks up ALL on-disk code — including engine changes (Pact chat, sessions). Any agents running here are interrupted."]),
-  ]);
+  // Filled dynamically by refreshProcesses from `reloadDaemonAffected`: a reload that changes engine
+  // code also restarts sessiond (interrupts running agents); a web/client-only reload keeps the engine
+  // and every running agent alive (a pending prompt is NOT lost).
+  const reloadBannerHd = el("div", { class: "deploy-restart-hd" }, ["⚠ What a Reload restarts"]);
+  const reloadBannerTxt = el("div", { class: "deploy-restart-txt" }, ["Checking what this reload restarts…"]);
+  const reloadBanner = el("div", { class: "deploy-restart-banner" }, [reloadBannerHd, reloadBannerTxt]);
   const procBox = el("div", { class: "deploy-proc" }, [el("div", { class: "hint" }, ["Loading running processes…"])]);
   let LAST_PROC = null;
 
@@ -982,6 +984,15 @@ function viewDeploy() {
     let d = {};
     try { d = await (await fetch("/api/admin/processes", { cache: "no-store" })).json(); } catch { d = { ok: false }; }
     LAST_PROC = d;
+    // Reload banner: engine-affecting reloads restart sessiond (interrupt agents); web-only reloads
+    // keep the engine + every running agent alive. `reloadDaemonAffected` defaults to the safe
+    // (interrupts) reading when the plan couldn't be computed.
+    const reloadHitsEngine = d.reloadDaemonAffected !== false;
+    reloadBanner.className = "deploy-restart-banner " + (reloadHitsEngine ? "--warn" : "--safe");
+    reloadBannerHd.textContent = (reloadHitsEngine ? "⚠ " : "✓ ") + "What a Reload restarts";
+    reloadBannerTxt.textContent = reloadHitsEngine
+      ? "Engine code changed — this Reload restarts BOTH the web and the session engine (sessiond), so it picks up all on-disk code. Any agents running here are interrupted (a pending prompt mid-turn is lost)."
+      : "Web/client-only change — this Reload restarts just the web. The session engine and every running agent keep going, so a pending prompt is preserved.";
     const b = d.banner || { tone: "safe", text: "Deploy impact unknown — the process list couldn't be read." };
     restartBanner.className = "deploy-restart-banner " + (b.tone === "warn" ? "--warn" : "--safe");
     const restarts = (d.plan && d.plan.restarts) || ["web"];

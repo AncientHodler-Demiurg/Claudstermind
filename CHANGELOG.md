@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.39] - 2026-08-16
+
+### Fixed
+- **A web-only Reload no longer interrupts running agents / loses a pending prompt.** v1.4.35 made Reload
+  restart the session engine (`sessiond`) too so it could pick up engine changes — but that also killed any
+  in-flight turn, so a prompt sent right before a Reload (with no reply yet) vanished. That broke the
+  deploy-survivable-agents property. Reload now restarts the engine **only when engine code actually
+  changed** since the running process started (`deployChangedFiles(runningSha)` → `deployPlan`); a
+  web/client-only reload restarts just the web, and the engine + every running agent (and your pending
+  prompt) keep going. The Reload banner now says which it'll be — "restarts the web only, agents preserved"
+  vs "also restarts the engine, running agents interrupted." (When engine code genuinely changed, loading it
+  still requires an engine restart, which unavoidably interrupts an in-flight turn.)
+
 ## [1.4.38] - 2026-08-16
 
 ### Fixed

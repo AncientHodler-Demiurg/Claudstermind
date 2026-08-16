@@ -495,7 +495,11 @@ async function gatherDeployProcesses(liveSha) {
   // The guard's authoritative busy count — computed at request time from the engine's own snapshot,
   // so it can't be bypassed with a stale client view. Web-only deploys never warn (client-side).
   const busy = anyBusy(await workspaceSummaries());
-  return { ok: true, processes, changedFiles, plan, banner: deployBannerText(plan), busy };
+  // The LOCAL reload plan (running web sha → on-disk HEAD, incl. working tree), so the UI can tell you
+  // whether a Reload will also restart the engine (interrupting agents) or is web-only (agents survive).
+  let reloadDaemonAffected = true;
+  try { reloadDaemonAffected = deployPlan(deployChangedFiles(readVersion().gitSha), { daemonInstalled }).daemonAffected; } catch { reloadDaemonAffected = true; }
+  return { ok: true, processes, changedFiles, plan, banner: deployBannerText(plan), busy, reloadDaemonAffected };
 }
 
 // ---- Self-restart safety (dashboard-self-restart-safety): never touch the live process until a
@@ -525,6 +529,7 @@ export async function runSelfRestart({
   scratchPort = randomScratchPort(PORT),
   timeoutMs = 15000,
   restartExitWindowMs = 3000,
+  restartDaemon = true,
   onLog = () => {},
   preflightStepsFn = preflightSteps,
   runPreflightFn = runPreflight,
@@ -554,7 +559,10 @@ export async function runSelfRestart({
     return { ok: false, reason: result.reason, detail: result.detail };
   }
   onLog("✓ candidate answered healthy — triggering the real restart.");
-  const cmd = restartCommandFn();
+  onLog(restartDaemon
+    ? "  Engine code changed → restarting the session engine (sessiond) too; any in-flight agent turn is interrupted."
+    : "  Engine code unchanged → restarting the web only; running agents keep going and a pending prompt is preserved.");
+  const cmd = restartCommandFn({ daemon: restartDaemon });
   let child;
   try {
     child = spawnFn(cmd.cmd, cmd.args, { windowsHide: true, detached: true, stdio: ["ignore", "ignore", "pipe"] });
@@ -604,7 +612,14 @@ export function subscribeRestartLog(fn) { RESTART.subs.add(fn); return () => RES
 export function startSelfRestart(overrides = {}) {
   if (RESTART.running) return { ok: false, reason: "already-running", message: "A restart pre-flight is already in progress." };
   RESTART.running = true; RESTART.log = []; RESTART.result = null; RESTART.startedAt = Date.now();
-  runSelfRestart({ onLog: restartLog, ...overrides })
+  // Restart the session engine (sessiond) ONLY when engine code changed since THIS web process started
+  // — otherwise a web/client-only reload would needlessly interrupt in-flight agent turns and lose a
+  // pending prompt (the deploy-survivable-agents property). deployChangedFiles(runningSha) covers both
+  // committed (runningSha..HEAD) and working-tree changes the reload will load. Can't tell → be safe
+  // and restart the engine too. A web-only reload keeps sessiond (and every running agent) alive.
+  let restartDaemon = true;
+  try { restartDaemon = deployPlan(deployChangedFiles(readVersion().gitSha)).daemonAffected; } catch { restartDaemon = true; }
+  runSelfRestart({ onLog: restartLog, restartDaemon, ...overrides })
     .then((r) => { RESTART.result = r; restartLog(r.ok ? "__DONE_OK__" : "__DONE_FAIL__"); })
     .catch((e) => { RESTART.result = { ok: false, error: String(e && e.message || e) }; restartLog("__DONE_FAIL__"); })
     .finally(() => { RESTART.running = false; });

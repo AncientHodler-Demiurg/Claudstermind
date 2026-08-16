@@ -186,7 +186,22 @@ test("runSelfRestart triggers the real restart command only after the pre-flight
   assert.equal(result.ok, true);
   assert.ok(spawned, "spawnFn should have been called");
   assert.equal(spawned.cmd, "sudo");
+  // Default restartDaemon:true → both units (a reload that picks up engine changes).
   assert.deepEqual(spawned.args, ["-n", "systemctl", "restart", "claudstermind-sessiond", "claudstermind"]);
+});
+
+test("runSelfRestart with restartDaemon:false restarts the WEB only — a web-only reload keeps agents alive", async () => {
+  let spawned = null;
+  const result = await runSelfRestart({
+    repoRoot: "/fake/repo",
+    scratchPort: 34569,
+    restartDaemon: false,
+    runPreflightFn: async () => ({ ok: true }),
+    spawnFn: (cmd, args, opts) => { spawned = { cmd, args, opts }; return { unref() {} }; },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(spawned.args, ["-n", "systemctl", "restart", "claudstermind"],
+    "engine code unchanged → sessiond is NOT restarted, so in-flight turns (and a pending prompt) survive");
 });
 
 /** A minimal fake child_process.ChildProcess: real EventEmitter (so `.on("exit"/"error")` works
