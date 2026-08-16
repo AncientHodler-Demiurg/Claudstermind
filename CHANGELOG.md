@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.32] - 2026-08-16
+
+### Changed
+- **Name a Pact chat from its first line — no more renaming later.** A new chat's tab now takes its name
+  from the **first non-empty line** of your first message, so you can type a short label like `ATS Audit`
+  on line 1 and the actual prompt on the lines below, and the tab is named `ATS Audit` immediately (the
+  label is still sent as part of the prompt). Previously the auto-namer collapsed all newlines together and
+  used the first ~40 characters, so `ATS Audit` + a prompt became `ATS Audit please audit the…`. A
+  single-line prompt still names itself (truncated at 40 chars) exactly as before, and any leaked auto-skill
+  preamble is stripped first so the name reflects what you actually wrote.
+
 ## [1.4.31] - 2026-08-16
 
 ### Fixed

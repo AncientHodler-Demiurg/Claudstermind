@@ -4378,14 +4378,22 @@ function pactChatRenameTab(t) {
   pactStateSave();
 }
 // ---- P3: chat history panel + naming + resume ------------------------------------------------
-// Derive a friendly chat name from the user's first line — first ~40 chars, whitespace collapsed,
-// and any leaked auto-skill preamble stripped so the name reflects what the USER actually asked.
+// ===== PACT CHAT NAME — pure helper (sliced for lib/pactChatName.test.mjs) =====
+// Derive a friendly chat name from the user's first message. The FIRST non-empty LINE becomes the
+// title (up to ~40 chars, whitespace collapsed) — so you can type a short label like "ATS Audit" on
+// line 1 and the real prompt on the lines below, and the tab is named from that label with no later
+// rename. A single-line prompt just names itself (truncated), unchanged from before. Any leaked
+// auto-skill preamble the Pact IDE prepends is stripped FIRST so the name reflects what the USER
+// wrote, not the orienting boilerplate (and stripped before whitespace is collapsed, so the `\n\n`
+// boundary is still there to find).
 function pactDeriveChatName(text) {
-  let s = String(text || "").replace(/\s+/g, " ").trim();
-  if (!s) return "";
-  if (s.startsWith("[Pact IDE")) { const i = s.indexOf("\n\n"); if (i >= 0) s = s.slice(i + 2); s = s.replace(/\s+/g, " ").trim(); }
-  return s.length > 40 ? s.slice(0, 40).trim() + "…" : s;
+  let s = String(text || "");
+  if (/^\s*\[Pact IDE/.test(s)) { const i = s.indexOf("\n\n"); if (i >= 0) s = s.slice(i + 2); }
+  const firstLine = (s.split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0)) || "";
+  const name = firstLine.replace(/\s+/g, " ").trim();
+  return name.length > 40 ? name.slice(0, 40).trim() + "…" : name;
 }
+// ===== end PACT CHAT NAME pure helper =====
 // A saved transcript turn → the chat's own message shape (drop store bookkeeping; keep conversation).
 function pactTranscriptToMsgs(transcript) {
   const out = [];
