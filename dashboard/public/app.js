@@ -4653,14 +4653,27 @@ function pactChatStop() {
 }
 function pactChatActive() { return PACT_CHAT && PACT_CHAT.tabs.find((t) => t.id === PACT_CHAT.activeId); }
 function pactChatByKey(key) { return PACT_CHAT && PACT_CHAT.tabs.find((t) => t.key === key); }
+// ===== PACT NEXT CHAT NAME — pure helper (sliced for lib/pactNextChatName.test.mjs) =====
+// The default name for a NEW chat tab: "Chat N" where N reflects how many chats there ARE (count+1),
+// not the ever-growing internal tab id. So with 2 chats open a new one is "Chat 3" — and closing it
+// then opening another gives "Chat 3" again, never drifting up to "Chat 7". N is bumped past any
+// existing "Chat N" so default names still never collide (e.g. after a middle chat was closed).
+function pactNextChatName(tabs) {
+  const list = Array.isArray(tabs) ? tabs : [];
+  const taken = new Set(list.map((t) => t && t.name));
+  let n = list.length + 1;
+  while (taken.has("Chat " + n)) n++;
+  return "Chat " + n;
+}
+// ===== end PACT NEXT CHAT NAME pure helper =====
 function pactChatNewTab() {
   if (!PACT_CHAT) return;
   pactChatSaveDraft();   // keep the current tab's compose text before the shared textarea is torn down
-  const id = ++PACT_CHAT.seq;
+  const id = ++PACT_CHAT.seq;   // a monotonic UNIQUE tab id (never reused) — distinct from the display name
   // `_queue`/`_pendingText` start empty and are only ever tied to THIS fresh session key — every tab
   // is a new object with its own key, so a message queued mid-turn can never fire into another
   // session (the Core cockpit resets p._queue on repo/worktree switch for the same reason).
-  PACT_CHAT.tabs.push({ id, name: "Chat " + id, key: wsUuid(), msgs: [], live: "", status: "idle", started: false, perm: null, draft: "", attachedImages: [], _queue: null, _pendingText: null, _pendingImages: null });
+  PACT_CHAT.tabs.push({ id, name: pactNextChatName(PACT_CHAT.tabs), key: wsUuid(), msgs: [], live: "", status: "idle", started: false, perm: null, draft: "", attachedImages: [], _queue: null, _pendingText: null, _pendingImages: null });
   PACT_CHAT.activeId = id;
   pactChatRender();
   pactStateSave();

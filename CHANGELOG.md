@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.37] - 2026-08-16
+
+### Fixed
+- **A new Pact chat is named by the chat count, not an ever-growing counter.** Opening a new chat used the
+  monotonic internal tab id for its name, so with only 2 chats a new one could read "Chat 7" — and each
+  open/close bumped it further ("Chat 8", …). Now the default name reflects how many chats there are: with 2
+  chats open, a new one is **"Chat 3"**, and closing it then opening another gives "Chat 3" again instead of
+  drifting upward. The number is still bumped past any existing "Chat N" so default names never collide.
+
 ## [1.4.36] - 2026-08-16
 
 ### Fixed
