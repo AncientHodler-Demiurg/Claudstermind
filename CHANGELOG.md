@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.40] - 2026-08-16
+
+### Added
+- **Reload warns before interrupting ongoing chats.** When a Reload will restart the engine (engine code
+  changed) AND agents are mid-turn, the Reload button now shows a danger confirm — "N chat(s) still working…
+  those will be interrupted and their unfinished reply lost; it's recommended to let them finish first" —
+  before proceeding (count re-fetched at click time so it's authoritative). A web-only reload (engine + agents
+  survive) gets a plain confirm instead. Mirrors the Deploy busy-agent guard.
+
 ## [1.4.39] - 2026-08-16
 
 ### Fixed

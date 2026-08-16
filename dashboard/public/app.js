@@ -1058,6 +1058,32 @@ function viewDeploy() {
       sub: "Deploy the current build to brain.ancientholdings.eu? The relay rebuilds (~1 min)." });
   }
 
+  // Reload's own confirm + busy-agent guard. A reload that must restart the engine (engine code
+  // changed) interrupts every ongoing chat and loses its unfinished reply — so when there ARE ongoing
+  // chats, warn explicitly and recommend letting them finish first (re-fetched at click time so the
+  // count + engine-impact are authoritative, never a stale panel render). A web-only reload keeps the
+  // engine + agents alive, so it just gets a plain confirm.
+  async function reloadConfirm() {
+    let daemonHit = true, busy = LAST_PROC && LAST_PROC.busy;
+    try {
+      const d = await (await fetch("/api/admin/processes", { cache: "no-store" })).json();
+      LAST_PROC = d; if (typeof d.reloadDaemonAffected === "boolean") daemonHit = d.reloadDaemonAffected; if (d.busy) busy = d.busy;
+    } catch { /* keep last known — fail toward the standard confirm below */ }
+    const count = (busy && busy.count) || 0;
+    if (daemonHit && count > 0) {
+      const goOn = await showModal({
+        title: count === 1 ? "1 chat still working" : count + " chats still working",
+        danger: true, confirmLabel: "Reload anyway",
+        sub: `This reload restarts the session engine, so ${count === 1 ? "that ongoing chat" : "those " + count + " ongoing chats"} will be interrupted and ${count === 1 ? "its" : "their"} unfinished reply lost. It's recommended to let ${count === 1 ? "it" : "them"} finish first, then reload. Reload anyway?`,
+      });
+      return !!goOn;   // the consequence was spelled out + confirmed — no second generic prompt
+    }
+    return await showModal({ title: "Reload the local dashboard", confirmLabel: "Reload",
+      sub: daemonHit
+        ? "Run a sandboxed pre-flight and, only if it passes, reload now? This picks up engine changes and briefly restarts the engine."
+        : "Run a sandboxed pre-flight and, only if it passes, reload now? Web-only change — the engine and any running agents keep going." });
+  }
+
   // Self-restart safety: a sandboxed pre-flight, then (only on ok:true) the real restart —
   // gated identically to Deploy above (same canDeploy/canRestart condition) rather than a
   // new auth path, and reusing this same log-terminal rendering (openLogStream) rather than
@@ -1276,8 +1302,7 @@ function viewDeploy() {
     const restartBtn = el("button", { class: "loginbtn secondary" }, [restarting ? "Reloading…" : "⟳ Reload"]);
     if (restarting || !canRestart) restartBtn.disabled = true;
     restartBtn.addEventListener("click", async () => {
-      if (!(await showModal({ title: "Reload the local dashboard", confirmLabel: "Reload",
-        sub: "Run a sandboxed pre-flight and, only if it passes, reload the local dashboard now? Agents on this machine are interrupted by a reload." }))) return;
+      if (!(await reloadConfirm())) return;   // custom modal (+ busy-agent guard when the reload restarts the engine)
       restarting = true; rNote.textContent = "Starting reload pre-flight…"; openRestartStream();
       refreshRestartBtn();
       const r = await wsPost2("/api/dashboard/restart", {});
