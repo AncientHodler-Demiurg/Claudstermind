@@ -4,6 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.38] - 2026-08-16
+
+### Fixed
+- **The REAL "new Pact chat still shows Master's whole chain" fix — the resync path was re-flooding it.**
+  1.4.31/1.4.34 stopped the *send* path from seeding a new chat with the merged workspace history, but a
+  Pact tab's transcript is also (re)fetched on every **resync** — on stream reconnect (`hello`), self-heal,
+  and after a daemon restart drops the tab from "live." That resync path (`_resync`/`_openTranscript` →
+  `_liveOrSavedState`) still read the **whole merged workspace** (`readWorkspace`), so a new/idle Pact tab
+  kept getting re-flooded with Master + every other conversation. Root cause: the engine can't tell a Pact
+  tab (many conversations per workspace) from a Core cockpit pane (one per repo) by the key alone — both can
+  carry a uuid key. Fix: the Pact client now sends an explicit **`scoped: true`** on its prompt, resync, and
+  open calls, and the engine honors it by seeding/replaying **only that one session**, never the merge. The
+  Core cockpit sends no `scoped`, so its one-conversation-per-repo merge is unchanged.
+  - **Engine + client change** — needs a `sessiond` restart (which a Reload now does since 1.4.35) plus a
+    browser refresh. Existing audit tabs will show clean once resynced.
+
 ## [1.4.37] - 2026-08-16
 
 ### Fixed

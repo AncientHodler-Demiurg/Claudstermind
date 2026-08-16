@@ -4297,7 +4297,7 @@ function pactRestoreChat(ch) {
   const restoredKeys = PACT_CHAT.tabs.map((t) => t.key).filter(Boolean);
   setTimeout(() => {
     if (!PACT_CHAT) return;
-    for (const key of restoredKeys) if (PACT_CHAT.tabs.some((t) => t.key === key)) wsPost("control", { action: "resync", args: { sessionKey: key } });
+    for (const key of restoredKeys) if (PACT_CHAT.tabs.some((t) => t.key === key)) wsPost("control", { action: "resync", args: { sessionKey: key, scoped: true } });
   }, 1500);
 }
 function pactRestoreCollapse(mode) {
@@ -4593,10 +4593,10 @@ function pactChatSelfHeal() {
     if (!t.key) continue;
     if (pactChatBusy(t) && (now - (t._lastEventAt || 0)) > WS_HEAL_QUIET_MS && (now - (t._healAt || 0)) > WS_HEAL_QUIET_MS) {
       t._healAt = now;
-      wsPost("control", { action: "resync", args: { sessionKey: t.key } });
+      wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true } });
     } else if (t.id === PACT_CHAT.activeId && !pactChatBusy(t) && (now - (t._lastResultAt || 0)) < 120_000 && (now - (t._statusSyncAt || 0)) > WS_HEAL_QUIET_MS) {
       t._statusSyncAt = now;
-      wsPost("control", { action: "resync", args: { sessionKey: t.key } });
+      wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true } });
     }
   }
 }
@@ -4722,7 +4722,7 @@ function pactChatOpenStream() {
 // fresh-open `sessionOpen` concat, which assumes an empty tab and would duplicate on a filled one).
 function pactChatResyncAll() {
   if (!PACT_CHAT) return;
-  for (const t of PACT_CHAT.tabs) if (t.key) wsPost("control", { action: "resync", args: { sessionKey: t.key } });
+  for (const t of PACT_CHAT.tabs) if (t.key) wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true } });
 }
 function pactChatRoute({ kind, sessionKey, data }) {
   if (!PACT_CHAT) return;
@@ -4841,7 +4841,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       // lying, and ask the server for its authoritative status so the button settles on the truth (Deep
       // Work… while it keeps producing, or idle the instant it finishes) instead of a stuck "Working…".
       if (!pactChatBusy(t)) t.status = "deepwork";
-      wsPost("control", { action: "resync", args: { sessionKey: t.key } });
+      wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true } });
       if (t._pendingText != null) {
         // The optimistic bubble dispatch pushed was NOT accepted (the server had a turn running) — retract
         // it so the message appears ONCE, as the queued bubble below, instead of twice (the double-send
@@ -5002,7 +5002,11 @@ async function pactChatDispatch(t, text, images) {
   // starting blank. A tab with its OWN saved `resume` continues that; a tab without one starts truly
   // empty. (The Core cockpit sends no `fresh`, so its intended one-conversation-per-repo auto-resume
   // is unchanged.)
-  const body = { sessionKey: t.key, repo: PACT_REPO, worktree: "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id, resume: t.resume || undefined, fresh: !t.resume };
+  // `scoped: true` — a Pact tab is ALWAYS one specific conversation; the engine must seed/replay only
+  // this session's own turns, never the merged workspace history (which, since every Pact tab shares one
+  // workspace id, would re-flood the tab with Master + every other chat). `fresh` = start blank (a
+  // brand-new tab); a tab with its own saved `resume` continues just that.
+  const body = { sessionKey: t.key, repo: PACT_REPO, worktree: "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id, resume: t.resume || undefined, fresh: !t.resume, scoped: true };
   if (images.length) body.images = images.map((a) => ({ mediaType: a.mediaType, base64Data: a.base64Data }));
   const r = await wsPost("prompt", body);
   if (!r || r.ok === false) {
