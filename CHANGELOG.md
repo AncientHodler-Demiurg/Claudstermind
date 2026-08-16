@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.31] - 2026-08-16
+
+### Fixed
+- **A new Pact chat now starts truly empty instead of silently continuing "Master."** Every Pact chat tab
+  (Master + each audit tab) shares ONE workspace id (`OuroborosNetwork/_onchain/Ouronet@main`), and the
+  engine auto-seeds a fresh conversation's SDK `resume` from *that workspace's most recent session* — a
+  behavior that's correct for the Core cockpit (one ongoing conversation per repo) but wrong for Pact's
+  many-conversations-per-repo model, where "the latest session" is always Master. So opening a new chat and
+  sending the first prompt made the agent resume Master's full context. The Pact client now sends `fresh:
+  true` whenever a tab has no saved session of its own, and the engine honors it by skipping the
+  workspace-latest auto-resume and starting blank. A tab that reopens its OWN saved conversation (explicit
+  `resume`) still continues that; the Core cockpit sends no `fresh`, so its one-conversation-per-repo
+  auto-resume is unchanged.
+
 ## [1.4.30] - 2026-08-15
 
 ### Fixed

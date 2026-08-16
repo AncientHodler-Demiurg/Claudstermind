@@ -4958,7 +4958,13 @@ async function pactChatDispatch(t, text, images) {
   pactChatPaint(t);
   // `resume` continues a specific saved session with full SDK context — set when this tab was opened
   // from history (Resume / Load-into-box). Ignored server-side once a live session for the key exists.
-  const body = { sessionKey: t.key, repo: PACT_REPO, worktree: "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id, resume: t.resume || undefined };
+  // `fresh` is the Pact-specific opt-out: every chat tab shares ONE workspace id (Ouronet@main), so
+  // without this the server's per-workspace auto-resume would seed each brand-new tab with the
+  // workspace's latest session — i.e. Master — making "new chat" silently continue Master instead of
+  // starting blank. A tab with its OWN saved `resume` continues that; a tab without one starts truly
+  // empty. (The Core cockpit sends no `fresh`, so its intended one-conversation-per-repo auto-resume
+  // is unchanged.)
+  const body = { sessionKey: t.key, repo: PACT_REPO, worktree: "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id, resume: t.resume || undefined, fresh: !t.resume };
   if (images.length) body.images = images.map((a) => ({ mediaType: a.mediaType, base64Data: a.base64Data }));
   const r = await wsPost("prompt", body);
   if (!r || r.ok === false) {
