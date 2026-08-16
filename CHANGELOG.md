@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.34] - 2026-08-16
+
+### Fixed
+- **A new Pact chat now shows a truly empty transcript — the other half of the "new chat picked up Master"
+  bug.** 1.4.31 stopped a fresh chat from resuming Master's SDK *context*, but the engine still seeded the
+  new pane's *displayed* transcript from the full **merged workspace history** (`readWorkspace`), which — for
+  Pact, where every chat shares one workspace id — concatenates *every* conversation (Master + each audit
+  tab) into the brand-new tab. Now a `fresh` chat starts with an empty transcript and shows only its own new
+  turn; the Core cockpit's one-conversation-per-repo seeding is unchanged, and resuming a specific saved
+  chat still reads just that one session (`_openSession`), never the merge.
+  - **Engine change — requires a `sessiond` restart to take effect.** `lib/workspace.mjs` runs only inside
+    the `sessiond` daemon; a web Reload does not restart it. If a new chat still shows old history, the
+    daemon is running pre-fix code — `sudo systemctl restart claudstermind-sessiond`.
+
 ## [1.4.33] - 2026-08-16
 
 ### Fixed
