@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.35] - 2026-08-16
+
+### Fixed
+- **Reload now actually restarts the engine too — it picks up ALL on-disk code, not just the web.** The
+  session engine runs inside the `sessiond` daemon, which deliberately *survives* a web restart (so routine
+  deploys don't interrupt agents). But that meant the **Reload** button — whose entire purpose is "run the
+  current on-disk code" — silently left the engine (`lib/workspace.mjs`, `lib/claudeSession.mjs`, …) on
+  stale code, so engine-side fixes (e.g. the Pact new-chat fix) never took effect from a Reload. That was a
+  real footgun the banner even lied about ("agents are interrupted" when they weren't). Reload now restarts
+  **both** `claudstermind-sessiond` and `claudstermind` (daemon first, so it's back by the time the web
+  reconnects), and the banner says so. Routine agent-preserving updates remain the **Deploy** path's job
+  (still web-only unless a daemon file changed). Needs the sudoers grant to also cover
+  `systemctl restart claudstermind-sessiond` (or a broader `/usr/bin/systemctl` grant).
+
 ## [1.4.34] - 2026-08-16
 
 ### Fixed

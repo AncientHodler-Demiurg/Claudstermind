@@ -972,7 +972,7 @@ function viewDeploy() {
   // fixed statement (unlike Deploy's, which depends on the changed files' plan).
   const reloadBanner = el("div", { class: "deploy-restart-banner --warn" }, [
     el("div", { class: "deploy-restart-hd" }, ["⚠ What a Reload restarts"]),
-    el("div", { class: "deploy-restart-txt" }, ["Reload restarts this local dashboard process to pick up on-disk code. Agents running on this machine are interrupted."]),
+    el("div", { class: "deploy-restart-txt" }, ["Reload restarts BOTH the web dashboard and the session engine (sessiond) on this machine, so it picks up ALL on-disk code — including engine changes (Pact chat, sessions). Any agents running here are interrupted."]),
   ]);
   const procBox = el("div", { class: "deploy-proc" }, [el("div", { class: "hint" }, ["Loading running processes…"])]);
   let LAST_PROC = null;

@@ -186,7 +186,7 @@ test("runSelfRestart triggers the real restart command only after the pre-flight
   assert.equal(result.ok, true);
   assert.ok(spawned, "spawnFn should have been called");
   assert.equal(spawned.cmd, "sudo");
-  assert.deepEqual(spawned.args, ["-n", "systemctl", "restart", "claudstermind"]);
+  assert.deepEqual(spawned.args, ["-n", "systemctl", "restart", "claudstermind-sessiond", "claudstermind"]);
 });
 
 /** A minimal fake child_process.ChildProcess: real EventEmitter (so `.on("exit"/"error")` works
