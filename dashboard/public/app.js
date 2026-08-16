@@ -4771,6 +4771,15 @@ function pactChatResyncAll() {
   if (!PACT_CHAT) return;
   for (const t of PACT_CHAT.tabs) if (t.key) wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true } });
 }
+// ===== PACT RESUME-LOST — pure helper (sliced for lib/pactResumeLost.test.mjs) =====
+// Detects the SDK's "the session I tried to resume is gone" error — a Claude Code session that ended
+// (or was interrupted before it finalized, e.g. by a daemon restart), so its `resume` id no longer
+// resolves. When this fires, the Pact chat drops the stale resume id and restarts the chat FRESH
+// rather than hard-erroring and losing the prompt.
+function pactIsResumeLostError(text) {
+  return /No conversation found with session ID/i.test(String(text || ""));
+}
+// ===== end PACT RESUME-LOST pure helper =====
 function pactChatRoute({ kind, sessionKey, data }) {
   if (!PACT_CHAT) return;
   if (kind === "presence") return;
@@ -4904,15 +4913,36 @@ function pactChatRoute({ kind, sessionKey, data }) {
         pactChatPaint(t);
       }
       return;
-    case "error":
+    case "error": {
+      const emsg = d.text || d.message || "error";
       // A "could not be opened" reply to a rehydrate/resume in flight (the session no longer exists on
       // disk) must leave the tab quietly empty, not push a scary error bubble into a freshly-restored
       // tab. Any OTHER error (a real turn failure) still surfaces normally.
       if (PACT_CHAT._pendingOpen && sessionKey && PACT_CHAT._pendingOpen[sessionKey] != null) { delete PACT_CHAT._pendingOpen[sessionKey]; t.live = ""; t.status = "idle"; t._pendingText = null; t._pendingImages = null; pactChatPaint(t); return; }
-      t.live = ""; t.status = "idle"; t._pendingText = null; t._pendingImages = null; t.msgs.push({ kind: "error", text: d.text || d.message || "error" });
+      // Resume-lost: the Claude Code session this tab was continuing is gone (typically interrupted by a
+      // restart before it finalized). Drop the stale resume id so it's never reused, and — if a prompt
+      // was in flight — AUTO-RETRY it as a FRESH conversation (resume cleared → the send goes out as
+      // fresh:true, so no bad-id reuse) instead of hard-erroring and losing it. The agent restarts
+      // without Claude Code's prior context, but the shown transcript stays and the prompt is answered.
+      if (pactIsResumeLostError(emsg)) {
+        t.resume = null;
+        if (t._pendingText != null) {
+          const retryText = t._pendingText, retryImages = t._pendingImages || [];
+          if (t._optimisticUserMsg) { t.msgs = t.msgs.filter((m) => m !== t._optimisticUserMsg); t._optimisticUserMsg = null; }
+          t.live = ""; t.status = "idle"; t._pendingText = null; t._pendingImages = null; t.started = false;
+          if (typeof pactChatFlashNote === "function") pactChatFlashNote("↻ Prior session expired — restarting this chat fresh…");
+          pactChatDispatch(t, retryText, retryImages);
+          return;
+        }
+        t.live = ""; t.status = "idle"; t.msgs.push({ kind: "note", text: "↻ The prior agent session expired — your next message starts a fresh conversation." });
+        pactChatPaint(t); pactStateSave(); pactChatDrainQueue(t);
+        return;
+      }
+      t.live = ""; t.status = "idle"; t._pendingText = null; t._pendingImages = null; t.msgs.push({ kind: "error", text: emsg });
       pactChatPaint(t);
       pactChatDrainQueue(t);   // a failed turn still ends the turn — don't strand a queued follow-up
       return;
+    }
     case "status":
       t.status = d.status;
       pactChatPaint(t);

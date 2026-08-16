@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.45] - 2026-08-16
+
+### Fixed
+- **"No conversation found with session ID" no longer dead-ends a chat and loses your prompt.** A Pact tab
+  continues its Claude Code session via a `resume` id; if that session is gone (interrupted before it
+  finalized — e.g. by one of the daemon restarts), the next prompt hard-errored with Claude Code's "No
+  conversation found with session ID: …" and your message was lost. The Pact chat now detects that specific
+  error, **drops the stale resume id, and auto-retries the same prompt as a fresh conversation** (a brief
+  "↻ Prior session expired — restarting this chat fresh…" note). The agent restarts without Claude Code's
+  prior in-memory context, but the shown transcript stays and the prompt is actually answered. Pure detector
+  `pactIsResumeLostError` + `lib/pactResumeLost.test.mjs`.
+
 ## [1.4.44] - 2026-08-16
 
 ### Fixed
