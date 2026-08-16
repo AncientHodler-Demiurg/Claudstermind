@@ -4472,8 +4472,23 @@ function pactChatRenderHistory() {
   panel.replaceChildren(head, list);
 }
 function pactHistName(r) { return (r.sessionId && PACT_CHAT_NAMES[r.sessionId]) || r.name || pactDeriveChatName(r.firstPrompt) || "Untitled chat"; }
+// ===== PACT PRIME ROW — pure helper (sliced for lib/pactPrimeRow.test.mjs) =====
+// Which saved-history row is the undeletable "prime" (Master) conversation: the row whose sessionId
+// equals the prime tab's OWN key — a history row's sessionId is the tab key that named its transcript
+// file (see pactHistRename/pactChatOpenSaved, which both match `tab.key === r.sessionId`). Pure over
+// (row, tabs) so it's unit-testable; the DOM callers pass PACT_CHAT.tabs. The prime row shows a ★ and
+// a disabled delete button so it can't be removed by mistake — mirroring the tab's ★-instead-of-×.
+function pactRowIsPrime(row, tabs) {
+  if (!row || !row.sessionId || !Array.isArray(tabs)) return false;
+  const p = tabs.find((t) => t && t.prime);
+  return !!(p && p.key && row.sessionId === p.key);
+}
+// ===== end PACT PRIME ROW pure helper =====
+function pactIsPrimeRow(r) { return pactRowIsPrime(r, PACT_CHAT && PACT_CHAT.tabs); }
 function pactHistRow(r) {
-  const nameEl = el("div", { class: "pc-hist-name", title: "Double-click to rename" }, [pactHistName(r)]);
+  const prime = pactIsPrimeRow(r);
+  const star = prime ? el("span", { class: "pc-tab-prime", title: "Prime conversation — always kept, can't be deleted" }, ["★ "]) : "";
+  const nameEl = el("div", { class: "pc-hist-name", title: prime ? "Prime conversation" : "Double-click to rename" }, [star, pactHistName(r)]);
   nameEl.addEventListener("dblclick", () => pactHistRename(r));
   const meta = el("div", { class: "pc-hist-meta" }, [`${r.turns || 0} msg${(r.turns || 0) === 1 ? "" : "s"}` + (r.updatedAt ? " · " + pactAgo(r.updatedAt) : "") + (r.realSessionId ? "" : " · no resume")]);
   const first = el("div", { class: "pc-hist-first" }, [r.firstPrompt || "(no prompt)"]);
@@ -4483,8 +4498,9 @@ function pactHistRow(r) {
   loadB.addEventListener("click", () => pactChatOpenSaved(r, false));
   const renameB = el("button", { class: "ws-ico", title: "Rename" }, ["✎"]);
   renameB.addEventListener("click", () => pactHistRename(r));
-  const delB = el("button", { class: "ws-ico", title: "Delete this saved chat permanently" }, ["🗑"]);
-  delB.addEventListener("click", () => pactHistDelete(r));
+  const delB = el("button", { class: "ws-ico" + (prime ? " --nodelete" : ""), title: prime ? "The prime conversation can't be deleted" : "Delete this saved chat permanently" }, ["🗑"]);
+  if (prime) { delB.disabled = true; delB.setAttribute("aria-disabled", "true"); }
+  else delB.addEventListener("click", () => pactHistDelete(r));
   return el("div", { class: "pc-hist-row" }, [el("div", { class: "pc-hist-main" }, [nameEl, meta, first]), el("div", { class: "pc-hist-actions" }, [resumeB, loadB, renameB, delB])]);
 }
 // Open a saved chat into a tab. `adopt` = Resume: the tab ADOPTS the saved session key so its
@@ -4519,6 +4535,7 @@ function pactHistRename(r) {
 }
 function pactHistDelete(r) {
   if (!r || !r.sessionId) return;
+  if (pactIsPrimeRow(r)) return;   // the prime conversation is never deletable — belt to the disabled button's braces
   if (!window.confirm("Delete this saved chat permanently? This cannot be undone.")) return;
   wsPost("control", { action: "sessionDelete", args: { repo: PACT_REPO, worktree: "main", sessionId: r.sessionId } });
   if (PACT_CHAT.sessions) PACT_CHAT.sessions = PACT_CHAT.sessions.filter((x) => x.sessionId !== r.sessionId);
@@ -5659,7 +5676,7 @@ function viewPactMobile() {
       if (!rows) { list.replaceChildren(el("div", { class: "pactm-empty" }, ["Loading saved conversations…"])); return; }
       if (!rows.length) { list.replaceChildren(el("div", { class: "pactm-empty" }, ["No saved conversations."])); return; }
       list.replaceChildren(...rows.map((r) => {
-        const name = el("div", { class: "pactm-hrow-name" }, [pactHistName(r)]);
+        const name = el("div", { class: "pactm-hrow-name" }, [pactIsPrimeRow(r) ? el("span", { class: "pc-tab-prime" }, ["★ "]) : "", pactHistName(r)]);
         const meta = el("div", { class: "pactm-hrow-meta" }, [pactChatMsgLabel(r.turns) + (r.updatedAt ? " · " + pactAgo(r.updatedAt) : "") + (r.realSessionId ? "" : " · no resume")]);
         const first = el("div", { class: "pactm-hrow-first" }, [r.firstPrompt || "(no prompt)"]);
         const row = el("div", { class: "pactm-frow pactm-hrow" }, [el("div", { class: "pactm-hrow-main" }, [name, meta, first])]);

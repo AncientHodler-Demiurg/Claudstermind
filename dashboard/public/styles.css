@@ -1444,6 +1444,9 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pc-hist-meta { font-size: 10.5px; color: var(--ink-mute); margin: 1px 0; }
 .pc-hist-first { font-size: 11px; color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pc-hist-actions { display: flex; gap: 2px; flex: 0 0 auto; }
+/* The prime ("Master") row's delete is disabled + redded out so it can't be removed by mistake. */
+.pc-hist-actions .ws-ico.--nodelete, .pc-hist-actions .ws-ico:disabled { color: #f87171; opacity: .5; cursor: not-allowed; }
+.pc-hist-actions .ws-ico.--nodelete:hover, .pc-hist-actions .ws-ico:disabled:hover { border-color: transparent; color: #f87171; }
 .pc-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; line-height: 1.5; }
 .pc-msg { max-width: 92%; border-radius: 9px; padding: 7px 10px; word-break: break-word; }
 .pc-user { align-self: flex-end; background: #2f6feb; color: #fff; white-space: pre-wrap; }   /* keep the line breaks / spacing the user typed */

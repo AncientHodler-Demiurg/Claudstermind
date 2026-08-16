@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.33] - 2026-08-16
+
+### Fixed
+- **The prime ("Master") chat can no longer be deleted from the history panel.** Closing the Master *tab*
+  was already blocked (it shows ★ instead of ×), but the **history panel's trash button was a separate
+  delete path with no such guard** — so Master's transcript could be removed by mistake. Now the Master row
+  in Pact chat history shows a **★** and its delete button is **disabled and redded out**, and the delete
+  handler refuses the prime row even if invoked. (Matching is by the prime tab's own key, not its name or
+  shared resume id, so only the real Master row is protected.) The mobile history sheet shows the ★ too.
+  Covered by a new sentinel-sliced pure helper `pactRowIsPrime` + `lib/pactPrimeRow.test.mjs`.
+
 ## [1.4.32] - 2026-08-16
 
 ### Changed
