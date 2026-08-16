@@ -319,7 +319,8 @@ function localListRepos() {
 // fallback: a flag that's unset, or set-but-unreachable, runs the exact in-process path as before,
 // so the running app can never regress just because the env var is (or isn't) present. Every seam
 // is injectable so dashboard/server.test.mjs proves all three branches without opening a socket.
-export async function selectWorkspace({ env = process.env, makeInProcess, makeClient, socketPaths, exists, log = console } = {}) {
+export async function selectWorkspace({ env = process.env, makeInProcess, makeClient, socketPaths, exists, log = console,
+  attempts = 1, waitMs = 0, probeTimeoutMs, sleep } = {}) {
   // Candidate daemon sockets, in order: the explicit `SESSIOND_SOCK` (if set), then the well-known default
   // paths. AUTO-DETECT is the key: any dashboard on the work machine (the live one OR a manually-started
   // localhost one) joins the SAME running `sessiond` without needing an env var — so localhost and the
@@ -329,22 +330,45 @@ export async function selectWorkspace({ env = process.env, makeInProcess, makeCl
   const cands = [];
   if (env.SESSIOND_SOCK) cands.push(env.SESSIOND_SOCK);
   for (const p of (socketPaths || [])) if (p) cands.push(p);
-  const seen = new Set();
-  for (const sock of cands) {
-    if (seen.has(sock)) continue; seen.add(sock);
-    if (typeof exists === "function" && !exists(sock)) continue;   // no socket file here → daemon not on this box; no probe/log noise
-    let client = null;
-    try {
-      client = makeClient(sock);
-      if (await client.probe()) {
-        log.log?.(`  Session engine: sessiond daemon at ${sock}${env.SESSIOND_SOCK === sock ? " (SESSIOND_SOCK)" : " (auto-detected)"} — ONE shared engine for localhost + remote; agents also survive a web restart`);
-        return client;
+  const nap = sleep || ((ms) => new Promise((r) => { const t = setTimeout(r, ms); t?.unref?.(); }));
+  // One pass over the candidates: first reachable daemon wins; null if none answered this pass.
+  const tryOnce = async () => {
+    const seen = new Set();
+    for (const sock of cands) {
+      if (seen.has(sock)) continue; seen.add(sock);
+      if (typeof exists === "function" && !exists(sock)) continue;   // no socket file here → daemon not on this box (or mid-restart); no probe/log noise
+      let client = null;
+      try {
+        client = makeClient(sock);
+        if (await client.probe({ timeoutMs: probeTimeoutMs })) {
+          log.log?.(`  Session engine: sessiond daemon at ${sock}${env.SESSIOND_SOCK === sock ? " (SESSIOND_SOCK)" : " (auto-detected)"} — ONE shared engine for localhost + remote; agents also survive a web restart`);
+          return client;
+        }
+        log.warn?.(`  Session engine: sessiond at ${sock} present but unreachable — trying the next candidate`);
+      } catch (e) {
+        log.warn?.(`  Session engine: sessiond client at ${sock} failed to init (${e && e.message || e}) — trying the next candidate`);
       }
-      log.warn?.(`  Session engine: sessiond at ${sock} present but unreachable — trying the next candidate / in-process`);
-    } catch (e) {
-      log.warn?.(`  Session engine: sessiond client at ${sock} failed to init (${e && e.message || e}) — trying the next candidate / in-process`);
+      try { client?.close?.(); } catch {}
     }
-    try { client?.close?.(); } catch {}
+    return null;
+  };
+  // Retry before giving up. THE FIX for "Reload dropped the web into in-process mode": a Reload now
+  // restarts BOTH the daemon and the web (so engine code updates too), which means the web can boot
+  // while `sessiond` is still coming back up — its socket briefly absent/silent. A single probe then
+  // races and loses, permanently demoting this dashboard to the in-process engine (the split-engine
+  // desync). So when candidates exist, poll for a bounded window (the daemon returns in ~1-2s) before
+  // falling back. No candidates at all (dev box / a test importing the module) → straight to in-process,
+  // nothing to wait for. Once attached, the SessiondClient's own auto-reconnect handles later restarts.
+  if (cands.length) {
+    const max = Math.max(1, attempts);
+    for (let i = 0; i < max; i++) {
+      const client = await tryOnce();
+      if (client) return client;
+      if (i < max - 1) {
+        if (i === 0 && waitMs > 0) log.log?.(`  Session engine: sessiond not answering yet (it may be co-restarting after a Reload) — waiting up to ~${Math.round(((max - 1) * waitMs) / 1000)}s for it before falling back to in-process…`);
+        await nap(waitMs);
+      }
+    }
   }
   return makeInProcess();
 }
@@ -380,6 +404,10 @@ if (!OIDC) {
     exists: (p) => { try { return existsSync(p); } catch { return false; } },
     makeInProcess,
     makeClient: (sock) => new SessiondClient({ socketPath: sock, root: MASTER_ROOT, send: wsSend }),
+    // Poll ~10s for a co-restarting daemon (Reload restarts both units) so the web reliably reattaches
+    // to sessiond instead of racing it and falling back to the in-process engine. Only matters when
+    // candidates exist (SERVER_IS_MAIN); a fast probe timeout keeps each attempt from stalling.
+    attempts: SERVER_IS_MAIN ? 25 : 1, waitMs: 400, probeTimeoutMs: 1200,
   });
   // Surfaced in /api/version so the UI can show which engine THIS dashboard runs — "sessiond" (shared with
   // every other client on the daemon) vs "in-process" (this process only; a prompt here won't reach other

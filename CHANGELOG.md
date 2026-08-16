@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.36] - 2026-08-16
+
+### Fixed
+- **The web now reliably reattaches to the `sessiond` engine after a Reload — no more spurious "local-only
+  engine" badge.** Making Reload restart both units (1.4.35) exposed a race: the web could boot while
+  `sessiond` was still coming back up (its socket briefly gone), and the one-shot auto-detect probe lost that
+  race and permanently demoted the dashboard to the **in-process** engine — reviving the exact split-engine
+  desync (localhost prompts not showing on remote). `selectWorkspace` now **polls for the daemon for a
+  bounded window (~10s, it returns in ~1–2s)** before falling back, so the co-restart no longer strands the
+  web in-process. No candidates present (a dev box or a test importing the module) still goes straight to
+  in-process. Once attached, the client's existing auto-reconnect handles any later daemon restart.
+
 ## [1.4.35] - 2026-08-16
 
 ### Fixed

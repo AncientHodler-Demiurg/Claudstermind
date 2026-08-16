@@ -512,6 +512,44 @@ test("selectWorkspace: SESSIOND_SOCK takes priority over the auto-detect candida
   assert.equal(client._sock, "/custom/sock", "the explicit flag is dialed first");
 });
 
+test("selectWorkspace: RETRIES a co-restarting daemon (socket appears late) instead of falling back to in-process", async () => {
+  // Reload restarts BOTH units, so the web can boot while sessiond's socket is momentarily gone. The
+  // one-shot probe used to lose that race and demote to in-process (the split-engine desync). Now it
+  // polls: here the socket only appears on the 3rd pass, and it must attach — never in-process.
+  const slept = [];
+  let existsPass = 0;
+  let last;
+  const ws = await selectWorkspace({
+    env: {},
+    socketPaths: ["/run/claudstermind/sessiond.sock"],
+    exists: () => (++existsPass >= 3),                // absent for the first two passes, then present
+    makeInProcess: () => ({ kind: "in-process" }),
+    makeClient: () => (last = { probe: async () => true, close() {} }),
+    log: {},
+    attempts: 5, waitMs: 10, sleep: async (ms) => { slept.push(ms); },
+  });
+  assert.equal(ws, last, "must attach to the daemon once its socket appears, not fall back");
+  assert.deepEqual(slept, [10, 10], "slept between the two empty passes, then attached on the third");
+});
+
+test("selectWorkspace: falls back to in-process only AFTER exhausting the retry window", async () => {
+  const slept = [];
+  const inproc = { kind: "in-process" };
+  let probes = 0;
+  const ws = await selectWorkspace({
+    env: {},
+    socketPaths: ["/run/claudstermind/sessiond.sock"],
+    exists: () => true,
+    makeInProcess: () => inproc,
+    makeClient: () => ({ probe: async () => { probes++; return false; }, close() {} }),
+    log: {},
+    attempts: 3, waitMs: 5, sleep: async (ms) => { slept.push(ms); },
+  });
+  assert.equal(ws, inproc);
+  assert.equal(probes, 3, "probed on every one of the 3 attempts");
+  assert.equal(slept.length, 2, "slept between attempts, not after the last");
+});
+
 test("selectWorkspace: a throwing client constructor still falls back to in-process (never crashes)", async () => {
   const inproc = { kind: "in-process" };
   const ws = await selectWorkspace({
