@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.49] - 2026-08-16
+
+### Fixed
+- **A Pact chat no longer shows a different name on phone vs. desktop (e.g. "[Pact IDE — auto-skill] You are
+  working…" on one, "SWP Audit" on the other).** The saved `firstPrompt` a client derives a chat name from
+  was truncated to 120 chars — but the Pact auto-skill preamble is longer than that, so the `\n\n` separating
+  the boilerplate from the user's real message got cut off, leaving name-derivation nothing to strip. A
+  client with the friendly-name overlay showed the real name; one without it showed the raw preamble — hence
+  the mismatch. The engine now strips the preamble **before** truncating (`firstPromptText`), so the saved
+  first-prompt is the user's actual message on every client, and derived names agree. `summarise` recomputes
+  it from the full transcript, so existing conversations are cleaned up too.
+  - **Engine change — takes effect on the next `sessiond` restart.**
+
 ## [1.4.48] - 2026-08-16
 
 ### Fixed
