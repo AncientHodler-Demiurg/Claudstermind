@@ -5,7 +5,31 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocketServer } from "ws";
-import { createBridge } from "./agent.mjs";
+import { createBridge, tunnelGateOpen } from "./agent.mjs";
+
+// ---- tunnelGateOpen: the live-mirror gate for turn content crossing to the remote ----
+test("tunnelGateOpen: non-gated kinds + keyless frames always cross", () => {
+  // Workspace-wide reads (list/tree/history) and transcript replies are metadata, not turn content.
+  assert.equal(tunnelGateOpen("transcript", "sess", {}), true);
+  assert.equal(tunnelGateOpen("state", null, {}), true, "keyless frame passes");
+  assert.equal(tunnelGateOpen("event", null, {}), true);
+});
+
+test("tunnelGateOpen: turn content for an untouched, unwatched session is withheld (privacy)", () => {
+  assert.equal(tunnelGateOpen("event", "sess", { remoteTouched: false, remoteWatching: false }), false);
+  assert.equal(tunnelGateOpen("state", "sess", {}), false);
+  assert.equal(tunnelGateOpen("permission", "sess", {}), false);
+});
+
+test("tunnelGateOpen: crosses once the remote drove the session (remoteTouched)", () => {
+  assert.equal(tunnelGateOpen("event", "sess", { remoteTouched: true, remoteWatching: false }), true);
+});
+
+test("tunnelGateOpen: crosses when a remote browser is watching — the localhost→remote live-mirror fix", () => {
+  // A prompt typed on localhost (never remoteTouched) still mirrors live to a connected remote viewer.
+  assert.equal(tunnelGateOpen("event", "sess", { remoteTouched: false, remoteWatching: true }), true);
+  assert.equal(tunnelGateOpen("state", "sess", { remoteWatching: true }), true);
+});
 import { FRAME } from "../lib/protocol.mjs";
 import { WorkspaceManager } from "../lib/workspace.mjs";
 import { appendTurn, workspaceId } from "../lib/workspaceStore.mjs";

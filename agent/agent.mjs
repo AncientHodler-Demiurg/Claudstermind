@@ -58,6 +58,20 @@ export function defaultPaths() {
   };
 }
 
+// Which WS_OUT kinds carry live turn/conversation content (vs. workspace-wide reads or transcript
+// replies, which are metadata the remote explicitly asked for and always pass).
+const GATED_KINDS = new Set(["event", "state", "permission"]);
+/** May this WS_OUT frame cross the tunnel to the remote? Turn content is gated so it only crosses once
+ *  the remote is genuinely in the loop for this session — EITHER the remote drove it (`remoteTouched`)
+ *  OR a remote browser is currently connected and watching (`remoteWatching`). The presence signal is
+ *  what makes a prompt typed ON LOCALHOST mirror to the remote view LIVE (not only after a refresh),
+ *  while a purely-local chat with no remote viewer still never crosses the wire. Keyless frames
+ *  (workspace-wide reads) and non-gated kinds always pass. Pure + exported for unit testing. */
+export function tunnelGateOpen(kind, sessionKey, { remoteTouched = false, remoteWatching = false } = {}) {
+  if (!sessionKey || !GATED_KINDS.has(kind)) return true;
+  return remoteTouched || remoteWatching;
+}
+
 /**
  * Build a bridge. Injectable (url, secret, snapshot/command fns, WebSocket impl) so the
  * tunnel behavior is testable against a stub relay without scanning the real workspace.
@@ -113,9 +127,12 @@ export function createBridge(opts = {}) {
   // complete its own trip up the tunnel before the resulting prompt does). "Has this sessionKey
   // had a prompt genuinely arrive over WS_IN" needs no cross-module plumbing and has no such race.
   const remoteTouched = new Set();
-  const GATED_KINDS = new Set(["event", "state", "permission"]);
+  // How many remote browsers the relay currently reports as connected (from `presence` frames). When
+  // >0 the operator is actively watching remotely, so localhost-originated turns should mirror to that
+  // view LIVE — the fix for "I prompt on localhost but the remote page doesn't update until I refresh."
+  let remoteBrowsers = 0;
   const tunnelSink = (kind, sessionKey, data) => {
-    if (sessionKey && GATED_KINDS.has(kind) && !remoteTouched.has(sessionKey)) return;
+    if (!tunnelGateOpen(kind, sessionKey, { remoteTouched: remoteTouched.has(sessionKey), remoteWatching: remoteBrowsers > 0 })) return;
     wsSend(kind, sessionKey, data);
   };
   const workspace = opts.workspace ?? new WorkspaceManager({
@@ -376,7 +393,7 @@ export function createBridge(opts = {}) {
       if (frame.kind === "restart" && opts.restart) { runRemoteRestart(); return; }
       // The relay reporting ITS browsers (it is a sensor). Hand them to the work machine, which
       // merges them with its own localhost terminals into the one authoritative presence list.
-      if (frame.kind === "presence") { try { opts.onRemotePresence?.(frame.data?.connections || []); } catch (e) { log("presence error:", e.message); } return; }
+      if (frame.kind === "presence") { const conns = frame.data?.connections || []; remoteBrowsers = conns.length; try { opts.onRemotePresence?.(conns); } catch (e) { log("presence error:", e.message); } return; }
       // A prompt genuinely arriving over the tunnel is the remote-interest signal `tunnelSink`
       // gates on above — mark it BEFORE handleIn so this very turn's own resulting sends qualify.
       if (frame.kind === "prompt" && frame.sessionKey) remoteTouched.add(frame.sessionKey);
@@ -414,7 +431,9 @@ export function createBridge(opts = {}) {
   function scheduleReconnect() {
     clearInterval(snapTimer);
     // The tunnel is down, so the relay's reported browsers are no longer reachable — clear the
-    // remote presence set so the merged list doesn't keep showing phantom live-site terminals.
+    // remote presence set so the merged list doesn't keep showing phantom live-site terminals, and
+    // drop the live-mirror gate back to closed (no remote watcher until the next presence frame).
+    remoteBrowsers = 0;
     try { opts.onRemotePresence?.([]); } catch {}
     closeAllMirrorWs();
     if (stopped) return;

@@ -4,6 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.42] - 2026-08-16
+
+### Fixed
+- **Prompts/replies typed on localhost now stream to the remote view LIVE — not only after a refresh.**
+  Root cause (long-standing, not a recent regression): the bridge tunnel *gates* live turn content
+  (`event`/`state`/`permission`), forwarding a session's stream to the remote only once that session was
+  driven **over the tunnel** (`remoteTouched`) — a privacy rule so a purely-local chat never crosses the
+  wire. But a chat you prompt **on localhost** is never "remote-touched," so its live tokens were withheld
+  from the remote, which only caught up via snapshot/resync (hence "appears after I refresh"). The gate now
+  ALSO opens when a **remote browser is actually connected and watching** (from the relay's presence
+  reports): if you have the remote page open, localhost-originated turns mirror to it live — and vice-versa
+  (a remote-driven turn already showed on localhost). With no remote viewer connected, a local-only chat
+  still never crosses the wire. Pure, unit-tested gate `tunnelGateOpen`.
+  - **Bridge change (runs in the web process)** — a plain web **Reload** picks it up (no engine restart, so
+    running agents are undisturbed); the bridge reconnects with the new gate.
+
 ## [1.4.41] - 2026-08-16
 
 ### Fixed
