@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.46] - 2026-08-16
+
+### Fixed
+- **Mobile: the token count no longer overlaps the chat tabs.** On a phone the "N tok" readout and the mode
+  select shared the tab row and could visually collide with the tabs. The tabs now take the flexible
+  remaining width (scrolling horizontally on their own) with the token readout + mode pinned to the right, so
+  nothing overlaps. For many conversations, the **💬 Conversations** button in the mobile control bar already
+  opens a full-height, scrollable list of every chat (switch / close / ＋ New) — that's the bottom control
+  for browsing all chats regardless of how many there are.
+
 ## [1.4.45] - 2026-08-16
 
 ### Fixed

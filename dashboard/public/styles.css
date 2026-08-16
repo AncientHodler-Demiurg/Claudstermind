@@ -1704,6 +1704,14 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .pactm-chatwrap .pc-compose .pc-send,
   .pactm-chatwrap .pc-compose .pc-stop { display: none; }
   .pactm-chatwrap .pc-head .pact-ed-ico { display: none; }
+  /* On a phone the token/context readout ("N tok") and the mode select shared the tab row and could
+     visually OVERLAP the chat tabs. Give the tabs the flexible remaining width (they scroll
+     horizontally on their own — .pc-tabs already has overflow-x:auto), drop the phantom spacer, and pin
+     the readout + mode to the right so nothing can collide. Many tabs → scroll here, or use the 💬
+     Conversations sheet (control bar) which lists them all full-height. */
+  .pactm-chatwrap .pc-head .ws-spacer { display: none; }
+  .pactm-chatwrap .pc-head .pc-tabs { flex: 1 1 0; }
+  .pactm-chatwrap .pc-head .pc-usage { margin-left: 6px; max-width: 30vw; }
   .pactm-chatwrap .pc-input { width: 100%; }
   /* v1.3.8 — collapse the compose to a single line (overrides pactChatAutosize's inline height) so a long
      draft stops expanding upward into the transcript. The transcript gets the reclaimed height. */
