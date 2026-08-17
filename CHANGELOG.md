@@ -4,6 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.58] - 2026-08-18
+
+### Fixed
+- **Usage tab now tells the truth when plan usage is unavailable.** The SDK's experimental rate-limit
+  surface returns `rate_limits_available: false` (and null limits) for API-key / Bedrock / Vertex auth
+  **or an OAuth token minted without the plan-usage scope**. The card used to show a misleading "fills in
+  once this key runs a turn" in that case — it never would. It now distinguishes three states: live
+  usage bars, **"plan usage isn't available for this key"** (with the `claude setup-token` re-mint hint),
+  and "no usage recorded yet — run a turn or Refresh". The engine records the `available` flag + a
+  `checked` timestamp so the tab can pick the right one.
+- **Usage is auto-recorded at every turn-end**, not only when a client asks. Previously only the Pact
+  chat requested `usageLimits` (and the Core cockpit never did), so prompts run in Core populated
+  nothing. `_onEvent` now fires a fire-and-forget `getUsageLimits()` on each `result` — the streaming
+  session's SDK query is still open at that point, so it works — keeping the Usage tab and the proactive
+  percentage-based failover current regardless of which surface ran the turn.
+
 ## [1.4.57] - 2026-08-17
 
 ### Added

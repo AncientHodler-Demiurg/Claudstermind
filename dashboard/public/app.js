@@ -586,9 +586,16 @@ function viewUsage() {
       r.active ? el("span", { class: "usage-key-badge --active" }, ["● active"]) : "",
       r.exhausted ? el("span", { class: "usage-key-badge --exhausted" }, ["⚠ exhausted" + (r.exhaustedUntil ? " · frees " + new Date(r.exhaustedUntil).toLocaleTimeString() : "")]) : "",
     ]);
-    const bars = rl
-      ? [bar("5-hour", pct(rl.five_hour), rl.five_hour && rl.five_hour.resets_at), bar("7-day", pct(rl.seven_day), rl.seven_day && rl.seven_day.resets_at)]
-      : [el("div", { class: "hint", style: "padding:4px 0" }, ["No usage recorded yet — it fills in once this key runs a turn."])];
+    let bars;
+    if (rl) {
+      bars = [bar("5-hour", pct(rl.five_hour), rl.five_hour && rl.five_hour.resets_at), bar("7-day", pct(rl.seven_day), rl.seven_day && rl.seven_day.resets_at)];
+    } else if (r.checked && !r.available) {
+      // The SDK answered but this key has no plan rate-limits (API-key/Bedrock/Vertex auth, or the token
+      // was minted without the plan-usage scope). No percentages will ever come — say so, don't imply waiting.
+      bars = [el("div", { class: "usage-unavail" }, ["⛔ Plan usage isn't available for this key — the token has no plan rate-limit scope (or uses API-key / Bedrock / Vertex auth). Re-mint with ", el("code", {}, ["claude setup-token"]), " to add the scope. Error-based failover still works."])];
+    } else {
+      bars = [el("div", { class: "hint", style: "padding:4px 0" }, ["No usage recorded yet — run a turn on this key (or hit ↻ Refresh) to populate it."])];
+    }
     if (rl && pct(rl.seven_day_opus) !== null) bars.push(bar("7-day · Opus", pct(rl.seven_day_opus), null));
     if (rl && pct(rl.seven_day_sonnet) !== null) bars.push(bar("7-day · Sonnet", pct(rl.seven_day_sonnet), null));
     return el("div", { class: "usage-key-card" + (r.active ? " --active" : "") + (r.exhausted ? " --exhausted" : "") }, [head, ...bars]);
