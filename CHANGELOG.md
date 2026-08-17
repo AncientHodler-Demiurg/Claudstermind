@@ -4,7 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.49] - 2026-08-16
+## [1.4.50] - 2026-08-17
+
+### Changed
+- **Pact chat is much smoother on a long conversation — no more stall on every event.** Each incoming event
+  (your echoed prompt, a tool call, the reply, the result, a status flip, a resync) re-rendered the ENTIRE
+  transcript — re-parsing every message's markdown + code-highlighting and rebuilding the whole DOM. Now each
+  message's rendered node is **cached on the message** (its content is immutable once shown; the "Thought
+  for…" stamp busts the cache for just that one reply), so a paint only renders the NEW message and reuses
+  the rest. That removes the drag when sending a prompt / mid-turn on a big chat — and, as a bonus, a
+  tool-call you expanded stays expanded across updates instead of collapsing on every event.
+- **Faster app loads on mobile — vendored CodeMirror is now cached.** The service worker treated the large,
+  never-changing CodeMirror library + addons (`/vendor/…`, ~15 files) as part of the always-fresh app shell,
+  re-downloading them over the tunnel on every load. They're now served **cache-first** (fetched once, then
+  instant), while the actual app code (app.js/styles.css/etc.) stays network-fresh so a deploy still shows up
+  immediately. Cache name bumped to `cm-shell-v3`.
 
 ### Fixed
 - **A Pact chat no longer shows a different name on phone vs. desktop (e.g. "[Pact IDE — auto-skill] You are

@@ -4880,7 +4880,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       // assistant bubble; the tool rounds sit above it.
       {
         const dur = (typeof d.durationMs === "number") ? d.durationMs : (t._turnStartedAt ? Date.now() - t._turnStartedAt : null);
-        if (dur != null) { const last = [...t.msgs].reverse().find((m) => m.role === "assistant"); if (last) last.elapsedMs = dur; }
+        if (dur != null) { const last = [...t.msgs].reverse().find((m) => m.role === "assistant"); if (last) { last.elapsedMs = dur; last._node = null; } }   // clear the cached node so the "Thought for…" header re-renders once
         t._turnStartedAt = null;
       }
       if (d.usageTotal) t.usage = d.usageTotal;
@@ -5233,7 +5233,12 @@ function pactChatPaint(t) {
   // this tab has usage data.
   const usageEl = PACT_CHAT.host.querySelector(".pc-usage");
   if (usageEl) { const usg = wsUsageLabel(t.usage, t.contextUsage); usageEl.textContent = usg.text; usageEl.title = usg.title; usageEl.hidden = !usg.text; }
-  const nodes = t.msgs.map(pactChatMsgNode);
+  // Cache each message's rendered node on the message object. A message's content is immutable once
+  // added (only `elapsedMs` is stamped once, on result — which clears `_node` there), so re-parsing its
+  // markdown + code-highlighting on EVERY event (user echo / tool_use / assistant / result / status /
+  // resync…) was the Pact-chat stall on a long conversation. Now a paint renders only the NEW message(s);
+  // existing ones reuse their node — which also preserves the tool-call expand state you'd opened.
+  const nodes = t.msgs.map((m) => m._node || (m._node = pactChatMsgNode(m)));
   if (t.perm) {
     const bar = el("div", { class: "pc-perm" }, [
       el("span", {}, ["⏸ Allow " + t.perm.tool + "?"]), el("span", { class: "ws-spacer" }, []),
