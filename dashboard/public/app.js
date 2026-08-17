@@ -2645,10 +2645,13 @@ const WS_MAX_COLS = 8, WS_MAX_ROWS = 2;
 // up and surfacing an explicit note — covers a disconnected bridge, which otherwise never answers
 // at all and would leave the UI (and the pendingOpens entry) waiting forever.
 const WS_OPEN_TIMEOUT_MS = 8000;
-// A pane repaints on every streamed event; only re-snap the transcript scroll to the bottom when
-// it was already within this many px of it — otherwise someone scrolled up to read history keeps
-// their spot instead of being yanked back down mid-turn.
-const WS_SCROLL_NEAR_BOTTOM_PX = 48;
+// A pane repaints on every streamed event; only re-snap the transcript scroll to the bottom when the
+// reader is at DEAD BOTTOM — otherwise someone who scrolled up (even a little) keeps their exact spot
+// instead of being yanked down mid-turn. This is a tolerance, not a "near" band: 4px absorbs only the
+// sub-pixel/fractional-height rounding a browser reports at a true bottom (Chrome/Safari can be ~1px
+// off on high-DPI). It used to be 48px, which treated "a couple of lines up" as bottom and produced
+// exactly the "incoming reply drags my scroll down" report. Pact already used this strict value.
+const WS_SCROLL_NEAR_BOTTOM_PX = 4;
 // Only the most recent WS_TURN_RENDER_CAP turns are kept in the DOM by default; older ones sit
 // behind a "show earlier" control (see renderTranscriptInto). This keeps the standing DOM small
 // on a long conversation so a weaker/software-rendering browser isn't asked to lay out and paint
@@ -2699,18 +2702,43 @@ function attachStickController(scrollEl, opts = {}) {
   // so that the instant you scroll up even a little, nothing may auto-scroll you back down.
   const nearPx = typeof opts.nearPx === "number" ? opts.nearPx : WS_SCROLL_NEAR_BOTTOM_PX;
   const atBottom = () => (scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight) < nearPx;
+  // A stable "what am I looking at" anchor for the NOT-pinned case: the first child whose bottom edge is
+  // below the scroller's top, plus how far its own top sits from that edge. Captured in sample() (before
+  // the DOM changes) and restored in apply(), so content inserted / removed / replaced ABOVE the viewport
+  // — a render-cap eviction of the oldest turn, the live→final node swap, a full replaceChildren — can't
+  // shift the reader's view. In the common case (new content appended BELOW the viewport) the anchor
+  // doesn't move, so the restore is a mathematical no-op — identical to the old "leave scrollTop alone",
+  // just also correct when the change is above the fold.
+  const captureAnchor = () => {
+    const top = scrollEl.getBoundingClientRect().top;
+    for (const child of scrollEl.children) {
+      const r = child.getBoundingClientRect();
+      if (r.bottom > top + 1) return { node: child, delta: r.top - top };
+    }
+    return null;
+  };
   const ctrl = {
-    pinned: true, scrollEl, wrap, pill,
+    pinned: true, scrollEl, wrap, pill, _anchor: null,
     // Read the live position. Call BEFORE replacing/growing content, when scrollTop still reflects
-    // where the reader actually is — the answer is "were they following the tail a moment ago?".
-    sample() { this.pinned = atBottom(); return this.pinned; },
-    // Act on that decision once the DOM has changed: follow the tail, or reveal the pulsing pill.
+    // where the reader actually is — the answer is "were they at DEAD BOTTOM a moment ago?". When they
+    // weren't, also snapshot a visual anchor so apply() can pin their exact spot afterward.
+    sample() { this.pinned = atBottom(); this._anchor = this.pinned ? null : captureAnchor(); return this.pinned; },
+    // Act on that decision once the DOM has changed: glue to the tail, or hold the reader's exact spot
+    // (anchor restore) and reveal the pulsing pill that new output arrived.
     apply(stick) {
-      if (stick) { scrollEl.scrollTop = scrollEl.scrollHeight; this.pinned = true; pill.classList.remove("--show"); }
-      else { this.pinned = false; pill.classList.add("--show"); }
+      if (stick) { scrollEl.scrollTop = scrollEl.scrollHeight; this.pinned = true; this._anchor = null; pill.classList.remove("--show"); }
+      else {
+        const a = this._anchor;
+        if (a && a.node && a.node.parentNode === scrollEl) {
+          const now = a.node.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top;
+          const shift = now - a.delta;   // >0 means content grew ABOVE the fold and pushed the anchor down
+          if (Math.abs(shift) >= 1) scrollEl.scrollTop += shift;   // ignore sub-pixel rect noise; correct only real shifts
+        }
+        this.pinned = false; pill.classList.add("--show");
+      }
     },
     // Force back to the tail and re-pin (pill click, or a just-sent message).
-    pin() { this.pinned = true; scrollEl.scrollTop = scrollEl.scrollHeight; pill.classList.remove("--show"); },
+    pin() { this.pinned = true; this._anchor = null; scrollEl.scrollTop = scrollEl.scrollHeight; pill.classList.remove("--show"); },
   };
   let raf = 0;
   scrollEl.addEventListener("scroll", () => {

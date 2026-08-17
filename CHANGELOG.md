@@ -4,6 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.62] - 2026-08-18
+
+### Fixed
+- **Scroll no longer gets dragged down by an incoming reply unless you're at dead bottom (Core + Pact).**
+  Two fixes to the shared stick-to-bottom controller:
+  - **Strict dead-bottom detection.** The Core transcript used a 48px "near bottom" band, so scrolling up
+    even a line or two still counted as "at the bottom" and re-snapped you down on the next streamed
+    chunk. Lowered to a 4px rounding tolerance (what Pact already used) — now only a genuine dead-bottom
+    position follows the tail; any scroll-up holds your spot until you return by hand or tap "↓ New output".
+  - **Anchor preservation when scrolled up.** `apply()` used to just leave `scrollTop` untouched, which is
+    only correct when new content lands BELOW the viewport. When content changed ABOVE the fold — the
+    Core transcript evicting its oldest turn past the 20-turn render cap, the live→final node swap, a full
+    re-render — a scrolled-up reader's view still jumped. The controller now snapshots a visual anchor in
+    `sample()` (the first child crossing the scroller's top edge) and restores it in `apply()`, so the
+    exact content you're reading stays put no matter where the DOM changed. For the common below-append
+    case the restore is a no-op, so following-the-tail behavior is unchanged.
+
 ## [1.4.61] - 2026-08-18
 
 ### Fixed
