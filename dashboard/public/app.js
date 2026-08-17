@@ -123,6 +123,7 @@ const SECTIONS = [
   { id: "workspace", label: "Workspace", icon: "💬", view: "workspace", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local"), subs: [
     { id: "core", label: "Core", icon: "💬", short: "Core", view: "workspace" },
     { id: "pact", label: "Pact", icon: "⬡", short: "Pact", view: "pact" },
+    { id: "usage", label: "Usage", icon: "📊", short: "Usage", view: "usage" },
     { id: "mirror", label: "Mirror", icon: "🪞", short: "Mirror", view: "mirror" },
     { id: "localhost", label: "LocalHost", icon: "🌐", short: "Host", view: "localhost" },
   ] },
@@ -534,6 +535,7 @@ function render() {
   if (VIEW !== "localhost" && LH_TIMER) { clearInterval(LH_TIMER); LH_TIMER = null; }
   if (VIEW !== "pact" && typeof PACT_RUN_ES !== "undefined" && PACT_RUN_ES) { try { PACT_RUN_ES.close(); } catch {} PACT_RUN_ES = null; }
   if (VIEW !== "pact" && typeof PACT_CHAT !== "undefined" && PACT_CHAT) { pactChatStop(); }
+  if (VIEW !== "usage") usageStop();   // close the Usage tab's SSE stream when leaving it
   document.body.classList.toggle("ws-full", VIEW === "workspace" || VIEW === "pact");   // full-height cockpit views
   if (VIEW === "cascade") v.replaceChildren(viewCascade());
   else if (VIEW === "activity") v.replaceChildren(viewActivity());
@@ -553,6 +555,63 @@ function render() {
   else if (VIEW === "admin") v.replaceChildren(viewAdmin(ADMIN_SECTION));
   else if (VIEW === "mirror") v.replaceChildren(viewMirror());
   else if (VIEW === "localhost") v.replaceChildren(viewLocalHost());
+  else if (VIEW === "usage") v.replaceChildren(viewUsage());
+}
+
+/* ---------- Usage & Keys (Workspace → Usage): multi-key OAuth + plan rate-limit viewer + failover ----- */
+let USAGE_ES = null;
+function usageStop() { try { USAGE_ES && USAGE_ES.close(); } catch {} USAGE_ES = null; }
+function viewUsage() {
+  const list = el("div", { class: "usage-keys" }, [el("div", { class: "hint", style: "padding:12px" }, ["Loading keys…"])]);
+  const refreshBtn = el("button", { class: "loginbtn secondary" }, ["↻ Refresh"]);
+  refreshBtn.addEventListener("click", () => { wsPost("control", { action: "usageLimits" }); wsPost("control", { action: "keysUsage" }); refreshBtn.textContent = "↻ Refreshing…"; setTimeout(() => { refreshBtn.textContent = "↻ Refresh"; }, 1200); });
+  const pct = (w) => (w && typeof w.utilization === "number") ? Math.round(w.utilization) : null;
+  function bar(label, val, resetAt) {
+    const row = [el("span", { class: "usage-bar-lbl" }, [label])];
+    if (val === null) { row.push(el("span", { class: "hint" }, ["— no data yet"])); return el("div", { class: "usage-bar-row" }, row); }
+    const cls = val >= 95 ? " --hot" : val >= 80 ? " --warn" : "";
+    row.push(
+      el("div", { class: "usage-bar" }, [el("div", { class: "usage-bar-fill" + cls, style: `width:${Math.min(100, Math.max(0, val))}%` }, [])]),
+      el("span", { class: "usage-bar-pct" + cls }, [val + "%"]),
+      resetAt ? el("span", { class: "usage-bar-reset hint" }, ["resets " + new Date(resetAt).toLocaleString()]) : "",
+    );
+    return el("div", { class: "usage-bar-row" }, row);
+  }
+  function card(r) {
+    const rl = r.limits && r.limits.rate_limits;
+    const head = el("div", { class: "usage-key-hd" }, [
+      el("span", { class: "usage-key-name" }, [r.name]),
+      el("code", { class: "usage-key-fp" }, [r.fingerprint]),
+      el("span", { class: "ws-spacer" }, []),
+      r.active ? el("span", { class: "usage-key-badge --active" }, ["● active"]) : "",
+      r.exhausted ? el("span", { class: "usage-key-badge --exhausted" }, ["⚠ exhausted" + (r.exhaustedUntil ? " · frees " + new Date(r.exhaustedUntil).toLocaleTimeString() : "")]) : "",
+    ]);
+    const bars = rl
+      ? [bar("5-hour", pct(rl.five_hour), rl.five_hour && rl.five_hour.resets_at), bar("7-day", pct(rl.seven_day), rl.seven_day && rl.seven_day.resets_at)]
+      : [el("div", { class: "hint", style: "padding:4px 0" }, ["No usage recorded yet — it fills in once this key runs a turn."])];
+    if (rl && pct(rl.seven_day_opus) !== null) bars.push(bar("7-day · Opus", pct(rl.seven_day_opus), null));
+    if (rl && pct(rl.seven_day_sonnet) !== null) bars.push(bar("7-day · Sonnet", pct(rl.seven_day_sonnet), null));
+    return el("div", { class: "usage-key-card" + (r.active ? " --active" : "") + (r.exhausted ? " --exhausted" : "") }, [head, ...bars]);
+  }
+  function render(rows) {
+    if (!rows || !rows.length) { list.replaceChildren(el("div", { class: "hint", style: "padding:12px" }, ["No OAuth keys configured. Add one or more to ", el("code", {}, [".secrets/claude-oauth-keys.csv"]), " — one per line: ", el("code", {}, ["<token> ; <name>"]), "."])); return; }
+    list.replaceChildren(...rows.map(card));
+  }
+  // Live: open a workspace SSE stream, ask for the key list + a usage refresh, render on the state frame.
+  usageStop();
+  const q = "?conn=" + encodeURIComponent(wsUuid() + ":usage") + "&label=" + encodeURIComponent("usage");
+  let es; try { es = new EventSource("/api/workspace/stream" + q); USAGE_ES = es; } catch {}
+  if (es) {
+    es.addEventListener("hello", () => { wsPost("control", { action: "keysUsage" }); wsPost("control", { action: "usageLimits" }); });
+    es.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch { return; } if (m && m.kind === "state" && m.data && Array.isArray(m.data.keysUsage)) render(m.data.keysUsage); };
+  }
+  return el("div", { class: "usage-view" }, [
+    el("h2", { class: "deploy-h" }, ["📊 Usage & Keys"]),
+    el("div", { class: "hint" }, ["Plan rate-limit utilization per OAuth key. New turns run on the active key; when a key's 5-hour or weekly limit is hit, they fall over to the next key automatically."]),
+    el("div", { class: "usage-actions" }, [refreshBtn]),
+    list,
+    el("div", { class: "usage-note hint" }, ["Keys live in ", el("code", {}, [".secrets/claude-oauth-keys.csv"]), " — one per line, ", el("code", {}, ["<token> ; <name>"]), ". Add a line to add a key; edit after the ", el("code", {}, [";"]), " to rename. Utilization is the SDK's experimental plan-limit surface and may be unavailable until a key has run a turn."]),
+  ]);
 }
 
 /* ---------- LocalHost: the aggregator, embedded ----------
@@ -5423,11 +5482,10 @@ function pactChatRender() {
   // badge (wsUsageLabel). Hidden until this tab actually has usage data; filled by pactChatPaint.
   const usageEl = el("span", { class: "pc-usage" }, []);
   usageEl.hidden = true;
-  // Account-wide plan usage limits (5h / 7d rolling rate-limit utilization, EXPERIMENTAL per the SDK) —
-  // the same data the Core cockpit shows. Filled by pactRenderUsageLimits from PACT_CHAT.usageLimits.
-  const usageLimitsEl = el("span", { class: "pc-usage-limits", title: "Plan usage limits (experimental)" }, []);
-  usageLimitsEl.hidden = true;
-  const head = el("div", { class: "pact-zone-hd pc-head" }, [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, el("span", { class: "ws-spacer" }, []), usageLimitsEl, usageEl, modeSel, chatCollapse]);
+  // Account-wide plan usage limits now live in the dedicated Workspace → Usage tab (multi-key + failover),
+  // so the Pact head no longer carries a usage badge. The Pact stream still requests `usageLimits` on
+  // connect, which the engine uses to keep the active key's per-key usage record fresh (see _usageLimits).
+  const head = el("div", { class: "pact-zone-hd pc-head" }, [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, el("span", { class: "ws-spacer" }, []), usageEl, modeSel, chatCollapse]);
   const scroll = el("div", { class: "pc-scroll" }, []);
   const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (⌘/Ctrl+Enter to send)" });
   const send = el("button", { class: "pc-send" }, ["Send"]);

@@ -4,6 +4,30 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.57] - 2026-08-17
+
+### Added
+- **Workspace → Usage tab: multi-key OAuth store with automatic failover + a plan-usage viewer.** A new
+  Tier-2 **Usage** button sits alongside Core / Pact / Mirror / LocalHost, so account usage no longer
+  burdens the Core and Pact workspaces. It shows every configured OAuth key as a card — name, a safe
+  fingerprint (never the raw token), **● active** / **⚠ exhausted** badges, and 5-hour + 7-day utilization
+  bars with reset times (plus per-model Opus / Sonnet when present). A refresh button re-polls live.
+- **Multiple, named OAuth keys.** Keys live in `.secrets/claude-oauth-keys.csv`, one per line as
+  `<token> ; <name>` (comma also accepted; name optional → "Key N"; `#` comments and blanks ignored;
+  duplicate tokens deduped). The legacy single-token `.secrets/claude-oauth-token.txt` still works and is
+  read as one key ("Key 1"). New store: `lib/claudeKeys.mjs` (`parseClaudeKeys`, `serializeClaudeKeys`,
+  `readClaudeKeys`, `keyFingerprint`, `usageExhaustion`, `pickActiveKeyIndex`) with `claudeKeys.test.mjs`.
+- **Automatic failover to the next key** when the current one's **5-hour or weekly** limit is exhausted.
+  Exhaustion is detected two ways: the SDK's experimental rate-limit surface reporting a window at ≥100%,
+  or a mid-turn rate-limit / quota error (the key is then blocked until its known 5-hour reset, or a
+  1-hour cooldown if unknown). Each turn's `_prompt` picks the first non-exhausted key; if all are blocked
+  it uses the one that frees soonest. The Usage tab reflects the active pick and each key's block window.
+
+### Changed
+- The plan usage-limits **badge was removed from the Pact header** (added in 1.4.56) — that data now lives
+  in the dedicated Usage tab. The Pact stream still requests `usageLimits` on connect so the engine keeps
+  the active key's per-key usage record fresh.
+
 ## [1.4.56] - 2026-08-17
 
 ### Added
