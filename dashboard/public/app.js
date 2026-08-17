@@ -4775,7 +4775,7 @@ function pactChatOpenStream() {
   // disconnected emitted its live events into a dead stream and is otherwise lost to the UI; the
   // resync re-fetches the now-persisted reply. Mirrors the Core cockpit's resyncOpenPanes() on `hello`.
   PACT_STREAM_LAST_MSG_AT = Date.now();   // a fresh stream isn't already stale
-  es.addEventListener("hello", () => { PACT_STREAM_LAST_MSG_AT = Date.now(); pactChatResyncAll(); pactOutboxFlush(); });
+  es.addEventListener("hello", () => { PACT_STREAM_LAST_MSG_AT = Date.now(); pactChatResyncAll(); pactOutboxFlush(); wsPost("control", { action: "usageLimits" }); });
   es.onmessage = (e) => { PACT_STREAM_LAST_MSG_AT = Date.now(); let m; try { m = JSON.parse(e.data); } catch { return; } pactChatRoute(m); };
   // Staleness watchdog — the fix for "desktop stuck on thinking while the phone shows the answer". Every
   // message AND the server's 25s heartbeat stamp PACT_STREAM_LAST_MSG_AT; if nothing arrives for
@@ -4811,6 +4811,9 @@ function pactChatRoute({ kind, sessionKey, data }) {
     pactChatSelfHeal();   // also runs on a local timer (PACT_HEAL_TIMER) so a silent stream still self-heals
     return;
   }
+  // Account-wide plan usage limits (5h/7d) — NOT tied to a tab (the engine answers it from any live
+  // session and echoes with the requesting key, which may be null), so handle it before the tab lookup.
+  if (kind === "event" && data && data.kind === "usageLimits") { PACT_CHAT.usageLimits = data.limits; pactRenderUsageLimits(); return; }
   // The per-session history list (state frame, no sessionKey) — refresh the history panel.
   if (kind === "state" && data && Array.isArray(data.pactSessions)) { PACT_CHAT.sessions = data.pactSessions; pactChatRenderHistory(); if (typeof PACT_MOBILE_SESSIONS_CB === "function") PACT_MOBILE_SESSIONS_CB(); return; }
   // A saved chat's transcript arriving to rehydrate a Resume / Load-into-box tab. The frame is keyed
@@ -4900,6 +4903,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       // Context usage changes every turn — refresh it once a turn actually finishes (not on every
       // streamed chunk), exactly like the Core cockpit (see paintPane's contextUsage request).
       wsPost("control", { action: "contextUsage", args: { sessionKey: t.key } });
+      wsPost("control", { action: "usageLimits" });   // account-wide plan usage moves each turn — refresh the badge
       t._lastResultAt = Date.now();   // a deepwork/background phase can follow a "result" — see the heartbeat
       pactChatPaint(t); pactEdCheckAgentEdits(); pactEdCheckChangedFiles();
       pactChatDrainQueue(t);   // turn done → release anything typed mid-turn, merged into one prompt
@@ -5214,6 +5218,41 @@ function wsAttachCopyButtons(container) {
     pre.appendChild(b);
   });
 }
+// ===== PACT USAGE LIMITS — pure helper (sliced for lib/pactUsageLimits.test.mjs) =====
+// Format the plan's rate-limit utilization (5h / 7d rolling windows + per-model) into a compact
+// "5h X% · 7d Y%" badge label + a multi-line tooltip. Account-wide and EXPERIMENTAL (the SDK's own
+// usage_EXPERIMENTAL… surface). Returns null when there's nothing to show (unavailable / no windows).
+function pactUsageLimits(limits) {
+  if (!limits || !limits.rate_limits_available || !limits.rate_limits) return null;
+  var rl = limits.rate_limits;
+  var pct = function (w) { return (w && typeof w.utilization === "number") ? Math.round(w.utilization) : null; };
+  var resets = function (w) { return (w && w.resets_at) ? new Date(w.resets_at).toLocaleString() : null; };
+  var five = pct(rl.five_hour), seven = pct(rl.seven_day);
+  var parts = [];
+  if (five !== null) parts.push("5h " + five + "%");
+  if (seven !== null) parts.push("7d " + seven + "%");
+  if (!parts.length) return null;
+  var detail = [];
+  if (five !== null) detail.push("5-hour: " + five + "%" + (resets(rl.five_hour) ? ", resets " + resets(rl.five_hour) : ""));
+  if (seven !== null) detail.push("7-day: " + seven + "%" + (resets(rl.seven_day) ? ", resets " + resets(rl.seven_day) : ""));
+  if (pct(rl.seven_day_opus) !== null) detail.push("7-day (Opus): " + pct(rl.seven_day_opus) + "%");
+  if (pct(rl.seven_day_sonnet) !== null) detail.push("7-day (Sonnet): " + pct(rl.seven_day_sonnet) + "%");
+  (rl.model_scoped || []).forEach(function (m) { if (m && typeof m.utilization === "number") detail.push((m.display_name || "model") + ": " + Math.round(m.utilization) + "%"); });
+  return { text: parts.join(" · "), title: "Plan usage limits (experimental) — account-wide" + (detail.length ? "\n" + detail.join("\n") : ""), max: Math.max(five || 0, seven || 0) };
+}
+// ===== end PACT USAGE LIMITS pure helper =====
+function pactRenderUsageLimits() {
+  if (!PACT_CHAT || !PACT_CHAT.host) return;
+  const elMain = PACT_CHAT.host.querySelector(".pc-usage-limits");
+  if (!elMain) return;
+  const r = pactUsageLimits(PACT_CHAT.usageLimits);
+  if (!r) { elMain.hidden = true; return; }
+  elMain.hidden = false;
+  elMain.textContent = r.text;
+  elMain.title = r.title;
+  elMain.classList.toggle("--warn", r.max >= 80 && r.max < 95);   // amber as you approach a limit
+  elMain.classList.toggle("--hot", r.max >= 95);                  // red when nearly capped
+}
 function pactChatMsgNode(m) {
   if (m.role === "user") {
     // `m.images` ride two shapes: a just-sent message carries raw { dataUrl } (rendered inline);
@@ -5384,7 +5423,11 @@ function pactChatRender() {
   // badge (wsUsageLabel). Hidden until this tab actually has usage data; filled by pactChatPaint.
   const usageEl = el("span", { class: "pc-usage" }, []);
   usageEl.hidden = true;
-  const head = el("div", { class: "pact-zone-hd pc-head" }, [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, el("span", { class: "ws-spacer" }, []), usageEl, modeSel, chatCollapse]);
+  // Account-wide plan usage limits (5h / 7d rolling rate-limit utilization, EXPERIMENTAL per the SDK) —
+  // the same data the Core cockpit shows. Filled by pactRenderUsageLimits from PACT_CHAT.usageLimits.
+  const usageLimitsEl = el("span", { class: "pc-usage-limits", title: "Plan usage limits (experimental)" }, []);
+  usageLimitsEl.hidden = true;
+  const head = el("div", { class: "pact-zone-hd pc-head" }, [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, el("span", { class: "ws-spacer" }, []), usageLimitsEl, usageEl, modeSel, chatCollapse]);
   const scroll = el("div", { class: "pc-scroll" }, []);
   const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (⌘/Ctrl+Enter to send)" });
   const send = el("button", { class: "pc-send" }, ["Send"]);
@@ -5432,6 +5475,7 @@ function pactChatRender() {
   attachStickController(scroll, { wrapClass: "stick-wrap-pc", nearPx: 4 });   // wrap now so the pill exists from the first paint
   requestAnimationFrame(() => pactChatAutosize(input));   // size to any restored draft once the pane has real layout
   pactSyncCollapseBtns();
+  pactRenderUsageLimits();   // the head was just rebuilt — restore the plan-usage badge from PACT_CHAT.usageLimits
   if (active) { pactChatPaint(active); pactPaintAttachment(active); }   // restore any attachments when switching tabs
 }
 function viewPact() {

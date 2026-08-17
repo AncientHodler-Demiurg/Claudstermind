@@ -4,7 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.55] - 2026-08-17
+## [1.4.56] - 2026-08-17
+
+### Added
+- **Plan usage-limits badge in the Pact workspace.** The header now shows the account's rolling rate-limit
+  utilization — a compact **"5h X% · 7d Y%"** badge, with a full breakdown in the tooltip (5-hour + 7-day
+  windows with reset times, plus per-model / Opus / Sonnet usage). It tints **amber** as you approach a
+  limit (≥80%) and **red** when nearly capped (≥95%). This is the same account-wide data the Core cockpit
+  already surfaced, now in the Pact chat too. Refreshed when a turn finishes and on stream (re)connect;
+  hidden until there's a live session to read it from. (The data is the SDK's EXPERIMENTAL usage surface, so
+  it can change or be unavailable — the badge just hides itself then.) Pure formatter `pactUsageLimits` +
+  `lib/pactUsageLimits.test.mjs`.
 
 ### Fixed
 - **The 10-family Pact coloring is now exact everywhere — including the deleted lines of a diff.** Those red
