@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.63] - 2026-08-18
+
+### Added
+- **Scroll-mode "bulb" — a persistent, always-visible readout of the chat's follow mode (Core + Pact).**
+  A small badge at the bottom-left of every transcript shows which mode you're in: green **● Live** (you're
+  at dead bottom — incoming messages scroll into view automatically) or amber **● Held** (you've scrolled up
+  — incoming messages stay put and won't move your view). Unlike the "↓ New output" pill (which only appears
+  when new output lands while you're scrolled up), the bulb is always shown, so you can tell at a glance how
+  incoming replies will behave. Click it to jump to the latest and go Live. It's driven from the exact same
+  `pinned` state the scroll behavior uses, updated on every scroll and every render, so it can never
+  disagree with what actually happens.
+
 ## [1.4.62] - 2026-08-18
 
 ### Fixed

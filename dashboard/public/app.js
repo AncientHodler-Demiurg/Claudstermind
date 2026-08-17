@@ -2698,6 +2698,25 @@ function attachStickController(scrollEl, opts = {}) {
   wrap.appendChild(scrollEl);
   const pill = el("button", { class: "stick-pill", type: "button", title: "Jump to the latest output" }, ["↓ New output"]);
   wrap.appendChild(pill);
+  // Persistent mode "bulb" — tells you at a glance which mode the transcript is in, ALWAYS visible (unlike
+  // the pill, which only appears when new output lands while you're scrolled up):
+  //   • LIVE  (green, at dead bottom)  → incoming messages scroll into view automatically.
+  //   • HELD  (amber, scrolled up)     → incoming messages stay put; your view won't move.
+  // Click it to jump to the latest and go Live. reflect() repaints it from ctrl.pinned on every scroll
+  // and every sample()/apply(), so it can never disagree with the actual scroll behavior.
+  const modeTag = el("button", { class: "stick-mode", type: "button" }, [
+    el("span", { class: "stick-mode-dot" }, []), el("span", { class: "stick-mode-lbl" }, []),
+  ]);
+  wrap.appendChild(modeTag);
+  const reflect = () => {
+    const live = !!ctrl.pinned;
+    modeTag.classList.toggle("--live", live);
+    modeTag.classList.toggle("--held", !live);
+    modeTag.querySelector(".stick-mode-lbl").textContent = live ? "Live" : "Held";
+    modeTag.title = live
+      ? "Live — you're at the bottom, so new messages scroll into view automatically."
+      : "Held — you've scrolled up, so new messages stay put and won't move your view. Click to jump to the latest.";
+  };
   // How close to the bottom still counts as "following the tail". Callers can force STRICT (~exact bottom)
   // so that the instant you scroll up even a little, nothing may auto-scroll you back down.
   const nearPx = typeof opts.nearPx === "number" ? opts.nearPx : WS_SCROLL_NEAR_BOTTOM_PX;
@@ -2722,7 +2741,7 @@ function attachStickController(scrollEl, opts = {}) {
     // Read the live position. Call BEFORE replacing/growing content, when scrollTop still reflects
     // where the reader actually is — the answer is "were they at DEAD BOTTOM a moment ago?". When they
     // weren't, also snapshot a visual anchor so apply() can pin their exact spot afterward.
-    sample() { this.pinned = atBottom(); this._anchor = this.pinned ? null : captureAnchor(); return this.pinned; },
+    sample() { this.pinned = atBottom(); this._anchor = this.pinned ? null : captureAnchor(); reflect(); return this.pinned; },
     // Act on that decision once the DOM has changed: glue to the tail, or hold the reader's exact spot
     // (anchor restore) and reveal the pulsing pill that new output arrived.
     apply(stick) {
@@ -2736,9 +2755,10 @@ function attachStickController(scrollEl, opts = {}) {
         }
         this.pinned = false; pill.classList.add("--show");
       }
+      reflect();
     },
     // Force back to the tail and re-pin (pill click, or a just-sent message).
-    pin() { this.pinned = true; this._anchor = null; scrollEl.scrollTop = scrollEl.scrollHeight; pill.classList.remove("--show"); },
+    pin() { this.pinned = true; this._anchor = null; scrollEl.scrollTop = scrollEl.scrollHeight; pill.classList.remove("--show"); reflect(); },
   };
   let raf = 0;
   scrollEl.addEventListener("scroll", () => {
@@ -2749,9 +2769,12 @@ function attachStickController(scrollEl, opts = {}) {
       // (the pill only turns ON when new output lands via apply(), not merely on scroll-up).
       if (atBottom()) { ctrl.pinned = true; pill.classList.remove("--show"); }
       else ctrl.pinned = false;
+      reflect();
     });
   }, { passive: true });
   pill.addEventListener("click", () => ctrl.pin());
+  modeTag.addEventListener("click", () => ctrl.pin());   // the bulb is also a "jump to latest + go Live" button
+  reflect();   // paint the initial state (starts Live/pinned)
   scrollEl._stick = ctrl;
   return ctrl;
 }
