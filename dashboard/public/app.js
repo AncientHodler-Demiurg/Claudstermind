@@ -6316,6 +6316,13 @@ function viewWorkspace() {
     if (m.kind === "created") return line("ws-note", [`created ${m.what}: ${m.path}`]);
     return null;
   }
+  // Cache each item's rendered node on the message. Transcript items are immutable once added
+  // (append-only; assistant markdown/code-highlighting is the expensive part), so within the LIVE last
+  // turn — the only turn re-rendered on every event — an item renders once and is then reused, the same
+  // per-node caching the Pact chat uses. Finalized turns are already cached whole (ui._turnCache); a
+  // resync/reopen swaps the transcript ARRAY, giving fresh message objects with no `_node`, so nothing
+  // stale can be reused. `null` results (no-op items) aren't cached — they're cheap to re-evaluate.
+  function renderItemCached(m) { return m._node || (m._node = renderItem(m)); }
   const isToolEvent = (m) => m.kind === "tool_use" || m.kind === "tool_result";
   const isTurnBoundary = (m) => m.role === "user" || m.kind === "user";
   // A turn with several tool calls otherwise renders one "✓ tool result" line per event, burying
@@ -6340,7 +6347,7 @@ function viewWorkspace() {
     if (isOpen) props.open = true;
     return el("details", props, [
       el("summary", { class: "ws-toolgroup-summary" }, [el("i", { class: "ti ti-tool" }, []), ` ${calls} tool call${calls === 1 ? "" : "s"}`]),
-      ...group.map(renderItem).filter(Boolean),
+      ...group.map(renderItemCached).filter(Boolean),
     ]);
   }
   // Renders a full transcript, grouping every tool_use/tool_result event within one TURN into a
@@ -6368,7 +6375,7 @@ function viewWorkspace() {
         if (!group) { group = []; groupKey = keyBase + i; groupSlot = out.length; out.push(null); }
         group.push(m);
       } else {
-        const node = renderItem(m); if (node) out.push(node);
+        const node = renderItemCached(m); if (node) out.push(node);
       }
     });
     closeGroup();

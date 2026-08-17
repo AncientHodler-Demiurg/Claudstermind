@@ -4,7 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.50] - 2026-08-17
+## [1.4.51] - 2026-08-17
+
+### Changed
+- **Core cockpit: the live turn no longer re-renders every item on each event.** The Core transcript was
+  already well-optimized (finalized turns are cached whole, old turns hide behind "show earlier", only the
+  growing last turn re-renders) — but *within* that last turn, every item (including markdown-heavy assistant
+  messages) was re-parsed on every event. Now each item's rendered node is cached on the message (the same
+  per-node caching added to Pact chat in 1.4.50), so a big in-flight turn with lots of tool calls + long
+  replies stays smooth. Finalized-turn caching and the render cap are unchanged; a resync/reopen still swaps
+  the transcript array (fresh objects, no stale nodes).
 
 ### Changed
 - **Pact chat is much smoother on a long conversation — no more stall on every event.** Each incoming event
