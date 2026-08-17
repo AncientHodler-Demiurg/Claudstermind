@@ -4,7 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.51] - 2026-08-17
+## [1.4.52] - 2026-08-17
+
+### Added
+- **Pact coloring: URD/URC auxiliary prefixes now share their parent's color.** `URDX` / `URDXX`
+  (auxiliaries of a `URD` function) now color the same as `URD` (derived-reads blue, `pk-readd`), and
+  `URCX` / `URCXX` (auxiliaries of a `URC` function) color the same as `URC` (reads blue, `pk-read`). Added
+  to the editable/diff editor's classifier wrapper (same mechanism as the earlier `CC_`/`AA_` doubled
+  prefixes), matching the base band boundaries (segment start, optional write-count digits, `_`/`>`/`|`
+  trailer). Covered by `lib/pactAuxColors.test.mjs`.
 
 ### Changed
 - **Core cockpit: the live turn no longer re-renders every item on each event.** The Core transcript was

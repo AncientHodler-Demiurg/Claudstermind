@@ -20,9 +20,19 @@
     var base = window.pactClassifyWord;
     if (typeof base !== "function" || base._ccaaWrapped) return;
     var CC = /(?:^|[|.:>])CC\d*[_>|]/, AA = /(?:^|[|.:>])AA\d*[_>|]/;
+    // URDX/URDXX are auxiliaries of a URD function, and URCX/URCXX of a URC function (URDXX/URCXX being
+    // the auxiliary of URDX/URCX). They take the SAME band color as their parent — URD is derived-reads
+    // (pk-readd), URC is reads (pk-read). The base classifier's URD/URC patterns require a boundary
+    // immediately after "URD"/"URC", so "URDX_"/"URCX_" fall through to null here and we fill them in.
+    var URDX = /(?:^|[|.:>])URDXX?\d*[_>|]/, URCX = /(?:^|[|.:>])URCXX?\d*[_>|]/;
     var wrapped = function (w) {
       var r = base(w);
-      if (r == null) { if (CC.test(w)) return "pk-client"; if (AA.test(w)) return "pk-admin"; }
+      if (r == null) {
+        if (URDX.test(w)) return "pk-readd";   // URDX / URDXX → same blue as URD
+        if (URCX.test(w)) return "pk-read";    // URCX / URCXX → same blue as URC
+        if (CC.test(w)) return "pk-client";
+        if (AA.test(w)) return "pk-admin";
+      }
       return r;
     };
     wrapped._ccaaWrapped = true;
