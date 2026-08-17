@@ -4,7 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.59] - 2026-08-18
+## [1.4.60] - 2026-08-18
+
+### Fixed
+- **A prompt sent right before an interrupt/crash/restart no longer disappears from the conversation.**
+  The dashboard replays each conversation from its own on-disk **mirror**, which was only written at a
+  turn boundary (`_persist`, on the `result` event or a clean stop). So a prompt whose turn never reached
+  one — you hit Stop and the SDK interrupt hung, the daemon was restarted mid-turn, or the turn crashed —
+  lived only in memory and vanished from the mirror on the next reload, even though Claude's own session
+  log still had it. Reloading history couldn't bring it back (the UI replays the mirror, not the SDK log).
+  Now the user turn is **persisted the instant it's accepted** (persist-on-send, in both the new-session
+  and existing-session paths), closing that window. New regression test: a prompt whose turn hangs with no
+  `result` is still on disk for the display path. The real SDK session id now rides on the assistant reply
+  (always present in a real turn) and, for resumed sessions, is stamped on the prompt at send time.
+
+
 
 ### Fixed
 - **Typing in the Pact compose box no longer hangs on a big conversation.** The Pact chat rendered
