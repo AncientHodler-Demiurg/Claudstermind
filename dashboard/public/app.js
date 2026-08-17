@@ -5173,6 +5173,34 @@ function pactChatDecide(t, decision) {
   t.perm = null; t.status = decision === "allow" ? "thinking" : "idle";
   pactChatPaint(t);
 }
+// The Pact chat renders assistant markdown via window.mdRender (→ `.md-pre` code blocks), which — unlike
+// the Core cockpit's own renderer — has no copy affordance. Add a ⧉ copy button to each code block so a
+// handed-off block (e.g. an agent's copy-paste window) can be copied in one tap. Idempotent (a cached
+// node repaint won't double-add). Reuses the existing `.ws-copy` button style, absolutely positioned.
+function wsCopyFallback(text, done) {
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.cssText = "position:fixed;top:-9999px;left:0;opacity:0";
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    const ok = document.execCommand("copy"); document.body.removeChild(ta); if (done) done(ok);
+  } catch { if (done) done(false); }
+}
+function wsAttachCopyButtons(container) {
+  if (!container || !container.querySelectorAll) return;
+  container.querySelectorAll("pre").forEach((pre) => {
+    if (pre.querySelector(".ws-copy")) return;
+    const b = el("button", { class: "ws-copy ws-copy-abs", type: "button", title: "Copy code" }, ["⧉"]);
+    const flash = (ok) => { b.textContent = ok ? "✓" : "✗"; b.classList.toggle("copied", !!ok); setTimeout(() => { b.textContent = "⧉"; b.classList.remove("copied"); }, 1200); };
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const text = (pre.querySelector("code") || pre).textContent || "";
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => flash(true), () => wsCopyFallback(text, flash));
+      else wsCopyFallback(text, flash);
+    });
+    pre.classList.add("ws-pre-copy");
+    pre.appendChild(b);
+  });
+}
 function pactChatMsgNode(m) {
   if (m.role === "user") {
     // `m.images` ride two shapes: a just-sent message carries raw { dataUrl } (rendered inline);
@@ -5199,6 +5227,7 @@ function pactChatMsgNode(m) {
     if (m.elapsedMs != null) kids.push(el("div", { class: "pc-thought", title: "Total time for this response" }, ["💭 Thought for " + pactFmtThought(m.elapsedMs)]));
     const body = el("div", { class: "pc-asst-body" });
     if (typeof window.mdRender === "function") body.innerHTML = window.mdRender(m.text); else body.textContent = m.text;
+    wsAttachCopyButtons(body);   // ⧉ copy on every code block (handoff windows etc.)
     kids.push(body);
     return el("div", { class: "pc-msg pc-asst" }, kids);
   }

@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.53] - 2026-08-17
+
+### Added
+- **Copy button on the Pact chat's code blocks.** A code block in an agent reply (e.g. a handoff / copy-paste
+  window) now has a ⧉ copy button in its top-right corner — one tap copies the block. The Pact chat renders
+  markdown via `mdRender`, which (unlike the Core cockpit's own renderer, which already had copy buttons) had
+  no copy affordance. On touch the button stays clearly visible (no hover).
+
 ## [1.4.52] - 2026-08-17
 
 ### Added

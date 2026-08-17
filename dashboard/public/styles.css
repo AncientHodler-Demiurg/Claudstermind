@@ -1547,6 +1547,14 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-md .md-code { font: 12px ui-monospace, monospace; background: var(--chip); padding: 1px 5px; border-radius: 5px; }
 .pact-md .md-pre { background: #0b0f14; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow: auto; }
 .pact-md .md-pre code { font: 12px/1.5 ui-monospace, monospace; color: #cbd5e1; white-space: pre; }
+/* ⧉ copy button anchored to a code block (Pact chat handoff windows). Anchored on the pre; always
+   faintly visible (mobile has no hover) and solid on hover. `pre` scrolls, so keep the button sticky
+   to the top-right of the viewport of the block via position:absolute on the (relative) pre. */
+.pc-asst-body pre.ws-pre-copy, .pact-md pre.ws-pre-copy { position: relative; }
+.ws-copy-abs { position: absolute; top: 6px; right: 6px; z-index: 2; padding: 2px 6px; font-size: 12px; line-height: 1;
+  background: color-mix(in srgb, var(--panel) 82%, transparent); opacity: .5; backdrop-filter: blur(2px); }
+.ws-pre-copy:hover .ws-copy-abs { opacity: 1; }
+@media (hover: none) { .ws-copy-abs { opacity: .8; } }   /* touch: no hover, so keep it clearly visible */
 .pact-md .md-bq { margin: 8px 0; padding: 2px 12px; border-left: 3px solid var(--accent); color: var(--ink-dim); }
 .pact-md .md-hr { border: none; border-top: 1px solid var(--line); margin: 16px 0; }
 .pact-md a { color: #4fb6e0; }
