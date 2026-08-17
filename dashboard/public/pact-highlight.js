@@ -121,7 +121,12 @@
       if (WORD.test(c)) {
         var w = i; while (w < n && WORD.test(code[w])) w++;
         var word = code.slice(i, w);
-        push(classifyWord(word), word); i = w; continue;
+        // Route through the GLOBAL classifier, which pact-cm-mode.js wraps with the StoicSyntax colour
+        // families (OuronetInformational/StoicSyntax-Prefixes.md §4). This keeps the static <pre>
+        // highlighter (used for deleted diff lines) in lockstep with the editable CodeMirror view — one
+        // source of truth. Falls back to the local band classifier if the wrapper isn't installed
+        // (`root.pactClassifyWord = classifyWord` below guarantees the global always exists).
+        push((root.pactClassifyWord || classifyWord)(word), word); i = w; continue;
       }
       // anything else (whitespace, operators, punctuation) — passthrough, escaped
       var d = i;

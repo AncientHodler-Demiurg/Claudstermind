@@ -4,7 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.54] - 2026-08-17
+## [1.4.55] - 2026-08-17
+
+### Fixed
+- **The 10-family Pact coloring is now exact everywhere — including the deleted lines of a diff.** Those red
+  removal lines are rendered by the static `<pre>` highlighter (`pact-highlight.js`), which used its own
+  internal classifier and so kept the old bands (the one gap noted in 1.4.54). It now routes each word
+  through the wrapped global classifier (`root.pactClassifyWord`), so the static highlighter and the editable
+  CodeMirror view share ONE source of truth — the StoicSyntax families. New/renamed prefixes (`URH_`,
+  `URCx_`, `CT_`, `UEV_IMC`, aux dimming, `A_`/`C_`→RECIPE, `URD_`→HEAVY-READ amber) now color correctly on
+  removed diff lines too. Falls back to the local band classifier if the wrapper isn't loaded. Verified by a
+  test that runs the real `pactHighlight()` through the wrapper.
 
 ### Changed
 - **Pact syntax coloring reworked to the 10-family StoicSyntax taxonomy** (source of truth:
