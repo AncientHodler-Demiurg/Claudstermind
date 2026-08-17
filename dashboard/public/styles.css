@@ -1176,8 +1176,14 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-ed-gutter-y::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 2px; transform: translateY(-50%);
   background: var(--line); border-radius: 2px; transition: background .12s; }
 .pact-ed-gutter-x:hover::after, .pact-ed-gutter-y:hover::after { background: var(--accent); }
+/* `contain: layout paint` fences each editor box's (heavy — a CodeMirror instance) internal layout off
+   from the rest of the page — the SAME isolation the Core cockpit's .ws-pane gets. Without it, a forced
+   reflow anywhere on the Pact page (notably the chat compose box's autosize `height:auto`→`scrollHeight`
+   read on every keystroke) re-lays-out EVERY open editor grid box, which is why typing in the Pact chat
+   hung while the Core chat stayed smooth. `paint` (not `size`/`strict`) — the flex parent still sizes the
+   box, so CodeMirror measures a real viewport; only its internal layout+paint is isolated. */
 .pact-ed-group { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative;
-  background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; contain: layout paint; }
 .pact-ed-group.--active { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); }
 .pact-ed-hd { display: flex; align-items: center; gap: 6px; padding: 4px 6px; min-height: 34px;
   border-bottom: 1px solid var(--line); background: var(--panel); }
@@ -1441,7 +1447,10 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .CodeMirror .cm-pk-cap      { color: #e06c75; }
 
 .pact-right { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
-.pact-chat, .pact-term { flex: 1; min-height: 0; display: flex; flex-direction: column;
+/* Same fence for the chat/terminal zone: the compose box's per-keystroke autosize reflow now stays
+   inside .pact-chat (a small, capped message list) instead of forcing a whole-page layout. Paired with
+   the .pact-ed-group containment above, typing in the Pact chat no longer touches the editor grid. */
+.pact-chat, .pact-term { flex: 1; min-height: 0; display: flex; flex-direction: column; contain: layout paint;
   background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .pact-zone-hd { display: flex; align-items: center; gap: 8px; padding: 8px 10px; font-weight: 700; font-size: 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
 /* Collapse a pane to just its header bar so the sibling fills the column. */

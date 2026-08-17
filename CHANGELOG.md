@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.61] - 2026-08-18
+
+### Fixed
+- **Pact chat typing hang — the actual root cause (follow-up to 1.4.59's message cap).** Only the Core
+  cockpit's panes had `contain: layout paint`; NONE of the Pact containers did. So every keystroke in the
+  Pact compose box — whose autosize does `height:auto` then reads `scrollHeight` — forced a whole-page
+  synchronous reflow that re-laid-out **every open CodeMirror editor box** (the heavy DOM), which is why
+  Pact hung while Core stayed smooth. Added `contain: layout paint` to `.pact-ed-group` (each editor box)
+  and `.pact-chat` / `.pact-term`, fencing the editor grid's layout off from the compose reflow — the same
+  isolation Core has had. The 1.4.59 message cap still helps (smaller chat list); this fixes the real
+  multiplier. CSS-only — a normal reload (the service worker fetches `.js`/`.css` network-first) picks it up.
+
 ## [1.4.60] - 2026-08-18
 
 ### Fixed
