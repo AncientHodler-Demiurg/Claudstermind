@@ -4,6 +4,33 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.59] - 2026-08-18
+
+### Fixed
+- **Typing in the Pact compose box no longer hangs on a big conversation.** The Pact chat rendered
+  *every* message of a tab into the DOM, so a long Master conversation stood up thousands of nodes —
+  and each compose-box autosize (`height:auto` → read `scrollHeight`) then forced a layout of that whole
+  giant tree on every keystroke. The Core cockpit stays smooth because it caps rendered turns
+  (`WS_TURN_RENDER_CAP`); Pact now does the same via `PACT_MSG_RENDER_CAP` (60 messages) with a "▲ Show N
+  earlier messages" chip (`t._showAll` lifts the cap). The tail always shows; the standing DOM stays small.
+
+### Added
+- **Reveal-in-tree in the Pact IDE (VS Code-style auto-reveal).** Selecting a file — switching editor
+  tabs, opening from the tree, or clicking into a box — expands the file tree down to that file, scrolls
+  it into view, and flashes + accents its row. Also available via the tab right-click menu ("Reveal in
+  tree"). Walks ancestor dirs shallowest-first, awaiting each lazy folder load; a newer reveal cancels an
+  in-flight one. New: `pactTreeReveal()`.
+- **Usage tab now labels each key with the Claude account it authenticates as** (email · subscription)
+  when the SDK surfaces it, via a new `ClaudeSession.getAccountInfo()` (SDK `accountInfo()`), recorded
+  per key at turn-end alongside usage.
+
+### Changed
+- **Corrected the "plan usage unavailable" guidance.** Research (SDK bundle + Anthropic issue tracker)
+  confirmed `claude setup-token` mints a token with only the `user:inference` scope, while plan
+  rate-limits (and account email) require `user:profile` — a scope only the interactive `claude /login`
+  / Claude Desktop OAuth flow grants, and one that re-minting a setup-token cannot add. The Usage tab's
+  unavailable notice now says exactly this instead of the earlier (wrong) "re-mint with setup-token" hint.
+
 ## [1.4.58] - 2026-08-18
 
 ### Fixed

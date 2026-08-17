@@ -368,6 +368,7 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .usage-key-hd { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .usage-key-name { font-weight: 700; font-size: 14px; color: var(--ink); }
 .usage-key-fp { font: 11px ui-monospace, monospace; color: var(--ink-mute); background: var(--chip); padding: 1px 6px; border-radius: 5px; }
+.usage-key-acct { font-size: 11px; color: var(--ink-dim); }
 .usage-key-badge { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
 .usage-key-badge.--active { color: #34d399; border: 1px solid color-mix(in srgb, #34d399 55%, transparent); }
 .usage-key-badge.--exhausted { color: #f87171; border: 1px solid color-mix(in srgb, #f87171 55%, transparent); }
@@ -1091,6 +1092,12 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   font-size: 12.5px; white-space: nowrap; }
 .pact-node:hover { background: var(--chip); }
 .pact-file.--active { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--ink); }
+/* Reveal-in-tree (IDE auto-reveal): the row synced to the active editor file. A persistent left accent
+   marks "this is the file open in the active box"; a brief flash draws the eye when it (re)reveals. */
+.pact-node.pact-file.--revealed { box-shadow: inset 2px 0 0 var(--accent); }
+.pact-node.pact-file.--reveal-flash { animation: pact-reveal-flash 900ms ease-out 1; }
+@keyframes pact-reveal-flash { 0% { background: color-mix(in srgb, var(--accent) 40%, transparent); } 100% { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .pact-node.pact-file.--reveal-flash { animation: none; } }
 .pact-chev { width: 12px; flex: 0 0 12px; text-align: center; font-size: 10px; color: var(--ink-dim); }
 .pact-node-ic { flex: 0 0 auto; font-size: 12px; }
 .pact-node-name { overflow: hidden; text-overflow: ellipsis; }

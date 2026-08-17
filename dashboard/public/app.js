@@ -579,9 +579,15 @@ function viewUsage() {
   }
   function card(r) {
     const rl = r.limits && r.limits.rate_limits;
+    // Account identity this key authenticates as (email / subscription), when the SDK surfaces it —
+    // needs the user:profile scope, so often absent for a setup-token. Shown next to the fingerprint.
+    const acct = r.account && (r.account.email || r.account.subscriptionType) ? el("span", { class: "usage-key-acct", title: "Claude account this key is tied to" }, [
+      [r.account.email, r.account.subscriptionType].filter(Boolean).join(" · "),
+    ]) : "";
     const head = el("div", { class: "usage-key-hd" }, [
       el("span", { class: "usage-key-name" }, [r.name]),
       el("code", { class: "usage-key-fp" }, [r.fingerprint]),
+      acct,
       el("span", { class: "ws-spacer" }, []),
       r.active ? el("span", { class: "usage-key-badge --active" }, ["● active"]) : "",
       r.exhausted ? el("span", { class: "usage-key-badge --exhausted" }, ["⚠ exhausted" + (r.exhaustedUntil ? " · frees " + new Date(r.exhaustedUntil).toLocaleTimeString() : "")]) : "",
@@ -592,7 +598,7 @@ function viewUsage() {
     } else if (r.checked && !r.available) {
       // The SDK answered but this key has no plan rate-limits (API-key/Bedrock/Vertex auth, or the token
       // was minted without the plan-usage scope). No percentages will ever come — say so, don't imply waiting.
-      bars = [el("div", { class: "usage-unavail" }, ["⛔ Plan usage isn't available for this key — the token has no plan rate-limit scope (or uses API-key / Bedrock / Vertex auth). Re-mint with ", el("code", {}, ["claude setup-token"]), " to add the scope. Error-based failover still works."])];
+      bars = [el("div", { class: "usage-unavail" }, ["⛔ Plan usage isn't available for this key. Tokens minted by ", el("code", {}, ["claude setup-token"]), " only carry the ", el("code", {}, ["user:inference"]), " scope; plan rate-limits need ", el("code", {}, ["user:profile"]), ", which only the interactive ", el("code", {}, ["claude /login"]), " (or Claude Desktop) login grants. Re-minting a setup-token can't add it. Error-based failover still works regardless."])];
     } else {
       bars = [el("div", { class: "hint", style: "padding:4px 0" }, ["No usage recorded yet — run a turn on this key (or hit ↻ Refresh) to populate it."])];
     }
@@ -2650,6 +2656,14 @@ const WS_SCROLL_NEAR_BOTTOM_PX = 48;
 // WITHOUT content-visibility's on-scroll rendering (which made scrolling feel like it was
 // "loading"). Everything rendered is real and accurately sized, so scrolling stays smooth.
 const WS_TURN_RENDER_CAP = 20;
+// The Pact chat's equivalent cap — it renders individual messages (user / tool_use / assistant), not
+// whole turns, so the cap is in messages (~one turn = user + a few tool_use + assistant). The Pact page
+// is far heavier than the Core cockpit (an editor grid of syntax-highlighted files beside the chat), so
+// an uncapped long conversation there put THOUSANDS of message nodes in the DOM — which made every
+// textarea autosize reflow (height:auto→scrollHeight) lay out the whole giant tree, and THAT is why
+// typing in the Pact compose box hangs on a big conversation while the Core box stays smooth. Capping
+// the standing DOM (older messages behind a "show earlier" chip, t._showAll lifts it) fixes the hang.
+const PACT_MSG_RENDER_CAP = 60;
 const WS_STORE_KEY = "cm.workspace.v1";
 // Mirrors PERMISSION_MODES in lib/claudeSession.mjs — the browser can't import it, so the
 // ids must stay in step with that list (the server ignores any it doesn't recognise).
@@ -3019,6 +3033,8 @@ function pactEdTabMenu(clientX, clientY, g, tb) {
   const moveSub = others.map((gg) => ({ label: label(gg), onClick: () => pactEdMoveTab(g.id, tb.path, gg.id, null) }));
   moveSub.push({ label: "＋ New box", onClick: () => { pactEdAddGroup(); const ng = PACT_ED.groups[PACT_ED.groups.length - 1]; pactEdMoveTab(g.id, tb.path, ng.id, null); } });
   pactShowCtxMenu(clientX, clientY, [
+    { label: "Reveal in tree", onClick: () => pactTreeReveal(tb.path) },
+    "---",
     { label: "Clone to", submenu: cloneSub },
     { label: "Move to", submenu: moveSub },
     "---",
@@ -3092,7 +3108,11 @@ function pactEdLayout() {
     g.el = el("div", { class: "pact-ed-group" + (g.id === PACT_ED.activeId ? " --active" : "") }, [g.tabsEl, g.bodyEl, g.footEl]);
     g.el.style.flex = (g.flex || 1) + " 1 0";
     g.el.addEventListener("mousedown", () => {
-      if (PACT_ED.activeId !== g.id) { PACT_ED.activeId = g.id; for (const gg of PACT_ED.groups) gg.el.classList.toggle("--active", gg.id === PACT_ED.activeId); }
+      if (PACT_ED.activeId !== g.id) {
+        PACT_ED.activeId = g.id;
+        for (const gg of PACT_ED.groups) gg.el.classList.toggle("--active", gg.id === PACT_ED.activeId);
+        if (g.active) pactTreeReveal(g.active);   // selecting a box reveals the file it's showing (IDE auto-reveal)
+      }
     });
   }
   const rowEls = [];
@@ -3138,7 +3158,7 @@ function pactEdRenderGroup(g) {
       el("span", { class: "pact-tab2-ic" }, [pactFileIcon(tb.name)]), el("span", { class: "pact-tab2-name" }, [tb.name]), x,
     ]);
     tb._tabEl = tab;
-    tab.addEventListener("click", () => { PACT_ED.activeId = g.id; g.active = tb.path; pactEdLayout(); });
+    tab.addEventListener("click", () => { PACT_ED.activeId = g.id; g.active = tb.path; pactEdLayout(); pactTreeReveal(tb.path); });
     // Chrome-style drag: reorder within this box, or drop onto another box's tab row to move the file
     // there (the whole tab — its editor + unsaved edits — moves with it). See pactEdMoveTab. (v1.4.6)
     tab.setAttribute("draggable", "true");
@@ -4140,6 +4160,31 @@ async function pactTreeExpandPath(path) {
   const wrap = [...PACT_ED.treeBody.querySelectorAll(".pact-node-wrap")].find((w) => w.dataset.path === path);
   if (wrap && typeof wrap._expand === "function") await wrap._expand();
 }
+// IDE "reveal in tree" (like VS Code's auto-reveal): expand the file tree down to `path`, scroll its row
+// into view, and flash it. Called when the active editor tab changes — selecting a file in a box moves
+// the tree to where that file lives. Walks ancestor dirs shallowest-first, awaiting each (a folder's
+// children load lazily on expand, so the next segment's node doesn't exist until its parent has loaded).
+let PACT_REVEAL_SEQ = 0;
+async function pactTreeReveal(path) {
+  if (!PACT_ED || !PACT_ED.treeBody || !path) return;
+  const mySeq = ++PACT_REVEAL_SEQ;   // if another reveal starts mid-walk, abandon this stale one
+  // The tree is display:none while the "Changed" list is showing — switch back to Files or the scroll
+  // (and the highlight) would be invisible.
+  if (PACT_ED.treeTab === "changed") pactTreeSwitchTab("files");
+  const segs = String(path).split("/");
+  let cur = "";
+  for (let i = 0; i < segs.length - 1; i++) {
+    cur = cur ? cur + "/" + segs[i] : segs[i];
+    await pactTreeExpandPath(cur);
+    if (mySeq !== PACT_REVEAL_SEQ) return;
+  }
+  const row = [...PACT_ED.treeBody.querySelectorAll(".pact-node.pact-file")].find((n) => n.dataset.path === path);
+  if (!row) return;
+  for (const r of PACT_ED.treeBody.querySelectorAll(".pact-node.--revealed")) r.classList.remove("--revealed");
+  row.classList.add("--revealed");
+  row.scrollIntoView({ block: "center" });
+  row.classList.remove("--reveal-flash"); void row.offsetWidth; row.classList.add("--reveal-flash");   // restart the flash on a re-reveal
+}
 // Swap the tree column between its "Files" tree and the "Changed" list without touching either's
 // scroll/font state — just toggle visibility and the active-tab underline.
 function pactTreeSwitchTab(which) {
@@ -4250,6 +4295,7 @@ async function pactEdOpen(path, row) {
   const g = PACT_ED.groups.find((x) => x.id === PACT_ED.activeId) || PACT_ED.groups[0];
   PACT_ED.activeId = g.id;
   await pactEdOpenInto(g, path, true, true);
+  pactTreeReveal(path);   // keep the tree synced to the file now active in the box (highlight + scroll)
 }
 // Open `path` into a SPECIFIC group (not just the active one). Shared by the tree-click open above
 // and by layout restore, which reopens each saved box's files into its own group. `relayout` runs a
@@ -5385,7 +5431,18 @@ function pactChatPaint(t) {
   // markdown + code-highlighting on EVERY event (user echo / tool_use / assistant / result / status /
   // resync…) was the Pact-chat stall on a long conversation. Now a paint renders only the NEW message(s);
   // existing ones reuse their node — which also preserves the tool-call expand state you'd opened.
-  const nodes = t.msgs.map((m) => m._node || (m._node = pactChatMsgNode(m)));
+  // Cap the standing DOM to the most recent PACT_MSG_RENDER_CAP messages (t._showAll lifts it) — the
+  // fix for typing hanging on a big conversation (see the cap's declaration). Mirrors the Core cockpit's
+  // WS_TURN_RENDER_CAP + "show earlier" chip. The tail always shows; older messages hide behind the chip.
+  const showAll = !!t._showAll;
+  const visibleMsgs = showAll ? t.msgs : t.msgs.slice(-PACT_MSG_RENDER_CAP);
+  const hiddenCount = t.msgs.length - visibleMsgs.length;
+  const nodes = visibleMsgs.map((m) => m._node || (m._node = pactChatMsgNode(m)));
+  if (hiddenCount > 0) {
+    const btn = el("button", { class: "ws-show-earlier" }, [`▲ Show ${hiddenCount} earlier message${hiddenCount === 1 ? "" : "s"}`]);
+    btn.addEventListener("click", () => { t._showAll = true; pactChatPaint(t); });
+    nodes.unshift(btn);
+  }
   if (t.perm) {
     const bar = el("div", { class: "pc-perm" }, [
       el("span", {}, ["⏸ Allow " + t.perm.tool + "?"]), el("span", { class: "ws-spacer" }, []),
