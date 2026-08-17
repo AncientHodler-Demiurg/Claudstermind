@@ -2692,9 +2692,22 @@ function pactHighlightLines(content, rel) {
   lines.push(cur);
   return lines;
 }
-// A compact strip that teaches the band colors — "the prefix is the contract" made visible.
+// A compact strip that teaches the band colors — "the prefix is the contract" made visible. Hardcoded to
+// the StoicSyntax COLOUR FAMILIES (OuronetInformational/StoicSyntax-Prefixes.md §4), NOT the read-only base
+// highlighter's window.pactBandLegend (older bands), so the strip matches what the editor colours by.
 function pactLegend() {
-  const legend = (window.pactBandLegend || []);
+  const legend = [
+    ["pk-compute", "UC_",  "COMPUTE — pure, no reads/enforce"],
+    ["pk-read",    "UR_",  "READ — bounded point read"],
+    ["pk-heavy",   "URH_", "HEAVY-READ ⚠ — scan (select/keys); OFF the execution path only"],
+    ["pk-enforce", "UEV_", "ENFORCE — read + enforce; can abort the tx (UEV_/CAP_)"],
+    ["pk-ctor",    "UDC_", "CONSTRUCT — data/object builder"],
+    ["pk-const",   "CT_",  "CONSTANT — constant accessor"],
+    ["pk-write",   "WU_",  "WRITE — raw persistence (WI_/WU_/WW_)"],
+    ["pk-recipe",  "C_",   "RECIPE — client/admin entrypoint (A_/C_/CC_)"],
+    ["pk-orch",    "XI_",  "PROTECTED — protected orchestration (XI_/XE_/XB_)"],
+    ["pk-struct",  "GOV",  "STRUCTURAL — governance/policy/SECURE/UEV_IMC boilerplate"],
+  ];
   return el("div", { class: "pact-legend" }, legend.map(([cls, tag, desc]) =>
     el("span", { class: "pact-legend-item", title: desc }, [el("code", { class: cls }, [tag]), el("span", { class: "pact-legend-desc" }, [desc])])));
 }

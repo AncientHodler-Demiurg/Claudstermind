@@ -4,6 +4,28 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.54] - 2026-08-17
+
+### Changed
+- **Pact syntax coloring reworked to the 10-family StoicSyntax taxonomy** (source of truth:
+  `OuronetInformational/StoicSyntax-Prefixes.md` §4). Every function/capability prefix now colors by its
+  semantic family, with two rules enforced by the palette:
+  - **HEAVY-READ is LOUD (amber, bold)** — `URH_`/`URHC_` (and the live `URD_`/`URDC_` migration spelling)
+    scans jump out so a reviewer instantly spots one and checks it's off the execution path.
+  - **`…x` auxiliaries inherit their base family's hue, dimmed + italic** — they read as "the helper of the
+    thing above," never a new colour.
+  - Families: **COMPUTE** (`UC_/UCk_/UCx_`) · **READ** (`UR_/URC_/URCx_/URU_`) · **HEAVY-READ ⚠**
+    (`URH_/URHx_/URHC_/URHCx_`) · **ENFORCE** (`UEV_/CAP_`, red) · **CONSTRUCT** (`UDC_/UDCx_`) ·
+    **CONSTANT** (`CT_`) · **WRITE** (`WI_/WU_/WW_`, magenta) · **RECIPE** (`A_/C_/CC_`, one bold green
+    hue) · **PROTECTED** (`XI_/XE_/XB_`, purple) · **STRUCTURAL** (`GOV/P|/SECURE/UEV_IMC`, dim grey).
+  - Migration spellings colored identically (`URD*≡URH*`, `UCK≡UCk`, `*X≡*x`). Module/table scopes
+    (`SWP`, `AQP`, `DPNF`, …) are never colored as classes — only the class token is. Legend + the deleted-
+    diff-line fallback re-pointed to match. Full family classifier tested in `lib/pactAuxColors.test.mjs`.
+  - Applies to the editable editor and diff view (which read the family classifier). The deleted lines in a
+    diff render via the read-only base highlighter (`pact-highlight.js`, not editable) — their legacy classes
+    are re-hued to approximate the new palette, but a few (e.g. `URD_` amber, `A_`/`C_` green) can't be as
+    precise there without editing that file.
+
 ## [1.4.53] - 2026-08-17
 
 ### Added

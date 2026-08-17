@@ -1284,17 +1284,30 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-code .pk-sq      { color: #da70d6; }
 .pact-code .pk-brace   { color: #179fff; }
 .pact-code .pk-op      { color: #56b6c2; }
-/* StoicSyntax bands — rainbow by contract (prefix = the contract) */
-.pact-code .pk-compute { color: #9ccdff; }                     /* UC/UCK  — light blue */
-.pact-code .pk-read    { color: #5aa9ec; }                     /* UR/URC  — blue */
-.pact-code .pk-readd   { color: #4373c9; }                     /* URD/URDC — dark blue */
-.pact-code .pk-ctor    { color: #e6e6a3; }                     /* UDC     — pale yellow */
-.pact-code .pk-enforce { color: #a679d6; }                     /* UEV     — violet */
-.pact-code .pk-cap     { color: #e6c200; font-weight: 600; }   /* CAP     — golden yellow */
-.pact-code .pk-client  { color: #98c379; }                     /* C       — green */
-.pact-code .pk-orch    { color: #e5a663; }                     /* X       — orange */
-.pact-code .pk-admin   { color: #c14867; font-weight: 600; }   /* A       — vișiniu / cherry */
-.pact-code .pk-write   { color: #ef5350; font-weight: 600; }   /* W       — red */
+/* StoicSyntax COLOUR FAMILIES — coloured by prefix per OuronetInformational/StoicSyntax-Prefixes.md §4.
+   Ten families; `…x` auxiliaries share their family hue, dimmed + italic ("helper of the thing above").
+   HEAVY-READ is deliberately the LOUDEST read colour (amber) so a scan on a hot path jumps out. The
+   family classifier lives in pact-cm-mode.js (wraps window.pactClassifyWord). */
+.pact-code .pk-compute  { color: #9ccdff; }                       /* COMPUTE — UC/UCk (calm blue) */
+.pact-code .pk-computex { color: #9ccdff; opacity: .68; font-style: italic; }  /* UCx aux */
+.pact-code .pk-read     { color: #5aa9ec; }                       /* READ — UR/URC (blue) */
+.pact-code .pk-readx    { color: #5aa9ec; opacity: .68; font-style: italic; }  /* URCx/URU aux·dim */
+.pact-code .pk-heavy    { color: #ff9d3c; font-weight: 700; }     /* HEAVY-READ ⚠ — URH/URD scans (LOUD amber) */
+.pact-code .pk-heavyx   { color: #ff9d3c; opacity: .72; font-style: italic; }  /* URHx aux */
+.pact-code .pk-enforce  { color: #e06c75; }                       /* ENFORCE — UEV/CAP (red) */
+.pact-code .pk-ctor     { color: #e6e6a3; }                       /* CONSTRUCT — UDC (pale yellow) */
+.pact-code .pk-ctorx    { color: #e6e6a3; opacity: .68; font-style: italic; }  /* UDCx aux */
+.pact-code .pk-const    { color: #8b98a5; }                       /* CONSTANT — CT (muted) */
+.pact-code .pk-write    { color: #d670c8; font-weight: 600; }     /* WRITE — WI/WU/WW (magenta) */
+.pact-code .pk-recipe   { color: #8ec07c; font-weight: 700; }     /* RECIPE — A/C/CC (bold green) */
+.pact-code .pk-orch     { color: #b58ae6; }                       /* PROTECTED — XI/XE/XB (purple) */
+.pact-code .pk-struct   { color: #6f7b8a; }                       /* STRUCTURAL — GOV/P|/SECURE/UEV_IMC (dim) */
+/* Legacy class names the read-only base highlighter (pact-highlight.js, not editable) still emits on
+   deleted diff lines — re-pointed to the nearest new family so those lines approximate the new palette. */
+.pact-code .pk-readd    { color: #ff9d3c; font-weight: 700; }     /* URD/URDC (static) → HEAVY-READ */
+.pact-code .pk-admin    { color: #8ec07c; font-weight: 700; }     /* A (static) → RECIPE */
+.pact-code .pk-client   { color: #8ec07c; font-weight: 700; }     /* C (static) → RECIPE */
+.pact-code .pk-cap      { color: #e06c75; }                       /* CAP (static) → ENFORCE */
 
 /* Band legend — a compact strip between the editor header and the code, teaching the color language. */
 .pact-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 6px 12px; border-bottom: 1px solid var(--line);
@@ -1302,12 +1315,12 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-legend-item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .pact-legend-item code { font: 700 11px ui-monospace, monospace; }
 .pact-legend-desc { color: var(--ink-mute); }
-/* Reuse the token colors on the legend's <code> tags. */
+/* Reuse the family colors on the legend's <code> tags (new 10-family palette). */
 .pact-legend .pk-compute { color: #9ccdff; } .pact-legend .pk-read { color: #5aa9ec; }
-.pact-legend .pk-readd { color: #4373c9; } .pact-legend .pk-ctor { color: #e6e6a3; }
-.pact-legend .pk-enforce { color: #a679d6; } .pact-legend .pk-cap { color: #e6c200; }
-.pact-legend .pk-client { color: #98c379; } .pact-legend .pk-orch { color: #e5a663; }
-.pact-legend .pk-admin { color: #c14867; } .pact-legend .pk-write { color: #ef5350; }
+.pact-legend .pk-heavy { color: #ff9d3c; font-weight: 700; } .pact-legend .pk-enforce { color: #e06c75; }
+.pact-legend .pk-ctor { color: #e6e6a3; } .pact-legend .pk-const { color: #8b98a5; }
+.pact-legend .pk-write { color: #d670c8; } .pact-legend .pk-recipe { color: #8ec07c; font-weight: 700; }
+.pact-legend .pk-orch { color: #b58ae6; } .pact-legend .pk-struct { color: #6f7b8a; }
 
 /* ===== CodeMirror 5 — the editable Pact editor surface (replaces the textarea overlay). The host fills
    the box; the CM instance fills the host. Dark theme matched to the app; per-box font-size is applied
@@ -1375,16 +1388,26 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .CodeMirror .cm-pk-sq      { color: #da70d6; }
 .CodeMirror .cm-pk-brace   { color: #179fff; }
 .CodeMirror .cm-pk-op      { color: #56b6c2; }
-.CodeMirror .cm-pk-compute { color: #9ccdff; }
-.CodeMirror .cm-pk-read    { color: #5aa9ec; }
-.CodeMirror .cm-pk-readd   { color: #4373c9; }
-.CodeMirror .cm-pk-ctor    { color: #e6e6a3; }
-.CodeMirror .cm-pk-enforce { color: #a679d6; }
-.CodeMirror .cm-pk-cap     { color: #e6c200; font-weight: 600; }
-.CodeMirror .cm-pk-client  { color: #98c379; }
-.CodeMirror .cm-pk-orch    { color: #e5a663; }
-.CodeMirror .cm-pk-admin   { color: #c14867; font-weight: 600; }
-.CodeMirror .cm-pk-write   { color: #ef5350; font-weight: 600; }
+/* StoicSyntax COLOUR FAMILIES for the editable/diff CM — same hex as `.pact-code .pk-*` above. */
+.CodeMirror .cm-pk-compute  { color: #9ccdff; }
+.CodeMirror .cm-pk-computex { color: #9ccdff; opacity: .68; font-style: italic; }
+.CodeMirror .cm-pk-read     { color: #5aa9ec; }
+.CodeMirror .cm-pk-readx    { color: #5aa9ec; opacity: .68; font-style: italic; }
+.CodeMirror .cm-pk-heavy    { color: #ff9d3c; font-weight: 700; }
+.CodeMirror .cm-pk-heavyx   { color: #ff9d3c; opacity: .72; font-style: italic; }
+.CodeMirror .cm-pk-enforce  { color: #e06c75; }
+.CodeMirror .cm-pk-ctor     { color: #e6e6a3; }
+.CodeMirror .cm-pk-ctorx    { color: #e6e6a3; opacity: .68; font-style: italic; }
+.CodeMirror .cm-pk-const    { color: #8b98a5; }
+.CodeMirror .cm-pk-write    { color: #d670c8; font-weight: 600; }
+.CodeMirror .cm-pk-recipe   { color: #8ec07c; font-weight: 700; }
+.CodeMirror .cm-pk-orch     { color: #b58ae6; }
+.CodeMirror .cm-pk-struct   { color: #6f7b8a; }
+/* Legacy names (base highlighter output on deleted diff lines) → nearest new family. */
+.CodeMirror .cm-pk-readd    { color: #ff9d3c; font-weight: 700; }
+.CodeMirror .cm-pk-admin    { color: #8ec07c; font-weight: 700; }
+.CodeMirror .cm-pk-client   { color: #8ec07c; font-weight: 700; }
+.CodeMirror .cm-pk-cap      { color: #e06c75; }
 
 .pact-right { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 .pact-chat, .pact-term { flex: 1; min-height: 0; display: flex; flex-direction: column;

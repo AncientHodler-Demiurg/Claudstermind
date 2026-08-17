@@ -12,30 +12,63 @@
   if (typeof window === "undefined" || !window.CodeMirror) return;
   var CodeMirror = window.CodeMirror;
 
-  // Doubled prefixes CC_ / AA_ get the SAME band color as the single C_ / A_ (client / admin). The base
-  // classifier (pact-highlight.js) only matches the single-letter bands, so wrap the global once here so
-  // both the editable CM and anything else reading window.pactClassifyWord pick it up. Same lead/trail
-  // boundary as the base BANDS (segment start `^|[|.:>]`, optional write-count `\d*`, then `_ > |`).
-  (function wrapCcAa() {
+  // StoicSyntax prefix COLOUR FAMILIES — the authoritative taxonomy from
+  // OuronetInformational/StoicSyntax-Prefixes.md (§4). The base classifier (pact-highlight.js, which we
+  // must not edit) only knows the older single-letter bands, so wrap the global once here to (a) OVERRIDE
+  // some base bands to the new families (e.g. URD/URH → HEAVY-READ amber, A/C/CC → RECIPE) and (b) add the
+  // new prefixes (URH*, URU_, CT_, aux `…x`, structural GOV/P|/SECURE/UEV_IMC). Everything reading
+  // window.pactClassifyWord (the editable CM + the read-only diff CM) picks the families up. Ten families:
+  //   COMPUTE UC_/UCk_/UCx_ · READ UR_/URC_/URCx_/URU_ · HEAVY-READ⚠ URH_/URHx_/URHC_/URHCx_ (LOUD amber)
+  //   · ENFORCE UEV_/CAP_ · CONSTRUCT UDC_/UDCx_ · CONSTANT CT_ · WRITE WI_/WU_/WW_ · RECIPE A_/C_/CC_
+  //   · PROTECTED XI_/XE_/XB_ · STRUCTURAL GOV/P|/SECURE/UEV_IMC. Migration: URD*≡URH*, UCK≡UCk, *X≡*x —
+  //   coloured the same. `…x` auxiliaries take their family hue, dimmed (a distinct `…x` class → CSS dims).
+  (function wrapStoicFamilies() {
     var base = window.pactClassifyWord;
-    if (typeof base !== "function" || base._ccaaWrapped) return;
-    var CC = /(?:^|[|.:>])CC\d*[_>|]/, AA = /(?:^|[|.:>])AA\d*[_>|]/;
-    // URDX/URDXX are auxiliaries of a URD function, and URCX/URCXX of a URC function (URDXX/URCXX being
-    // the auxiliary of URDX/URCX). They take the SAME band color as their parent — URD is derived-reads
-    // (pk-readd), URC is reads (pk-read). The base classifier's URD/URC patterns require a boundary
-    // immediately after "URD"/"URC", so "URDX_"/"URCX_" fall through to null here and we fill them in.
-    var URDX = /(?:^|[|.:>])URDXX?\d*[_>|]/, URCX = /(?:^|[|.:>])URCXX?\d*[_>|]/;
+    if (typeof base !== "function" || base._stoicFam) return;
+    // Boundaries mirror the base BANDS: segment start (^ or after | . : >), optional write-count digits,
+    // then a `_ > |` trailer. TS = strict trailer (no `|`) for the single letters A/C. X = an aux marker
+    // (x or X, possibly doubled — covers the old UPPERCASE spelling and stacked xx).
+    var L = "(?:^|[|.:>])", T = "\\d*[_>|]", TS = "\\d*[_>]", X = "[xX]+";
+    var FAM = [
+      // STRUCTURAL first — boilerplate; UEV_IMC must beat UEV_ (enforce), and the module-less markers.
+      ["pk-struct",   new RegExp(L + "UEV_IMC(?![A-Za-z0-9])")],
+      ["pk-struct",   new RegExp(L + "SECURE(?![A-Za-z0-9])")],
+      ["pk-struct",   new RegExp(L + "GOV(?![A-Za-z])")],
+      ["pk-struct",   new RegExp(L + "P\\|")],
+      // HEAVY-READ before READ (both start UR). Old `D` spelling ≡ new `H`. Aux (…x) first.
+      ["pk-heavyx",   new RegExp(L + "UR[HD]C?" + X + T)],
+      ["pk-heavy",    new RegExp(L + "UR[HD]C?" + T)],
+      // READ — aux/dim (URCx, URU) first, then UR_/URC_.
+      ["pk-readx",    new RegExp(L + "URC" + X + T)],
+      ["pk-readx",    new RegExp(L + "URU" + T)],
+      ["pk-read",     new RegExp(L + "URC?" + T)],
+      // COMPUTE — aux first (UCx/UCkx), then UC_/UCk_/UCK_.
+      ["pk-computex", new RegExp(L + "UC[Kk]?" + X + T)],
+      ["pk-compute",  new RegExp(L + "UC[Kk]?" + T)],
+      // ENFORCE
+      ["pk-enforce",  new RegExp(L + "(?:UEV|CAP)" + T)],
+      // CONSTRUCT — aux first
+      ["pk-ctorx",    new RegExp(L + "UDC" + X + T)],
+      ["pk-ctor",     new RegExp(L + "UDC" + T)],
+      // CONSTANT
+      ["pk-const",    new RegExp(L + "CT" + T)],
+      // WRITE
+      ["pk-write",    new RegExp(L + "(?:WI|WU|WW|W)" + T)],
+      // RECIPE — doubled CC/AA, then single A/C (strict boundary so they don't swallow multi-letter).
+      ["pk-recipe",   new RegExp(L + "(?:CC|AA)" + T)],
+      ["pk-recipe",   new RegExp(L + "[AC]" + TS)],
+      // PROTECTED
+      ["pk-orch",     new RegExp(L + "(?:XI|XE|XB)" + T)],
+    ];
+    function fam(w) { for (var i = 0; i < FAM.length; i++) if (FAM[i][1].test(w)) return FAM[i][0]; return null; }
     var wrapped = function (w) {
       var r = base(w);
-      if (r == null) {
-        if (URDX.test(w)) return "pk-readd";   // URDX / URDXX → same blue as URD
-        if (URCX.test(w)) return "pk-read";    // URCX / URCXX → same blue as URC
-        if (CC.test(w)) return "pk-client";
-        if (AA.test(w)) return "pk-admin";
-      }
-      return r;
+      // Keep literals + language defs/keywords as the base decides; the families supersede its prefix bands.
+      if (r === "pk-number" || r === "pk-bool" || r === "pk-def" || r === "pk-keyword") return r;
+      var f = fam(w);
+      return f || r;   // a family wins; else fall back to whatever the base said (band or null)
     };
-    wrapped._ccaaWrapped = true;
+    wrapped._stoicFam = true; wrapped._ccaaWrapped = true;   // supersedes the old CC/AA + URDX wrapper
     window.pactClassifyWord = wrapped;
   })();
 
