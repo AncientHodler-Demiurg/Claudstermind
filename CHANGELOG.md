@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.65] - 2026-08-18
+
+### Changed
+- **The Live/Held scroll-mode bulb moved off the transcript text.** It used to float bottom-left over the
+  messages, obstructing text. Now:
+  - **Desktop (Core + Pact):** it docks just **above the Send button**, where there's nothing to obstruct.
+  - **Pact mobile:** it sits in a thin **mode strip directly under the control bar** (bottom of the chat),
+    so on a phone you can still tell at a glance whether an incoming reply will scroll the chat or hold
+    your scrolled-up position.
+  The controller now exposes `dockMode(mountEl, cls)` so each surface can home the one bulb where it fits;
+  placement variants are `--dock` (above Send), `--bar` (mobile strip), and `--float` (legacy bottom-left).
+
 ## [1.4.64] - 2026-08-18
 
 ### Fixed

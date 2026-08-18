@@ -2724,10 +2724,10 @@ function attachStickController(scrollEl, opts = {}) {
   //   • HELD  (amber, scrolled up)     → incoming messages stay put; your view won't move.
   // Click it to jump to the latest and go Live. reflect() repaints it from ctrl.pinned on every scroll
   // and every sample()/apply(), so it can never disagree with the actual scroll behavior.
-  const modeTag = el("button", { class: "stick-mode", type: "button" }, [
+  const modeTag = el("button", { class: "stick-mode stick-mode--float", type: "button" }, [
     el("span", { class: "stick-mode-dot" }, []), el("span", { class: "stick-mode-lbl" }, []),
   ]);
-  wrap.appendChild(modeTag);
+  wrap.appendChild(modeTag);   // default home: bottom-left float over the transcript (callers can re-dock it)
   const reflect = () => {
     const live = !!ctrl.pinned;
     modeTag.classList.toggle("--live", live);
@@ -2786,6 +2786,16 @@ function attachStickController(scrollEl, opts = {}) {
     },
     // Force back to the tail and re-pin (pill click, or a just-sent message).
     pin() { this.pinned = true; this._anchor = null; scrollEl.scrollTop = scrollEl.scrollHeight; pill.classList.remove("--show"); reflect(); },
+    modeTag,
+    // Re-home the mode bulb out of the default bottom-left float and into `mountEl` with placement class
+    // `cls` (docked above the Send button on desktop, or inline in the Pact mobile control bar). Idempotent
+    // — safe to call on every render; it just moves the one element and re-applies the live/held state.
+    dockMode(mountEl, cls) {
+      if (!mountEl) return;
+      modeTag.className = "stick-mode " + (cls || "stick-mode--float");
+      mountEl.appendChild(modeTag);
+      reflect();
+    },
   };
   let raf = 0;
   scrollEl.addEventListener("scroll", () => {
@@ -5664,7 +5674,8 @@ function pactChatRender() {
   });
   const imgPreview = el("div", { class: "pc-img-preview" }, []); imgPreview.hidden = true;
   const imgErr = el("div", { class: "pc-img-err" }, []); imgErr.hidden = true;
-  const compose = el("div", { class: "pc-compose" }, [imgFileInput, attach, input, stop, send]);
+  const sendWrap = el("div", { class: "pc-send-wrap" }, [send]);   // relative host so the Live/Held bulb can dock above Send
+  const compose = el("div", { class: "pc-compose" }, [imgFileInput, attach, input, stop, sendWrap]);
   compose.addEventListener("dragover", (e) => { e.preventDefault(); compose.classList.add("pc-drag"); });
   compose.addEventListener("dragleave", () => compose.classList.remove("pc-drag"));
   compose.addEventListener("drop", (e) => {
@@ -5674,7 +5685,8 @@ function pactChatRender() {
   });
   const composeExtras = el("div", { class: "pc-compose-extras" }, [imgPreview, imgErr]);
   host.replaceChildren(head, scroll, composeExtras, compose);
-  attachStickController(scroll, { wrapClass: "stick-wrap-pc", nearPx: 4 });   // wrap now so the pill exists from the first paint
+  const pcStick = attachStickController(scroll, { wrapClass: "stick-wrap-pc", nearPx: 4 });   // wrap now so the pill exists from the first paint
+  pcStick.dockMode(sendWrap, "stick-mode--dock");   // Live/Held bulb sits above Send (desktop) — off the transcript text
   requestAnimationFrame(() => pactChatAutosize(input));   // size to any restored draft once the pane has real layout
   pactSyncCollapseBtns();
   pactRenderUsageLimits();   // the head was just rebuilt — restore the plan-usage badge from PACT_CHAT.usageLimits
@@ -6003,7 +6015,13 @@ function viewPactMobile() {
     const bar = el("div", { class: "pactm-cbar" }, [menuB, upB, chatsB, histB, spacer, syncB, stopB, sendB]);
     // v1.3.8 — pin the compose to a single line so a long draft stops expanding upward into the
     // transcript. Toggle sits just before the send cluster; state persists across reloads.
-    const wrap = el("div", { class: "pactm-chatwrap" + (PACT_COMPOSE_COLLAPSED ? " pactm-compose-collapsed" : "") }, [chatHost, bar]);
+    // A thin "drawer" strip UNDER the control bar that hosts the Live/Held scroll-mode bulb — always
+    // visible so, on a phone, you can tell whether an incoming reply will scroll the chat or leave your
+    // scrolled-up position put. Docked from the chat's shared stick controller once .pc-scroll exists.
+    const modeBar = el("div", { class: "pactm-modebar" }, []);
+    const dockModeBulb = () => { const sc = chatHost.querySelector(".pc-scroll"); if (sc && sc._stick) sc._stick.dockMode(modeBar, "stick-mode--bar"); };
+    const wrap = el("div", { class: "pactm-chatwrap" + (PACT_COMPOSE_COLLAPSED ? " pactm-compose-collapsed" : "") }, [chatHost, bar, modeBar]);
+    requestAnimationFrame(dockModeBulb);   // .pc-scroll + its controller are set up by pactChatRender; grab the bulb once laid out
     const collapseB = tbtn(PACT_COMPOSE_COLLAPSED ? "⌃" : "⌄", PACT_COMPOSE_COLLAPSED ? "Expand the compose box" : "Collapse the compose box to one line", () => {
       PACT_COMPOSE_COLLAPSED = !PACT_COMPOSE_COLLAPSED;
       try { localStorage.setItem("pact.compose.collapsed", PACT_COMPOSE_COLLAPSED ? "1" : "0"); } catch {}
@@ -6020,6 +6038,7 @@ function viewPactMobile() {
       sendB.classList.toggle("busy", busy);
       stopB.hidden = !busy;
       chatsB.dataset.n = String((PACT_CHAT && PACT_CHAT.tabs.length) || 0);
+      if (!modeBar.querySelector(".stick-mode")) dockModeBulb();   // ensure the bulb is homed here even if the first rAF raced .pc-scroll
     };
     PACT_MOBILE_PAINT_CB();
     return wrap;
@@ -6919,7 +6938,8 @@ function viewWorkspace() {
     // Actions grouped in their own wrapper: a horizontal cluster on desktop, but on mobile a
     // VERTICAL column of round icon buttons (attach / stop / send) beside a full-width text box —
     // WhatsApp-style — so the typing area isn't squeezed to nothing when Stop and Send both show.
-    const composeBtns = el("div", { class: "ws-compose-btns" }, [attachBtn, stopBtn, sendBtn]);
+    const sendWrap = el("div", { class: "ws-send-wrap" }, [sendBtn]);   // relative host so the Live/Held bulb can dock above Send
+    const composeBtns = el("div", { class: "ws-compose-btns" }, [attachBtn, stopBtn, sendWrap]);
     const composeRow = el("div", { class: "ws-compose" }, [imgFileInput, promptEl, composeBtns]);
     const composeExtras = el("div", { class: "ws-compose-extras" }, [imgPreviewWrap, imgErr]);
     // A slim, ALWAYS-visible identity readout — plain text, not a control — so which
@@ -7035,6 +7055,7 @@ function viewWorkspace() {
     // (pill + blink + near-bottom follow). transcriptEl is already a child of paneRoot here, so the
     // controller can insert its relative wrapper in place around it.
     const stick = attachStickController(transcriptEl, { wrapClass: "stick-wrap-ws" });
+    stick.dockMode(sendWrap, "stick-mode--dock");   // move the Live/Held bulb from the transcript to just above Send (doesn't obstruct text)
     paneUI.set(p.id, { root: paneRoot, transcriptEl, stick, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, stopBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
     if (p.draft) { promptEl.value = p.draft; wsAutoResizePrompt(promptEl); }   // restore the saved compose draft after a view switch / reload
     return paneRoot;

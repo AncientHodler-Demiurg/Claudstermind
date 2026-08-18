@@ -572,11 +572,24 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    is following the tail (green "Live" — incoming messages scroll in) or holding your scrolled-up spot
    (amber "Held" — incoming messages stay put). Bottom-LEFT, opposite the "↓ New output" pill; click to
    jump to the latest and go Live. */
-.stick-mode { position: absolute; left: 10px; bottom: 12px; z-index: 5; display: inline-flex; align-items: center; gap: 6px;
+.stick-mode { display: inline-flex; align-items: center; gap: 6px;
   padding: 3px 9px 3px 8px; border-radius: 999px; cursor: pointer; font-size: 11px; font-weight: 600; line-height: 1;
   background: color-mix(in srgb, var(--panel) 82%, transparent); border: 1px solid var(--line); color: var(--ink-dim);
-  opacity: .8; transition: opacity .15s; }
+  opacity: .82; transition: opacity .15s; }
 .stick-mode:hover { opacity: 1; }
+/* Placement variants (attachStickController.dockMode picks one):
+   --float: default, floats bottom-left over the transcript (fallback / mobile Core for now).
+   --dock : docked just above the Send button on desktop — off the transcript text (Core + Pact). */
+.stick-mode--float { position: absolute; left: 10px; bottom: 12px; z-index: 5; }
+.stick-mode--dock { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 6; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+/* --bar: inline inside the Pact mobile bottom mode-strip (a normal flex child, not floating). */
+.stick-mode--bar { position: static; }
+/* The Pact mobile "drawer" strip that hosts the mode bulb, directly under the control bar. */
+.pactm-modebar { display: flex; justify-content: center; align-items: center; padding: 3px 0 4px; flex: 0 0 auto; }
+.pactm-modebar .stick-mode { font-size: 12px; padding: 4px 12px 4px 10px; opacity: 1; }
+.pactm-compose-collapsed .pactm-modebar { padding: 2px 0 3px; }
+/* Relative hosts so a --dock bulb anchors directly above the Send button (desktop Core + Pact). */
+.ws-send-wrap, .pc-send-wrap { position: relative; display: inline-flex; }
 .stick-mode-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--ink-mute); }
 .stick-mode.--live { color: #34d399; border-color: color-mix(in srgb, #34d399 45%, var(--line)); }
 .stick-mode.--live .stick-mode-dot { background: #34d399; box-shadow: 0 0 6px #34d399; animation: stickBulb 1.6s ease-in-out infinite; }
@@ -979,6 +992,9 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
     width: 46px; min-width: 46px; height: 46px; min-height: 46px; border-radius: 50%;
     padding: 0; margin: 0; align-self: center; flex: 0 0 auto;
     display: inline-flex; align-items: center; justify-content: center; }
+  /* The Send button is wrapped in .ws-send-wrap (host for the Live/Held bulb) — carry the round-column
+     centering to the wrapper so the flex item still centers, and let the 46px button inside fill it. */
+  .ws-compose-btns .ws-send-wrap { align-self: center; flex: 0 0 auto; }
   /* Send + Stop carry dynamic text ("Working…", "■ Stop") — hide it and draw a single glyph so the
      round button stays clean regardless of state; the busy/deep-work background colors still show. */
   .ws-compose-btns .ws-send, .ws-compose-btns .ws-stop { font-size: 0; }
