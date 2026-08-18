@@ -5548,17 +5548,33 @@ async function pactChatMigrate(t, toArg) {
     to = raw.trim();
   }
   if (!to || to === cur) return;
-  // Uncommitted work in the current checkout won't follow — warn (commit-first is the recommended path).
+  // What's uncommitted in the current checkout won't follow the migration (a new worktree is a clean
+  // checkout off HEAD). Distinguish real edits (tracked — worth committing to carry) from NEW/UNTRACKED
+  // files (`?`, often scratch/probe/draft files), so a pile of untracked scratch doesn't read as "your
+  // committed work is at risk" — the exact confusion where a `git commit` (which doesn't add new files)
+  // leaves the count non-zero.
   let changed = [];
   try { const d = await (await fetch("/api/pact/changed" + (cur !== "main" ? "?worktree=" + encodeURIComponent(cur) : ""))).json(); if (d && d.ok) changed = d.files || []; } catch {}
-  if (changed.length && !window.confirm(`The "${cur}" checkout has ${changed.length} uncommitted change(s).\n\nThey will STAY in "${cur}" and will NOT follow to "${to}". Recommended: Cancel, ask the agent to commit, then migrate.\n\nProceed anyway?`)) return;
+  const modified = changed.filter((f) => f && f.status !== "?");
+  const untracked = changed.filter((f) => f && f.status === "?");
+  if (changed.length) {
+    const bits = [];
+    if (modified.length) bits.push(`${modified.length} modified tracked file(s)`);
+    if (untracked.length) bits.push(`${untracked.length} new/untracked file(s)` + (untracked.length <= 6 ? " — " + untracked.map((f) => f.path.split("/").pop()).join(", ") : ""));
+    const msg = `"${cur}" has ${bits.join(" + ")}.\nThese stay in "${cur}" and won't follow to "${to}".\n\n`
+      + (modified.length
+        ? `The modified files are real edits — commit them first (ask the agent) if you want them in "${to}". Untracked files are usually scratch and safe to leave.`
+        : `These are all new/untracked files (scratch, drafts, probes) — safe to leave; migrating won't touch them.`)
+      + `\n\nProceed?`;
+    if (!window.confirm(msg)) return;
+  }
   // Ensure the target exists (create a new worktree if the name is new; "main" always exists).
   if (to !== "main" && !(PACT_ED && PACT_ED.worktrees || []).some((w) => w.name === to)) {
     const c = await pactWorktreeAct("create", to);
     if (!c.ok && !/already exists/i.test(c.error || "")) { pactEdSaveStatus("⚠ " + (c.error || "could not create worktree \"" + to + "\""), true); return; }
   }
   pactChatRecordMigration(t, cur, to);
-  pactEdSaveStatus('conversation now runs in "' + to + '" — its next turn uses that checkout' + (changed.length ? " (uncommitted work left in \"" + cur + "\")" : ""), false);
+  pactEdSaveStatus('conversation now runs in "' + to + '" — its next turn uses that checkout' + (modified.length ? ` (${modified.length} modified file(s) left in "${cur}")` : ""), false);
 }
 // Merge this conversation's worktree into main and RETURN the conversation to main. Conflict-safe: the
 // server aborts and leaves main untouched on a conflict. Offers to remove the now-merged worktree.

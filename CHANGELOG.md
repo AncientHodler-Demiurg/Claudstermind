@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.81] - 2026-08-18
+
+### Fixed
+- **Worktree migrate/merge no longer reads leftover UNTRACKED scratch files as "your work is at risk".**
+  The change-count uses `git status -uall` (includes untracked files), so new scratch/probe/draft files
+  (`?` status) that a plain `git commit` doesn't add kept the "N uncommitted changes" popup showing even
+  after you'd committed your real edits — looking like a bug.
+  - The migrate confirm now **distinguishes** modified tracked files (real edits — commit them to carry
+    them) from new/untracked files (names listed; "scratch — safe to leave"). When it's only untracked
+    files, the dialog says exactly that and you can just proceed.
+  - `mergeWorktree` no longer lets untracked files in **main** block a merge — only tracked, uncommitted
+    modifications do (it now checks main with `-uno`). Untracked work in the **worktree** is still flagged
+    (it must be committed to be part of the merge). New regression test.
+
 ## [1.4.80] - 2026-08-18
 
 ### Fixed
