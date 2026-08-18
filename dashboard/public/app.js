@@ -6369,6 +6369,12 @@ function viewWorkspace() {
   // tapping a tab — and the sidebar (repos/history) becomes a slide-in drawer. Both are hidden on
   // desktop via CSS; renderMobileTabs()/syncMobile() below drive them.
   const mobileTabs = el("div", { class: "ws-mtabs" }, []);
+  // Mobile bottom control bar (Stage 1 of the Pact-model overhaul): the active pane's actions move HERE
+  // — send / stop / attach / history / sync — so the compose box gets the full width, and a thin mode
+  // strip above it hosts the active pane's Live/Held bulb. Populated once by buildMobileBar(); both are
+  // hidden on desktop via CSS and only shown under .ws-mobile.
+  const wsMBar = el("div", { class: "ws-mcbar" }, []);
+  const wsModeStrip = el("div", { class: "ws-mmodebar" }, []);
   const sideBackdrop = el("div", { class: "ws-side-backdrop" }, []);
   const sideList = el("div", { class: "ws-side-list" }, []);
   const histList = el("div", { class: "ws-hist" }, []);
@@ -7256,6 +7262,7 @@ function viewWorkspace() {
     }
     if (ui.stick) ui.stick.apply(wasNearBottom); else if (wasNearBottom) ui.transcriptEl.scrollTop = ui.transcriptEl.scrollHeight;
     syncMobileTabDots();   // keep the mobile tab's status dot in step (cheap; no-op on desktop)
+    if (st.isMobile && p.id === st.activeId) syncMobileBar();   // reflect the active pane's busy state in the bottom bar
   }
 
   function setActive(id) {
@@ -7263,7 +7270,7 @@ function viewWorkspace() {
     st.activeId = id;
     for (const p of st.panes) paneUI.get(p.id)?.root.classList.toggle("on", p.id === id);
     renderSidebar();
-    if (st.isMobile) renderMobileTabs();
+    if (st.isMobile) { renderMobileTabs(); syncMobileBar(); }
     saveLayout();
     reportAttach();   // presence follows the active pane's workspace
   }
@@ -7298,6 +7305,38 @@ function viewWorkspace() {
     addBtn.addEventListener("click", addPaneMobile);
     mobileTabs.replaceChildren(menuBtn, el("div", { class: "ws-mtabs-scroll" }, tabs), addBtn);
   }
+  // Build the mobile bottom control bar ONCE — its buttons act on whatever pane is active at click time.
+  function buildMobileBar() {
+    const mb = (label, title, fn, cls) => {
+      const b = el("button", { class: "ws-mcbtn" + (cls ? " " + cls : ""), type: "button", "aria-label": title, title }, [label]);
+      b.addEventListener("click", fn); b.addEventListener("touchend", (e) => { e.preventDefault(); fn(); });   // kill the ghost-tap double-fire
+      return b;
+    };
+    const menuB = mb("☰", "Repositories & history", openDrawer);
+    const attachB = mb("📎", "Attach image", () => { const ui = paneUI.get(st.activeId); if (ui && ui.attachBtn) ui.attachBtn.click(); });
+    const histB = mb("🕐", "History", () => { const p = activePane(); loadHistory(p ? p.repo : null); openDrawer(); });
+    const syncB = mb("↻", "Sync now — re-fetch the latest state (no page reload)", () => { const p = activePane(); if (p && p.sessionKey) wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey } }); });
+    const stopB = mb("■", "Stop the current response (keeps the conversation)", () => { const p = activePane(); if (p && p.sessionKey) wsPost("stop", { sessionKey: p.sessionKey }); }, "ws-mcbtn-stop");
+    stopB.hidden = true;
+    const sendB = mb("➤", "Send", () => send(activePane()), "ws-mcbtn-send");
+    wsMBar._sendB = sendB; wsMBar._stopB = stopB;
+    wsMBar.replaceChildren(menuB, attachB, histB, el("span", { class: "ws-spacer" }, []), syncB, stopB, sendB);
+  }
+  // Keep the bottom bar's send/stop in step with the active pane, and home that pane's Live/Held bulb in
+  // the mode strip (each pane owns its own bulb; only the visible pane's belongs in the shared strip).
+  function syncMobileBar() {
+    if (!st.isMobile) return;
+    if (!wsMBar._sendB) buildMobileBar();
+    const p = activePane(); const ui = p && paneUI.get(p.id);
+    const busy = p ? paneBusy(p) : false;
+    wsMBar._sendB.textContent = p && p.status === "deepwork" ? "🔴" : busy ? "…" : "➤";
+    wsMBar._sendB.classList.toggle("busy", busy);
+    wsMBar._stopB.hidden = !busy;
+    if (ui && ui.stick && ui.stick.modeTag && wsModeStrip.firstChild !== ui.stick.modeTag) {
+      wsModeStrip.replaceChildren();                       // drop any prior pane's bulb
+      ui.stick.dockMode(wsModeStrip, "stick-mode--bar");   // and home the active pane's
+    }
+  }
   function addPaneMobile() {
     const p = newPane(); st.panes.push(p);
     st.cols = 1; st.rows = st.panes.length;   // on a phone the grid is a flat 1×N — one pane per "tab"
@@ -7326,7 +7365,8 @@ function viewWorkspace() {
   function syncMobile() {
     st.isMobile = !!WS_MOBILE_MQ.matches;
     root.classList.toggle("ws-mobile", st.isMobile);
-    if (st.isMobile) renderMobileTabs(); else closeDrawer();
+    if (st.isMobile) { renderMobileTabs(); buildMobileBar(); syncMobileBar(); }
+    else closeDrawer();
   }
   WS_MOBILE_MQ.addEventListener("change", syncMobile);
   sideBackdrop.addEventListener("click", closeDrawer);
@@ -7339,6 +7379,7 @@ function viewWorkspace() {
     paneUI.clear();
     grid.replaceChildren(...st.panes.map(buildPane));
     for (const p of st.panes) paintPane(p);
+    if (st.isMobile) syncMobileBar();   // panes were rebuilt → re-home the active bulb + refresh send/stop
   }
 
   /** Tell the work machine a session is finished with. Without this a pane that goes away
@@ -8234,6 +8275,8 @@ function viewWorkspace() {
       ]),
       grid,
     ]),
+    wsModeStrip,   // mobile-only: the active pane's Live/Held bulb (hidden on desktop via CSS)
+    wsMBar,        // mobile-only: the bottom control bar (hidden on desktop via CSS)
     permHost,
   );
   syncMobile();   // apply the phone layout immediately if we loaded narrow

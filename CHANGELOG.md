@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.66] - 2026-08-18
+
+### Added
+- **Core workspace mobile overhaul — Stage 1: a Pact-style bottom control bar.** On a phone, the active
+  pane's actions now live in a fixed **bottom bar** (☰ drawer · 📎 attach · 🕐 history · ↻ sync · ■ stop ·
+  ➤ send) instead of the vertical round-button column crammed inside the compose row — so the **compose
+  textarea gets the full width**, matching the Pact mobile chat. A thin strip above the bar hosts the
+  active pane's **Live/Held** scroll bulb. The bar drives whatever pane is active and reflects its
+  working/deep-work state; single-pane focus, the top tab switcher, and the repos/history drawer are
+  unchanged. Desktop is untouched (the bar is mobile-only). Stages 2–3 (controls drawer, history sheet,
+  moving the switcher into the bar, polish) follow.
+
 ## [1.4.65] - 2026-08-18
 
 ### Changed

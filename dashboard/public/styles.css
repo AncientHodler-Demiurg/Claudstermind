@@ -349,6 +349,8 @@ body.ws-full .ws-transcript { max-height: none; flex: 1; }
 body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 
 .ws-root { display: flex; flex-direction: column; gap: 10px; }
+/* Mobile-only Core bottom control bar + Live/Held strip — hidden on desktop (shown under .ws-mobile). */
+.ws-mcbar, .ws-mmodebar { display: none; }
 .ws-toolbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .ws-spacer { flex: 1; }
 .ws-trust { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink); }
@@ -1003,6 +1005,26 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .ws-compose-btns .ws-attach { font-size: 21px; line-height: 1; }
   .ws-pane-controls { gap: 5px; }
   .wsel, .wsel-sm { font-size: 12.5px; }   /* keep selects legible + tappable */
+
+  /* Stage-1 Core-mobile overhaul (Pact model): the per-pane compose buttons move to a global bottom
+     control bar, so the textarea owns the full width — matching the Pact mobile chat. */
+  .ws-mobile .ws-compose-btns { display: none; }
+  .ws-mobile .ws-compose { gap: 0; }
+  .ws-mobile .ws-mmodebar { display: flex; justify-content: center; align-items: center; padding: 2px 0 0; flex: 0 0 auto; }
+  .ws-mobile .ws-mcbar { display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
+    padding: 6px max(10px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+    border-top: 1px solid var(--line); background: var(--panel); }
+  .ws-mcbtn { min-width: 42px; min-height: 42px; padding: 0 10px; display: inline-flex; align-items: center; justify-content: center;
+    background: var(--chip); border: 1px solid var(--line); color: var(--ink); border-radius: 11px; font-size: 18px; cursor: pointer; }
+  .ws-mcbtn:active { filter: brightness(1.15); }
+  .ws-mcbtn-send { background: var(--accent); border-color: var(--accent); color: #fff; min-width: 58px; font-size: 20px; }
+  .ws-mcbtn-send.busy { background: #f59e0b; border-color: #f59e0b; color: #1a1400; }
+  .ws-mcbtn-stop { background: #f87171; border-color: #f87171; color: #2a0a0a; }
+  /* The bottom bar and its strip live at the very bottom of the flex column — kill ws-root's gap there
+     so they hug the compose above without a floating band. And let the active pane fit the remaining
+     flex space (the old min-height:calc(100vh-210px) predates the bottom bar and would push it off). */
+  .ws-mobile.ws-root { gap: 8px; }
+  .ws-mobile .ws-pane { min-height: 0; }
 
   /* PHASE 2 — one chat box at a time via a tab strip; the sidebar becomes a slide-in drawer. */
   .ws-mtabs { display: flex; align-items: center; gap: 6px; margin: 2px 0 4px; }
