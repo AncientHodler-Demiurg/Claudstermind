@@ -4,6 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.75] - 2026-08-18
+
+### Added
+- **Conversation worktree migration — Stage 2: merge to main & return, + persistent markers.** The head
+  **⇄** control on a started conversation is now a menu:
+  - **"Merge <worktree> into main & return"** — runs the conflict-safe merge (aborts + leaves main
+    untouched on conflict; needs both checkouts committed-clean), returns the conversation to main, drops a
+    green **⌥ returned to main (merged "ats")** separator, and offers to remove the merged worktree.
+  - **"Return to main (no merge)"** — flip the conversation's cwd back without merging.
+  - **"Migrate to another worktree…"** — the Stage-1 move.
+  This completes the round-trip you drive from the chat: move a running conversation into a worktree, work
+  in isolation, then merge it back and return — context unbroken the whole way, each hop marked by a line.
+- **Migration markers now persist across reloads.** Each move is recorded on the conversation
+  (`t.migrations`) and re-spliced into the transcript in chronological order on every rehydrate/resync — so
+  the separator lines survive a reload and a reconnect, not just the live session.
+
 ## [1.4.74] - 2026-08-18
 
 ### Fixed

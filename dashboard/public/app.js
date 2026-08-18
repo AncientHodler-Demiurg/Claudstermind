@@ -4621,7 +4621,7 @@ function pactStateSnapshot() {
     rowFlex: Array.isArray(PACT_ED.rowFlex) ? PACT_ED.rowFlex.slice() : null,
   };
   const chat = {
-    tabs: PACT_CHAT.tabs.map((t) => ({ key: t.key, name: t.name, draft: t.draft || "", resume: t.resume || null, prime: !!t.prime, worktree: t.worktree || null })),
+    tabs: PACT_CHAT.tabs.map((t) => ({ key: t.key, name: t.name, draft: t.draft || "", resume: t.resume || null, prime: !!t.prime, worktree: t.worktree || null, migrations: t.migrations || [] })),
     activeIndex: Math.max(0, PACT_CHAT.tabs.findIndex((t) => t.id === PACT_CHAT.activeId)),
   };
   const right = document.querySelector(".pact-right");
@@ -4674,6 +4674,8 @@ function pactRestoreChat(ch) {
       resume: pactResumeIdOk(ts.resume, key),
       // the worktree this conversation runs in survives reloads (Stage-2 binding); null/"main" → primary checkout
       worktree: (ts.worktree && ts.worktree !== "main") ? ts.worktree : undefined,
+      // recorded worktree-migration markers, re-injected into the transcript on rehydrate (see pactChatReinjectMigrations)
+      migrations: Array.isArray(ts.migrations) ? ts.migrations.filter((m) => m && typeof m.at === "number") : [],
       // the prime (undeletable) conversation flag survives reloads; ensurePrime backfills older layouts
       prime: !!ts.prime };
   });
@@ -5177,6 +5179,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
         if (lastIn && tail[0] && lastIn.role === tail[0].role && (lastIn.text || "") === (tail[0].text || "")) tail = tail.slice(1);
         tt.msgs = pactPreserveElapsed(tt.msgs, incoming).concat(tail);
       } else if (incoming.length >= tt.msgs.length) tt.msgs = pactPreserveElapsed(tt.msgs, incoming);
+      pactChatReinjectMigrations(tt);   // splice the worktree-migration markers back into the rehydrated transcript
       // Likewise don't yank a mid-turn tab back to idle — a live turn in flight owns the status.
       if (tt.status !== "thinking" && tt.status !== "deepwork" && tt.status !== "awaiting-permission") tt.status = "idle";
       tt._forceBottom = true;
@@ -5204,7 +5207,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
     case "resync": {
       const incoming = pactTranscriptToMsgs(d.transcript);
       const dec = pactResyncDecision(t.msgs.length, incoming.length, d.status, d.live);
-      if (dec.replace) t.msgs = pactPreserveElapsed(t.msgs, incoming);   // keep a live-stamped "Thought for …" the daemon hasn't persisted yet
+      if (dec.replace) { t.msgs = pactPreserveElapsed(t.msgs, incoming); pactChatReinjectMigrations(t); }   // keep a live-stamped "Thought for …" the daemon hasn't persisted yet; re-add migration markers
       if (d.usage) t.usage = d.usage;
       if (d.status) t.status = d.status;
       pactChatMarkTurnBusy(t);   // restored mid-turn (e.g. after reload) → show the timer here too
@@ -5472,33 +5475,86 @@ async function pactChatDispatch(t, text, images) {
     if (r && r._status === 401) sessionSetExpired(true);
   }
 }
+// One place that records a worktree move on a conversation: flips its cwd (future turns), drops the marker
+// line, and remembers it (t.migrations) so it's re-injected in time order on reload (see pactRestoreChat).
+function pactChatRecordMigration(t, from, to) {
+  t.worktree = (to && to !== "main") ? to : undefined;
+  const rec = { kind: "migration", from: from || "main", to: to || "main", at: Date.now() };
+  t.msgs.push(rec);
+  (t.migrations = t.migrations || []).push({ from: rec.from, to: rec.to, at: rec.at });
+  t._forceBottom = true;
+  pactStateSave(); pactChatRender(); pactChatPaint(t); pactEdLoadWorktrees();
+}
+// Re-inject a conversation's recorded migration markers into its transcript in chronological order — the
+// server rehydrate (sessionOpen / resync) replaces t.msgs wholesale, so the client-side markers must be
+// spliced back each time by their `at` timestamp. Idempotent (drops any markers already present first).
+function pactChatReinjectMigrations(t) {
+  if (!t || !Array.isArray(t.msgs)) return;
+  if (t.msgs.some((m) => m.kind === "migration")) t.msgs = t.msgs.filter((m) => m.kind !== "migration");
+  if (!t.migrations || !t.migrations.length) return;
+  for (const mig of t.migrations) {
+    let idx = t.msgs.findIndex((m) => typeof m.at === "number" && m.at > mig.at);
+    if (idx < 0) idx = t.msgs.length;
+    t.msgs.splice(idx, 0, { kind: "migration", from: mig.from, to: mig.to, at: mig.at });
+  }
+}
+// The head ⇄ menu for a STARTED conversation: migrate to another worktree, merge back + return to main, or
+// return to main without merging.
+function pactChatWorktreeMenu(t, x, y) {
+  if (!t) return;
+  const on = t.worktree || "main";
+  const items = [];
+  if (on !== "main") {
+    items.push({ label: `Merge "${on}" into main & return`, onClick: () => pactChatMergeReturn(t) });
+    items.push({ label: "Return to main (no merge)", onClick: () => pactChatMigrate(t, "main") });
+    items.push("---");
+  }
+  items.push({ label: "Migrate to another worktree…", onClick: () => pactChatMigrate(t) });
+  pactShowCtxMenu(x, y, items);
+}
 // Migrate a RUNNING conversation to a different worktree (or back to main): its context is unbroken (the
-// SDK session continues — only the agent's cwd changes for future turns), a marker line records the move,
-// and uncommitted work in the current checkout is flagged (it stays behind; commit first to carry it).
-async function pactChatMigrate(t) {
+// SDK session continues — only the agent's cwd changes for future turns). `toArg` skips the prompt (used by
+// "Return to main"). Uncommitted work in the current checkout is flagged (it stays behind; commit to carry it).
+async function pactChatMigrate(t, toArg) {
   if (!t) return;
   const cur = t.worktree || "main";
-  const existing = (PACT_ED && PACT_ED.worktrees ? PACT_ED.worktrees : []).filter((w) => !w.isMain).map((w) => w.name);
-  const hint = existing.length ? "existing: " + existing.join(", ") : "none yet — type a name to create one";
-  const raw = window.prompt(`Migrate "${(PACT_CHAT_NAMES[t.key] || t.name)}" to which worktree?\n\nType a NEW name to create it, an existing worktree, or "main" to return.\n(${hint})`, cur === "main" ? "" : "main");
-  if (raw == null) return;
-  const to = raw.trim();
+  let to = toArg;
+  if (to == null) {
+    const existing = (PACT_ED && PACT_ED.worktrees ? PACT_ED.worktrees : []).filter((w) => !w.isMain).map((w) => w.name);
+    const hint = existing.length ? "existing: " + existing.join(", ") : "none yet — type a name to create one";
+    const raw = window.prompt(`Migrate "${(PACT_CHAT_NAMES[t.key] || t.name)}" to which worktree?\n\nType a NEW name to create it, an existing worktree, or "main" to return.\n(${hint})`, cur === "main" ? "" : "main");
+    if (raw == null) return;
+    to = raw.trim();
+  }
   if (!to || to === cur) return;
   // Uncommitted work in the current checkout won't follow — warn (commit-first is the recommended path).
   let changed = [];
   try { const d = await (await fetch("/api/pact/changed" + (cur !== "main" ? "?worktree=" + encodeURIComponent(cur) : ""))).json(); if (d && d.ok) changed = d.files || []; } catch {}
   if (changed.length && !window.confirm(`The "${cur}" checkout has ${changed.length} uncommitted change(s).\n\nThey will STAY in "${cur}" and will NOT follow to "${to}". Recommended: Cancel, ask the agent to commit, then migrate.\n\nProceed anyway?`)) return;
   // Ensure the target exists (create a new worktree if the name is new; "main" always exists).
-  if (to !== "main" && !existing.includes(to)) {
+  if (to !== "main" && !(PACT_ED && PACT_ED.worktrees || []).some((w) => w.name === to)) {
     const c = await pactWorktreeAct("create", to);
     if (!c.ok && !/already exists/i.test(c.error || "")) { pactEdSaveStatus("⚠ " + (c.error || "could not create worktree \"" + to + "\""), true); return; }
   }
-  // Flip the conversation's cwd for future turns + drop the migration marker. Context is untouched.
-  t.worktree = to === "main" ? undefined : to;
-  t.msgs.push({ kind: "migration", from: cur, to, at: Date.now() });
-  t._forceBottom = true;
-  pactStateSave(); pactChatRender(); pactChatPaint(t); pactEdLoadWorktrees();
+  pactChatRecordMigration(t, cur, to);
   pactEdSaveStatus('conversation now runs in "' + to + '" — its next turn uses that checkout' + (changed.length ? " (uncommitted work left in \"" + cur + "\")" : ""), false);
+}
+// Merge this conversation's worktree into main and RETURN the conversation to main. Conflict-safe: the
+// server aborts and leaves main untouched on a conflict. Offers to remove the now-merged worktree.
+async function pactChatMergeReturn(t) {
+  if (!t || !t.worktree) return;
+  const wt = t.worktree;
+  if (!window.confirm(`Merge worktree "${wt}" into main and return this conversation to main?\n\nBoth checkouts must be committed-clean (a merge only takes committed work — ask the agent to commit first if needed). If it would conflict, it's ABORTED and main is left exactly as it is.`)) return;
+  pactEdSaveStatus(`merging "${wt}" into main…`, false);
+  const d = await pactWorktreeAct("merge", wt);
+  if (!d.ok) { pactEdSaveStatus("⚠ " + (d.error || "merge failed"), true); return; }
+  pactChatRecordMigration(t, wt, "main");
+  pactEdSaveStatus(`✓ merged "${wt}" into ${d.mainBranch || "main"} (${d.merged || 0} commit${d.merged === 1 ? "" : "s"}) — conversation returned to main`, false);
+  if (window.confirm(`Merged. Remove the "${wt}" worktree checkout now? (its branch + commits stay; only the folder is deleted)`)) {
+    const r = await pactWorktreeAct("remove", wt);
+    if (r.ok) { for (const g of PACT_ED.groups) if (g.worktree === wt) { g.worktree = undefined; for (const tt of g.tabs) tt.worktree = "main"; } pactEdLoadWorktrees(); pactStateSave(); }
+    else pactEdSaveStatus("⚠ " + (r.error || "could not remove worktree"), true);
+  }
 }
 function pactChatSend(t) {
   if (!PACT_CHAT || !t) return;
@@ -5838,9 +5894,9 @@ function pactChatRender() {
       // deliberate MIGRATE action handles it (commit-first hygiene + a marker line). Always available so
       // you can move a running conversation to a new/other worktree, or back to main.
       const mig = el("button", { class: "pact-ed-ico pc-migrate" + ((a0 && a0.worktree) ? " --active" : ""),
-        title: "Migrate this conversation to another git worktree, or back to main (commit first — uncommitted work won't follow)" },
+        title: "This conversation's git worktree — migrate to another, or merge back into main (commit first — uncommitted work won't follow)" },
         ["⇄ " + ((a0 && a0.worktree) || "main")]);
-      mig.addEventListener("click", (e) => { e.stopPropagation(); pactChatMigrate(pactChatActive()); });
+      mig.addEventListener("click", (e) => { e.stopPropagation(); const r = mig.getBoundingClientRect(); pactChatWorktreeMenu(pactChatActive(), r.left, r.bottom + 4); });
       headKids.push(mig);
     } else if (PACT_ED && PACT_ED.worktrees && PACT_ED.worktrees.length > 1) {
       // Not started yet → the plain binding selector (Stage 2): pick the worktree this conversation starts in.
