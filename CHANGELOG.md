@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.67] - 2026-08-18
+
+### Changed
+- **Core mobile overhaul — Stage 2: switcher + settings move to bottom sheets, reclaiming the top rows.**
+  Building on Stage 1's bottom bar:
+  - **💬 Conversations** button opens a slide-up sheet listing every open pane (switch · close · ＋ new),
+    replacing the top tab strip — which is now **hidden**, reclaiming that row. A count badge on 💬 shows
+    how many conversations are open.
+  - **⚙ Settings** button opens a sheet with the active pane's own controls (repo · worktree · model ·
+    effort · mode) — the live `.ws-pane-controls` node is borrowed into the sheet (all its handlers intact)
+    and returned on close.
+  - The **desktop toolbar is hidden on mobile** too, so the active pane now owns nearly the whole screen.
+  Single-pane focus and the repos/history drawer (☰) are unchanged; desktop is untouched. Stage 3 (polish:
+  background-work badge, activity feed, new-repo access, safe-area tuning) follows.
+
 ## [1.4.66] - 2026-08-18
 
 ### Added

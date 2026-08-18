@@ -6375,6 +6375,7 @@ function viewWorkspace() {
   // hidden on desktop via CSS and only shown under .ws-mobile.
   const wsMBar = el("div", { class: "ws-mcbar" }, []);
   const wsModeStrip = el("div", { class: "ws-mmodebar" }, []);
+  const wsSheet = el("div", { class: "ws-sheet" }, []);   // mobile bottom sheet (conversations · pane settings)
   const sideBackdrop = el("div", { class: "ws-side-backdrop" }, []);
   const sideList = el("div", { class: "ws-side-list" }, []);
   const histList = el("div", { class: "ws-hist" }, []);
@@ -7305,6 +7306,49 @@ function viewWorkspace() {
     addBtn.addEventListener("click", addPaneMobile);
     mobileTabs.replaceChildren(menuBtn, el("div", { class: "ws-mtabs-scroll" }, tabs), addBtn);
   }
+  // ---- mobile bottom sheets (Stage 2): a slide-up panel reused for the conversations switcher and the
+  // active pane's settings. One sheet element; openSheet swaps its title + body. `_sheetReturn` restores
+  // any DOM borrowed into the sheet (the pane's live controls) when it closes.
+  const sheetBody = el("div", { class: "ws-sheet-body" }, []);
+  const sheetTitle = el("span", { class: "ws-sheet-ttl" }, [""]);
+  let _sheetReturn = null;
+  function openSheet(title, bodyEl) { if (_sheetReturn) { _sheetReturn(); _sheetReturn = null; } sheetTitle.textContent = title; sheetBody.replaceChildren(bodyEl); wsSheet.classList.add("open"); }
+  function closeSheet() { wsSheet.classList.remove("open"); if (_sheetReturn) { _sheetReturn(); _sheetReturn = null; } }
+  {
+    const x = el("button", { class: "ws-sheet-x", type: "button", "aria-label": "Close" }, ["✕"]);
+    x.addEventListener("click", closeSheet);
+    const back = el("div", { class: "ws-sheet-back" }, []);
+    back.addEventListener("click", closeSheet);
+    wsSheet.replaceChildren(back, el("div", { class: "ws-sheet-panel" }, [el("div", { class: "ws-sheet-hd" }, [sheetTitle, x]), sheetBody]));
+  }
+  // The conversations switcher (was the top tab strip) as a sheet: one row per open pane + a "＋ New".
+  function convosSheetBody() {
+    const rows = st.panes.map((p) => {
+      const label = p.repo ? shortRepo(p.repo) + (p.worktree && p.worktree !== "main" ? "@" + p.worktree : "") : "New chat";
+      const busy = paneBusy(p);
+      const dot = el("span", { class: "ws-mtab-dot" + (busy ? " busy" : "") + (p.status === "deepwork" ? " deep" : "") }, []);
+      const row = el("button", { class: "ws-sheet-row" + (p.id === st.activeId ? " --active" : ""), type: "button" }, [dot, el("span", { class: "ws-sheet-row-lbl" }, [label])]);
+      row.addEventListener("click", () => { setActive(p.id); closeSheet(); });
+      if (st.panes.length > 1) {
+        const x = el("span", { class: "ws-sheet-row-x", title: "Close this conversation" }, ["×"]);
+        x.addEventListener("click", (e) => { e.stopPropagation(); removePaneMobile(p); openSheet("Conversations", convosSheetBody()); });
+        row.appendChild(x);
+      }
+      return row;
+    });
+    const addRow = el("button", { class: "ws-sheet-row ws-sheet-add", type: "button" }, ["＋ New conversation"]);
+    addRow.addEventListener("click", () => { addPaneMobile(); closeSheet(); });
+    return el("div", { class: "ws-sheet-list" }, [...rows, addRow]);
+  }
+  // The active pane's own controls (repo / worktree / model / effort / mode) — BORROW the live
+  // .ws-pane-controls node into the sheet (all its handlers come with it), and put it back on close.
+  function openSettingsSheet() {
+    const ui = paneUI.get(st.activeId); if (!ui) return;
+    const controls = ui.root.querySelector(".ws-pane-controls"); if (!controls) return;
+    const extras = ui.root.querySelector(".ws-compose-extras");
+    openSheet("Pane settings", controls);
+    _sheetReturn = () => { if (extras && extras.parentNode === ui.root) ui.root.insertBefore(controls, extras); else ui.root.appendChild(controls); };
+  }
   // Build the mobile bottom control bar ONCE — its buttons act on whatever pane is active at click time.
   function buildMobileBar() {
     const mb = (label, title, fn, cls) => {
@@ -7313,14 +7357,15 @@ function viewWorkspace() {
       return b;
     };
     const menuB = mb("☰", "Repositories & history", openDrawer);
+    const chatsB = mb("💬", "Conversations — switch, add, or close", () => openSheet("Conversations", convosSheetBody()), "ws-mcbtn-chats");
+    const setB = mb("⚙", "Pane settings — repo, worktree, model, effort, mode", openSettingsSheet);
     const attachB = mb("📎", "Attach image", () => { const ui = paneUI.get(st.activeId); if (ui && ui.attachBtn) ui.attachBtn.click(); });
-    const histB = mb("🕐", "History", () => { const p = activePane(); loadHistory(p ? p.repo : null); openDrawer(); });
     const syncB = mb("↻", "Sync now — re-fetch the latest state (no page reload)", () => { const p = activePane(); if (p && p.sessionKey) wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey } }); });
     const stopB = mb("■", "Stop the current response (keeps the conversation)", () => { const p = activePane(); if (p && p.sessionKey) wsPost("stop", { sessionKey: p.sessionKey }); }, "ws-mcbtn-stop");
     stopB.hidden = true;
     const sendB = mb("➤", "Send", () => send(activePane()), "ws-mcbtn-send");
-    wsMBar._sendB = sendB; wsMBar._stopB = stopB;
-    wsMBar.replaceChildren(menuB, attachB, histB, el("span", { class: "ws-spacer" }, []), syncB, stopB, sendB);
+    wsMBar._sendB = sendB; wsMBar._stopB = stopB; wsMBar._chatsB = chatsB;
+    wsMBar.replaceChildren(menuB, chatsB, setB, attachB, el("span", { class: "ws-spacer" }, []), syncB, stopB, sendB);
   }
   // Keep the bottom bar's send/stop in step with the active pane, and home that pane's Live/Held bulb in
   // the mode strip (each pane owns its own bulb; only the visible pane's belongs in the shared strip).
@@ -7332,6 +7377,7 @@ function viewWorkspace() {
     wsMBar._sendB.textContent = p && p.status === "deepwork" ? "🔴" : busy ? "…" : "➤";
     wsMBar._sendB.classList.toggle("busy", busy);
     wsMBar._stopB.hidden = !busy;
+    if (wsMBar._chatsB) wsMBar._chatsB.dataset.n = String(st.panes.length);
     if (ui && ui.stick && ui.stick.modeTag && wsModeStrip.firstChild !== ui.stick.modeTag) {
       wsModeStrip.replaceChildren();                       // drop any prior pane's bulb
       ui.stick.dockMode(wsModeStrip, "stick-mode--bar");   // and home the active pane's
@@ -7365,6 +7411,7 @@ function viewWorkspace() {
   function syncMobile() {
     st.isMobile = !!WS_MOBILE_MQ.matches;
     root.classList.toggle("ws-mobile", st.isMobile);
+    closeSheet();   // rotating between phone/desktop: never strand a borrowed controls node in a hidden sheet
     if (st.isMobile) { renderMobileTabs(); buildMobileBar(); syncMobileBar(); }
     else closeDrawer();
   }
@@ -7372,6 +7419,7 @@ function viewWorkspace() {
   sideBackdrop.addEventListener("click", closeDrawer);
 
   function rebuildGrid() {
+    closeSheet();   // the settings sheet may have borrowed a pane's controls node — put it back before the panes are rebuilt
     grid.dataset.cols = String(st.cols);
     grid.dataset.rows = String(st.rows);
     grid.style.setProperty("--ws-cols", st.cols);
@@ -8277,6 +8325,7 @@ function viewWorkspace() {
     ]),
     wsModeStrip,   // mobile-only: the active pane's Live/Held bulb (hidden on desktop via CSS)
     wsMBar,        // mobile-only: the bottom control bar (hidden on desktop via CSS)
+    wsSheet,       // mobile-only: the slide-up sheet (conversations / pane settings)
     permHost,
   );
   syncMobile();   // apply the phone layout immediately if we loaded narrow
