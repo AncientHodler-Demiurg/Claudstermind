@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.77] - 2026-08-18
+
+### Changed
+- **A conversation's worktree is now an always-visible pill in the compose bar (lower-left).** Previously the
+  worktree control only appeared in the chat header, and only once a worktree existed — so you couldn't tell
+  what a conversation was tied to (or bind it) before creating one. Now every Pact conversation shows a
+  **⌂ main** / **⌥ <worktree>** pill at the bottom-left of the compose box, always. Click it for a
+  state-aware menu: **before the first message** → pick which checkout it starts in, or **＋ New worktree…**
+  to create + bind one on the spot; **after it's started** → migrate to another worktree, or merge back to
+  main & return. The old header selector/⇄ button were removed (folded into the pill).
+
 ## [1.4.76] - 2026-08-18
 
 ### Fixed

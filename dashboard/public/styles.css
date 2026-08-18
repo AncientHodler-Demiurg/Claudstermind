@@ -1353,6 +1353,15 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pc-migration.--tomain .pc-migration-lbl { color: #34d399; background: color-mix(in srgb, #34d399 12%, transparent); }
 /* The head migrate button (shown for a started conversation) — accented when on a non-main checkout. */
 .pc-migrate.--active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+/* Always-visible worktree pill in the compose bar (lower-left): the conversation's current checkout +
+   a caret; click opens the bind/migrate/merge menu. Shows "⌂ main" by default so it's always discoverable. */
+.pc-wtpill { flex: 0 0 auto; align-self: flex-end; display: inline-flex; align-items: center; gap: 3px;
+  height: 32px; padding: 0 9px; font-size: 11px; font-weight: 600; color: var(--ink-dim); cursor: pointer;
+  background: var(--chip); border: 1px solid var(--line); border-radius: 9px; white-space: nowrap; }
+.pc-wtpill:hover { color: var(--ink); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.pc-wtpill.--active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: color-mix(in srgb, var(--accent) 10%, var(--chip)); }
+.pc-wtpill-caret { font-size: 8px; opacity: .65; }
 /* Per-tab worktree marker + a left accent so a conversation bound to a non-main checkout stands out. */
 .pc-tab.--wt { border-left: 2px solid color-mix(in srgb, var(--accent) 65%, transparent); }
 .pc-tab-wt { font-size: 9.5px; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent);

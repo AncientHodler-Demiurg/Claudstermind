@@ -5503,13 +5503,34 @@ function pactChatReinjectMigrations(t) {
 function pactChatWorktreeMenu(t, x, y) {
   if (!t) return;
   const on = t.worktree || "main";
+  const started = !!(t.started || (t.msgs && t.msgs.length));
   const items = [];
-  if (on !== "main") {
-    items.push({ label: `Merge "${on}" into main & return`, onClick: () => pactChatMergeReturn(t) });
-    items.push({ label: "Return to main (no merge)", onClick: () => pactChatMigrate(t, "main") });
+  if (!started) {
+    // Not started yet → BIND: pick the checkout this conversation will start in (or create a new one).
+    // Uncommitted work isn't in play yet, so this is a plain, reversible choice (no migrate/merge needed).
+    items.push({ label: "Run this conversation in:", disabled: true });
+    for (const w of ((PACT_ED && PACT_ED.worktrees) || [{ name: "main", isMain: true }])) {
+      const nm = w.name;
+      items.push({ label: (w.isMain ? "⌂ main" : "⌥ " + nm) + (nm === on ? "   ✓" : ""),
+        onClick: () => { t.worktree = w.isMain ? undefined : nm; pactStateSave(); pactChatRender(); } });
+    }
     items.push("---");
+    items.push({ label: "＋ New worktree…", onClick: async () => {
+      const name = window.prompt("New worktree name (letters, digits, . _ - ) — an isolated checkout + branch off HEAD:");
+      if (name == null || !name.trim()) return;
+      const c = await pactWorktreeAct("create", name.trim());
+      if (c.ok || /already exists/i.test(c.error || "")) { t.worktree = name.trim(); pactEdLoadWorktrees(); pactStateSave(); pactChatRender(); }
+      else pactEdSaveStatus("⚠ " + (c.error || "could not create worktree"), true);
+    } });
+  } else {
+    // Started → its cwd can't just be re-picked (uncommitted work wouldn't follow): MIGRATE / MERGE-RETURN.
+    if (on !== "main") {
+      items.push({ label: `Merge "${on}" into main & return`, onClick: () => pactChatMergeReturn(t) });
+      items.push({ label: "Return to main (no merge)", onClick: () => pactChatMigrate(t, "main") });
+      items.push("---");
+    }
+    items.push({ label: on === "main" ? "Migrate to a worktree…" : "Migrate to another worktree…", onClick: () => pactChatMigrate(t) });
   }
-  items.push({ label: "Migrate to another worktree…", onClick: () => pactChatMigrate(t) });
   pactShowCtxMenu(x, y, items);
 }
 // Migrate a RUNNING conversation to a different worktree (or back to main): its context is unbroken (the
@@ -5885,33 +5906,9 @@ function pactChatRender() {
   // Stage-2: bind THIS conversation's agent to a worktree — it runs there (its edits land in that
   // checkout; pair it with an editor box on the same worktree to review them). Only shown when a worktree
   // beyond main exists, and LOCKED once the conversation has started (changing cwd mid-chat is confusing).
-  const headKids = [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, el("span", { class: "ws-spacer" }, [])];
-  {
-    const a0 = pactChatActive();
-    const started = !!(a0 && (a0.started || (a0.msgs && a0.msgs.length)));
-    if (started) {
-      // A started conversation's cwd can't just be re-picked (its uncommitted work wouldn't follow) — the
-      // deliberate MIGRATE action handles it (commit-first hygiene + a marker line). Always available so
-      // you can move a running conversation to a new/other worktree, or back to main.
-      const mig = el("button", { class: "pact-ed-ico pc-migrate" + ((a0 && a0.worktree) ? " --active" : ""),
-        title: "This conversation's git worktree — migrate to another, or merge back into main (commit first — uncommitted work won't follow)" },
-        ["⇄ " + ((a0 && a0.worktree) || "main")]);
-      mig.addEventListener("click", (e) => { e.stopPropagation(); const r = mig.getBoundingClientRect(); pactChatWorktreeMenu(pactChatActive(), r.left, r.bottom + 4); });
-      headKids.push(mig);
-    } else if (PACT_ED && PACT_ED.worktrees && PACT_ED.worktrees.length > 1) {
-      // Not started yet → the plain binding selector (Stage 2): pick the worktree this conversation starts in.
-      const wtSel = el("select", { class: "wsel wsel-sm pc-wt" + ((a0 && a0.worktree) ? " --active" : ""),
-        title: "Worktree this conversation's agent runs in — set before the first message" },
-        PACT_ED.worktrees.map((w) => el("option", { value: w.name }, [w.isMain ? "⌂ main" : "⌥ " + w.name])));
-      wtSel.value = (a0 && a0.worktree) || "main";
-      wtSel.addEventListener("change", () => {
-        const a = pactChatActive(); if (!a || a.started || (a.msgs && a.msgs.length)) return;
-        a.worktree = wtSel.value === "main" ? undefined : wtSel.value; pactStateSave(); pactChatRender();
-      });
-      headKids.push(wtSel);
-    }
-  }
-  headKids.push(usageEl, modeSel, chatCollapse);
+  // The worktree control now lives ALWAYS-VISIBLE in the compose bar (lower-left, see `wtPill` below), so
+  // you can always see + change which checkout a conversation runs in — even before any worktree exists.
+  const headKids = [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, el("span", { class: "ws-spacer" }, []), usageEl, modeSel, chatCollapse];
   const head = el("div", { class: "pact-zone-hd pc-head" }, headKids);
   const scroll = el("div", { class: "pc-scroll" }, []);
   const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (⌘/Ctrl+Enter to send)" });
@@ -5948,7 +5945,15 @@ function pactChatRender() {
   const imgPreview = el("div", { class: "pc-img-preview" }, []); imgPreview.hidden = true;
   const imgErr = el("div", { class: "pc-img-err" }, []); imgErr.hidden = true;
   const sendWrap = el("div", { class: "pc-send-wrap" }, [send]);   // relative host so the Live/Held bulb can dock above Send
-  const compose = el("div", { class: "pc-compose" }, [imgFileInput, attach, input, stop, sendWrap]);
+  // Always-visible worktree pill (compose bar, lower-LEFT): shows which checkout THIS conversation runs in
+  // (⌂ main by default) and, clicked, opens the state-aware worktree menu — bind (before first message),
+  // migrate, or merge-&-return (after). Visible even before any worktree exists, so it's always discoverable.
+  const a0 = pactChatActive();
+  const wtPill = el("button", { class: "pc-wtpill" + ((a0 && a0.worktree) ? " --active" : ""), type: "button",
+    title: "This conversation runs in this git worktree — click to bind, migrate, or merge back to main" },
+    [(a0 && a0.worktree) ? "⌥ " + a0.worktree : "⌂ main", el("span", { class: "pc-wtpill-caret" }, ["▾"])]);
+  wtPill.addEventListener("click", (e) => { e.stopPropagation(); const r = wtPill.getBoundingClientRect(); pactChatWorktreeMenu(pactChatActive(), r.left, r.top); });
+  const compose = el("div", { class: "pc-compose" }, [imgFileInput, wtPill, attach, input, stop, sendWrap]);
   compose.addEventListener("dragover", (e) => { e.preventDefault(); compose.classList.add("pc-drag"); });
   compose.addEventListener("dragleave", () => compose.classList.remove("pc-drag"));
   compose.addEventListener("drop", (e) => {
