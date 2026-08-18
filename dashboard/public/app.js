@@ -4709,7 +4709,12 @@ function pactRestoreChat(ch) {
   for (const t of PACT_CHAT.tabs) {
     if (!t.key) continue;
     PACT_CHAT._pendingOpen[t.key] = t.id;
-    wsPost("control", { action: "sessionOpen", args: { repo: PACT_REPO, worktree: t.worktree || "main", sessionId: t.key } });
+    pactChatSetLoading(t, true);   // show a loader in the chat box until this tab's transcript arrives
+    // Scoped `open` (by session key) finds the conversation regardless of which worktree it now runs in — a
+    // Pact conversation persists under repo@main even after migration (see workspace.mjs) — and ships only the
+    // capped tail. The old worktree-specific `sessionOpen` looked in repo@<worktree>, so a migrated tab missed
+    // its file entirely, AND it shipped the WHOLE transcript uncapped (a 2.2 MB Master tab = the mobile stall).
+    wsPost("control", { action: "open", args: { sessionKey: t.key, scoped: true } });
   }
   // Close the persist-race window on a fresh reload: the sessionOpen rehydrate above can race the
   // daemon's turn-boundary persist for a turn that FINISHED during the downtime — the fresh-open
@@ -4949,8 +4954,9 @@ function pactChatOpenSaved(r, adopt) {
   PACT_CHAT.activeId = id;
   PACT_CHAT._pendingOpen = PACT_CHAT._pendingOpen || {};
   PACT_CHAT._pendingOpen[r.sessionId] = id;   // route the transcript frame (keyed by sessionId) to THIS tab
+  pactChatSetLoading(t, true);
   pactChatRender();
-  wsPost("control", { action: "sessionOpen", args: { repo: PACT_REPO, worktree: t.worktree || "main", sessionId: r.sessionId } });
+  wsPost("control", { action: "open", args: { sessionKey: r.sessionId, scoped: true } });   // capped, worktree-agnostic (see pactRestoreChat)
   pactChatCloseHistory();
   pactStateSave();
 }
@@ -5202,6 +5208,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       } else if (incoming.length >= tt.msgs.length) { tt.msgs = pactPreserveElapsed(tt.msgs, incoming); tt._transcriptTruncated = !!(data && data.transcriptTruncated); }
       pactChatReinjectMigrations(tt);   // splice the worktree-migration markers back into the rehydrated transcript
       pactChatHealWorktree(tt);         // recover a worktree binding the IDE-state layout may have lost
+      pactChatSetLoading(tt, false);    // transcript arrived — drop the loader
       // Likewise don't yank a mid-turn tab back to idle — a live turn in flight owns the status.
       if (tt.status !== "thinking" && tt.status !== "deepwork" && tt.status !== "awaiting-permission") tt.status = "idle";
       tt._forceBottom = true;
@@ -5234,6 +5241,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       const incoming = pactTranscriptToMsgs(d.transcript);
       const dec = pactResyncDecision(t.msgs.length, incoming.length, d.status, d.live);
       if (dec.replace) { t.msgs = pactPreserveElapsed(t.msgs, incoming); pactChatReinjectMigrations(t); pactChatHealWorktree(t); t._transcriptTruncated = !!d.transcriptTruncated; }   // keep a live-stamped "Thought for …" the daemon hasn't persisted yet; re-add migration markers; recover a lost worktree binding
+      pactChatSetLoading(t, false);   // a resync also satisfies an in-flight load — drop the loader
       if (d.usage) t.usage = d.usage;
       if (d.status) t.status = d.status;
       pactChatMarkTurnBusy(t);   // restored mid-turn (e.g. after reload) → show the timer here too
@@ -5312,7 +5320,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       // A "could not be opened" reply to a rehydrate/resume in flight (the session no longer exists on
       // disk) must leave the tab quietly empty, not push a scary error bubble into a freshly-restored
       // tab. Any OTHER error (a real turn failure) still surfaces normally.
-      if (PACT_CHAT._pendingOpen && sessionKey && PACT_CHAT._pendingOpen[sessionKey] != null) { delete PACT_CHAT._pendingOpen[sessionKey]; t.live = ""; t.status = "idle"; t._pendingText = null; t._pendingImages = null; pactChatPaint(t); return; }
+      if (PACT_CHAT._pendingOpen && sessionKey && PACT_CHAT._pendingOpen[sessionKey] != null) { delete PACT_CHAT._pendingOpen[sessionKey]; pactChatSetLoading(t, false); t.live = ""; t.status = "idle"; t._pendingText = null; t._pendingImages = null; pactChatPaint(t); return; }
       // Resume-lost: the Claude Code session this tab was continuing is gone (typically interrupted by a
       // restart before it finalized). Drop the stale resume id so it's never reused, and — if a prompt
       // was in flight — AUTO-RETRY it as a FRESH conversation (resume cleared → the send goes out as
@@ -5418,6 +5426,25 @@ function pactChatBusy(t) { return !!t && (t.status === "thinking" || t.status ==
 //   • idle/done   → accent (the send-ready colour) — this one is waiting on YOUR next prompt
 //   • working     → amber  (thinking / awaiting a permission you must grant)
 //   • deep work   → red    (the SDK is still producing after the visible turn ended)
+// Loading state for a tab whose transcript is being fetched (page load / history resume). Drives the chat-box
+// loader so a big/tunnelled conversation shows "loading…" instead of a blank box for the seconds it takes to
+// arrive. Self-clears after a timeout so a dropped/errored reply never wedges the loader up forever.
+function pactChatSetLoading(t, on) {
+  if (!t) return;
+  clearTimeout(t._loadTimer); t._loadTimer = null;
+  t._loading = !!on;
+  if (on) t._loadTimer = setTimeout(() => { if (t._loading) { t._loading = false; pactChatPaint(t); } }, 12000);
+}
+// Catch a tab up to the server's authoritative state the moment you switch to it — the fix for "I had to
+// refresh to see the latest reply." A background tab only updates from live stream events; if any were
+// dropped (flaky mobile link) it can sit stale until a reload. Re-asking on activate makes simply LOOKING at
+// a tab enough to see its newest turns. Cheap + idempotent (the resync only repaints if something changed).
+function pactChatCatchUp(t) {
+  // `full` when this tab already holds its COMPLETE history (not truncated): a capped catch-up would be
+  // SHORTER than what's on screen, so the resync length-guard would reject it and a new tail turn would be
+  // missed. A truncated tab (showing only the tail) takes the cheap capped catch-up.
+  if (t && t.key) wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true, full: t._transcriptTruncated === false } });
+}
 function pactChatConvoStateCls(t) { return t && t.status === "deepwork" ? " --deep" : (pactChatBusy(t) ? " --busy" : ""); }
 function pactChatConvoStateLabel(t) {
   if (!t) return "";
@@ -5973,7 +6000,13 @@ function pactChatPaint(t) {
   const stick = attachStickController(scroll, { wrapClass: "stick-wrap-pc", nearPx: 4 });
   const force = t._forceBottom; t._forceBottom = false;
   const wasNearBottom = force || stick.sample();
-  scroll.replaceChildren(...(nodes.length ? nodes : [el("div", { class: "hint", style: "padding:10px" }, ["Ask the agent to explore, write, or test Pact in the Ouronet repo."])]));
+  // While a tab's transcript is still being fetched (page load / history resume), show a loader instead of a
+  // blank box or the empty-state hint — so the seconds it takes to pull a big conversation through the tunnel
+  // read as "loading", not "broken/empty". Once messages exist the loader is moot (real content replaces it).
+  const empty = t._loading
+    ? [el("div", { class: "pc-loading" }, [el("span", { class: "pc-loading-bar" }, []), el("span", { class: "pc-loading-lbl" }, ["Loading conversation…"])])]
+    : [el("div", { class: "hint", style: "padding:10px" }, ["Ask the agent to explore, write, or test Pact in the Ouronet repo."])];
+  scroll.replaceChildren(...(nodes.length ? nodes : empty));
   stick.apply(wasNearBottom);
   // Drive the send + stop buttons from this tab's status — an EXACT mirror of the Core cockpit's
   // paintPane: label Send/Working…/Deep Work…, the amber `busy` / red `deepwork` treatment, the
@@ -6021,7 +6054,7 @@ function pactChatRender() {
     if (t.prime) { tail = el("span", { class: "pc-tab-prime", title: "Prime conversation — always open, can't be closed" }, ["★"]); }
     else { tail = el("span", { class: "pc-tab-x", title: "Close chat" }, ["×"]); tail.addEventListener("click", (e) => { e.stopPropagation(); pactChatCloseTab(t.id); }); }
     const tab = el("div", { class: "pc-tab" + (t.id === PACT_CHAT.activeId ? " --active" : "") + (t.prime ? " --prime" : "") + (t.worktree ? " --wt" : "") }, [dot, nameEl, wtMark, tail]);
-    tab.addEventListener("click", () => { if (t.id === PACT_CHAT.activeId) return; pactChatSaveDraft(); PACT_CHAT.activeId = t.id; pactChatRender(); pactStateSave(); });
+    tab.addEventListener("click", () => { if (t.id === PACT_CHAT.activeId) return; pactChatSaveDraft(); PACT_CHAT.activeId = t.id; pactChatRender(); pactStateSave(); pactChatCatchUp(t); });
     return tab;
   });
   const add = el("button", { class: "pact-ed-ico", title: "New Pact chat" }, ["＋"]);
@@ -6498,7 +6531,7 @@ function viewPactMobile() {
           tail.addEventListener("touchend", (e) => { e.preventDefault(); closeConv(e); });
         }
         const row = el("div", { class: "pactm-frow" + (t.id === PACT_CHAT.activeId ? " --active" : "") + (t.prime ? " --prime" : "") }, [state, name, tail]);
-        onTap(row, () => { if (t.id !== PACT_CHAT.activeId) { pactChatSaveDraft(); PACT_CHAT.activeId = t.id; pactChatRender(); pactStateSave(); } closeSheet(); renderStage(); });
+        onTap(row, () => { if (t.id !== PACT_CHAT.activeId) { pactChatSaveDraft(); PACT_CHAT.activeId = t.id; pactChatRender(); pactStateSave(); pactChatCatchUp(t); } closeSheet(); renderStage(); });
         rows.push(row);
       });
       list.replaceChildren(...rows);

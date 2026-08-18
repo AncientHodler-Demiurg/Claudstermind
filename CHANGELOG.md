@@ -4,7 +4,28 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.88] - 2026-08-18
+## [1.4.89] - 2026-08-19
+
+### Fixed
+- **The Pact chat box now populates fast on load instead of sitting blank for ~5 seconds.** The load path
+  (`sessionOpen` → `_openSession`) shipped the *entire* saved transcript uncapped — a Master tab's history
+  was **2.2 MB on disk**, transferred whole through the tunnel on every page load, which is the mobile stall.
+  It also looked up by `repo@<worktree>`, so after the storage-stability fix a migrated tab's file wasn't
+  even found there (it populated only via the later resync). Both fixed: the client now loads each tab with
+  the scoped `open` (find-by-session-key, so it's worktree-agnostic **and** capped to the last 250 messages,
+  same as resync); older turns still load on demand via "Show earlier". `_openSession` is capped too as a
+  backstop. Regression test in `lib/workspace.test.mjs`.
+- **A loading indicator in the chat box while a conversation is being fetched.** Instead of a blank box for
+  the seconds a big/tunnelled transcript takes to arrive, the tab shows an indeterminate progress bar +
+  "Loading conversation…", cleared the moment the transcript (or a resync) lands. It self-clears after a
+  timeout so a dropped reply never wedges it up.
+- **"I had to refresh to see the latest reply" — switching to a conversation now catches it up.** A
+  background tab only updated from live stream events, so any dropped on a flaky link left it stale until a
+  reload. Activating a tab (top strip or the mobile switcher) now re-asks the server for its authoritative
+  state (`pactChatCatchUp`) — `full` when the tab already holds its complete history so the length-guard
+  can't reject a new tail turn — so simply *looking* at a conversation shows its newest turns.
+
+
 
 ### Added
 - **A live per-conversation status light in the mobile Pact "Conversations" switcher**, so you can see at a
