@@ -385,7 +385,9 @@ export function createRelay(opts = {}) {
       if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The Pact workspace is ancient-only." });
       if (!link.connected) return sendJSON(res, 503, { ok: false, error: "Local Claudstermind is not connected." });
       const body = await readBody(req);
-      const r = await link.relay("pactWrite", { path: body.path || "", content: body.content || "" }, 15_000);
+      // Forward the editor's baseline (`expected`) + `force` so the bridge's write honors the same
+      // on-disk-conflict guard as a local save — otherwise a remote save would blindly overwrite.
+      const r = await link.relay("pactWrite", { path: body.path || "", content: body.content || "", expected: body.expected, force: !!body.force }, 15_000);
       return sendJSON(res, 200, r || { ok: false, error: "no reply from the work machine" });
     }
 

@@ -3760,12 +3760,15 @@ function pactEdScheduleAutosave(tab) {
   if (!tab.dirty) return;
   tab._saveTimer = setTimeout(() => { tab._saveTimer = null; pactEdSaveTab(tab); }, 300000);   // 5 min after you stop typing (Ctrl/⌘-S + Save All are immediate)
 }
-async function pactEdSaveTab(tab) {
+async function pactEdSaveTab(tab, opts = {}) {
   if (!tab || !tab.dirty || tab._saving) return;
   tab._saving = true;
   const snapshot = tab.content;
+  // Send the editor's BASELINE (`expected` = what we last loaded/saved from disk) so the server refuses to
+  // blindly overwrite a file the agent (or another session in this shared checkout) changed underneath us.
+  // Data-loss fix: a silent autosave writing a stale buffer used to revert such files to an old snapshot.
   let d;
-  try { d = await (await fetch("/api/pact/file", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: tab.path, content: snapshot }) })).json(); }
+  try { d = await (await fetch("/api/pact/file", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: tab.path, content: snapshot, expected: tab.saved, force: !!opts.force }) })).json(); }
   catch { d = { ok: false, error: "unreachable" }; }
   tab._saving = false;
   if (d.ok) {
@@ -3774,6 +3777,15 @@ async function pactEdSaveTab(tab) {
     if (tab._tabEl) tab._tabEl.classList.toggle("--dirty", tab.dirty);
     pactTreeApplyChangeColors();   // reflect the save on the tree row promptly (uses the current change map)
     if (!tab.dirty) pactEdSaveStatus("✓ saved " + tab.name, false); else pactEdScheduleAutosave(tab);
+  } else if (d.conflict) {
+    // The file changed on disk since we opened it — NEVER silently overwrite. A background autosave just
+    // warns and stops (no reschedule — it would only conflict again). A MANUAL save asks the user, and
+    // only force-overwrites on an explicit yes; "Cancel" leaves both versions intact (disk untouched).
+    tab._diskConflict = typeof d.current === "string" ? d.current : null;
+    if (opts.manual && window.confirm(`"${tab.name}" changed on disk since you opened it — saving now would OVERWRITE those external changes (e.g. the agent's edits, or another session's).\n\nOK = overwrite the disk with YOUR version.\nCancel = keep the disk version untouched (your unsaved edits stay in this box; close + reopen the file to load the disk version).`)) {
+      return pactEdSaveTab(tab, { manual: true, force: true });
+    }
+    pactEdSaveStatus("⚠ " + tab.name + " changed on disk — NOT saved (a blind save would overwrite external edits). Use Save-All to resolve, or close + reopen to load the disk version.", true);
   } else {
     pactEdSaveStatus("⚠ " + (d.message || d.error || "save failed"), true);
   }
@@ -3785,7 +3797,7 @@ async function pactEdSaveAll() {
   for (const g of PACT_ED.groups) for (const t of g.tabs) if (t.dirty) { if (t._saveTimer) { clearTimeout(t._saveTimer); t._saveTimer = null; } dirty.push(t); }
   if (!dirty.length) return;
   pactEdSaveStatus("saving " + dirty.length + " file" + (dirty.length > 1 ? "s" : "") + "…", false);
-  for (const t of dirty) await pactEdSaveTab(t);
+  for (const t of dirty) await pactEdSaveTab(t, { manual: true });   // explicit save → may prompt to resolve an on-disk conflict
   if (!pactEdAnyDirty()) pactEdSaveStatus("✓ all saved", false);
   pactEdCheckChangedFiles();   // re-fetch the change list once (reuses the existing endpoint) so saves/commits re-color the tree
 }

@@ -272,7 +272,7 @@ export function createBridge(opts = {}) {
       const root = resolvePactRoot(paths.root);
       const a = frame.cmd.args || {};
       const result = frame.cmd.type === "pactTree" ? pactListDir(root, a.dir || "")
-        : frame.cmd.type === "pactWrite" ? pactWriteFile(root, a.path || "", a.content || "")
+        : frame.cmd.type === "pactWrite" ? pactWriteFile(root, a.path || "", a.content || "", { expected: a.expected, force: !!a.force })
         // The agent-changed review list + the ?ref=head diff-"before", forwarded down the tunnel so
         // REMOTE works exactly like LOCAL (the Ouronet repo lives on THIS machine).
         : frame.cmd.type === "pactChanged" ? { ok: true, files: pactChangedFiles(root) }

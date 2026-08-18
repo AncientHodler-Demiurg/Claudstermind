@@ -1078,7 +1078,9 @@ const handler = async (req, res) => {
     if (!who.localActionsAvailable) return sendJSON(res, 403, { ok: false, reason: "local-only", message: "Saving Pact files is local-only." });
     if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Execute permission required." });
     const b = await readBody(req);
-    return sendJSON(res, 200, pactWriteFile(resolvePactRoot(MASTER_ROOT), b.path || "", b.content || ""));
+    // Pass the editor's baseline (`expected`) so pactWriteFile can refuse to blindly overwrite a file that
+    // changed on disk since it was opened (the shared-worktree data-loss guard). `force` overrides it.
+    return sendJSON(res, 200, pactWriteFile(resolvePactRoot(MASTER_ROOT), b.path || "", b.content || "", { expected: b.expected, force: !!b.force }));
   }
   // ---- Pact IDE: shared server-side IDE-state (open files, editor boxes, chat tabs/drafts, collapse,
   // chat names). Lives beside the Pact conversation history so localhost and the remote website read

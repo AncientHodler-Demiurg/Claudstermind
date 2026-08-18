@@ -4,6 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.69] - 2026-08-18
+
+### Fixed
+- **Pact editor could silently overwrite on-disk edits (shared-worktree data loss).** The editor saved
+  files with a blind write — no check that the file still matched what it had loaded — and a silent
+  5-minute autosave fires unattended. A tab you'd edited (dirty) is deliberately NOT resynced from disk,
+  so if the agent (or another session sharing the same `repo@main` checkout) changed that same file, the
+  autosave would write the box's stale buffer over those edits, reverting the file to an old snapshot with
+  no prompt. This matches the reported "uncommitted work reverted to a mid-session snapshot" loss. Added
+  an on-disk **conflict guard**: `pactFs.writeTextFile` now takes `{ expected, force }` and refuses to
+  overwrite a file that diverged from the editor's baseline (returning the current bytes to reconcile),
+  threaded through the local endpoint, the relay `pactWrite` forward, and the bridge so remote saves are
+  guarded too. Autosave can never force (it warns and stops on a conflict); a manual Save-All/⌘-S asks
+  before overwriting. New regression test in `lib/pactFs.test.mjs`. Note: the agent-edit review + "Keep
+  All" were already safe (they treat disk as the source of truth and write nothing). Recommendation for
+  concurrent work: run each session in its own `repo@<worktree>` rather than several on `repo@main`.
+
 ## [1.4.68] - 2026-08-18
 
 ### Fixed
