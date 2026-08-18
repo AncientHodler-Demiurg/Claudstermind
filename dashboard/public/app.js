@@ -2183,6 +2183,13 @@ const WS_STALE_MS = 65_000;
 // A pane still marked busy but silent this long is treated as a missed end-of-turn and resynced on
 // the next heartbeat (server heartbeat is 25s; a live turn streams events far more often than this).
 const WS_HEAL_QUIET_MS = 20_000;
+// How long after a tab's last REAL activity the client keeps re-verifying an idle-LOOKING active tab against
+// the server. A turn's "result" flips the tab to idle, but the SDK can keep producing in a "deepwork" phase
+// whose status event is easy to miss on a flaky mobile link — and the old 2-minute window (keyed to the last
+// `result`) was far too short for a long autonomous build or a >2-min connection drop, so the tab sat showing
+// "done" while the agent kept working. This bounds the polling (one scoped resync per tab) yet is long enough
+// to bridge a real outage; once a resync catches the deepwork, the busy-branch takes over and self-sustains.
+const WS_HEAL_ACTIVE_WINDOW_MS = 10 * 60_000;
 /* ---------- relay: the tunnel between this LocalHost and the online site ----------
    Symmetric tab. On the LOCAL dashboard it CONTROLS the bridge (enable/disable, address,
    device secret) and shows whether the remote is online + receiving. On the ONLINE relay
@@ -5017,7 +5024,7 @@ function pactChatSelfHeal() {
     if (pactChatBusy(t) && (now - (t._lastEventAt || 0)) > WS_HEAL_QUIET_MS && (now - (t._healAt || 0)) > WS_HEAL_QUIET_MS) {
       t._healAt = now;
       wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true } });
-    } else if (t.id === PACT_CHAT.activeId && !pactChatBusy(t) && (now - (t._lastResultAt || 0)) < 120_000 && (now - (t._statusSyncAt || 0)) > WS_HEAL_QUIET_MS) {
+    } else if (t.id === PACT_CHAT.activeId && !pactChatBusy(t) && (now - (t._lastActiveAt || t._lastResultAt || 0)) < WS_HEAL_ACTIVE_WINDOW_MS && (now - (t._statusSyncAt || 0)) > WS_HEAL_QUIET_MS) {
       t._statusSyncAt = now;
       wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true } });
     }
@@ -5210,6 +5217,10 @@ function pactChatRoute({ kind, sessionKey, data }) {
   if (kind !== "event") return;
   const d = data || {};
   t._lastEventAt = Date.now();   // per-tab activity stamp — the heartbeat self-heal spots a stuck-busy tab by it
+  // Last REAL content event, EXCLUDING a resync reply (which is itself an "event"). The idle-active self-heal
+  // window is keyed to this: if we counted resync replies, verifying a genuinely-done tab would perpetually
+  // re-arm its own window and never stop. Excluding them lets the window close after true silence.
+  if (d.kind !== "resync") t._lastActiveAt = t._lastEventAt;
   switch (d.kind) {
     // Reconnect catch-up reply (see pactChatResyncAll + `_resync` server-side): the server's
     // AUTHORITATIVE current state. REPLACE the tab's messages with the persisted transcript (never
@@ -7724,7 +7735,7 @@ function viewWorkspace() {
     const chatsB = mb("💬", "Conversations — switch, add, or close", () => openSheet("Conversations", convosSheetBody()), "ws-mcbtn-chats");
     const setB = mb("⚙", "Pane settings — repo, worktree, model, effort, mode", openSettingsSheet);
     const attachB = mb("📎", "Attach image", () => { const ui = paneUI.get(st.activeId); if (ui && ui.attachBtn) ui.attachBtn.click(); });
-    const syncB = mb("↻", "Sync now — re-fetch the latest state (no page reload)", () => { const p = activePane(); if (p && p.sessionKey) wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey } }); });
+    const syncB = mb("↻", "Sync now — re-fetch the latest state (no page reload)", () => { const p = activePane(); if (p && p.sessionKey) wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey, full: !!p._showAllTurns } }); });
     const stopB = mb("■", "Stop the current response (keeps the conversation)", () => { const p = activePane(); if (p && p.sessionKey) wsPost("stop", { sessionKey: p.sessionKey }); }, "ws-mcbtn-stop");
     stopB.hidden = true;
     const sendB = mb("➤", "Send", () => send(activePane()), "ws-mcbtn-send");
@@ -8139,9 +8150,19 @@ function viewWorkspace() {
       // server for its true current state. Harmless if it really is still working (server says so).
       const now = Date.now();
       for (const p of st.panes) {
-        if (p.sessionKey && !p.readonly && paneBusy(p) && (now - (p._lastEventAt || 0)) > WS_HEAL_QUIET_MS) {
+        if (!p.sessionKey || p.readonly) continue;
+        // `full` preserves a pane that's showing its whole history ("Show earlier" was clicked): a plain resync
+        // ships only the tail (transcript cap), which would otherwise re-truncate the revealed older messages.
+        const args = { sessionKey: p.sessionKey, full: !!p._showAllTurns };
+        if (paneBusy(p) && (now - (p._lastEventAt || 0)) > WS_HEAL_QUIET_MS) {
           p._lastEventAt = now;   // don't re-fire every heartbeat while the resync round-trips
-          wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey } });
+          wsPost("control", { action: "resync", args });
+        } else if (!paneBusy(p) && (now - (p._lastEventAt || 0)) < WS_HEAL_ACTIVE_WINDOW_MS && (now - (p._statusSyncAt || 0)) > WS_HEAL_QUIET_MS) {
+          // Idle-LOOKING but recently active: the SDK can keep producing in a "deepwork" phase after a turn's
+          // "result" idles the pane, and that status event is easy to miss on a flaky link — leaving the pane
+          // showing "done" while the agent works on. Verify against the server (which knows the true status).
+          p._statusSyncAt = now;
+          wsPost("control", { action: "resync", args });
         }
       }
       return;
@@ -8335,13 +8356,17 @@ function viewWorkspace() {
       // whole reason a resync was requested in the first place.
       if (data.kind === "resync") {
         for (const p of targets) {
+          const prevStatus = p.status, prevLen = (p.transcript || []).length;
           if (Array.isArray(data.transcript)) { p.transcript = wsBackfillTurnWorkspace(data.transcript, data.workspaceId || wsWorkspaceId(p.repo, p.worktree)); p._transcriptTruncated = !!data.transcriptTruncated; }
           if (data.status) p.status = data.status;
           if (data.usage) p.usage = data.usage;
           if (data.mode) p.mode = data.mode;
           p._liveText = "";   // stale relative to whatever actually streamed before the reconnect
           paintPane(p);
-          logActivity(p, "↻ Reconnected — caught up", "ws-act-ok");
+          // Only announce a catch-up when the resync ACTUALLY changed something — the periodic idle-active
+          // verification (below, in the heartbeat self-heal) resyncs a quiet pane every ~20s, and logging
+          // "Reconnected — caught up" on each of those no-op confirmations would spam the activity rail.
+          if (p.status !== prevStatus || (p.transcript || []).length !== prevLen) logActivity(p, "↻ Reconnected — caught up", "ws-act-ok");
           // A resync is how a pane recovers when its turn's `result` event was dropped (stream hiccup) —
           // it silently went idle. If a message was queued during that turn, the drain that should have
           // fired on the (lost) result never did, so it'd sit "queued" forever. Release it here now that

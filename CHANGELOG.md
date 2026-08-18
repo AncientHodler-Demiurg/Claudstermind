@@ -4,7 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.85] - 2026-08-18
+## [1.4.86] - 2026-08-18
+
+### Fixed
+- **A conversation that's still working no longer gets stuck showing "done" after a flaky-connection blip.**
+  A turn's `result` flips a tab/pane to idle, but the agent can keep producing in a "deep work" phase whose
+  status update is easy to miss on a mobile link — leaving the chat looking finished while the agent works
+  on. The self-heal that re-verifies against the server was keyed to the last `result` with only a 2-minute
+  window (Pact) or didn't check idle-looking panes at all (Core cockpit), so a long autonomous build or a
+  >2-minute drop outran it. Now both surfaces re-verify an idle-LOOKING but recently-active conversation
+  against the server for up to 10 minutes (`WS_HEAL_ACTIVE_WINDOW_MS`), keyed to the last real activity (not
+  just the last `result`); once a resync catches the deep-work status the normal busy-watchdog takes over. The
+  recovery is unchanged if you'd rather force it: tap the **↻** sync button. Also: self-heal/sync resyncs now
+  preserve a pane that's showing its full history (`Show earlier`) instead of re-truncating it to the tail,
+  and the Core "Reconnected — caught up" note only appears when the resync actually changed something (no
+  spam from the periodic verification).
+
+
 
 ### Fixed
 - **The "migrated to worktree …" separator now stays where the migration happened instead of sliding down
