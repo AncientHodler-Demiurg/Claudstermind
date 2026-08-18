@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.80] - 2026-08-18
+
+### Fixed
+- **Mobile layout now triggers on touch devices up to 1180px, not just ≤900px.** A phone/foldable whose CSS
+  viewport reports just over 900px (wide/large-screen phones, some foldables) was falling through to the
+  full desktop cockpit. The mobile breakpoint is now **width ≤900px OR a coarse-pointer (touch) device
+  ≤1180px** — applied to both the CSS media queries and the JS `matchMedia` gates, with the complementary
+  desktop `min-width: 901px` rules narrowed to `(pointer: fine)` or ≥1181px so they don't fight it. Desktop
+  with a mouse is unchanged (still 900px). If a phone still shows the desktop layout after this, its browser
+  is in "Desktop site" mode (reporting a desktop-width viewport) — turn that off.
+
 ## [1.4.79] - 2026-08-18
 
 ### Fixed

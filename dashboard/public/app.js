@@ -3013,7 +3013,7 @@ function pactChatMsgLabel(turns) {
 // the rest of the dashboard's mobile chrome uses (WS_MOBILE_MQ), so the JS branch and the CSS
 // `@media (max-width:900px)` rules never disagree at the edge. Re-render on a cross so rotating a device
 // swaps the desktop⇄mobile layout cleanly.
-const PACT_MOBILE_MQ = window.matchMedia ? window.matchMedia("(max-width: 900px)") : { matches: false, addEventListener() {} };
+const PACT_MOBILE_MQ = window.matchMedia ? window.matchMedia("(max-width: 900px), (pointer: coarse) and (max-width: 1180px)") : { matches: false, addEventListener() {} };
 function pactIsMobile() { return !!PACT_MOBILE_MQ.matches; }
 if (PACT_MOBILE_MQ.addEventListener) PACT_MOBILE_MQ.addEventListener("change", () => {
   if (VIEW !== "pact") return;
@@ -7568,7 +7568,7 @@ function viewWorkspace() {
   // ---- mobile: tabs + drawer (Phase 2) --------------------------------------------
   // 900px, not 760: many large / low-DPI Android phones report a CSS viewport width around 800px
   // even though they're physically phone-sized, so a 760 cutoff left them on the desktop layout.
-  const WS_MOBILE_MQ = window.matchMedia ? window.matchMedia("(max-width: 900px)") : { matches: false, addEventListener() {} };
+  const WS_MOBILE_MQ = window.matchMedia ? window.matchMedia("(max-width: 900px), (pointer: coarse) and (max-width: 1180px)") : { matches: false, addEventListener() {} };
   function openDrawer() { root.classList.add("ws-drawer-open"); }
   function closeDrawer() { root.classList.remove("ws-drawer-open"); }
   // One chat box at a time on a phone: a tab per pane (status dot + short label + close), a menu

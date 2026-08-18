@@ -797,7 +797,7 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .deploy-col-hd { font-size: 13px; font-weight: 700; color: var(--ink); letter-spacing: .02em; }
 .deploy-cardbox { display: contents; }
 .deploy-term-hd { font-size: 11px; color: var(--ink-mute); text-transform: uppercase; letter-spacing: .04em; margin-top: 2px; }
-@media (max-width: 900px) {
+@media (max-width: 900px), (pointer: coarse) and (max-width: 1180px) {
   .deploy-split { grid-template-columns: 1fr; grid-template-rows: auto; }
   .deploy-col { grid-row: auto; display: flex; flex-direction: column; gap: 10px; }
 }
@@ -816,7 +816,7 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .deploy-term-body[hidden] { display: none; }
 .deploy-term-body.--split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: start; }
 .deploy-term-pane { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-@media (max-width: 900px) { .deploy-term-body.--split { grid-template-columns: 1fr; } }
+@media (max-width: 900px), (pointer: coarse) and (max-width: 1180px) { .deploy-term-body.--split { grid-template-columns: 1fr; } }
 .deploy-vers { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .deploy-card { flex: 1; min-width: 220px; background: var(--panel); border: 1px solid var(--line);
   border-radius: var(--radius); padding: 13px 15px; }
@@ -952,7 +952,7 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    workspace tab layout + per-page deep polish come in later phases; here the
    goal is "installable and genuinely usable on a phone".
    ============================================================================ */
-@media (max-width: 900px) {
+@media (max-width: 900px), (pointer: coarse) and (max-width: 1180px) {
   /* Notch-safe: pad the sticky header's top + the page's sides with safe-area insets. */
   .ph { padding-top: env(safe-area-inset-top, 0); }
   .ph-inner { padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left)); }
@@ -1167,11 +1167,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 /* Bottom nav exists only for the phone layout. Hidden on desktop via a width-scoped rule (NOT a
    plain rule, which — sitting after the mobile block with equal specificity — would win and hide it
    on mobile too). Same pattern as .ws-mtabs above. */
-@media (min-width: 901px) { .ph-tabbar, .ph-tabdrawer, .ph-tabbar-backdrop { display: none !important; } }
+@media (min-width: 901px) and (pointer: fine), (min-width: 1181px) { .ph-tabbar, .ph-tabdrawer, .ph-tabbar-backdrop { display: none !important; } }
 
 /* Hidden on desktop — these only exist for the phone layout above. Scoped to desktop width (not a
    plain rule) so it can't override the mobile block, which sits earlier and has equal specificity. */
-@media (min-width: 901px) { .ws-mtabs, .ws-side-backdrop, .ws-drawer-close { display: none; } }
+@media (min-width: 901px) and (pointer: fine), (min-width: 1181px) { .ws-mtabs, .ws-side-backdrop, .ws-drawer-close { display: none; } }
 
 /* Only the tiniest phones go one-stat-per-row; normal phones keep the two-up grid above. */
 @media (max-width: 330px) { .stat { flex-basis: 100%; } }
@@ -1765,7 +1765,7 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-md a { color: #4fb6e0; }
 
 /* Phone: an IDE can't be three columns — stack the zones and scroll the whole view. */
-@media (max-width: 900px) {
+@media (max-width: 900px), (pointer: coarse) and (max-width: 1180px) {
   .pact-ide { flex-direction: column; overflow-y: auto; gap: 8px; }
   .pact-tree { flex: 0 0 auto; width: auto; max-height: 38vh; }
   .pact-work { flex: 0 0 auto; flex-direction: column; gap: 8px; }
