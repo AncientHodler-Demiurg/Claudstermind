@@ -4,6 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.72] - 2026-08-18
+
+### Added
+- **Pact IDE worktree binding — Stage 3: manage worktrees + merge-to-main from the workspace.** A new **⌥
+  Worktrees** menu in the Pact tree header lets you, without leaving the workspace:
+  - **Create** a worktree (an isolated checkout + branch off HEAD) — its selectors then appear on boxes/chats.
+  - **Merge a worktree into main** — the deliberate, visible answer to "how do I patch the parallel
+    work-streams together". It's **conflict-safe**: both checkouts must be committed-clean first (a merge
+    only takes committed work), and if the merge would conflict it is **aborted and main is left exactly as
+    it was**, with the conflicting files reported for a manual resolution — never a half-merged tree.
+  - **Remove** a worktree (keeps its branch + commits; unbinds any box/chat that pointed at it).
+  New `worktrees.mergeWorktree` (+ tests: clean merge, uncommitted-refusal, conflict-abort-safety), a
+  local-only `POST /api/pact/worktree` (create/remove/merge), and `pactFs.pactWorktreeAction`. This
+  completes the worktree feature (Stages 1–3): bind a box + a chat to a worktree, let its agent work in
+  isolation, then merge it back on your terms. (Deferred polish: the file tree + change-coloring following
+  the active box's worktree, and Pact history rows carrying each session's worktree.)
+
 ## [1.4.71] - 2026-08-18
 
 ### Added

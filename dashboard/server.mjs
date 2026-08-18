@@ -23,7 +23,7 @@ import { join, extname, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readActivity, readLastBackup } from "../orchestrator/activity.mjs";
 import { listArchives, pruneArchives, deleteArchive } from "../orchestrator/archives.mjs";
-import { listDir as pactListDir, readTextFile as pactReadFile, writeTextFile as pactWriteFile, pactRoot as resolvePactRoot, pactRootFor, pactWorktrees } from "../lib/pactFs.mjs";
+import { listDir as pactListDir, readTextFile as pactReadFile, writeTextFile as pactWriteFile, pactRoot as resolvePactRoot, pactRootFor, pactWorktrees, pactWorktreeAction } from "../lib/pactFs.mjs";
 import { gitChangedFiles as pactChangedFiles, gitFileAtHead as pactFileAtHead } from "../lib/pactGit.mjs";
 import { readIdeState as pactReadIdeState, writeIdeState as pactWriteIdeState } from "../lib/pactIdeState.mjs";
 import { pactRunSpec } from "../lib/pactRun.mjs";
@@ -1061,6 +1061,15 @@ const handler = async (req, res) => {
   if (path === "/api/pact/worktrees") {
     if (!who.canRead) return sendJSON(res, 403, { ok: false, reason: "read-only" });
     return sendJSON(res, 200, { ok: true, worktrees: pactWorktrees(MASTER_ROOT).map((w) => ({ name: w.name, branch: w.branch, isMain: !!w.isMain })) });
+  }
+  // ---- Pact IDE: worktree lifecycle — create / remove / merge-to-main (Stage-3). A git operation on the
+  // work machine, so local-only + canExecute, same gate as saving. `merge` is conflict-safe (see mergeWorktree). ----
+  if (path === "/api/pact/worktree" && req.method === "POST") {
+    if (!sameOrigin(req)) return sendJSON(res, 403, { ok: false, reason: "cross-origin" });
+    if (!who.localActionsAvailable) return sendJSON(res, 403, { ok: false, reason: "local-only", message: "Worktree management is local-only (it's a git operation on the work machine)." });
+    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Execute permission required." });
+    const b = await readBody(req);
+    return sendJSON(res, 200, pactWorktreeAction(MASTER_ROOT, b.action || "", b.name || ""));
   }
   if (path === "/api/pact/tree") {
     if (!who.canRead) return sendJSON(res, 403, { ok: false, reason: "read-only" });

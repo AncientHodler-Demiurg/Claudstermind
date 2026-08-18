@@ -3026,6 +3026,48 @@ async function pactEdLoadWorktrees() {
     if (PACT_CHAT && PACT_CHAT.host && typeof pactChatRender === "function") pactChatRender();   // and the chat-head selector
   }
 }
+// ---- Stage-3: worktree lifecycle from the Pact IDE (create / merge-to-main / remove) --------------
+function pactWorktreeMenu(x, y) {
+  const wts = (PACT_ED && PACT_ED.worktrees) || [{ name: "main", isMain: true }];
+  const named = wts.filter((w) => !w.isMain);
+  const items = [{ label: "＋ New worktree…", onClick: pactWorktreeCreate }];
+  items.push("---");
+  if (named.length) for (const w of named) items.push({ label: "⌥ " + w.name, submenu: [
+    { label: "Merge into main", onClick: () => pactWorktreeMerge(w.name) },
+    { label: "Remove worktree", onClick: () => pactWorktreeRemove(w.name) },
+  ] });
+  else items.push({ label: "No worktrees yet — create one to isolate parallel work", disabled: true });
+  pactShowCtxMenu(x, y, items);
+}
+async function pactWorktreeAct(action, name) {
+  try { return await (await fetch("/api/pact/worktree", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, name }) })).json(); }
+  catch { return { ok: false, error: "unreachable" }; }
+}
+async function pactWorktreeCreate() {
+  const name = window.prompt("New worktree name (letters, digits, . _ - ) — a fresh isolated checkout + branch off HEAD:");
+  if (name == null || !name.trim()) return;
+  const d = await pactWorktreeAct("create", name.trim());
+  if (d.ok) { pactEdSaveStatus('✓ worktree "' + name.trim() + '" created' + (d.staleWarning ? " · ⚠ " + d.staleWarning : ""), !!d.staleWarning); pactEdLoadWorktrees(); }
+  else pactEdSaveStatus("⚠ " + (d.error || "create failed"), true);
+}
+async function pactWorktreeRemove(name) {
+  if (!window.confirm(`Remove worktree "${name}"?\n\nDeletes its checkout FOLDER; the branch (and its commits) is kept. Any UNCOMMITTED work in that checkout is lost. Merge it first if you want its changes.`)) return;
+  const d = await pactWorktreeAct("remove", name);
+  if (d.ok) {
+    // Unbind any box/unstarted-chat pointing at the now-gone worktree so it doesn't error on the missing checkout.
+    for (const g of PACT_ED.groups) if (g.worktree === name) { g.worktree = undefined; for (const t of g.tabs) t.worktree = "main"; }
+    if (PACT_CHAT) for (const t of PACT_CHAT.tabs) if (t.worktree === name && !(t.started || (t.msgs && t.msgs.length))) t.worktree = undefined;
+    pactEdSaveStatus('✓ worktree "' + name + '" removed', false); pactEdLoadWorktrees(); pactStateSave();
+  } else pactEdSaveStatus("⚠ " + (d.error || "remove failed"), true);
+}
+async function pactWorktreeMerge(name) {
+  if (!window.confirm(`Merge worktree "${name}" into main?\n\nBoth checkouts must be committed-clean first (a merge only takes COMMITTED work). If it would conflict, it's aborted and main is left exactly as it is.`)) return;
+  pactEdSaveStatus('merging "' + name + '" into main…', false);
+  const d = await pactWorktreeAct("merge", name);
+  if (d.ok) pactEdSaveStatus('✓ merged "' + name + '" into ' + (d.mainBranch || "main") + " (" + (d.merged || 0) + " commit" + (d.merged === 1 ? "" : "s") + ")", false);
+  else pactEdSaveStatus("⚠ " + (d.error || "merge failed"), true);
+  pactEdCheckChangedFiles();
+}
 // Bind an editor box to a worktree. Reloads every open tab from the NEW checkout (same paths, different
 // content). Refuses if the box has unsaved edits — switching would discard them — so nothing is lost.
 async function pactEdSetGroupWorktree(g, wt) {
@@ -5803,10 +5845,14 @@ function viewPact() {
   tabChangedBtn.addEventListener("click", () => pactTreeSwitchTab("changed"));
   const treeRefreshBtn = el("button", { class: "pact-ed-ico", title: "Re-scan the file tree (pick up newly created/removed files)" }, ["↻"]);
   treeRefreshBtn.addEventListener("click", () => pactTreeRefresh());
+  // Worktrees menu (Stage-3): create an isolated checkout, merge one into main, or remove it — without
+  // leaving the Pact workspace. The isolation primitive for parallel agents (bind a box + a chat to it).
+  const wtBtn = el("button", { class: "pact-ed-ico", title: "Git worktrees — create an isolated checkout, merge one into main, or remove it" }, ["⌥"]);
+  wtBtn.addEventListener("click", (e) => { e.stopPropagation(); const r = wtBtn.getBoundingClientRect(); pactWorktreeMenu(r.left, r.bottom + 4); });
   const changedList = el("div", { class: "pact-changed-list" }, [el("div", { class: "hint", style: "padding:8px 10px" }, ["No changes vs HEAD."])]);
   changedList.style.display = "none";
   const treeEl = el("aside", { class: "pact-tree" }, [
-    el("div", { class: "pact-tree-hd pact-tree-tabs" }, [tabFilesBtn, tabChangedBtn, el("span", { class: "ws-spacer" }, []), treeRefreshBtn, ...treeFontBtns]),
+    el("div", { class: "pact-tree-hd pact-tree-tabs" }, [tabFilesBtn, tabChangedBtn, el("span", { class: "ws-spacer" }, []), wtBtn, treeRefreshBtn, ...treeFontBtns]),
     treeBody,
     changedList,
   ]);
