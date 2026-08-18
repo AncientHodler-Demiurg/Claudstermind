@@ -1343,6 +1343,16 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 /* History-row worktree badge — which checkout a saved conversation ran in. */
 .pc-hist-wt { font-size: 9.5px; color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent);
   border-radius: 4px; padding: 0 4px; margin-left: 6px; white-space: nowrap; }
+/* Worktree-migration separator: a labeled dashed line marking where the conversation moved checkouts.
+   Amber-accent for a move INTO a worktree, green for a return/merge to main. */
+.pc-migration { display: flex; align-items: center; gap: 8px; margin: 12px 2px; }
+.pc-migration::before, .pc-migration::after { content: ""; flex: 1; border-top: 1px dashed color-mix(in srgb, var(--accent) 50%, var(--line)); }
+.pc-migration-lbl { font-size: 11px; font-weight: 700; color: var(--accent); white-space: nowrap;
+  background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 999px; padding: 2px 12px; }
+.pc-migration.--tomain::before, .pc-migration.--tomain::after { border-color: color-mix(in srgb, #34d399 45%, var(--line)); }
+.pc-migration.--tomain .pc-migration-lbl { color: #34d399; background: color-mix(in srgb, #34d399 12%, transparent); }
+/* The head migrate button (shown for a started conversation) — accented when on a non-main checkout. */
+.pc-migrate.--active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
 /* Per-tab worktree marker + a left accent so a conversation bound to a non-main checkout stands out. */
 .pc-tab.--wt { border-left: 2px solid color-mix(in srgb, var(--accent) 65%, transparent); }
 .pc-tab-wt { font-size: 9.5px; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent);

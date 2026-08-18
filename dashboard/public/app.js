@@ -2667,7 +2667,7 @@ const WS_TURN_RENDER_CAP = 20;
 // rows interleaved among them ride along for free — with PACT_MSG_HARD_CAP as an absolute node ceiling so
 // a pathological run of tool rows can't blow the DOM back up (which would hurt scroll/paint; typing itself
 // is already protected by the .pact-* `contain: layout paint` fix). Older messages sit behind a "show
-// earlier" chip (t._showAll lifts the cap). This keeps the standing DOM bounded AND readable.
+// earlier" chip (t._showFrom reveals older messages 100 at a time). This keeps the standing DOM bounded AND readable.
 const PACT_TEXT_RENDER_CAP = 50;
 const PACT_MSG_HARD_CAP = 400;
 // Start index of the visible window: walk back from the end until PACT_TEXT_RENDER_CAP readable messages
@@ -2761,8 +2761,12 @@ function attachStickController(scrollEl, opts = {}) {
       const mid = (lo + hi) >> 1, c = kids[mid];
       if (c.offsetTop + c.offsetHeight > st) { ans = mid; hi = mid - 1; } else lo = mid + 1;
     }
-    const node = kids[ans];
-    return { node, delta: node.offsetTop - st };
+    let node = kids[ans];
+    // Never anchor to the "▲ Show earlier" chip: it's recreated each paint and pinned to the very top,
+    // so anchoring to it would leave the reader stuck at scrollTop 0 when older messages load in. Use the
+    // next real node so the message you were reading stays put as content grows ABOVE it.
+    if (node && node.classList && node.classList.contains("ws-show-earlier") && kids[ans + 1]) node = kids[ans + 1];
+    return node ? { node, delta: node.offsetTop - st } : null;
   };
   const ctrl = {
     pinned: true, scrollEl, wrap, pill, _anchor: null,
@@ -4718,7 +4722,7 @@ function pactChatSaveDraft() {
   const a = pactChatActive();
   if (ta && a) a.draft = ta.value;
 }
-const PACT_CHAT_PREAMBLE = "[Pact IDE — auto-skill] You are working in the Ouronet Pact repo (your cwd). BEFORE anything else, read `OuronetInformational/SKILL.md` — it is the single load hook: it gives the load order, the StoicSyntax discipline (`StoicSyntax.md` + `ouronet/conventions/*`), the Pact 5 language layer (`pact5/`), the fast-recall rules, and the active-learning protocol. Follow its load order and become fully skilled from those files (they are the canonical authority). Use `OuronetInformational/MODULE-INDEX.md` for a one-glance map of every module (schemas/tables/public C_/A_/X entrypoints). Before writing code in any module, find it in the index then SCAN that module's `.pact` + its interface + its `.repl` tests to learn its real schemas/tables/prefixes/caps, and imitate sibling patterns — e.g. \"an info function for module X\" means mirror how the codebase exposes `UR_`/`INFO-` readers for X's schema (grep for the pattern rather than guessing). Run tests with `pact <file>.repl` (Pact 5.4); namespace `ouronet-ns`. Keep all code in the StoicSyntax discipline. When I correct you (\"do X instead of Y\"), capture it per SKILL.md's active-learning protocol (a dated `memories/` note + fold durable rules into the matching doc).";
+const PACT_CHAT_PREAMBLE = "[Pact IDE — auto-skill] You are working in the Ouronet Pact repo (your cwd). BEFORE anything else, read `OuronetInformational/SKILL.md` — it is the single load hook: it gives the load order, the StoicSyntax discipline (`StoicSyntax.md` + `ouronet/conventions/*`), the Pact 5 language layer (`pact5/`), the fast-recall rules, and the active-learning protocol. Follow its load order and become fully skilled from those files (they are the canonical authority). Use `OuronetInformational/MODULE-INDEX.md` for a one-glance map of every module (schemas/tables/public C_/A_/X entrypoints). Before writing code in any module, find it in the index then SCAN that module's `.pact` + its interface + its `.repl` tests to learn its real schemas/tables/prefixes/caps, and imitate sibling patterns — e.g. \"an info function for module X\" means mirror how the codebase exposes `UR_`/`INFO-` readers for X's schema (grep for the pattern rather than guessing). Run tests with `pact <file>.repl` (Pact 5.4); namespace `ouronet-ns`. Keep all code in the StoicSyntax discipline. When I correct you (\"do X instead of Y\"), capture it per SKILL.md's active-learning protocol (a dated `memories/` note + fold durable rules into the matching doc). WORKTREE HYGIENE: if I ask to move/switch/migrate this conversation to another git worktree (or to merge one back and return to main), FIRST commit ALL uncommitted changes in the current checkout (a clear `git add -A && git commit`) so nothing is lost or left behind — uncommitted work does NOT follow a worktree switch. Never migrate or merge with a dirty tree.";
 let PACT_CHAT = null;   // { host, tabs:[t], activeId, seq, es, mode, conn }
                         // t = { id, name, key, msgs:[{role|kind,text,tools}], live, status, started, perm, bodyEl }
 // Pact chat live-stream health, mirroring the Core cockpit (WS_LAST_MSG_AT + WS_STALE_TIMER). A mobile
@@ -5468,6 +5472,34 @@ async function pactChatDispatch(t, text, images) {
     if (r && r._status === 401) sessionSetExpired(true);
   }
 }
+// Migrate a RUNNING conversation to a different worktree (or back to main): its context is unbroken (the
+// SDK session continues — only the agent's cwd changes for future turns), a marker line records the move,
+// and uncommitted work in the current checkout is flagged (it stays behind; commit first to carry it).
+async function pactChatMigrate(t) {
+  if (!t) return;
+  const cur = t.worktree || "main";
+  const existing = (PACT_ED && PACT_ED.worktrees ? PACT_ED.worktrees : []).filter((w) => !w.isMain).map((w) => w.name);
+  const hint = existing.length ? "existing: " + existing.join(", ") : "none yet — type a name to create one";
+  const raw = window.prompt(`Migrate "${(PACT_CHAT_NAMES[t.key] || t.name)}" to which worktree?\n\nType a NEW name to create it, an existing worktree, or "main" to return.\n(${hint})`, cur === "main" ? "" : "main");
+  if (raw == null) return;
+  const to = raw.trim();
+  if (!to || to === cur) return;
+  // Uncommitted work in the current checkout won't follow — warn (commit-first is the recommended path).
+  let changed = [];
+  try { const d = await (await fetch("/api/pact/changed" + (cur !== "main" ? "?worktree=" + encodeURIComponent(cur) : ""))).json(); if (d && d.ok) changed = d.files || []; } catch {}
+  if (changed.length && !window.confirm(`The "${cur}" checkout has ${changed.length} uncommitted change(s).\n\nThey will STAY in "${cur}" and will NOT follow to "${to}". Recommended: Cancel, ask the agent to commit, then migrate.\n\nProceed anyway?`)) return;
+  // Ensure the target exists (create a new worktree if the name is new; "main" always exists).
+  if (to !== "main" && !existing.includes(to)) {
+    const c = await pactWorktreeAct("create", to);
+    if (!c.ok && !/already exists/i.test(c.error || "")) { pactEdSaveStatus("⚠ " + (c.error || "could not create worktree \"" + to + "\""), true); return; }
+  }
+  // Flip the conversation's cwd for future turns + drop the migration marker. Context is untouched.
+  t.worktree = to === "main" ? undefined : to;
+  t.msgs.push({ kind: "migration", from: cur, to, at: Date.now() });
+  t._forceBottom = true;
+  pactStateSave(); pactChatRender(); pactChatPaint(t); pactEdLoadWorktrees();
+  pactEdSaveStatus('conversation now runs in "' + to + '" — its next turn uses that checkout' + (changed.length ? " (uncommitted work left in \"" + cur + "\")" : ""), false);
+}
 function pactChatSend(t) {
   if (!PACT_CHAT || !t) return;
   const ta = PACT_CHAT.host.querySelector(".pc-input");
@@ -5639,6 +5671,18 @@ function pactChatMsgNode(m) {
     return el("div", { class: "pc-err" }, kids);
   }
   if (m.kind === "note") return el("div", { class: "pc-note" }, [m.text]);
+  // A worktree-migration separator: a full-width labeled line marking where this conversation moved
+  // between checkouts (main ⇄ a worktree). Context is unbroken across it — only the agent's cwd changed.
+  if (m.kind === "migration") {
+    const from = m.from || "main", to = m.to || "main";
+    const label = to === "main"
+      ? "⌥ returned to main" + (from && from !== "main" ? ' (merged "' + from + '")' : "")
+      : '⌥ migrated to worktree "' + to + '"' + (from && from !== "main" ? ' (from "' + from + '")' : "");
+    const when = m.at ? new Date(m.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
+    return el("div", { class: "pc-migration" + (to === "main" ? " --tomain" : "") }, [
+      el("span", { class: "pc-migration-lbl" }, [label + (when ? "  ·  " + when : "")]),
+    ]);
+  }
   return el("div", {}, []);
 }
 function pactChatPaint(t) {
@@ -5657,16 +5701,21 @@ function pactChatPaint(t) {
   // existing ones reuse their node — which also preserves the tool-call expand state you'd opened.
   // Cap the standing DOM to a window that GUARANTEES the last ~PACT_TEXT_RENDER_CAP readable messages
   // (user/assistant text), with tool_use rows riding along free — so a tool-heavy turn no longer crowds
-  // the readable text out of view (see pactVisibleStart). t._showAll lifts the cap. Mirrors the Core
+  // the readable text out of view (see pactVisibleStart). t._showFrom reveals older messages 100 at a time. Mirrors the Core
   // cockpit's "show earlier" chip. The tail always shows; older messages hide behind the chip.
-  const showAll = !!t._showAll;
-  const start = showAll ? 0 : pactVisibleStart(t.msgs);
+  // "Show earlier" reveals the previous 100 messages at a time (NOT all at once) and keeps your scroll
+  // where it is — the stick controller's anchor restore holds the message you're reading in place while
+  // the older ones load in above it. `t._showFrom` is the revealed start index; it sticks as new messages
+  // arrive at the tail, and never exceeds the cap start (so the tail always shows).
+  const capStart = pactVisibleStart(t.msgs);
+  const start = (typeof t._showFrom === "number") ? Math.max(0, Math.min(t._showFrom, capStart)) : capStart;
   const visibleMsgs = t.msgs.slice(start);
   const hiddenCount = start;
   const nodes = visibleMsgs.map((m) => m._node || (m._node = pactChatMsgNode(m)));
   if (hiddenCount > 0) {
-    const btn = el("button", { class: "ws-show-earlier" }, [`▲ Show ${hiddenCount} earlier message${hiddenCount === 1 ? "" : "s"}`]);
-    btn.addEventListener("click", () => { t._showAll = true; pactChatPaint(t); });
+    const chunk = Math.min(100, hiddenCount);
+    const btn = el("button", { class: "ws-show-earlier" }, [`▲ Show ${chunk} earlier message${chunk === 1 ? "" : "s"}` + (hiddenCount > chunk ? `  ·  ${hiddenCount} older` : "")]);
+    btn.addEventListener("click", () => { t._showFrom = Math.max(0, start - 100); pactChatPaint(t); });
     nodes.unshift(btn);
   }
   if (t.perm) {
@@ -5781,19 +5830,30 @@ function pactChatRender() {
   // checkout; pair it with an editor box on the same worktree to review them). Only shown when a worktree
   // beyond main exists, and LOCKED once the conversation has started (changing cwd mid-chat is confusing).
   const headKids = [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, el("span", { class: "ws-spacer" }, [])];
-  if (PACT_ED && PACT_ED.worktrees && PACT_ED.worktrees.length > 1) {
+  {
     const a0 = pactChatActive();
     const started = !!(a0 && (a0.started || (a0.msgs && a0.msgs.length)));
-    const wtSel = el("select", { class: "wsel wsel-sm pc-wt" + ((a0 && a0.worktree) ? " --active" : ""),
-      title: started ? "This conversation is running in " + ((a0 && a0.worktree) || "main") + " — its worktree is fixed." : "Worktree this conversation's agent runs in — set before the first message" },
-      PACT_ED.worktrees.map((w) => el("option", { value: w.name }, [w.isMain ? "⌂ main" : "⌥ " + w.name])));
-    wtSel.value = (a0 && a0.worktree) || "main";
-    wtSel.disabled = started;
-    wtSel.addEventListener("change", () => {
-      const a = pactChatActive(); if (!a || a.started || (a.msgs && a.msgs.length)) return;
-      a.worktree = wtSel.value === "main" ? undefined : wtSel.value; pactStateSave(); pactChatRender();
-    });
-    headKids.push(wtSel);
+    if (started) {
+      // A started conversation's cwd can't just be re-picked (its uncommitted work wouldn't follow) — the
+      // deliberate MIGRATE action handles it (commit-first hygiene + a marker line). Always available so
+      // you can move a running conversation to a new/other worktree, or back to main.
+      const mig = el("button", { class: "pact-ed-ico pc-migrate" + ((a0 && a0.worktree) ? " --active" : ""),
+        title: "Migrate this conversation to another git worktree, or back to main (commit first — uncommitted work won't follow)" },
+        ["⇄ " + ((a0 && a0.worktree) || "main")]);
+      mig.addEventListener("click", (e) => { e.stopPropagation(); pactChatMigrate(pactChatActive()); });
+      headKids.push(mig);
+    } else if (PACT_ED && PACT_ED.worktrees && PACT_ED.worktrees.length > 1) {
+      // Not started yet → the plain binding selector (Stage 2): pick the worktree this conversation starts in.
+      const wtSel = el("select", { class: "wsel wsel-sm pc-wt" + ((a0 && a0.worktree) ? " --active" : ""),
+        title: "Worktree this conversation's agent runs in — set before the first message" },
+        PACT_ED.worktrees.map((w) => el("option", { value: w.name }, [w.isMain ? "⌂ main" : "⌥ " + w.name])));
+      wtSel.value = (a0 && a0.worktree) || "main";
+      wtSel.addEventListener("change", () => {
+        const a = pactChatActive(); if (!a || a.started || (a.msgs && a.msgs.length)) return;
+        a.worktree = wtSel.value === "main" ? undefined : wtSel.value; pactStateSave(); pactChatRender();
+      });
+      headKids.push(wtSel);
+    }
   }
   headKids.push(usageEl, modeSel, chatCollapse);
   const head = el("div", { class: "pact-zone-hd pc-head" }, headKids);

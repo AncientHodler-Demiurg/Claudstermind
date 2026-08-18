@@ -4,6 +4,27 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.74] - 2026-08-18
+
+### Fixed
+- **Pact chat "Show earlier" reveals 100 at a time and keeps your scroll put** — instead of loading the
+  ENTIRE conversation and jumping you to the very top. Each click loads the previous 100 messages above
+  while the message you were reading stays exactly where it is (the stick controller's anchor now skips
+  the "Show earlier" chip, so it holds a real message in place as older ones load in). The chip shows how
+  many older messages remain.
+
+### Added
+- **Migrate a running conversation to a worktree (worktree migration — Stage 1).** A started Pact
+  conversation now shows a **⇄ <worktree>** button in its head: migrate it to another git worktree — or
+  back to main — WITHOUT losing context (the SDK session continues; only the agent's `cwd` changes for
+  future turns). A **labeled separator line** is dropped into the transcript marking the move
+  (`⌥ migrated to worktree "ats"`), and uncommitted work in the current checkout is flagged (it stays
+  behind — commit first to carry it). A new worktree name creates it on the spot. (Stage 2: "merge to main
+  & return" with the conflict-safe merge + the return marker.)
+- **Commit-before-migrate baked into the Pact agent's skill preamble** — the agent is now instructed that
+  if asked to move/switch a conversation to another worktree (or merge one back), it must FIRST commit all
+  uncommitted changes so nothing is lost, and never migrate/merge a dirty tree.
+
 ## [1.4.73] - 2026-08-18
 
 ### Added
