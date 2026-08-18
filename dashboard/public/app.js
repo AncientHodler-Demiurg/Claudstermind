@@ -3051,33 +3051,41 @@ function pactWorktreeMenu(x, y) {
   else items.push({ label: "No worktrees yet — create one to isolate parallel work", disabled: true });
   pactShowCtxMenu(x, y, items);
 }
+// A tidy in-app alert (reuses the styled modal, not a native popup): title + message + a single OK.
+const pactNotify = (title, msg, danger) => showModal({ title, sub: msg, confirmLabel: "OK", danger: !!danger });
 async function pactWorktreeAct(action, name) {
-  try { return await (await fetch("/api/pact/worktree", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, name }) })).json(); }
-  catch { return { ok: false, error: "unreachable" }; }
+  let r;
+  try { r = await fetch("/api/pact/worktree", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, name }) }); }
+  catch { return { ok: false, error: "Couldn't reach the work machine." }; }
+  // The worktree endpoints ship in an update that may not be on the RUNNING dashboard yet (a restart is
+  // needed). A 404 there otherwise looks like "nothing happened" — surface it plainly instead.
+  if (r.status === 404) return { ok: false, error: "Worktree management isn't available on the running dashboard yet — restart the dashboard to enable it (create/merge/remove ship in an update that hasn't been deployed)." };
+  try { return await r.json(); }
+  catch { return { ok: false, error: `The dashboard returned an unexpected response (HTTP ${r.status}).` }; }
 }
 async function pactWorktreeCreate() {
-  const name = window.prompt("New worktree name (letters, digits, . _ - ) — a fresh isolated checkout + branch off HEAD:");
+  const name = await showModal({ title: "＋ New worktree", sub: "A fresh isolated checkout + branch off HEAD. Letters, digits, . _ - only.", editable: true, value: "", confirmLabel: "Create" });
   if (name == null || !name.trim()) return;
   const d = await pactWorktreeAct("create", name.trim());
-  if (d.ok) { pactEdSaveStatus('✓ worktree "' + name.trim() + '" created' + (d.staleWarning ? " · ⚠ " + d.staleWarning : ""), !!d.staleWarning); pactEdLoadWorktrees(); }
-  else pactEdSaveStatus("⚠ " + (d.error || "create failed"), true);
+  if (d.ok) { pactEdSaveStatus('✓ worktree "' + name.trim() + '" created', false); pactEdLoadWorktrees(); if (d.staleWarning) await pactNotify("Worktree reattached", d.staleWarning, true); }
+  else await pactNotify("Couldn't create worktree", d.error || "create failed", true);
 }
 async function pactWorktreeRemove(name) {
-  if (!window.confirm(`Remove worktree "${name}"?\n\nDeletes its checkout FOLDER; the branch (and its commits) is kept. Any UNCOMMITTED work in that checkout is lost. Merge it first if you want its changes.`)) return;
+  if (!(await showModal({ title: `Remove worktree "${name}"?`, sub: "Deletes its checkout folder; the branch and its commits are kept. Any UNCOMMITTED work in that checkout is lost — merge it first if you want its changes.", confirmLabel: "Remove", danger: true }))) return;
   const d = await pactWorktreeAct("remove", name);
   if (d.ok) {
     // Unbind any box/unstarted-chat pointing at the now-gone worktree so it doesn't error on the missing checkout.
     for (const g of PACT_ED.groups) if (g.worktree === name) { g.worktree = undefined; for (const t of g.tabs) t.worktree = "main"; }
     if (PACT_CHAT) for (const t of PACT_CHAT.tabs) if (t.worktree === name && !(t.started || (t.msgs && t.msgs.length))) t.worktree = undefined;
     pactEdSaveStatus('✓ worktree "' + name + '" removed', false); pactEdLoadWorktrees(); pactStateSave();
-  } else pactEdSaveStatus("⚠ " + (d.error || "remove failed"), true);
+  } else await pactNotify("Couldn't remove worktree", d.error || "remove failed", true);
 }
 async function pactWorktreeMerge(name) {
-  if (!window.confirm(`Merge worktree "${name}" into main?\n\nBoth checkouts must be committed-clean first (a merge only takes COMMITTED work). If it would conflict, it's aborted and main is left exactly as it is.`)) return;
+  if (!(await showModal({ title: `Merge "${name}" into main?`, sub: "Both checkouts must be committed-clean (a merge only takes committed work). If it would conflict, it's aborted and main is left exactly as it is.", confirmLabel: "Merge" }))) return;
   pactEdSaveStatus('merging "' + name + '" into main…', false);
   const d = await pactWorktreeAct("merge", name);
   if (d.ok) pactEdSaveStatus('✓ merged "' + name + '" into ' + (d.mainBranch || "main") + " (" + (d.merged || 0) + " commit" + (d.merged === 1 ? "" : "s") + ")", false);
-  else pactEdSaveStatus("⚠ " + (d.error || "merge failed"), true);
+  else await pactNotify("Merge not done", d.error || "merge failed", true);
   pactEdCheckChangedFiles();
 }
 // Bind an editor box to a worktree. Reloads every open tab from the NEW checkout (same paths, different
@@ -5516,11 +5524,11 @@ function pactChatWorktreeMenu(t, x, y) {
     }
     items.push("---");
     items.push({ label: "＋ New worktree…", onClick: async () => {
-      const name = window.prompt("New worktree name (letters, digits, . _ - ) — an isolated checkout + branch off HEAD:");
+      const name = await showModal({ title: "＋ New worktree", sub: "An isolated checkout + branch off HEAD. This conversation will start in it. Letters, digits, . _ - only.", editable: true, value: "", confirmLabel: "Create & bind" });
       if (name == null || !name.trim()) return;
       const c = await pactWorktreeAct("create", name.trim());
       if (c.ok || /already exists/i.test(c.error || "")) { t.worktree = name.trim(); pactEdLoadWorktrees(); pactStateSave(); pactChatRender(); }
-      else pactEdSaveStatus("⚠ " + (c.error || "could not create worktree"), true);
+      else await pactNotify("Couldn't create worktree", c.error || "could not create worktree", true);
     } });
   } else {
     // Started → its cwd can't just be re-picked (uncommitted work wouldn't follow): MIGRATE / MERGE-RETURN.
@@ -5542,8 +5550,8 @@ async function pactChatMigrate(t, toArg) {
   let to = toArg;
   if (to == null) {
     const existing = (PACT_ED && PACT_ED.worktrees ? PACT_ED.worktrees : []).filter((w) => !w.isMain).map((w) => w.name);
-    const hint = existing.length ? "existing: " + existing.join(", ") : "none yet — type a name to create one";
-    const raw = window.prompt(`Migrate "${(PACT_CHAT_NAMES[t.key] || t.name)}" to which worktree?\n\nType a NEW name to create it, an existing worktree, or "main" to return.\n(${hint})`, cur === "main" ? "" : "main");
+    const hint = existing.length ? "Existing: " + existing.join(", ") + "." : "None yet — type a name to create one.";
+    const raw = await showModal({ title: `Migrate "${(PACT_CHAT_NAMES[t.key] || t.name)}"`, sub: `Type a NEW worktree name to create it, an existing worktree, or "main" to return.  ${hint}`, editable: true, value: cur === "main" ? "" : "main", confirmLabel: "Migrate" });
     if (raw == null) return;
     to = raw.trim();
   }
@@ -5566,12 +5574,12 @@ async function pactChatMigrate(t, toArg) {
         ? `The modified files are real edits — commit them first (ask the agent) if you want them in "${to}". Untracked files are usually scratch and safe to leave.`
         : `These are all new/untracked files (scratch, drafts, probes) — safe to leave; migrating won't touch them.`)
       + `\n\nProceed?`;
-    if (!window.confirm(msg)) return;
+    if (!(await showModal({ title: "Some files stay behind", sub: msg, confirmLabel: "Proceed" }))) return;
   }
   // Ensure the target exists (create a new worktree if the name is new; "main" always exists).
   if (to !== "main" && !(PACT_ED && PACT_ED.worktrees || []).some((w) => w.name === to)) {
     const c = await pactWorktreeAct("create", to);
-    if (!c.ok && !/already exists/i.test(c.error || "")) { pactEdSaveStatus("⚠ " + (c.error || "could not create worktree \"" + to + "\""), true); return; }
+    if (!c.ok && !/already exists/i.test(c.error || "")) { await pactNotify("Couldn't create worktree", c.error || `could not create worktree "${to}"`, true); return; }
   }
   pactChatRecordMigration(t, cur, to);
   pactEdSaveStatus('conversation now runs in "' + to + '" — its next turn uses that checkout' + (modified.length ? ` (${modified.length} modified file(s) left in "${cur}")` : ""), false);
@@ -5581,13 +5589,13 @@ async function pactChatMigrate(t, toArg) {
 async function pactChatMergeReturn(t) {
   if (!t || !t.worktree) return;
   const wt = t.worktree;
-  if (!window.confirm(`Merge worktree "${wt}" into main and return this conversation to main?\n\nBoth checkouts must be committed-clean (a merge only takes committed work — ask the agent to commit first if needed). If it would conflict, it's ABORTED and main is left exactly as it is.`)) return;
+  if (!(await showModal({ title: `Merge "${wt}" into main & return?`, sub: "Both checkouts must be committed-clean (a merge only takes committed work — ask the agent to commit first if needed). If it would conflict, it's aborted and main is left exactly as it is.", confirmLabel: "Merge & return" }))) return;
   pactEdSaveStatus(`merging "${wt}" into main…`, false);
   const d = await pactWorktreeAct("merge", wt);
-  if (!d.ok) { pactEdSaveStatus("⚠ " + (d.error || "merge failed"), true); return; }
+  if (!d.ok) { await pactNotify("Merge not done", d.error || "merge failed", true); return; }
   pactChatRecordMigration(t, wt, "main");
   pactEdSaveStatus(`✓ merged "${wt}" into ${d.mainBranch || "main"} (${d.merged || 0} commit${d.merged === 1 ? "" : "s"}) — conversation returned to main`, false);
-  if (window.confirm(`Merged. Remove the "${wt}" worktree checkout now? (its branch + commits stay; only the folder is deleted)`)) {
+  if (await showModal({ title: `Remove the "${wt}" worktree now?`, sub: "Its branch + commits stay; only the checkout folder is deleted. You've already merged it into main.", confirmLabel: "Remove worktree" })) {
     const r = await pactWorktreeAct("remove", wt);
     if (r.ok) { for (const g of PACT_ED.groups) if (g.worktree === wt) { g.worktree = undefined; for (const tt of g.tabs) tt.worktree = "main"; } pactEdLoadWorktrees(); pactStateSave(); }
     else pactEdSaveStatus("⚠ " + (r.error || "could not remove worktree"), true);

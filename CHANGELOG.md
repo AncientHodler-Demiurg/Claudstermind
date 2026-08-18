@@ -4,7 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.81] - 2026-08-18
+## [1.4.82] - 2026-08-18
+
+### Changed
+- **Worktree create / migrate / merge use in-app modals instead of native browser popups,** and failures
+  are surfaced clearly instead of doing nothing. The prompt for a new worktree name, and the migrate /
+  merge / remove confirmations, now use the styled `showModal` dialog (⌘/Ctrl+Enter to confirm, Esc to
+  cancel). Errors — including **"worktree management isn't available on the running dashboard yet, restart
+  it"** when the `/api/pact/worktree` endpoint 404s (the create/merge/remove endpoints ship in an update
+  that may not be deployed to the running dashboard yet) — now pop a clear message rather than silently
+  failing (the "tried to add a worktree, nothing happened" report). `pactWorktreeAct` detects a 404 /
+  non-JSON response and reports it plainly.
+
+
 
 ### Fixed
 - **Worktree migrate/merge no longer reads leftover UNTRACKED scratch files as "your work is at risk".**
