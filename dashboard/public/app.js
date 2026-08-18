@@ -2883,9 +2883,17 @@ function pactLegend() {
 // Worktree query fragment for a Pact-IDE fetch: "" for main (or unset), else "&worktree=<name>". Every
 // per-box/per-tab read/save/diff appends this so it acts on that box's bound checkout (Stage-1 worktrees).
 const pactWtQ = (wt) => (wt && wt !== "main") ? "&worktree=" + encodeURIComponent(wt) : "";
+// The worktree the file TREE + Changed panel currently reflect: the ACTIVE editor box's worktree, so
+// browsing shows the checkout you're working in (Stage-3 polish). Same paths across worktrees; content +
+// git-status differ.
+function pactActiveWt() {
+  if (!PACT_ED) return "main";
+  const g = PACT_ED.groups.find((x) => x.id === PACT_ED.activeId);
+  return (g && g.worktree) || "main";
+}
 async function loadPactDir(rel, container) {
   let d;
-  try { d = await (await fetch("/api/pact/tree?dir=" + encodeURIComponent(rel))).json(); }
+  try { d = await (await fetch("/api/pact/tree?dir=" + encodeURIComponent(rel) + pactWtQ(pactActiveWt()))).json(); }
   catch { container.replaceChildren(el("div", { class: "hint" }, ["Tree unavailable."])); return; }
   if (!d.ok) { container.replaceChildren(el("div", { class: "hint" }, [d.error || "error"])); return; }
   if (!d.items.length) { container.replaceChildren(el("div", { class: "hint", style: "padding:4px 8px" }, ["(empty)"])); return; }
@@ -3013,7 +3021,7 @@ if (PACT_MOBILE_MQ.addEventListener) PACT_MOBILE_MQ.addEventListener("change", (
 });
 let PACT_TREE_FONT = 12.5;   // tree font size (px), adjustable via the tree header A-/A+
 let PACT_ED = null;   // { host, groups:[group], activeId, seq }; group = { id, tabs:[{path,name,loaded,content,error}], active, fontPx }
-function pactEdInit(host) { PACT_ED = { host, groups: [], activeId: null, seq: 0, treeExpanded: new Set(), worktrees: [{ name: "main", branch: "main", isMain: true }] }; pactEdAddGroup(); pactEdLoadWorktrees(); }
+function pactEdInit(host) { PACT_ED = { host, groups: [], activeId: null, seq: 0, treeExpanded: new Set(), worktrees: [{ name: "main", branch: "main", isMain: true }], _treeWt: "main" }; pactEdAddGroup(); pactEdLoadWorktrees(); }
 // Fetch the Pact repo's checkouts (main + any worktrees) so each editor box can be BOUND to one. Cheap;
 // refreshed on init and after a worktree add/remove. When more than main exists, box headers show a
 // worktree selector (see pactEdRenderGroup).
@@ -3088,6 +3096,7 @@ async function pactEdSetGroupWorktree(g, wt) {
     else { t.error = (d.error || "not in this worktree") + (d.tooLarge ? ` (${Math.round((d.size || 0) / 1e6)} MB)` : ""); t.loaded = true; }
   }
   pactEdRenderGroup(g);
+  if (g.id === PACT_ED.activeId) pactEdSyncTreeToActiveBox();   // the active box changed worktree → re-point the tree
   pactStateSave();
 }
 function pactEdAddGroup() {
@@ -3278,6 +3287,7 @@ function pactEdLayout() {
       if (PACT_ED.activeId !== g.id) {
         PACT_ED.activeId = g.id;
         for (const gg of PACT_ED.groups) gg.el.classList.toggle("--active", gg.id === PACT_ED.activeId);
+        pactEdSyncTreeToActiveBox();   // re-point the tree at this box's worktree (only re-scans if it changed)
         if (g.active) pactTreeReveal(g.active);   // selecting a box reveals the file it's showing (IDE auto-reveal)
       }
     });
@@ -3325,7 +3335,7 @@ function pactEdRenderGroup(g) {
       el("span", { class: "pact-tab2-ic" }, [pactFileIcon(tb.name)]), el("span", { class: "pact-tab2-name" }, [tb.name]), x,
     ]);
     tb._tabEl = tab;
-    tab.addEventListener("click", () => { PACT_ED.activeId = g.id; g.active = tb.path; pactEdLayout(); pactTreeReveal(tb.path); });
+    tab.addEventListener("click", () => { PACT_ED.activeId = g.id; g.active = tb.path; pactEdLayout(); pactEdSyncTreeToActiveBox(); pactTreeReveal(tb.path); });
     // Chrome-style drag: reorder within this box, or drop onto another box's tab row to move the file
     // there (the whole tab — its editor + unsaved edits — moves with it). See pactEdMoveTab. (v1.4.6)
     tab.setAttribute("draggable", "true");
@@ -4346,6 +4356,18 @@ async function pactTreeRefresh() {
     pactEdLoadWorktrees();   // pick up any newly-created/removed worktree so box selectors stay current
   } finally { PACT_TREE_REFRESHING = false; }
 }
+// Re-point the file tree + Changed panel at the ACTIVE box's worktree — but only when it actually changed,
+// so ordinary box/tab focus within one worktree doesn't re-scan the tree. pactTreeRefresh preserves the
+// expanded folders. A small "⌥<name>" chip in the tree header shows when you're browsing a non-main checkout.
+function pactEdSyncTreeToActiveBox() {
+  if (!PACT_ED || !PACT_ED.treeBody) return;
+  const wt = pactActiveWt();
+  if (wt === PACT_ED._treeWt) return;
+  PACT_ED._treeWt = wt;
+  if (PACT_ED.treeHdWt) { PACT_ED.treeHdWt.textContent = wt === "main" ? "" : "⌥ " + wt; PACT_ED.treeHdWt.hidden = (wt === "main"); }
+  pactTreeRefresh();
+  pactEdCheckChangedFiles();
+}
 async function pactTreeExpandPath(path) {
   if (!PACT_ED || !PACT_ED.treeBody) return;
   const wrap = [...PACT_ED.treeBody.querySelectorAll(".pact-node-wrap")].find((w) => w.dataset.path === path);
@@ -4389,7 +4411,8 @@ function pactTreeSwitchTab(which) {
 }
 async function pactEdCheckChangedFiles() {
   if (!PACT_ED || !PACT_ED.changedList) return;
-  let d; try { d = await (await fetch("/api/pact/changed")).json(); } catch { return; }   // git unreachable — leave the list as-is
+  const cwt = pactActiveWt();   // the Changed panel + tree coloring reflect the active box's worktree
+  let d; try { d = await (await fetch("/api/pact/changed" + (cwt !== "main" ? "?worktree=" + encodeURIComponent(cwt) : ""))).json(); } catch { return; }   // git unreachable — leave the list as-is
   if (!d || !d.ok || !Array.isArray(d.files)) return;   // git unavailable / not a repo — list stays empty
   PACT_CHANGED = d.files;
   pactEdRenderChanged();
@@ -4629,6 +4652,7 @@ function pactRestoreEditor(ed) {
     for (const p of paths) pactEdOpenInto(g, p, p === active, false);
     if (!paths.length) { g.active = null; pactEdRenderGroup(g); }
   });
+  pactEdSyncTreeToActiveBox();   // if the restored active box is on a worktree, show its tree straight away (guarded on treeBody)
 }
 function pactRestoreChat(ch) {
   const tabs = ch.tabs.slice(0, 16).filter((t) => t && typeof t === "object");
@@ -4867,7 +4891,8 @@ function pactIsPrimeRow(r) { return pactRowIsPrime(r, PACT_CHAT && PACT_CHAT.tab
 function pactHistRow(r) {
   const prime = pactIsPrimeRow(r);
   const star = prime ? el("span", { class: "pc-tab-prime", title: "Prime conversation — always kept, can't be deleted" }, ["★ "]) : "";
-  const nameEl = el("div", { class: "pc-hist-name", title: prime ? "Prime conversation" : "Double-click to rename" }, [star, pactHistName(r)]);
+  const wtBadge = (r.worktree && r.worktree !== "main") ? el("span", { class: "pc-hist-wt", title: "This conversation ran in worktree " + r.worktree }, ["⌥" + r.worktree]) : "";
+  const nameEl = el("div", { class: "pc-hist-name", title: prime ? "Prime conversation" : "Double-click to rename" }, [star, pactHistName(r), wtBadge]);
   nameEl.addEventListener("dblclick", () => pactHistRename(r));
   const meta = el("div", { class: "pc-hist-meta" }, [`${r.turns || 0} msg${(r.turns || 0) === 1 ? "" : "s"}` + (r.updatedAt ? " · " + pactAgo(r.updatedAt) : "") + (r.realSessionId ? "" : " · no resume")]);
   const first = el("div", { class: "pc-hist-first" }, [r.firstPrompt || "(no prompt)"]);
@@ -5849,10 +5874,14 @@ function viewPact() {
   // leaving the Pact workspace. The isolation primitive for parallel agents (bind a box + a chat to it).
   const wtBtn = el("button", { class: "pact-ed-ico", title: "Git worktrees — create an isolated checkout, merge one into main, or remove it" }, ["⌥"]);
   wtBtn.addEventListener("click", (e) => { e.stopPropagation(); const r = wtBtn.getBoundingClientRect(); pactWorktreeMenu(r.left, r.bottom + 4); });
+  // Shows which worktree the tree is currently reflecting (the active box's) — hidden on main.
+  const treeHdWt = el("span", { class: "pact-tree-wt", title: "The tree + Changed panel are showing this worktree (the active box's)" }, []);
+  treeHdWt.hidden = true;
+  PACT_ED.treeHdWt = treeHdWt;
   const changedList = el("div", { class: "pact-changed-list" }, [el("div", { class: "hint", style: "padding:8px 10px" }, ["No changes vs HEAD."])]);
   changedList.style.display = "none";
   const treeEl = el("aside", { class: "pact-tree" }, [
-    el("div", { class: "pact-tree-hd pact-tree-tabs" }, [tabFilesBtn, tabChangedBtn, el("span", { class: "ws-spacer" }, []), wtBtn, treeRefreshBtn, ...treeFontBtns]),
+    el("div", { class: "pact-tree-hd pact-tree-tabs" }, [tabFilesBtn, tabChangedBtn, treeHdWt, el("span", { class: "ws-spacer" }, []), wtBtn, treeRefreshBtn, ...treeFontBtns]),
     treeBody,
     changedList,
   ]);

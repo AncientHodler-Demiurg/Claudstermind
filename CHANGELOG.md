@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.73] - 2026-08-18
+
+### Added
+- **Pact IDE worktree binding — Stage 3 polish: the file tree follows the active box's worktree.** The file
+  tree, its change-coloring, and the **Changed** panel now reflect the **active editor box's worktree** — so
+  browsing shows the checkout you're actually working in, and clicking a file opens the right copy. It only
+  re-scans when the active worktree genuinely changes (ordinary box/tab focus within one worktree doesn't
+  thrash the tree; expanded folders are preserved). A small **⌥<name>** chip in the tree header shows when
+  you're browsing a non-main checkout. **Pact chat history** rows now show a **⌥<worktree>** badge for a
+  conversation that ran in a worktree, and reopening one restores its worktree binding (the session rows
+  already carried the worktree — now it's surfaced and honored end-to-end). This completes the worktree
+  feature's polish.
+
 ## [1.4.72] - 2026-08-18
 
 ### Added

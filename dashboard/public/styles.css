@@ -1337,6 +1337,12 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    once the conversation has started). */
 .pc-wt.--active { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); color: var(--accent); }
 .pc-wt:disabled { opacity: .7; cursor: not-allowed; }
+/* Tree-header chip: which worktree the file tree is currently showing (the active box's); hidden on main. */
+.pact-tree-wt { font-size: 10px; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 4px; padding: 1px 5px; white-space: nowrap; align-self: center; }
+/* History-row worktree badge — which checkout a saved conversation ran in. */
+.pc-hist-wt { font-size: 9.5px; color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent);
+  border-radius: 4px; padding: 0 4px; margin-left: 6px; white-space: nowrap; }
 /* Per-tab worktree marker + a left accent so a conversation bound to a non-main checkout stands out. */
 .pc-tab.--wt { border-left: 2px solid color-mix(in srgb, var(--accent) 65%, transparent); }
 .pc-tab-wt { font-size: 9.5px; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent);
