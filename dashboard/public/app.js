@@ -2659,14 +2659,34 @@ const WS_SCROLL_NEAR_BOTTOM_PX = 4;
 // WITHOUT content-visibility's on-scroll rendering (which made scrolling feel like it was
 // "loading"). Everything rendered is real and accurately sized, so scrolling stays smooth.
 const WS_TURN_RENDER_CAP = 20;
-// The Pact chat's equivalent cap — it renders individual messages (user / tool_use / assistant), not
-// whole turns, so the cap is in messages (~one turn = user + a few tool_use + assistant). The Pact page
-// is far heavier than the Core cockpit (an editor grid of syntax-highlighted files beside the chat), so
-// an uncapped long conversation there put THOUSANDS of message nodes in the DOM — which made every
-// textarea autosize reflow (height:auto→scrollHeight) lay out the whole giant tree, and THAT is why
-// typing in the Pact compose box hangs on a big conversation while the Core box stays smooth. Capping
-// the standing DOM (older messages behind a "show earlier" chip, t._showAll lifts it) fixes the hang.
-const PACT_MSG_RENDER_CAP = 60;
+// ===== PACT VISIBLE-WINDOW — pure cap helper (sliced for lib/pactVisibleStart.test.mjs) =====
+// The Pact chat renders individual messages: user / assistant TEXT plus collapsed tool_use rows (the
+// Read / Bash / Edit lines). Capping by RAW message count was wrong — a tool-heavy turn fills the window
+// with collapsed rows and crowds out the actual readable text you'd want to scroll back through. Instead
+// guarantee the last PACT_TEXT_RENDER_CAP READABLE (user/assistant) messages are always shown — the tool
+// rows interleaved among them ride along for free — with PACT_MSG_HARD_CAP as an absolute node ceiling so
+// a pathological run of tool rows can't blow the DOM back up (which would hurt scroll/paint; typing itself
+// is already protected by the .pact-* `contain: layout paint` fix). Older messages sit behind a "show
+// earlier" chip (t._showAll lifts the cap). This keeps the standing DOM bounded AND readable.
+const PACT_TEXT_RENDER_CAP = 50;
+const PACT_MSG_HARD_CAP = 400;
+// Start index of the visible window: walk back from the end until PACT_TEXT_RENDER_CAP readable messages
+// have been included OR the hard node ceiling is reached, whichever comes first. Pure (messages → index)
+// so it's unit-tested. "Readable" = a user/assistant turn carrying non-empty text; tool_use / note / other
+// rows don't count toward the readable budget (but are still shown when they fall inside the window).
+function pactVisibleStart(msgs, textCap = PACT_TEXT_RENDER_CAP, hardCap = PACT_MSG_HARD_CAP) {
+  if (!Array.isArray(msgs)) return 0;
+  let textSeen = 0;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m && (m.role === "user" || m.role === "assistant") && m.text != null && m.text !== "") {
+      if (++textSeen >= textCap) return i;
+    }
+    if (msgs.length - i >= hardCap) return i;   // absolute node ceiling hit before the readable budget
+  }
+  return 0;
+}
+// ===== end PACT VISIBLE-WINDOW pure helper =====
 const WS_STORE_KEY = "cm.workspace.v1";
 // Mirrors PERMISSION_MODES in lib/claudeSession.mjs — the browser can't import it, so the
 // ids must stay in step with that list (the server ignores any it doesn't recognise).
@@ -2728,13 +2748,21 @@ function attachStickController(scrollEl, opts = {}) {
   // shift the reader's view. In the common case (new content appended BELOW the viewport) the anchor
   // doesn't move, so the restore is a mathematical no-op — identical to the old "leave scrollTop alone",
   // just also correct when the change is above the fold.
+  // BINARY SEARCH over offsetTop (monotonic for stacked in-flow children) for the first child whose bottom
+  // edge is below the scroll top — O(log n) reads, not an O(n) getBoundingClientRect sweep, so a large
+  // window (hundreds of nodes) stays cheap to sample even mid-stream. `delta` is the anchor's top relative
+  // to the viewport top at capture; apply() restores scrollTop so the anchor returns to exactly that spot.
   const captureAnchor = () => {
-    const top = scrollEl.getBoundingClientRect().top;
-    for (const child of scrollEl.children) {
-      const r = child.getBoundingClientRect();
-      if (r.bottom > top + 1) return { node: child, delta: r.top - top };
+    const kids = scrollEl.children, n = kids.length;
+    if (!n) return null;
+    const st = scrollEl.scrollTop;
+    let lo = 0, hi = n - 1, ans = n - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1, c = kids[mid];
+      if (c.offsetTop + c.offsetHeight > st) { ans = mid; hi = mid - 1; } else lo = mid + 1;
     }
-    return null;
+    const node = kids[ans];
+    return { node, delta: node.offsetTop - st };
   };
   const ctrl = {
     pinned: true, scrollEl, wrap, pill, _anchor: null,
@@ -2749,9 +2777,8 @@ function attachStickController(scrollEl, opts = {}) {
       else {
         const a = this._anchor;
         if (a && a.node && a.node.parentNode === scrollEl) {
-          const now = a.node.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top;
-          const shift = now - a.delta;   // >0 means content grew ABOVE the fold and pushed the anchor down
-          if (Math.abs(shift) >= 1) scrollEl.scrollTop += shift;   // ignore sub-pixel rect noise; correct only real shifts
+          const target = a.node.offsetTop - a.delta;   // scrollTop that returns the anchor to its recorded viewport spot
+          if (Math.abs(target - scrollEl.scrollTop) >= 1) scrollEl.scrollTop = target;   // ignore sub-px noise
         }
         this.pinned = false; pill.classList.add("--show");
       }
@@ -5482,12 +5509,14 @@ function pactChatPaint(t) {
   // markdown + code-highlighting on EVERY event (user echo / tool_use / assistant / result / status /
   // resync…) was the Pact-chat stall on a long conversation. Now a paint renders only the NEW message(s);
   // existing ones reuse their node — which also preserves the tool-call expand state you'd opened.
-  // Cap the standing DOM to the most recent PACT_MSG_RENDER_CAP messages (t._showAll lifts it) — the
-  // fix for typing hanging on a big conversation (see the cap's declaration). Mirrors the Core cockpit's
-  // WS_TURN_RENDER_CAP + "show earlier" chip. The tail always shows; older messages hide behind the chip.
+  // Cap the standing DOM to a window that GUARANTEES the last ~PACT_TEXT_RENDER_CAP readable messages
+  // (user/assistant text), with tool_use rows riding along free — so a tool-heavy turn no longer crowds
+  // the readable text out of view (see pactVisibleStart). t._showAll lifts the cap. Mirrors the Core
+  // cockpit's "show earlier" chip. The tail always shows; older messages hide behind the chip.
   const showAll = !!t._showAll;
-  const visibleMsgs = showAll ? t.msgs : t.msgs.slice(-PACT_MSG_RENDER_CAP);
-  const hiddenCount = t.msgs.length - visibleMsgs.length;
+  const start = showAll ? 0 : pactVisibleStart(t.msgs);
+  const visibleMsgs = t.msgs.slice(start);
+  const hiddenCount = start;
   const nodes = visibleMsgs.map((m) => m._node || (m._node = pactChatMsgNode(m)));
   if (hiddenCount > 0) {
     const btn = el("button", { class: "ws-show-earlier" }, [`▲ Show ${hiddenCount} earlier message${hiddenCount === 1 ? "" : "s"}`]);

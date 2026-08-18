@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.64] - 2026-08-18
+
+### Fixed
+- **Pact chat "show earlier" cap now counts READABLE messages, not tool rows.** The 1.4.59 cap sliced the
+  last 60 raw messages — but collapsed tool_use rows (the Read / Bash / Edit lines) counted toward that 60,
+  so a tool-heavy turn filled the window with collapsed rows and left only a handful of actual text
+  replies visible above the "show earlier" ceiling. The window now guarantees the last **50 readable
+  (user/assistant) messages**, with interleaved tool rows riding along for free, bounded by an absolute
+  **400-node** ceiling so a pathological tool-row flood still can't blow up the DOM. New pure helper
+  `pactVisibleStart` (+ `lib/pactVisibleStart.test.mjs`, 6 cases).
+- **Scroll anchor capture is now O(log n).** With the larger window, the stick-to-bottom controller's
+  anchor capture switched from an O(n) `getBoundingClientRect` sweep to a binary search over `offsetTop`
+  (~9 reads for 400 nodes), so sampling stays cheap even mid-stream on a long conversation — the smooth
+  scrolling from 1.4.62 is preserved.
+
 ## [1.4.63] - 2026-08-18
 
 ### Added
