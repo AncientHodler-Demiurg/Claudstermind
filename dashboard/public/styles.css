@@ -350,10 +350,10 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 
 .ws-root { display: flex; flex-direction: column; gap: 10px; }
 /* Mobile-only Core bottom control bar + Live/Held strip — hidden on desktop (shown under .ws-mobile). */
-.ws-mcbar, .ws-mmodebar { display: none; }
+.ws-mcbar, .ws-mmodebar, .ws-drawer-actions { display: none; }
 /* Mobile bottom sheet (conversations switcher / pane settings) — a slide-up panel over a scrim. Only
    ever opened on a phone; harmless (display:none) on desktop. */
-.ws-sheet { position: fixed; inset: 0; z-index: 70; display: none; }
+.ws-sheet { position: fixed; inset: 0; z-index: 90; display: none; }   /* above the fixed bottom nav (.ph-tabbar ~79) so it's a true modal */
 .ws-sheet.open { display: block; }
 .ws-sheet-back { position: absolute; inset: 0; background: rgba(0,0,0,.5); }
 .ws-sheet-panel { position: absolute; left: 0; right: 0; bottom: 0; max-height: 76vh; display: flex; flex-direction: column;
@@ -1034,8 +1034,10 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .ws-mobile .ws-compose-btns { display: none; }
   .ws-mobile .ws-compose { gap: 0; }
   .ws-mobile .ws-mmodebar { display: flex; justify-content: center; align-items: center; padding: 2px 0 0; flex: 0 0 auto; }
+  /* No safe-area-inset-bottom here: body.ws-full already reserves the fixed bottom nav's height, so the
+     bar sits directly above .ph-tabbar (which itself covers the home-indicator inset). */
   .ws-mobile .ws-mcbar { display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
-    padding: 6px max(10px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+    padding: 6px max(10px, env(safe-area-inset-right)) 6px max(10px, env(safe-area-inset-left));
     border-top: 1px solid var(--line); background: var(--panel); }
   .ws-mcbtn { min-width: 42px; min-height: 42px; padding: 0 10px; display: inline-flex; align-items: center; justify-content: center;
     background: var(--chip); border: 1px solid var(--line); color: var(--ink); border-radius: 11px; font-size: 18px; cursor: pointer; }
@@ -1061,6 +1063,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .ws-mcbtn-chats[data-n]:not([data-n="0"]):not([data-n="1"])::after {
     content: attr(data-n); position: absolute; top: -4px; right: -4px; min-width: 15px; height: 15px; padding: 0 3px;
     background: var(--accent); color: #fff; border-radius: 999px; font-size: 10px; line-height: 15px; text-align: center; }
+  /* Stage 3: New folder / New repo, relocated into the ☰ drawer on mobile (their toolbar home is hidden). */
+  .ws-mobile .ws-drawer-actions { display: flex; gap: 8px; margin-bottom: 10px; }
+  .ws-mobile .ws-drawer-actions .ghost { flex: 1; min-height: 42px; border-radius: 10px; }
+  /* Bar tap targets never trigger a double-tap zoom. */
+  .ws-mcbtn { touch-action: manipulation; }
 
   /* PHASE 2 — one chat box at a time via a tab strip; the sidebar becomes a slide-in drawer. */
   .ws-mtabs { display: flex; align-items: center; gap: 6px; margin: 2px 0 4px; }

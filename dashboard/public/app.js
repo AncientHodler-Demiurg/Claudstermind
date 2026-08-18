@@ -8278,8 +8278,11 @@ function viewWorkspace() {
     for (const p of st.panes) { p.mode = st.defaultMode; wsPost("control", { action: "setMode", args: { sessionKey: p.sessionKey, mode: p.mode } }); paintPane(p); }
     saveLayout();
   });
-  newFolderBtn.addEventListener("click", () => { const name = window.prompt("New folder name:"); if (name == null) return; const parent = window.prompt("Parent path (blank = root):") || ""; wsPost("control", { action: "newFolder", args: { parent, name } }); });
-  newRepoBtn.addEventListener("click", () => { const name = window.prompt("New repo name (git init):"); if (name == null) return; const parent = window.prompt("Parent path (blank = root):") || ""; wsPost("control", { action: "newRepo", args: { parent, name } }); });
+  // Shared so the mobile drawer's actions row can trigger the same thing as the desktop toolbar buttons.
+  const doNewFolder = () => { const name = window.prompt("New folder name:"); if (name == null) return; const parent = window.prompt("Parent path (blank = root):") || ""; wsPost("control", { action: "newFolder", args: { parent, name } }); };
+  const doNewRepo = () => { const name = window.prompt("New repo name (git init):"); if (name == null) return; const parent = window.prompt("Parent path (blank = root):") || ""; wsPost("control", { action: "newRepo", args: { parent, name } }); };
+  newFolderBtn.addEventListener("click", doNewFolder);
+  newRepoBtn.addEventListener("click", doNewRepo);
 
   // ---- boot ----------------------------------------------------------------------
   if (!loadLayout()) { st.panes = [newPane()]; st.activeId = st.panes[0].id; }
@@ -8319,6 +8322,12 @@ function viewWorkspace() {
       sideBackdrop,
       el("aside", { class: "ws-side" }, [
         (() => { const c = el("button", { class: "ws-drawer-close", title: "Close" }, ["✕ Close"]); c.addEventListener("click", closeDrawer); return c; })(),
+        // Mobile-only: New folder / New repo live here (the desktop toolbar that hosts them is hidden on
+        // a phone). Same handlers as the toolbar buttons. Hidden on desktop via CSS.
+        el("div", { class: "ws-drawer-actions" }, [
+          (() => { const b = el("button", { class: "ghost", type: "button" }, ["＋ folder"]); b.addEventListener("click", () => { closeDrawer(); doNewFolder(); }); return b; })(),
+          (() => { const b = el("button", { class: "ghost", type: "button" }, ["＋ repo"]); b.addEventListener("click", () => { closeDrawer(); doNewRepo(); }); return b; })(),
+        ]),
         modeToggle, sideList, el("div", { class: "ws-side-sep" }, []), histList,
       ]),
       grid,

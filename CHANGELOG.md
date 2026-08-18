@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.68] - 2026-08-18
+
+### Fixed
+- **Core mobile overhaul — Stage 3 (polish).**
+  - **New folder / New repo** are reachable again on a phone — relocated into the ☰ drawer (their desktop
+    toolbar home is hidden on mobile), wired to the same handlers.
+  - The **conversations / settings sheet is now a true modal** — raised above the fixed bottom nav
+    (`.ph-tabbar`) so the nav can no longer poke through the bottom of an open sheet.
+  - **Removed a redundant bottom inset** on the control bar: `body.ws-full` already reserves the bottom
+    nav's height, so the extra `safe-area-inset-bottom` was leaving a dead gap under the bar.
+  - Bar buttons get `touch-action: manipulation` (no double-tap zoom).
+  The per-pane background-work badge and activity line were never lost — they live in the pane's own
+  header, which stays visible. This completes the Core mobile overhaul (Stages 1–3); the desktop cockpit
+  is untouched throughout.
+
 ## [1.4.67] - 2026-08-18
 
 ### Changed
