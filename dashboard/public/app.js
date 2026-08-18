@@ -5413,6 +5413,34 @@ async function pactAttachImageFile(t, file) {
 // permission — the exact set the Core cockpit's paneBusy() uses. Mirroring it keeps the "queue a
 // message typed mid-turn" behaviour identical across the two chat surfaces.
 function pactChatBusy(t) { return !!t && (t.status === "thinking" || t.status === "deepwork" || t.status === "awaiting-permission"); }
+// The per-conversation status light shown in the mobile switcher (and anywhere a `.pactm-frow-state` dot is
+// mounted). It MIMICS the send button's colour so a single glance tells you which agents still need you:
+//   • idle/done   → accent (the send-ready colour) — this one is waiting on YOUR next prompt
+//   • working     → amber  (thinking / awaiting a permission you must grant)
+//   • deep work   → red    (the SDK is still producing after the visible turn ended)
+function pactChatConvoStateCls(t) { return t && t.status === "deepwork" ? " --deep" : (pactChatBusy(t) ? " --busy" : ""); }
+function pactChatConvoStateLabel(t) {
+  if (!t) return "";
+  if (t.status === "deepwork") return "deep work — still producing";
+  if (t.status === "awaiting-permission") return "waiting on a permission";
+  if (pactChatBusy(t)) return "working…";
+  return "idle — ready for your prompt";
+}
+// Live-refresh every mounted conversation status dot from the current tab statuses. Cheap + idempotent
+// (only rewrites an attribute when it actually changed), driven by a self-terminating interval while the
+// switcher sheet is open AND by pactChatPaint, so it tracks background tabs too — not just the active one.
+function pactChatSyncConvoDots() {
+  if (!PACT_CHAT) return;
+  const dots = document.querySelectorAll(".pactm-frow-state[data-tabid]");
+  for (const dot of dots) {
+    const t = PACT_CHAT.tabs.find((x) => String(x.id) === dot.getAttribute("data-tabid"));
+    if (!t) continue;
+    const cls = "pactm-frow-state" + pactChatConvoStateCls(t);
+    if (dot.className !== cls) dot.className = cls;
+    const lbl = pactChatConvoStateLabel(t);
+    if (dot.getAttribute("title") !== lbl) dot.setAttribute("title", lbl);
+  }
+}
 // ===== PACT QUEUE MERGE — pure helper (sliced out for unit tests; see lib/pactQueue.test.mjs)
 // Merge N queued { text, images } entries (typed while the agent was mid-turn) into ONE prompt: the
 // texts joined by a blank line (double-newline, exactly like the Core drainQueue), the images
@@ -6455,6 +6483,10 @@ function viewPactMobile() {
       rows.push(add);
       (PACT_CHAT.tabs || []).forEach((t) => {
         const label = (t.key && PACT_CHAT_NAMES[t.key]) || t.name;
+        // A live, non-interactive status light mirroring the send button's colour — see it at a glance:
+        // idle (ready for a prompt), working, or deep work. Kept current by pactChatSyncConvoDots.
+        const state = el("span", { class: "pactm-frow-state" + pactChatConvoStateCls(t), title: pactChatConvoStateLabel(t) }, []);
+        state.setAttribute("data-tabid", String(t.id));
         const name = el("span", { class: "pactm-frow-name" }, [label]);
         // The prime conversation can't be closed — a ★ marker replaces the × close button.
         let tail;
@@ -6465,7 +6497,7 @@ function viewPactMobile() {
           tail.addEventListener("click", closeConv);
           tail.addEventListener("touchend", (e) => { e.preventDefault(); closeConv(e); });
         }
-        const row = el("div", { class: "pactm-frow" + (t.id === PACT_CHAT.activeId ? " --active" : "") + (t.prime ? " --prime" : "") }, [name, tail]);
+        const row = el("div", { class: "pactm-frow" + (t.id === PACT_CHAT.activeId ? " --active" : "") + (t.prime ? " --prime" : "") }, [state, name, tail]);
         onTap(row, () => { if (t.id !== PACT_CHAT.activeId) { pactChatSaveDraft(); PACT_CHAT.activeId = t.id; pactChatRender(); pactStateSave(); } closeSheet(); renderStage(); });
         rows.push(row);
       });
@@ -6473,6 +6505,9 @@ function viewPactMobile() {
     };
     openSheet("Conversations", list);
     rebuild();
+    // Keep the status lights live while the sheet is open. Self-terminates once the list leaves the DOM
+    // (sheet closed / re-rendered) so it never leaks — no explicit close hook needed.
+    const iv = setInterval(() => { if (!list.isConnected) { clearInterval(iv); return; } pactChatSyncConvoDots(); }, 900);
   }
   // Riser #2 — the saved-chat HISTORY (same 🕐 data as desktop). Fetch the session list over the workspace
   // stream, render PACT_CHAT.sessions with the SAME row data (name, first-prompt snippet, msg count,

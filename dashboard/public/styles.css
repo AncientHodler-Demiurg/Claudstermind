@@ -1867,6 +1867,16 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .pactm-frow-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-size: 14px; font-weight: 600; }
   .pactm-frow.--active .pactm-frow-name { color: var(--accent); }
+  /* Per-conversation status light — mimics the send button's colour so a glance shows which agents still
+     need you: accent = idle/done (ready for your prompt), amber = working, red = deep work. Not clickable. */
+  .pactm-frow-state { flex: 0 0 auto; width: 11px; height: 11px; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
+  .pactm-frow-state.--busy { background: #f59e0b; box-shadow: 0 0 0 3px color-mix(in srgb, #f59e0b 22%, transparent);
+    animation: pactmStatePulse 1.15s ease-in-out infinite; }
+  .pactm-frow-state.--deep { background: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 24%, transparent);
+    animation: pactmStatePulse 1.15s ease-in-out infinite; }
+  /* Keep the "＋ New conversation" row's text aligned with the tab names below it (which now lead with a dot). */
+  .pactm-frow-new .pactm-frow-name { margin-left: 21px; }
   .pactm-frow-x { flex: 0 0 auto; min-width: 34px; min-height: 34px; background: transparent; border: none;
     color: var(--ink-dim); font-size: 20px; line-height: 1; cursor: pointer;
     -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
@@ -1946,3 +1956,8 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .pactm-hrow-first { font-size: 12.5px; color: var(--ink-mute); overflow: hidden; text-overflow: ellipsis;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal; }
 }
+
+/* Conversation status-light pulse (mobile switcher) — defined top-level so keyframes are global and the
+   reduced-motion opt-out isn't nested inside another @media (invalid). */
+@keyframes pactmStatePulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+@media (prefers-reduced-motion: reduce) { .pactm-frow-state { animation: none !important; } }

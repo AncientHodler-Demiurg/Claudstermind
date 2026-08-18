@@ -4,7 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.87] - 2026-08-18
+## [1.4.88] - 2026-08-18
+
+### Added
+- **A live per-conversation status light in the mobile Pact "Conversations" switcher**, so you can see at a
+  glance which agents still need you without opening each one. Each row now leads with a non-clickable dot
+  that mimics the send button's colour: **accent/pink = idle** (done — ready for your next prompt), **amber =
+  working**, **red = deep work** (still producing after the visible turn ended). It updates live while the
+  sheet is open (including background conversations, not just the active one) and carries a tooltip naming the
+  state. Colour-blind-friendly fallback aside, the amber/red states also pulse; the pulse respects
+  `prefers-reduced-motion`.
+
+
 
 ### Fixed
 - **Migrating a Pact conversation to a worktree no longer splits its saved history or lets the tab silently
