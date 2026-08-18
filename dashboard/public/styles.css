@@ -1328,6 +1328,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   border: 1px solid var(--line); color: var(--ink-dim); font-size: 13px; cursor: pointer; }
 .pact-ed-ico:hover { color: var(--ink); }
 .pact-ed-ico.--on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+/* Per-box worktree selector (Stage-1 worktree binding) — ties a box to a checkout; only shown when a
+   worktree beyond main exists. A non-main binding is accented so an isolated box is obvious at a glance. */
+.pact-wt-sel { flex: 0 0 auto; font-size: 11px; max-width: 130px; background: var(--chip); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; cursor: pointer; }
+.pact-wt-sel.--active { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); color: var(--accent); }
 .pact-ed-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 /* v1.4.5 — per-box control strip at the bottom (font/split/close/find/replace), so the tab row stays
    full-width for file names instead of the buttons crushing them. */

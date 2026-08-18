@@ -23,7 +23,7 @@ import { join, extname, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readActivity, readLastBackup } from "../orchestrator/activity.mjs";
 import { listArchives, pruneArchives, deleteArchive } from "../orchestrator/archives.mjs";
-import { listDir as pactListDir, readTextFile as pactReadFile, writeTextFile as pactWriteFile, pactRoot as resolvePactRoot } from "../lib/pactFs.mjs";
+import { listDir as pactListDir, readTextFile as pactReadFile, writeTextFile as pactWriteFile, pactRoot as resolvePactRoot, pactRootFor, pactWorktrees } from "../lib/pactFs.mjs";
 import { gitChangedFiles as pactChangedFiles, gitFileAtHead as pactFileAtHead } from "../lib/pactGit.mjs";
 import { readIdeState as pactReadIdeState, writeIdeState as pactWriteIdeState } from "../lib/pactIdeState.mjs";
 import { pactRunSpec } from "../lib/pactRun.mjs";
@@ -1052,13 +1052,26 @@ const handler = async (req, res) => {
   // ---- Pact IDE: read-only folder tree + file viewer, confined to the Ouronet Pact repo ----
   // Reads only (editing is a later, gated phase). canRead gate — the live site already requires
   // login + a role for that; pactFs itself refuses any path that escapes the repo root.
+  // Every Pact-IDE read/write is scoped to a WORKTREE (Stage-1 worktree binding): `?worktree=<name>`
+  // (or `worktree` in the POST body) selects which checkout to act on — main, or an isolated one under
+  // .worktrees. A named worktree that doesn't exist resolves to null; the endpoint refuses rather than
+  // silently acting on main. `worktreeRoot(req|body)` centralizes that resolution + the not-found error.
+  const pactWtRoot = (name) => pactRootFor(MASTER_ROOT, name || "main");
+  // ---- Pact IDE: the worktrees available to bind a box/chat to (main + any under .worktrees). ----
+  if (path === "/api/pact/worktrees") {
+    if (!who.canRead) return sendJSON(res, 403, { ok: false, reason: "read-only" });
+    return sendJSON(res, 200, { ok: true, worktrees: pactWorktrees(MASTER_ROOT).map((w) => ({ name: w.name, branch: w.branch, isMain: !!w.isMain })) });
+  }
   if (path === "/api/pact/tree") {
     if (!who.canRead) return sendJSON(res, 403, { ok: false, reason: "read-only" });
-    return sendJSON(res, 200, pactListDir(resolvePactRoot(MASTER_ROOT), url.searchParams.get("dir") || ""));
+    const root = pactWtRoot(url.searchParams.get("worktree"));
+    if (!root) return sendJSON(res, 404, { ok: false, error: "worktree not found" });
+    return sendJSON(res, 200, pactListDir(root, url.searchParams.get("dir") || ""));
   }
   if (path === "/api/pact/file" && req.method === "GET") {
     if (!who.canRead) return sendJSON(res, 403, { ok: false, reason: "read-only" });
-    const root = resolvePactRoot(MASTER_ROOT);
+    const root = pactWtRoot(url.searchParams.get("worktree"));
+    if (!root) return sendJSON(res, 404, { ok: false, error: "worktree not found" });
     // ?ref=head → the committed ("before") content, for the agent-changed diff view (before=HEAD,
     // after=on-disk). Same canRead gate + repo confinement as the plain on-disk read.
     if (url.searchParams.get("ref") === "head")
@@ -1069,7 +1082,9 @@ const handler = async (req, res) => {
   // writes to disk directly, doesn't commit). Read-only (canRead), repo-confined via pactGit. ----
   if (path === "/api/pact/changed" && req.method === "GET") {
     if (!who.canRead) return sendJSON(res, 403, { ok: false, reason: "read-only" });
-    return sendJSON(res, 200, { ok: true, files: pactChangedFiles(resolvePactRoot(MASTER_ROOT)) });
+    const root = pactWtRoot(url.searchParams.get("worktree"));
+    if (!root) return sendJSON(res, 404, { ok: false, error: "worktree not found" });
+    return sendJSON(res, 200, { ok: true, files: pactChangedFiles(root) });
   }
   // ---- Pact IDE: SAVE a file back to disk (the editor's Save All / autosave). Local-only + canExecute
   // + repo-confined (pactFs refuses any escape). Tunneled through the relay as `pactWrite`. ----
@@ -1078,9 +1093,11 @@ const handler = async (req, res) => {
     if (!who.localActionsAvailable) return sendJSON(res, 403, { ok: false, reason: "local-only", message: "Saving Pact files is local-only." });
     if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Execute permission required." });
     const b = await readBody(req);
+    const wroot = pactWtRoot(b.worktree);   // save into the box's bound worktree (main by default)
+    if (!wroot) return sendJSON(res, 404, { ok: false, error: "worktree not found" });
     // Pass the editor's baseline (`expected`) so pactWriteFile can refuse to blindly overwrite a file that
     // changed on disk since it was opened (the shared-worktree data-loss guard). `force` overrides it.
-    return sendJSON(res, 200, pactWriteFile(resolvePactRoot(MASTER_ROOT), b.path || "", b.content || "", { expected: b.expected, force: !!b.force }));
+    return sendJSON(res, 200, pactWriteFile(wroot, b.path || "", b.content || "", { expected: b.expected, force: !!b.force }));
   }
   // ---- Pact IDE: shared server-side IDE-state (open files, editor boxes, chat tabs/drafts, collapse,
   // chat names). Lives beside the Pact conversation history so localhost and the remote website read

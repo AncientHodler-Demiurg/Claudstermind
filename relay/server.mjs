@@ -367,14 +367,17 @@ export function createRelay(opts = {}) {
 
     // ---- remote Pact IDE: tree + file reads, forwarded down the tunnel (the Ouronet repo lives on
     // the work machine, so the relay can't answer locally — one-shot COMMAND/RESULT via the bridge) ----
-    if (req.method === "GET" && (path === "/api/pact/tree" || path === "/api/pact/file" || path === "/api/pact/changed")) {
+    if (req.method === "GET" && (path === "/api/pact/tree" || path === "/api/pact/file" || path === "/api/pact/changed" || path === "/api/pact/worktrees")) {
       if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The Pact workspace is ancient-only." });
       if (!link.connected) return sendJSON(res, 503, { ok: false, error: "Local Claudstermind is not connected." });
-      const type = path === "/api/pact/tree" ? "pactTree" : path === "/api/pact/changed" ? "pactChanged" : "pactFile";
-      const args = type === "pactTree" ? { dir: url.searchParams.get("dir") || "" }
-        : type === "pactChanged" ? {}
-        // `ref` carries the ?ref=head diff-"before" request through the tunnel alongside the path.
-        : { path: url.searchParams.get("path") || "", ref: url.searchParams.get("ref") || "" };
+      const type = path === "/api/pact/tree" ? "pactTree" : path === "/api/pact/changed" ? "pactChanged" : path === "/api/pact/worktrees" ? "pactWorktrees" : "pactFile";
+      // `worktree` carries the box's worktree binding through the tunnel so the bridge reads/lists from
+      // the right checkout; `ref` carries the ?ref=head diff-"before" request alongside the path.
+      const wt = url.searchParams.get("worktree") || "";
+      const args = type === "pactTree" ? { dir: url.searchParams.get("dir") || "", worktree: wt }
+        : type === "pactChanged" ? { worktree: wt }
+        : type === "pactWorktrees" ? {}
+        : { path: url.searchParams.get("path") || "", ref: url.searchParams.get("ref") || "", worktree: wt };
       const r = await link.relay(type, args, 15_000);
       return sendJSON(res, 200, r || { ok: false, error: "no reply from the work machine" });
     }
@@ -387,7 +390,7 @@ export function createRelay(opts = {}) {
       const body = await readBody(req);
       // Forward the editor's baseline (`expected`) + `force` so the bridge's write honors the same
       // on-disk-conflict guard as a local save — otherwise a remote save would blindly overwrite.
-      const r = await link.relay("pactWrite", { path: body.path || "", content: body.content || "", expected: body.expected, force: !!body.force }, 15_000);
+      const r = await link.relay("pactWrite", { path: body.path || "", content: body.content || "", expected: body.expected, force: !!body.force, worktree: body.worktree || "" }, 15_000);
       return sendJSON(res, 200, r || { ok: false, error: "no reply from the work machine" });
     }
 

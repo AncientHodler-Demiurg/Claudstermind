@@ -2880,6 +2880,9 @@ function pactLegend() {
     el("span", { class: "pact-legend-item", title: desc }, [el("code", { class: cls }, [tag]), el("span", { class: "pact-legend-desc" }, [desc])])));
 }
 
+// Worktree query fragment for a Pact-IDE fetch: "" for main (or unset), else "&worktree=<name>". Every
+// per-box/per-tab read/save/diff appends this so it acts on that box's bound checkout (Stage-1 worktrees).
+const pactWtQ = (wt) => (wt && wt !== "main") ? "&worktree=" + encodeURIComponent(wt) : "";
 async function loadPactDir(rel, container) {
   let d;
   try { d = await (await fetch("/api/pact/tree?dir=" + encodeURIComponent(rel))).json(); }
@@ -3010,7 +3013,40 @@ if (PACT_MOBILE_MQ.addEventListener) PACT_MOBILE_MQ.addEventListener("change", (
 });
 let PACT_TREE_FONT = 12.5;   // tree font size (px), adjustable via the tree header A-/A+
 let PACT_ED = null;   // { host, groups:[group], activeId, seq }; group = { id, tabs:[{path,name,loaded,content,error}], active, fontPx }
-function pactEdInit(host) { PACT_ED = { host, groups: [], activeId: null, seq: 0, treeExpanded: new Set() }; pactEdAddGroup(); }
+function pactEdInit(host) { PACT_ED = { host, groups: [], activeId: null, seq: 0, treeExpanded: new Set(), worktrees: [{ name: "main", branch: "main", isMain: true }] }; pactEdAddGroup(); pactEdLoadWorktrees(); }
+// Fetch the Pact repo's checkouts (main + any worktrees) so each editor box can be BOUND to one. Cheap;
+// refreshed on init and after a worktree add/remove. When more than main exists, box headers show a
+// worktree selector (see pactEdRenderGroup).
+async function pactEdLoadWorktrees() {
+  if (!PACT_ED) return;
+  let d; try { d = await (await fetch("/api/pact/worktrees")).json(); } catch { return; }
+  if (d && d.ok && Array.isArray(d.worktrees) && d.worktrees.length) {
+    PACT_ED.worktrees = d.worktrees;
+    for (const g of PACT_ED.groups) pactEdRenderGroup(g);   // reveal/refresh the selectors
+  }
+}
+// Bind an editor box to a worktree. Reloads every open tab from the NEW checkout (same paths, different
+// content). Refuses if the box has unsaved edits — switching would discard them — so nothing is lost.
+async function pactEdSetGroupWorktree(g, wt) {
+  const norm = (wt && wt !== "main") ? wt : undefined;
+  if ((g.worktree || undefined) === norm) return;
+  const dirty = g.tabs.filter((t) => t.dirty);
+  if (dirty.length) {
+    pactEdSaveStatus("Save or close the " + dirty.length + " unsaved file(s) in this box before switching its worktree.", true);
+    pactEdRenderGroup(g);   // snap the selector back to the box's current worktree
+    return;
+  }
+  g.worktree = norm;
+  for (const t of g.tabs) { t.worktree = norm || "main"; t.loaded = false; t.agentDiff = null; t.diffBase = undefined; t.headContent = undefined; t.error = null; }
+  pactEdRenderGroup(g);   // shows "Loading…" while the reloads land
+  for (const t of g.tabs) {
+    let d; try { d = await (await fetch("/api/pact/file?path=" + encodeURIComponent(t.path) + pactWtQ(t.worktree))).json(); } catch { d = { ok: false, error: "unreachable" }; }
+    if (d.ok) { t.content = d.content; t.saved = d.content; t.dirty = false; t.loaded = true; t.error = null; }
+    else { t.error = (d.error || "not in this worktree") + (d.tooLarge ? ` (${Math.round((d.size || 0) / 1e6)} MB)` : ""); t.loaded = true; }
+  }
+  pactEdRenderGroup(g);
+  pactStateSave();
+}
 function pactEdAddGroup() {
   if (!PACT_ED || PACT_ED.groups.length >= 8) return;
   PACT_ED.groups.push({ id: ++PACT_ED.seq, tabs: [], active: null });
@@ -3291,6 +3327,17 @@ function pactEdRenderGroup(g) {
   // All box controls live on a slim bottom strip (footer): contextual Run/preview on the left; font,
   // split, close, and the Find/Replace toggles on the right. Keeps the header clean for file names. (v1.4.5)
   const ctx = [];
+  // Worktree binding for THIS box (Stage-1): when more than the main checkout exists, a small selector
+  // ties the box to one worktree — every file opened in it reads/saves from that checkout, isolated from
+  // the other boxes' worktrees. Hidden when only `main` exists (no clutter until you actually make one).
+  if (PACT_ED.worktrees && PACT_ED.worktrees.length > 1) {
+    const sel = el("select", { class: "pact-wt-sel" + ((g.worktree && g.worktree !== "main") ? " --active" : ""), title: "Worktree this box reads & writes — files opened here come from this checkout, isolated from other boxes" },
+      PACT_ED.worktrees.map((w) => el("option", { value: w.name }, [w.isMain ? "⌂ main" : "⌥ " + w.name])));
+    sel.value = g.worktree || "main";
+    sel.addEventListener("click", (e) => e.stopPropagation());
+    sel.addEventListener("change", (e) => { e.stopPropagation(); pactEdSetGroupWorktree(g, sel.value); });
+    ctx.push(sel);
+  }
   if (active && active.name.toLowerCase().endsWith(".repl")) {
     const run = el("button", { class: "pact-run-btn", title: "Run this .repl and stream the output" }, ["▶ Run"]);
     run.addEventListener("click", (e) => { e.stopPropagation(); pactRunRepl(active.path); });
@@ -3768,7 +3815,7 @@ async function pactEdSaveTab(tab, opts = {}) {
   // blindly overwrite a file the agent (or another session in this shared checkout) changed underneath us.
   // Data-loss fix: a silent autosave writing a stale buffer used to revert such files to an old snapshot.
   let d;
-  try { d = await (await fetch("/api/pact/file", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: tab.path, content: snapshot, expected: tab.saved, force: !!opts.force }) })).json(); }
+  try { d = await (await fetch("/api/pact/file", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: tab.path, content: snapshot, expected: tab.saved, force: !!opts.force, worktree: tab.worktree || "main" }) })).json(); }
   catch { d = { ok: false, error: "unreachable" }; }
   tab._saving = false;
   if (d.ok) {
@@ -4148,7 +4195,7 @@ async function pactEdCheckAgentEdits() {
   try {
     for (const g of PACT_ED.groups) for (const tab of g.tabs) {
       if (!tab.loaded || tab.dirty || tab._saving) continue;   // never clobber a tab the user is editing
-      let d; try { d = await (await fetch("/api/pact/file?path=" + encodeURIComponent(tab.path))).json(); } catch { continue; }
+      let d; try { d = await (await fetch("/api/pact/file?path=" + encodeURIComponent(tab.path) + pactWtQ(tab.worktree))).json(); } catch { continue; }
       if (!d.ok || typeof d.content !== "string") continue;
       if (d.content !== tab.content) {
         if (!tab.agentDiff) tab.diffBase = tab.content;         // anchor at the pre-agent content
@@ -4253,6 +4300,7 @@ async function pactTreeRefresh() {
     await loadPactDir("", PACT_ED.treeBody);
     for (const p of want) await pactTreeExpandPath(p);
     pactTreeApplyChangeColors();
+    pactEdLoadWorktrees();   // pick up any newly-created/removed worktree so box selectors stay current
   } finally { PACT_TREE_REFRESHING = false; }
 }
 async function pactTreeExpandPath(path) {
@@ -4369,12 +4417,13 @@ async function pactEdOpenAsDiff(path) {
   if (!g) return;
   PACT_ED.activeId = g.id;
   let tab = g.tabs.find((t) => t.path === path);
-  if (!tab) { tab = { path, name: path.split("/").pop(), loaded: false, content: "", saved: "", dirty: false, error: null }; g.tabs.push(tab); }
+  if (!tab) { tab = { path, name: path.split("/").pop(), loaded: false, content: "", saved: "", dirty: false, error: null, worktree: g.worktree || "main" }; g.tabs.push(tab); }
   g.active = path;
   pactEdLayout();   // switch to the box + tab immediately (a "Loading…" body while the two fetches land)
+  const wtq = pactWtQ(tab.worktree);
   const [aRes, bRes] = await Promise.all([
-    fetch("/api/pact/file?path=" + encodeURIComponent(path)).then((r) => r.json()).catch(() => null),         // after = on-disk
-    fetch("/api/pact/file?ref=head&path=" + encodeURIComponent(path)).then((r) => r.json()).catch(() => null), // before = HEAD
+    fetch("/api/pact/file?path=" + encodeURIComponent(path) + wtq).then((r) => r.json()).catch(() => null),         // after = on-disk (this box's worktree)
+    fetch("/api/pact/file?ref=head&path=" + encodeURIComponent(path) + wtq).then((r) => r.json()).catch(() => null), // before = HEAD (this box's worktree)
   ]);
   // A deleted/unreadable file → after = "" (full red diff vs HEAD). A non-tooLarge read error is the
   // only case we surface as an error.
@@ -4409,7 +4458,7 @@ async function pactEdFetchHead(tab) {
   if (!tab || tab._headFetching) return;
   tab._headFetching = true;
   try {
-    const d = await (await fetch("/api/pact/file?ref=head&path=" + encodeURIComponent(tab.path))).json();
+    const d = await (await fetch("/api/pact/file?ref=head&path=" + encodeURIComponent(tab.path) + pactWtQ(tab.worktree))).json();
     if (d && d.ok && typeof d.content === "string") tab.headContent = d.content;
   } catch { /* git unreachable — leave the ruler empty */ }
   finally { tab._headFetching = false; }
@@ -4418,12 +4467,14 @@ async function pactEdFetchHead(tab) {
 async function pactEdOpenInto(g, path, makeActive, relayout) {
   if (!PACT_ED || !g) return;
   let tab = g.tabs.find((t) => t.path === path);
-  if (!tab) { tab = { path, name: path.split("/").pop(), loaded: false, content: "", saved: "", dirty: false, error: null }; g.tabs.push(tab); }
+  // Each tab remembers the WORKTREE it was opened from (its box's binding) — every later read/save/diff
+  // for this tab targets that checkout, so a box bound to "ats" edits ats's copy, not main's.
+  if (!tab) { tab = { path, name: path.split("/").pop(), loaded: false, content: "", saved: "", dirty: false, error: null, worktree: g.worktree || "main" }; g.tabs.push(tab); }
   if (makeActive) g.active = path;
   if (relayout) pactEdLayout(); else pactEdRenderGroup(g);
   if (tab.loaded || tab.error) return;
   let d;
-  try { d = await (await fetch("/api/pact/file?path=" + encodeURIComponent(path))).json(); }
+  try { d = await (await fetch("/api/pact/file?path=" + encodeURIComponent(path) + pactWtQ(tab.worktree))).json(); }
   catch { d = { ok: false, error: "unreachable" }; }
   if (d.ok) { tab.content = d.content; tab.saved = d.content; tab.dirty = false; tab.loaded = true; }
   else { tab.error = (d.error || "error") + (d.tooLarge ? ` (${Math.round((d.size || 0) / 1e6)} MB)` : ""); }
@@ -4495,7 +4546,7 @@ function pactStateSnapshot() {
   if (!PACT_ED || !PACT_CHAT) return null;
   pactChatSaveDraft();   // fold the active tab's live compose text into its tab before snapshotting
   const editor = {
-    groups: PACT_ED.groups.map((g) => ({ tabs: g.tabs.map((t) => t.path), active: g.active || null, fontPx: g.fontPx || null, flex: g.flex || 1 })),
+    groups: PACT_ED.groups.map((g) => ({ tabs: g.tabs.map((t) => t.path), active: g.active || null, fontPx: g.fontPx || null, flex: g.flex || 1, worktree: g.worktree || null })),
     activeIndex: Math.max(0, PACT_ED.groups.findIndex((g) => g.id === PACT_ED.activeId)),
     rowFlex: Array.isArray(PACT_ED.rowFlex) ? PACT_ED.rowFlex.slice() : null,
   };
@@ -4521,7 +4572,7 @@ async function pactRestoreState() {
 }
 function pactRestoreEditor(ed) {
   const groups = ed.groups.slice(0, 8);
-  PACT_ED.groups = groups.map((gs) => ({ id: ++PACT_ED.seq, tabs: [], active: null, fontPx: gs.fontPx || undefined, flex: (typeof gs.flex === "number" && gs.flex > 0) ? gs.flex : 1 }));
+  PACT_ED.groups = groups.map((gs) => ({ id: ++PACT_ED.seq, tabs: [], active: null, fontPx: gs.fontPx || undefined, flex: (typeof gs.flex === "number" && gs.flex > 0) ? gs.flex : 1, worktree: (gs.worktree && gs.worktree !== "main") ? gs.worktree : undefined }));
   const n = PACT_ED.groups.length;
   PACT_ED.layoutN = n;   // pin so pactEdLayout doesn't reset our restored weights (it only resets on a count change)
   PACT_ED.rowFlex = (Array.isArray(ed.rowFlex) && ed.rowFlex.length) ? ed.rowFlex.slice() : (PACT_ED_ROWS[n] || [1]).map(() => 1);

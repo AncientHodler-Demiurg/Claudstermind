@@ -25,7 +25,7 @@ import { readActivity } from "../orchestrator/activity.mjs";
 import { readBackupConfig } from "../orchestrator/backupConfig.mjs";
 import net from "node:net";
 import { createAggregator, registryProjects, mirrorablePorts } from "../lib/localhost.mjs";
-import { listDir as pactListDir, readTextFile as pactReadFile, writeTextFile as pactWriteFile, pactRoot as resolvePactRoot } from "../lib/pactFs.mjs";
+import { listDir as pactListDir, readTextFile as pactReadFile, writeTextFile as pactWriteFile, pactRoot as resolvePactRoot, pactRootFor, pactWorktrees } from "../lib/pactFs.mjs";
 import { gitChangedFiles as pactChangedFiles, gitFileAtHead as pactFileAtHead } from "../lib/pactGit.mjs";
 import { readIdeState as pactReadIdeState, writeIdeState as pactWriteIdeState } from "../lib/pactIdeState.mjs";
 import { forwardRequestHeaders, buildUpgradeRequest } from "../lib/mirror.mjs";
@@ -268,9 +268,21 @@ export function createBridge(opts = {}) {
     }
     // Pact IDE reads: the Ouronet repo lives on THIS machine, so the relay forwards tree/file reads
     // down the tunnel (repo-confined by pactFs). Same one-shot COMMAND/RESULT shape as workspaceImage.
+    if (frame.cmd.type === "pactWorktrees") {
+      const result = { ok: true, worktrees: pactWorktrees(paths.root).map((w) => ({ name: w.name, branch: w.branch, isMain: !!w.isMain })) };
+      if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
+      return;
+    }
     if (frame.cmd.type === "pactTree" || frame.cmd.type === "pactFile" || frame.cmd.type === "pactWrite" || frame.cmd.type === "pactChanged") {
-      const root = resolvePactRoot(paths.root);
       const a = frame.cmd.args || {};
+      // Resolve the box's bound worktree → its checkout on disk (main by default; a named worktree lives
+      // under .worktrees). A named worktree that no longer exists resolves to null — refuse, don't fall
+      // back to main (which would silently defeat the isolation).
+      const root = pactRootFor(paths.root, a.worktree || "main");
+      if (!root) {
+        if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result: { ok: false, error: "worktree not found" } }));
+        return;
+      }
       const result = frame.cmd.type === "pactTree" ? pactListDir(root, a.dir || "")
         : frame.cmd.type === "pactWrite" ? pactWriteFile(root, a.path || "", a.content || "", { expected: a.expected, force: !!a.force })
         // The agent-changed review list + the ?ref=head diff-"before", forwarded down the tunnel so

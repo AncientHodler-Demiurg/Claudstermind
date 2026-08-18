@@ -4,6 +4,25 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.70] - 2026-08-18
+
+### Added
+- **Pact IDE worktree binding — Stage 1: each editor box can be tied to a git worktree.** When the Ouronet
+  repo has a worktree beyond `main`, every editor box's control strip shows a small worktree selector.
+  Bind a box to a worktree and **every file you open in it reads and saves from that checkout** — so you
+  can keep "all my ATS files in box 3 (ats worktree)" fully isolated from "all my SWP files in box 2 (swp
+  worktree)". The whole editor read/write path is now worktree-scoped:
+  - New `/api/pact/worktrees` lists the repo's checkouts; `pactFs.pactRootFor` maps a worktree name → its
+    folder (main, or `.worktrees/<repo>/<name>`), returning **null for a missing worktree — never silently
+    main**, so an isolated box can't leak writes into the primary checkout.
+  - `worktree` threaded through tree/file/changed/head reads, the save (POST), the agent-edit re-read, and
+    the HEAD-diff — locally AND through the relay + bridge, so remote works the same.
+  - Each tab remembers its box's worktree; switching a box's worktree reloads its open files from the new
+    checkout (and refuses if the box has unsaved edits, so nothing is lost). The binding persists in the
+    saved IDE layout. The conflict guard from 1.4.69 now applies per-worktree automatically.
+  Scope note: the file **tree** and its change-coloring stay `main`-scoped for now (paths are shared across
+  worktrees); binding the **chat/agent** to a worktree so it edits that checkout is Stage 2.
+
 ## [1.4.69] - 2026-08-18
 
 ### Fixed
