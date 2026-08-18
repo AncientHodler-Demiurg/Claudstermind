@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.79] - 2026-08-18
+
+### Fixed
+- **Core cockpit: a queued message could get stranded when the turn's `result` event was dropped.** If a
+  turn's completion event was lost (a stream hiccup — common on a flaky mobile connection), the pane sat on
+  "Thinking" until the heartbeat self-heal **resynced** it to idle. But the resync path never called
+  `drainQueue`, so a message you'd typed-ahead (the orange "queued — sending once this turn finishes" box)
+  never sent — you'd resend it, leaving a stuck duplicate. The resync handler now drains the queue once the
+  true (idle) status is known, so a typed-ahead message always goes out. (The Pact chat already did this on
+  resync; this brings the Core cockpit in line.)
+
 ## [1.4.78] - 2026-08-18
 
 ### Fixed

@@ -8266,6 +8266,11 @@ function viewWorkspace() {
           p._liveText = "";   // stale relative to whatever actually streamed before the reconnect
           paintPane(p);
           logActivity(p, "↻ Reconnected — caught up", "ws-act-ok");
+          // A resync is how a pane recovers when its turn's `result` event was dropped (stream hiccup) —
+          // it silently went idle. If a message was queued during that turn, the drain that should have
+          // fired on the (lost) result never did, so it'd sit "queued" forever. Release it here now that
+          // the true status is known. (No-op if still busy or nothing's queued.)
+          drainQueue(p);
         }
         return;
       }
