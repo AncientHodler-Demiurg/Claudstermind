@@ -5186,7 +5186,8 @@ function pactChatRoute({ kind, sessionKey, data }) {
         const lastIn = incoming[incoming.length - 1];
         if (lastIn && tail[0] && lastIn.role === tail[0].role && (lastIn.text || "") === (tail[0].text || "")) tail = tail.slice(1);
         tt.msgs = pactPreserveElapsed(tt.msgs, incoming).concat(tail);
-      } else if (incoming.length >= tt.msgs.length) tt.msgs = pactPreserveElapsed(tt.msgs, incoming);
+        tt._transcriptTruncated = !!(data && data.transcriptTruncated);   // baseline is the tail only — older history fetchable via "Show earlier"
+      } else if (incoming.length >= tt.msgs.length) { tt.msgs = pactPreserveElapsed(tt.msgs, incoming); tt._transcriptTruncated = !!(data && data.transcriptTruncated); }
       pactChatReinjectMigrations(tt);   // splice the worktree-migration markers back into the rehydrated transcript
       // Likewise don't yank a mid-turn tab back to idle — a live turn in flight owns the status.
       if (tt.status !== "thinking" && tt.status !== "deepwork" && tt.status !== "awaiting-permission") tt.status = "idle";
@@ -5215,7 +5216,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
     case "resync": {
       const incoming = pactTranscriptToMsgs(d.transcript);
       const dec = pactResyncDecision(t.msgs.length, incoming.length, d.status, d.live);
-      if (dec.replace) { t.msgs = pactPreserveElapsed(t.msgs, incoming); pactChatReinjectMigrations(t); }   // keep a live-stamped "Thought for …" the daemon hasn't persisted yet; re-add migration markers
+      if (dec.replace) { t.msgs = pactPreserveElapsed(t.msgs, incoming); pactChatReinjectMigrations(t); t._transcriptTruncated = !!d.transcriptTruncated; }   // keep a live-stamped "Thought for …" the daemon hasn't persisted yet; re-add migration markers
       if (d.usage) t.usage = d.usage;
       if (d.status) t.status = d.status;
       pactChatMarkTurnBusy(t);   // restored mid-turn (e.g. after reload) → show the timer here too
@@ -5813,10 +5814,21 @@ function pactChatPaint(t) {
   const visibleMsgs = t.msgs.slice(start);
   const hiddenCount = start;
   const nodes = visibleMsgs.map((m) => m._node || (m._node = pactChatMsgNode(m)));
-  if (hiddenCount > 0) {
+  // Beyond the messages hidden locally, the server may hold OLDER ones it didn't ship — a resync/open sends
+  // only the tail (WS_RESYNC_MSG_CAP) so a big conversation appears instantly on mobile. Keep the chip offered
+  // while truncated, and when the reader reaches the local floor, fetch the rest whole (`full: true`).
+  const moreOnServer = !!t._transcriptTruncated;
+  if (hiddenCount > 0 || moreOnServer) {
     const chunk = Math.min(100, hiddenCount);
-    const btn = el("button", { class: "ws-show-earlier" }, [`▲ Show ${chunk} earlier message${chunk === 1 ? "" : "s"}` + (hiddenCount > chunk ? `  ·  ${hiddenCount} older` : "")]);
-    btn.addEventListener("click", () => { t._showFrom = Math.max(0, start - 100); pactChatPaint(t); });
+    const label = hiddenCount > 0
+      ? (`▲ Show ${chunk} earlier message${chunk === 1 ? "" : "s"}` + (hiddenCount > chunk ? `  ·  ${hiddenCount} older` : (moreOnServer ? "  ·  more" : "")))
+      : "▲ Show earlier messages";
+    const btn = el("button", { class: "ws-show-earlier" }, [label]);
+    btn.addEventListener("click", () => {
+      if (start - 100 <= 0 && t._transcriptTruncated && t.key) wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true, full: true } });
+      t._showFrom = Math.max(0, start - 100);
+      pactChatPaint(t);
+    });
     nodes.unshift(btn);
   }
   if (t.perm) {
@@ -7040,6 +7052,11 @@ function viewWorkspace() {
     const showAll = !!p._showAllTurns;
     const turns = showAll ? allTurns : allTurns.slice(-WS_TURN_RENDER_CAP);
     const hidden = allTurns.length - turns.length;
+    // Beyond the locally-hidden turns, the server may be holding OLDER history it didn't ship: a resync/open
+    // sends only the tail (see WS_RESYNC_MSG_CAP) so a big conversation appears instantly on mobile. When it's
+    // truncated, the chip must stay offered even after every local turn is revealed, and clicking it fetches
+    // the rest whole (`full: true`) — the resync reply swaps in the complete transcript and repaints.
+    const moreOnServer = !!p._transcriptTruncated;
     // Invalidate all cached nodes if the transcript array itself was swapped (resync/reopen give a
     // brand-new array) — reused nodes from a different conversation would be flat-out wrong.
     if (ui._txRef !== p.transcript) { ui._txRef = p.transcript; ui._turnCache = new Map(); ui._domLead = []; ui._showEarlierNode = null; }
@@ -7047,14 +7064,19 @@ function viewWorkspace() {
     const lead = [];
     // The show-earlier button — cached and reused across paints (stable node ⇒ the fast path can
     // keep it in place), rebuilt only when the hidden-count changes so its label stays accurate.
-    if (hidden > 0) {
-      if (!ui._showEarlierNode || ui._showEarlierHidden !== hidden) {
-        const btn = el("button", { class: "ws-show-earlier" }, [`▲ Show ${hidden} earlier message${hidden === 1 ? "" : "s"}`]);
-        btn.addEventListener("click", () => { p._showAllTurns = true; paintPane(p); });
-        ui._showEarlierNode = btn; ui._showEarlierHidden = hidden;
+    if (hidden > 0 || moreOnServer) {
+      if (!ui._showEarlierNode || ui._showEarlierHidden !== hidden || ui._showEarlierMore !== moreOnServer) {
+        const label = hidden > 0 ? `▲ Show ${hidden} earlier message${hidden === 1 ? "" : "s"}` : "▲ Show earlier messages";
+        const btn = el("button", { class: "ws-show-earlier" }, [label]);
+        btn.addEventListener("click", () => {
+          p._showAllTurns = true;
+          if (p._transcriptTruncated && p.sessionKey) wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey, full: true } });
+          paintPane(p);
+        });
+        ui._showEarlierNode = btn; ui._showEarlierHidden = hidden; ui._showEarlierMore = moreOnServer;
       }
       lead.push(ui._showEarlierNode);
-    } else { ui._showEarlierNode = null; ui._showEarlierHidden = 0; }
+    } else { ui._showEarlierNode = null; ui._showEarlierHidden = 0; ui._showEarlierMore = false; }
     for (let i = 0; i < turns.length - 1; i++) {
       const turn = turns[i];
       // Keyed by global start index + item count — both stable for an append-only prefix, so a hit
@@ -8189,6 +8211,7 @@ function viewWorkspace() {
         const p = st.panes.find((x) => x.id === req.paneId); if (!p) continue;   // its pane was trimmed away
         if ((p._gen || 0) !== req.gen) continue;   // this pane has moved on since the request — discard, don't apply
         p.transcript = wsBackfillTurnWorkspace(data.transcript || [], data.workspaceId || wsWorkspaceId(data.repo || p.repo, data.worktree || p.worktree));
+        p._transcriptTruncated = !!data.transcriptTruncated;   // server sent only the tail — more is fetchable via "Show earlier"
         p._expandedGroups = new Set();   // a freshly-(re)opened transcript has no expand state yet
         p._showAllTurns = false;         // a (re)opened conversation starts capped to recent turns
         p._scrollBottomNext = true;      // …and lands at the bottom (latest), not scrolled up
@@ -8283,7 +8306,7 @@ function viewWorkspace() {
       // whole reason a resync was requested in the first place.
       if (data.kind === "resync") {
         for (const p of targets) {
-          if (Array.isArray(data.transcript)) p.transcript = wsBackfillTurnWorkspace(data.transcript, data.workspaceId || wsWorkspaceId(p.repo, p.worktree));
+          if (Array.isArray(data.transcript)) { p.transcript = wsBackfillTurnWorkspace(data.transcript, data.workspaceId || wsWorkspaceId(p.repo, p.worktree)); p._transcriptTruncated = !!data.transcriptTruncated; }
           if (data.status) p.status = data.status;
           if (data.usage) p.usage = data.usage;
           if (data.mode) p.mode = data.mode;
@@ -8400,7 +8423,11 @@ function viewWorkspace() {
   // disconnected for even one event's duration loses it silently and permanently. This is the
   // fix: don't try to replay what was missed, just ask what's true right now.
   function resyncOpenPanes() {
-    for (const p of st.panes) if (p.sessionKey && !p.readonly) wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey } });
+    // Default resync sends only the tail of the transcript (server caps it — see WS_RESYNC_MSG_CAP) so a
+    // big conversation shows in a fraction of a second on mobile instead of transferring its whole history.
+    // If this pane was already showing the full history ("Show earlier" was clicked), re-request it whole so
+    // a reconnect doesn't silently drop the revealed older messages back off the top.
+    for (const p of st.panes) if (p.sessionKey && !p.readonly) wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey, full: !!p._showAllTurns } });
   }
   function openStream() {
     try { WS_ES && WS_ES.close(); } catch {}

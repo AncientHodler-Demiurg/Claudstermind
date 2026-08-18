@@ -4,7 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.82] - 2026-08-18
+## [1.4.83] - 2026-08-18
+
+### Changed
+- **A big conversation now appears in a fraction of a second on mobile instead of after a 5–20s blank
+  wait.** The cause: every page load / reconnect made the work machine ship the *entire* transcript back
+  down the relay (a real conversation's mirror was **842 KB on disk**) even though the client only ever
+  renders the last ~20 turns — so on a phone you stared at an empty chat while hundreds of KB transferred.
+  Now a resync/reopen sends only the **last 250 messages** by default (`WS_RESYNC_MSG_CAP` in
+  `lib/workspace.mjs`), tagged `transcriptTruncated` with the true total. Clicking **"Show earlier"** on a
+  truncated conversation fetches the rest whole (`full: true`) on demand — so the full history is always
+  one click away, but the initial paint no longer waits on it. A pane already showing the full history
+  re-requests it whole on reconnect, so a dropped connection never silently drops the revealed older
+  messages back off the top. Applies to both the Core cockpit and the Pact chat.
+
+
 
 ### Changed
 - **Worktree create / migrate / merge use in-app modals instead of native browser popups,** and failures
