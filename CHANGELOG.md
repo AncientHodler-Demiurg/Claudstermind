@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.76] - 2026-08-18
+
+### Fixed
+- **HOTFIX: the Pact workspace failed to load on a fresh page.** The tree-header worktree chip added in
+  1.4.73 wired itself onto `PACT_ED` (`PACT_ED.treeHdWt = …`) during the tree shell build — which runs
+  BEFORE `pactEdInit()` creates `PACT_ED`. On a fresh load `PACT_ED` is still `null`, so the assignment
+  threw and took the whole Pact view down with it (a stale `PACT_ED` from a prior in-session view masked it
+  until a real reload). Moved the assignment to just after `pactEdInit`, with the other `PACT_ED.*` wiring.
+
 ## [1.4.75] - 2026-08-18
 
 ### Added

@@ -5990,10 +5990,10 @@ function viewPact() {
   // leaving the Pact workspace. The isolation primitive for parallel agents (bind a box + a chat to it).
   const wtBtn = el("button", { class: "pact-ed-ico", title: "Git worktrees — create an isolated checkout, merge one into main, or remove it" }, ["⌥"]);
   wtBtn.addEventListener("click", (e) => { e.stopPropagation(); const r = wtBtn.getBoundingClientRect(); pactWorktreeMenu(r.left, r.bottom + 4); });
-  // Shows which worktree the tree is currently reflecting (the active box's) — hidden on main.
+  // Shows which worktree the tree is currently reflecting (the active box's) — hidden on main. NOTE: it's
+  // wired onto PACT_ED *after* pactEdInit runs (below), never here — PACT_ED doesn't exist yet at shell build.
   const treeHdWt = el("span", { class: "pact-tree-wt", title: "The tree + Changed panel are showing this worktree (the active box's)" }, []);
   treeHdWt.hidden = true;
-  PACT_ED.treeHdWt = treeHdWt;
   const changedList = el("div", { class: "pact-changed-list" }, [el("div", { class: "hint", style: "padding:8px 10px" }, ["No changes vs HEAD."])]);
   changedList.style.display = "none";
   const treeEl = el("aside", { class: "pact-tree" }, [
@@ -6035,6 +6035,7 @@ function viewPact() {
   pactEdInit(editorEl);
   PACT_ED.saveBtn = saveBtn; PACT_ED.keepBtn = keepBtn; PACT_ED.saveStatus = saveStatus;
   PACT_ED.treeBody = treeBody; PACT_ED.changedList = changedList; PACT_ED.tabFilesBtn = tabFilesBtn; PACT_ED.tabChangedBtn = tabChangedBtn; PACT_ED.treeTab = "files";
+  PACT_ED.treeHdWt = treeHdWt;   // wired here — PACT_ED only exists after pactEdInit above (see the shell-build note)
   pactEdUpdateSaveBar();
   pactChatInit(chatEl);
   loadPactDir("", treeBody);
