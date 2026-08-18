@@ -4,7 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.84] - 2026-08-18
+## [1.4.85] - 2026-08-18
+
+### Fixed
+- **The "migrated to worktree …" separator now stays where the migration happened instead of sliding down
+  under the latest answer on every reload.** The marker is placed by timestamp — it's spliced in before the
+  first message with a later `at` — but `pactTranscriptToMsgs` was **dropping the persisted `at`** off every
+  message when it rehydrated the transcript from the server. With no message carrying a timestamp, the
+  placement search always came up empty and appended the marker at the very end. Now the conversion carries
+  each turn's `at` through, so the separator anchors at its real point in the conversation. Also hardened the
+  record side: the marker is stamped strictly after the newest message it follows (`max(now, lastAt+1)`), so
+  a small clock skew between the phone and the work machine can't sort it above the answer it belongs under.
+  Extracted the placement into a pure `pactPlaceMigrations` helper with regression tests
+  (`lib/pactMigrationPlace.test.mjs`).
+
+
 
 ### Fixed
 - **Creating / merging / removing a worktree now works from mobile (through the relay), not just the local

@@ -4814,11 +4814,16 @@ function pactDeriveChatName(text) {
 // A saved transcript turn → the chat's own message shape (drop store bookkeeping; keep conversation).
 function pactTranscriptToMsgs(transcript) {
   const out = [];
+  // Carry each turn's persisted `at` timestamp through the conversion. It's what anchors a worktree-migration
+  // marker to the RIGHT spot on rehydrate: pactChatReinjectMigrations places the marker before the first
+  // message with `at > mig.at`. Dropping `at` here (the old bug) left every rehydrated message timestamp-less,
+  // so the marker could never find its anchor and always fell to the very bottom, below the latest answer.
+  const at = (m) => (typeof m.at === "number" ? m.at : undefined);
   for (const m of Array.isArray(transcript) ? transcript : []) {
     if (!m) continue;
-    if (m.role === "user") out.push({ role: "user", text: m.text || "", images: m.images || (m.image ? [m.image] : []), workspaceId: m.workspaceId || PACT_WORKSPACE_ID });
-    else if (m.role === "assistant") out.push({ role: "assistant", text: m.text || "", elapsedMs: (typeof m.durationMs === "number" ? m.durationMs : (typeof m.elapsedMs === "number" ? m.elapsedMs : undefined)) });
-    else if (m.kind === "tool_use") out.push({ kind: "tool_use", tools: m.tools || [] });
+    if (m.role === "user") out.push({ role: "user", text: m.text || "", images: m.images || (m.image ? [m.image] : []), workspaceId: m.workspaceId || PACT_WORKSPACE_ID, at: at(m) });
+    else if (m.role === "assistant") out.push({ role: "assistant", text: m.text || "", elapsedMs: (typeof m.durationMs === "number" ? m.durationMs : (typeof m.elapsedMs === "number" ? m.elapsedMs : undefined)), at: at(m) });
+    else if (m.kind === "tool_use") out.push({ kind: "tool_use", tools: m.tools || [], at: at(m) });
   }
   return out;
 }
@@ -5488,24 +5493,48 @@ async function pactChatDispatch(t, text, images) {
 // line, and remembers it (t.migrations) so it's re-injected in time order on reload (see pactRestoreChat).
 function pactChatRecordMigration(t, from, to) {
   t.worktree = (to && to !== "main") ? to : undefined;
-  const rec = { kind: "migration", from: from || "main", to: to || "main", at: Date.now() };
+  // Stamp the marker strictly AFTER the newest message it follows. The marker's clock is the browser's, but
+  // messages are timestamped on the work machine — a small clock skew could otherwise sort the marker BEFORE
+  // the last answer it should sit under (the reinject places it by `at`). Anchoring to the last known message
+  // timestamp makes placement robust regardless of which clock is ahead, while later messages (persisted with
+  // a larger server `at`) still land below it.
+  const lastAt = (t.msgs || []).reduce((mx, m) => (typeof m.at === "number" && m.at > mx ? m.at : mx), 0);
+  const rec = { kind: "migration", from: from || "main", to: to || "main", at: Math.max(Date.now(), lastAt + 1) };
   t.msgs.push(rec);
   (t.migrations = t.migrations || []).push({ from: rec.from, to: rec.to, at: rec.at });
   t._forceBottom = true;
   pactStateSave(); pactChatRender(); pactChatPaint(t); pactEdLoadWorktrees();
 }
+// ===== PACT MIGRATION-PLACEMENT — pure helper (sliced out for unit tests; see lib/pactMigrationPlace.test.mjs)
+// A worktree-migration marker is a CLIENT-side annotation — it is NOT in the server transcript — so after
+// every rehydrate (sessionOpen / resync replaces the message list wholesale) the client must splice its
+// recorded markers back in. Each marker lands before the first message with `at > marker.at`; a marker with no
+// later message goes at the end. Drops any markers already present first, so repeated rehydrates never
+// duplicate them. Returns the SAME array reference untouched when there's nothing to do (no markers present
+// and none to add) so an unrelated resync doesn't needlessly churn the list. The load-bearing precondition:
+// the transcript messages must carry their persisted `at` (see pactTranscriptToMsgs — dropping it was the bug
+// that made every marker fall to the very bottom, below the latest answer, because none had a timestamp to
+// anchor against).
+function pactPlaceMigrations(msgs, migrations) {
+  const arr = Array.isArray(msgs) ? msgs : [];
+  const hasMarkers = arr.some((m) => m && m.kind === "migration");
+  const migs = Array.isArray(migrations) ? migrations.filter((m) => m && typeof m.at === "number") : [];
+  if (!hasMarkers && !migs.length) return arr;
+  const out = arr.filter((m) => !(m && m.kind === "migration"));
+  for (const mig of migs) {
+    let idx = out.findIndex((m) => typeof m.at === "number" && m.at > mig.at);
+    if (idx < 0) idx = out.length;
+    out.splice(idx, 0, { kind: "migration", from: mig.from || "main", to: mig.to || "main", at: mig.at });
+  }
+  return out;
+}
+// ===== end PACT MIGRATION-PLACEMENT pure helper =====
 // Re-inject a conversation's recorded migration markers into its transcript in chronological order — the
 // server rehydrate (sessionOpen / resync) replaces t.msgs wholesale, so the client-side markers must be
 // spliced back each time by their `at` timestamp. Idempotent (drops any markers already present first).
 function pactChatReinjectMigrations(t) {
   if (!t || !Array.isArray(t.msgs)) return;
-  if (t.msgs.some((m) => m.kind === "migration")) t.msgs = t.msgs.filter((m) => m.kind !== "migration");
-  if (!t.migrations || !t.migrations.length) return;
-  for (const mig of t.migrations) {
-    let idx = t.msgs.findIndex((m) => typeof m.at === "number" && m.at > mig.at);
-    if (idx < 0) idx = t.msgs.length;
-    t.msgs.splice(idx, 0, { kind: "migration", from: mig.from, to: mig.to, at: mig.at });
-  }
+  t.msgs = pactPlaceMigrations(t.msgs, t.migrations);
 }
 // The head ⇄ menu for a STARTED conversation: migrate to another worktree, merge back + return to main, or
 // return to main without merging.
