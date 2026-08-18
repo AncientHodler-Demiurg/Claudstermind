@@ -7394,7 +7394,9 @@ function viewWorkspace() {
   function flushPaints() {
     _paintRAF = 0;
     const ids = _paintDirty; _paintDirty = new Set();
-    for (const id of ids) { const pane = st.panes.find((x) => x.id === id); if (pane) paintPane(pane); }
+    // A throw in one pane's paint must NOT abort the loop (the other panes would go stale) nor bubble out
+    // of the rAF and freeze every future scheduled paint (a stuck-until-reload symptom). Isolate + log each.
+    for (const id of ids) { const pane = st.panes.find((x) => x.id === id); if (pane) { try { paintPane(pane); } catch (e) { console.error("paintPane failed", e); } } }
   }
   function schedulePaint(p) {
     _paintDirty.add(p.id);
@@ -8323,7 +8325,7 @@ function viewWorkspace() {
         if (data.kind === "taskDone") { if (!data.skipTranscript) logActivity(p, (data.status === "completed" ? "✓" : "⚠") + " Background task " + data.status + (data.summary ? " — " + data.summary : ""), data.status === "completed" ? "ws-act-ok" : "ws-act-err"); continue; }
         // A user turn echoed by the server: this pane sent it (clear the pending buffer) or a
         // shared pane in another terminal did (render it so both windows show the same thread).
-        if (data.kind === "user" && data.by && data.by === CONN.id) { p._pendingText = null; p._pendingImages = null; }
+        if (data.kind === "user" && data.by && data.by === CONN.id) { p._pendingText = null; p._pendingImages = null; p._scrollBottomNext = true; }   // YOUR own message must scroll into view even if you'd scrolled up (the dead-bottom threshold is strict now)
         // The server refused the prompt outright (bad path, no token, too many images, …) — a
         // rejection, not a "try again shortly" like `busy`, so retrying automatically would just
         // fail the same way again. Restore the typed text AND any attached images (previously
@@ -8452,7 +8454,7 @@ function viewWorkspace() {
     // but setting it now closes a race — without it, a SECOND queued item could see paneBusy()
     // still false in the brief window before that event arrives and dispatch immediately behind
     // this one instead of waiting its turn.
-    p.status = "thinking"; p._streamingStarted = false; p._saved = false; p._lastEventAt = Date.now(); paintPane(p);
+    p.status = "thinking"; p._streamingStarted = false; p._saved = false; p._lastEventAt = Date.now(); p._scrollBottomNext = true; paintPane(p);   // jump to the bottom on send so you see your message + the Working state
     logActivity(p, "→ Sending your message…");
     const r = await wsPost("prompt", body);
     if (!r.ok) {

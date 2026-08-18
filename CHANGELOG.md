@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.78] - 2026-08-18
+
+### Fixed
+- **Core cockpit: your own just-sent message now scrolls into view.** The strict dead-bottom threshold
+  (1.4.62) exposed a latent gap — the Core pane never force-scrolled to a message you just sent (unlike the
+  Pact chat, which always did). So if you were even slightly scrolled up, your prompt landed BELOW the fold
+  and looked like it "didn't show" until a reload snapped you to the bottom. Sending now forces the scroll
+  (on dispatch AND when the server echoes your turn back), so you always land on your message + the
+  "Working…" state — matching the Pact chat.
+- **A throw in one pane's paint can no longer freeze all live updates.** `flushPaints` now isolates each
+  pane's `paintPane` in a try/catch and logs failures, so a single bad paint can't abort the loop or bubble
+  out of the animation frame and stall every future scheduled repaint until a reload.
+
 ## [1.4.77] - 2026-08-18
 
 ### Changed
