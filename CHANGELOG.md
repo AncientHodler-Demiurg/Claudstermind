@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.71] - 2026-08-18
+
+### Added
+- **Pact IDE worktree binding — Stage 2: each chat conversation runs in its own worktree.** A conversation
+  can now be bound to a git worktree from a selector in the chat head — its agent runs with `cwd` set to
+  that checkout, so its Edit/Bash act on the isolated worktree's files (and an editor box bound to the same
+  worktree, from Stage 1, shows those edits). This is the piece that lets 3 parallel agents work without
+  touching each other's files: bind conversation A → `ats`, B → `swp`, C → `main`, and they're physically
+  isolated. The binding is **set before the first message and locked once the conversation starts** (its
+  `cwd` can't shift mid-chat), threaded through the prompt, session-open, and delete; persisted in the
+  saved layout; and shown as a small `⌥<worktree>` marker on the tab. The engine already resolved
+  `repo@worktree` → cwd (shared with the Core cockpit), so this is client-only — a reload picks it up.
+  Pair a chat + an editor box on the same worktree for a fully isolated work-stream; merge the branches
+  when done (Stage 3 will add an in-IDE merge helper).
+
 ## [1.4.70] - 2026-08-18
 
 ### Added

@@ -1333,6 +1333,14 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-wt-sel { flex: 0 0 auto; font-size: 11px; max-width: 130px; background: var(--chip); color: var(--ink);
   border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; cursor: pointer; }
 .pact-wt-sel.--active { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); color: var(--accent); }
+/* The chat-head twin: binds THIS conversation's agent to a worktree (accented when non-main, dimmed+locked
+   once the conversation has started). */
+.pc-wt.--active { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); color: var(--accent); }
+.pc-wt:disabled { opacity: .7; cursor: not-allowed; }
+/* Per-tab worktree marker + a left accent so a conversation bound to a non-main checkout stands out. */
+.pc-tab.--wt { border-left: 2px solid color-mix(in srgb, var(--accent) 65%, transparent); }
+.pc-tab-wt { font-size: 9.5px; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 4px; padding: 0 3px; max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pact-ed-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 /* v1.4.5 — per-box control strip at the bottom (font/split/close/find/replace), so the tab row stays
    full-width for file names instead of the buttons crushing them. */

@@ -3022,7 +3022,8 @@ async function pactEdLoadWorktrees() {
   let d; try { d = await (await fetch("/api/pact/worktrees")).json(); } catch { return; }
   if (d && d.ok && Array.isArray(d.worktrees) && d.worktrees.length) {
     PACT_ED.worktrees = d.worktrees;
-    for (const g of PACT_ED.groups) pactEdRenderGroup(g);   // reveal/refresh the selectors
+    for (const g of PACT_ED.groups) pactEdRenderGroup(g);   // reveal/refresh the box selectors
+    if (PACT_CHAT && PACT_CHAT.host && typeof pactChatRender === "function") pactChatRender();   // and the chat-head selector
   }
 }
 // Bind an editor box to a worktree. Reloads every open tab from the NEW checkout (same paths, different
@@ -4551,7 +4552,7 @@ function pactStateSnapshot() {
     rowFlex: Array.isArray(PACT_ED.rowFlex) ? PACT_ED.rowFlex.slice() : null,
   };
   const chat = {
-    tabs: PACT_CHAT.tabs.map((t) => ({ key: t.key, name: t.name, draft: t.draft || "", resume: t.resume || null, prime: !!t.prime })),
+    tabs: PACT_CHAT.tabs.map((t) => ({ key: t.key, name: t.name, draft: t.draft || "", resume: t.resume || null, prime: !!t.prime, worktree: t.worktree || null })),
     activeIndex: Math.max(0, PACT_CHAT.tabs.findIndex((t) => t.id === PACT_CHAT.activeId)),
   };
   const right = document.querySelector(".pact-right");
@@ -4601,6 +4602,8 @@ function pactRestoreChat(ch) {
       // a resumed/loaded tab keeps its SDK resume target across reloads so continuing still has context —
       // but never a resume equal to the tab's own key (a bogus id that fails "No conversation found")
       resume: pactResumeIdOk(ts.resume, key),
+      // the worktree this conversation runs in survives reloads (Stage-2 binding); null/"main" → primary checkout
+      worktree: (ts.worktree && ts.worktree !== "main") ? ts.worktree : undefined,
       // the prime (undeletable) conversation flag survives reloads; ensurePrime backfills older layouts
       prime: !!ts.prime };
   });
@@ -4619,7 +4622,7 @@ function pactRestoreChat(ch) {
   for (const t of PACT_CHAT.tabs) {
     if (!t.key) continue;
     PACT_CHAT._pendingOpen[t.key] = t.id;
-    wsPost("control", { action: "sessionOpen", args: { repo: PACT_REPO, worktree: "main", sessionId: t.key } });
+    wsPost("control", { action: "sessionOpen", args: { repo: PACT_REPO, worktree: t.worktree || "main", sessionId: t.key } });
   }
   // Close the persist-race window on a fresh reload: the sessionOpen rehydrate above can race the
   // daemon's turn-boundary persist for a turn that FINISHED during the downtime — the fresh-open
@@ -4847,14 +4850,14 @@ function pactChatOpenSaved(r, adopt) {
   const id = ++PACT_CHAT.seq;
   const key = adopt ? r.sessionId : wsUuid();
   const name = pactHistName(r);
-  const t = { id, name, key, msgs: [], live: "", status: "idle", started: true, perm: null, draft: "", resume: pactResumeIdOk(r.realSessionId, key) };
+  const t = { id, name, key, msgs: [], live: "", status: "idle", started: true, perm: null, draft: "", resume: pactResumeIdOk(r.realSessionId, key), worktree: (r.worktree && r.worktree !== "main") ? r.worktree : undefined };
   if (key) PACT_CHAT_NAMES[key] = name;
   PACT_CHAT.tabs.push(t);
   PACT_CHAT.activeId = id;
   PACT_CHAT._pendingOpen = PACT_CHAT._pendingOpen || {};
   PACT_CHAT._pendingOpen[r.sessionId] = id;   // route the transcript frame (keyed by sessionId) to THIS tab
   pactChatRender();
-  wsPost("control", { action: "sessionOpen", args: { repo: PACT_REPO, worktree: "main", sessionId: r.sessionId } });
+  wsPost("control", { action: "sessionOpen", args: { repo: PACT_REPO, worktree: t.worktree || "main", sessionId: r.sessionId } });
   pactChatCloseHistory();
   pactStateSave();
 }
@@ -4871,7 +4874,7 @@ function pactHistDelete(r) {
   if (!r || !r.sessionId) return;
   if (pactIsPrimeRow(r)) return;   // the prime conversation is never deletable — belt to the disabled button's braces
   if (!window.confirm("Delete this saved chat permanently? This cannot be undone.")) return;
-  wsPost("control", { action: "sessionDelete", args: { repo: PACT_REPO, worktree: "main", sessionId: r.sessionId } });
+  wsPost("control", { action: "sessionDelete", args: { repo: PACT_REPO, worktree: (r.worktree || "main"), sessionId: r.sessionId } });
   if (PACT_CHAT.sessions) PACT_CHAT.sessions = PACT_CHAT.sessions.filter((x) => x.sessionId !== r.sessionId);
   delete PACT_CHAT_NAMES[r.sessionId];
   pactChatRenderHistory(); pactStateSave();
@@ -5369,7 +5372,10 @@ async function pactChatDispatch(t, text, images) {
   // `fresh: firstMsg` is true ONLY on a tab's genuinely-first message so a brand-new conversation starts
   // blank — a restored/existing tab (firstMsg=false) lets the engine auto-resume its OWN saved session,
   // so continuing a chat keeps ITS context, never a sibling's. (Core sends no scoped/fresh — unchanged.)
-  const body = { sessionKey: t.key, repo: PACT_REPO, worktree: "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id, resume: t.resume || undefined, fresh: firstMsg, scoped: true };
+  // Stage-2 worktree binding: the agent runs with cwd = this tab's worktree, so its Edit/Bash act on
+  // that isolated checkout (and an editor box bound to the same worktree shows those edits). Fixed per
+  // conversation — the head selector only lets you set it before the first message.
+  const body = { sessionKey: t.key, repo: PACT_REPO, worktree: t.worktree || "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id, resume: t.resume || undefined, fresh: firstMsg, scoped: true };
   if (images.length) body.images = images.map((a) => ({ mediaType: a.mediaType, base64Data: a.base64Data }));
   const r = await wsPost("prompt", body);
   if (!r || r.ok === false) {
@@ -5675,11 +5681,13 @@ function pactChatRender() {
     const label = (t.key && PACT_CHAT_NAMES[t.key]) || t.name;
     const nameEl = el("span", { class: "pc-tab-name", title: "Double-click to rename this chat" }, [label]);
     nameEl.addEventListener("dblclick", (e) => { e.stopPropagation(); pactChatRenameTab(t); });
+    // A small worktree marker so parallel conversations on different checkouts are distinguishable at a glance.
+    const wtMark = t.worktree ? el("span", { class: "pc-tab-wt", title: "Runs in worktree: " + t.worktree }, ["⌥" + t.worktree]) : "";
     // The prime conversation can't be closed — show a ★ marker instead of the × close.
     let tail;
     if (t.prime) { tail = el("span", { class: "pc-tab-prime", title: "Prime conversation — always open, can't be closed" }, ["★"]); }
     else { tail = el("span", { class: "pc-tab-x", title: "Close chat" }, ["×"]); tail.addEventListener("click", (e) => { e.stopPropagation(); pactChatCloseTab(t.id); }); }
-    const tab = el("div", { class: "pc-tab" + (t.id === PACT_CHAT.activeId ? " --active" : "") + (t.prime ? " --prime" : "") }, [dot, nameEl, tail]);
+    const tab = el("div", { class: "pc-tab" + (t.id === PACT_CHAT.activeId ? " --active" : "") + (t.prime ? " --prime" : "") + (t.worktree ? " --wt" : "") }, [dot, nameEl, wtMark, tail]);
     tab.addEventListener("click", () => { if (t.id === PACT_CHAT.activeId) return; pactChatSaveDraft(); PACT_CHAT.activeId = t.id; pactChatRender(); pactStateSave(); });
     return tab;
   });
@@ -5702,7 +5710,26 @@ function pactChatRender() {
   // Account-wide plan usage limits now live in the dedicated Workspace → Usage tab (multi-key + failover),
   // so the Pact head no longer carries a usage badge. The Pact stream still requests `usageLimits` on
   // connect, which the engine uses to keep the active key's per-key usage record fresh (see _usageLimits).
-  const head = el("div", { class: "pact-zone-hd pc-head" }, [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, el("span", { class: "ws-spacer" }, []), usageEl, modeSel, chatCollapse]);
+  // Stage-2: bind THIS conversation's agent to a worktree — it runs there (its edits land in that
+  // checkout; pair it with an editor box on the same worktree to review them). Only shown when a worktree
+  // beyond main exists, and LOCKED once the conversation has started (changing cwd mid-chat is confusing).
+  const headKids = [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, el("span", { class: "ws-spacer" }, [])];
+  if (PACT_ED && PACT_ED.worktrees && PACT_ED.worktrees.length > 1) {
+    const a0 = pactChatActive();
+    const started = !!(a0 && (a0.started || (a0.msgs && a0.msgs.length)));
+    const wtSel = el("select", { class: "wsel wsel-sm pc-wt" + ((a0 && a0.worktree) ? " --active" : ""),
+      title: started ? "This conversation is running in " + ((a0 && a0.worktree) || "main") + " — its worktree is fixed." : "Worktree this conversation's agent runs in — set before the first message" },
+      PACT_ED.worktrees.map((w) => el("option", { value: w.name }, [w.isMain ? "⌂ main" : "⌥ " + w.name])));
+    wtSel.value = (a0 && a0.worktree) || "main";
+    wtSel.disabled = started;
+    wtSel.addEventListener("change", () => {
+      const a = pactChatActive(); if (!a || a.started || (a.msgs && a.msgs.length)) return;
+      a.worktree = wtSel.value === "main" ? undefined : wtSel.value; pactStateSave(); pactChatRender();
+    });
+    headKids.push(wtSel);
+  }
+  headKids.push(usageEl, modeSel, chatCollapse);
+  const head = el("div", { class: "pact-zone-hd pc-head" }, headKids);
   const scroll = el("div", { class: "pc-scroll" }, []);
   const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (⌘/Ctrl+Enter to send)" });
   const send = el("button", { class: "pc-send" }, ["Send"]);
