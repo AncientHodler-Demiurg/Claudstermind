@@ -4,7 +4,32 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.86] - 2026-08-18
+## [1.4.87] - 2026-08-18
+
+### Fixed
+- **Migrating a Pact conversation to a worktree no longer splits its saved history or lets the tab silently
+  revert to "main".** Two root-cause bugs behind "my ATS/SWP tabs reverted to before I migrated them":
+  - **Split storage.** A Pact conversation was persisted under `repo@<worktree>`, so migrating it wrote the
+    post-migration turns to a *different* file than the pre-migration ones (same session key, two files),
+    and the lookup — which returns only one file and never merges — showed just one half. Now a Pact
+    (`scoped`) conversation always persists under the **canonical `repo@main`**, regardless of which worktree
+    its agent runs in; the worktree still sets the working directory (edits land in the right checkout), it
+    just no longer fragments the history. One conversation, one file, always.
+  - **Lost binding.** The worktree binding lived only in the IDE-state layout blob; if that dropped it, the
+    tab fell back to "main". Each turn now **records the worktree it ran in**, so the binding self-heals from
+    the transcript on reload (`pactChatHealWorktree`), and the "migrated to worktree …" separators are
+    **reconstructed from the turns themselves** (`pactDeriveMigrations`) rather than depending solely on the
+    layout blob — deduped against any stored markers. Tests: `lib/pactMigrationPlace.test.mjs` (derivation +
+    round-trip + dedup), `lib/workspace.test.mjs` (scoped turn persists under `repo@main`, runs in the
+    worktree checkout, records its worktree).
+
+### Data
+- Recovered and re-unified two conversations (**ATS Audit**, **SWP Audit**) whose histories had been split by
+  the old migration bug: each was merged back into a single continuous transcript under `repo@main` with its
+  post-migration turns tagged with the worktree, and its tab binding + migration marker restored. Full
+  pre-change backups kept under `recovered-chats/migration-restore-backup-2026-08-18/`.
+
+
 
 ### Fixed
 - **A conversation that's still working no longer gets stuck showing "done" after a flaky-connection blip.**

@@ -4828,7 +4828,7 @@ function pactTranscriptToMsgs(transcript) {
   const at = (m) => (typeof m.at === "number" ? m.at : undefined);
   for (const m of Array.isArray(transcript) ? transcript : []) {
     if (!m) continue;
-    if (m.role === "user") out.push({ role: "user", text: m.text || "", images: m.images || (m.image ? [m.image] : []), workspaceId: m.workspaceId || PACT_WORKSPACE_ID, at: at(m) });
+    if (m.role === "user") out.push({ role: "user", text: m.text || "", images: m.images || (m.image ? [m.image] : []), workspaceId: m.workspaceId || PACT_WORKSPACE_ID, at: at(m), worktree: (typeof m.worktree === "string" && m.worktree) ? m.worktree : undefined });
     else if (m.role === "assistant") out.push({ role: "assistant", text: m.text || "", elapsedMs: (typeof m.durationMs === "number" ? m.durationMs : (typeof m.elapsedMs === "number" ? m.elapsedMs : undefined)), at: at(m) });
     else if (m.kind === "tool_use") out.push({ kind: "tool_use", tools: m.tools || [], at: at(m) });
   }
@@ -5201,6 +5201,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
         tt._transcriptTruncated = !!(data && data.transcriptTruncated);   // baseline is the tail only — older history fetchable via "Show earlier"
       } else if (incoming.length >= tt.msgs.length) { tt.msgs = pactPreserveElapsed(tt.msgs, incoming); tt._transcriptTruncated = !!(data && data.transcriptTruncated); }
       pactChatReinjectMigrations(tt);   // splice the worktree-migration markers back into the rehydrated transcript
+      pactChatHealWorktree(tt);         // recover a worktree binding the IDE-state layout may have lost
       // Likewise don't yank a mid-turn tab back to idle — a live turn in flight owns the status.
       if (tt.status !== "thinking" && tt.status !== "deepwork" && tt.status !== "awaiting-permission") tt.status = "idle";
       tt._forceBottom = true;
@@ -5232,7 +5233,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
     case "resync": {
       const incoming = pactTranscriptToMsgs(d.transcript);
       const dec = pactResyncDecision(t.msgs.length, incoming.length, d.status, d.live);
-      if (dec.replace) { t.msgs = pactPreserveElapsed(t.msgs, incoming); pactChatReinjectMigrations(t); t._transcriptTruncated = !!d.transcriptTruncated; }   // keep a live-stamped "Thought for …" the daemon hasn't persisted yet; re-add migration markers
+      if (dec.replace) { t.msgs = pactPreserveElapsed(t.msgs, incoming); pactChatReinjectMigrations(t); pactChatHealWorktree(t); t._transcriptTruncated = !!d.transcriptTruncated; }   // keep a live-stamped "Thought for …" the daemon hasn't persisted yet; re-add migration markers; recover a lost worktree binding
       if (d.usage) t.usage = d.usage;
       if (d.status) t.status = d.status;
       pactChatMarkTurnBusy(t);   // restored mid-turn (e.g. after reload) → show the timer here too
@@ -5528,14 +5529,39 @@ function pactChatRecordMigration(t, from, to) {
 // anchor against).
 function pactPlaceMigrations(msgs, migrations) {
   const arr = Array.isArray(msgs) ? msgs : [];
-  const hasMarkers = arr.some((m) => m && m.kind === "migration");
-  const migs = Array.isArray(migrations) ? migrations.filter((m) => m && typeof m.at === "number") : [];
-  if (!hasMarkers && !migs.length) return arr;
-  const out = arr.filter((m) => !(m && m.kind === "migration"));
+  const stripped = arr.filter((m) => !(m && m.kind === "migration"));
+  // PRIMARY source of markers: the transcript itself. Each turn now records the worktree it ran in (server
+  // stamps `worktree` on user turns), so a change between consecutive turns' worktrees IS a migration — this
+  // reconstructs the "migrated to worktree X" separators straight from the persisted history, surviving even
+  // if the IDE-state layout (t.migrations, the old only home) is dropped or corrupted. The recorded
+  // t.migrations are unioned in as a fallback (older turns predating the worktree stamp), deduped by `at`.
+  const derived = pactDeriveMigrations(stripped);
+  const seenAt = new Set(derived.map((m) => m.at));
+  const extra = (Array.isArray(migrations) ? migrations : []).filter((m) => m && typeof m.at === "number" && !seenAt.has(m.at));
+  const migs = derived.concat(extra).sort((a, b) => a.at - b.at);
+  if (!migs.length) return arr.some((m) => m && m.kind === "migration") ? stripped : arr;
+  const out = stripped;
   for (const mig of migs) {
     let idx = out.findIndex((m) => typeof m.at === "number" && m.at > mig.at);
     if (idx < 0) idx = out.length;
     out.splice(idx, 0, { kind: "migration", from: mig.from || "main", to: mig.to || "main", at: mig.at });
+  }
+  return out;
+}
+// Reconstruct migration records from worktree transitions in a transcript. Walk turns in order; each time the
+// effective worktree changes (main⇄a named worktree, or between two named ones) emit a marker at the FIRST
+// turn of the new worktree. Only user turns carry `worktree`; a turn without one is "main". Returns records
+// shaped like the stored ones ({ from, to, at }).
+function pactDeriveMigrations(msgs) {
+  const out = [];
+  let cur = "main";
+  for (const m of Array.isArray(msgs) ? msgs : []) {
+    if (!m || m.role !== "user" || typeof m.at !== "number") continue;
+    const wt = (typeof m.worktree === "string" && m.worktree) ? m.worktree : "main";
+    // `at - 1` so the marker sorts strictly BEFORE the first turn of the new worktree (pactPlaceMigrations
+    // inserts before the first message with `at > marker.at`). Matches the convention the record side uses,
+    // so a transcript-derived marker and a stored one for the same migration dedupe cleanly.
+    if (wt !== cur) { out.push({ from: cur, to: wt, at: m.at - 1 }); cur = wt; }
   }
   return out;
 }
@@ -5546,6 +5572,16 @@ function pactPlaceMigrations(msgs, migrations) {
 function pactChatReinjectMigrations(t) {
   if (!t || !Array.isArray(t.msgs)) return;
   t.msgs = pactPlaceMigrations(t.msgs, t.migrations);
+}
+// Recover a LOST worktree binding from the transcript. Each turn records the worktree it ran in, so if the
+// IDE-state layout dropped a tab's binding (the "my migrated tab reverted to main" bug), the last turn that
+// carries a worktree is the ground truth of where this conversation actually runs — adopt it and re-persist,
+// so the next prompt uses the right checkout instead of silently falling back to main. Only fills an EMPTY
+// binding: a set one may reflect a just-issued migration that has no turn on the new worktree yet.
+function pactChatHealWorktree(t) {
+  if (!t || t.worktree || !Array.isArray(t.msgs)) return;
+  const lastWt = [...t.msgs].reverse().find((m) => m && typeof m.worktree === "string" && m.worktree)?.worktree;
+  if (lastWt && lastWt !== "main") { t.worktree = lastWt; pactStateSave(); }
 }
 // The head ⇄ menu for a STARTED conversation: migrate to another worktree, merge back + return to main, or
 // return to main without merging.
