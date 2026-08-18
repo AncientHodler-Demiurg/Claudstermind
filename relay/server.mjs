@@ -394,6 +394,17 @@ export function createRelay(opts = {}) {
       return sendJSON(res, 200, r || { ok: false, error: "no reply from the work machine" });
     }
 
+    // ---- remote Pact IDE: worktree lifecycle — create / remove / merge-to-main — forwarded down the
+    // tunnel so mobile/remote can manage worktrees, not just the local dashboard. It's a git op on the
+    // work machine (conflict-safe merge), gated ancient-only + connected — same model as the pactWrite save. ----
+    if (req.method === "POST" && path === "/api/pact/worktree") {
+      if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The Pact workspace is ancient-only." });
+      if (!link.connected) return sendJSON(res, 503, { ok: false, error: "Local Claudstermind is not connected." });
+      const body = await readBody(req);
+      const r = await link.relay("pactWorktree", { action: body.action || "", name: body.name || "" }, 30_000);
+      return sendJSON(res, 200, r || { ok: false, error: "no reply from the work machine" });
+    }
+
     // ---- remote Pact IDE: shared IDE-state read/write, forwarded down the tunnel. The state file
     // lives beside the Pact history on the work machine, so the remote website reads/writes the SAME
     // store the local dashboard does — the layout follows you across origins. Mirrors the tree/file

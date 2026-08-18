@@ -4,7 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.83] - 2026-08-18
+## [1.4.84] - 2026-08-18
+
+### Fixed
+- **Creating / merging / removing a worktree now works from mobile (through the relay), not just the local
+  dashboard.** The "Couldn't create worktree — worktree management isn't available on the running dashboard
+  yet, restart it" popup on the phone was misleading: the worktree *lifecycle* action (`POST
+  /api/pact/worktree`) had **no route on the relay at all** and no handler in the tunnel bridge — only the
+  local dashboard could run it. So on mobile the POST fell through to a 404, which the client reported as
+  "restart the dashboard" (restarting couldn't have helped). Now the relay forwards `pactWorktree`
+  (create/remove/merge) down the tunnel and the bridge runs it on the work machine, gated ancient-only +
+  connected — the same model as the remote file-save (`pactWrite`). The conflict-safe merge is unchanged.
+
+
 
 ### Changed
 - **A big conversation now appears in a fraction of a second on mobile instead of after a 5–20s blank

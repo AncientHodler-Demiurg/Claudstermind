@@ -25,7 +25,7 @@ import { readActivity } from "../orchestrator/activity.mjs";
 import { readBackupConfig } from "../orchestrator/backupConfig.mjs";
 import net from "node:net";
 import { createAggregator, registryProjects, mirrorablePorts } from "../lib/localhost.mjs";
-import { listDir as pactListDir, readTextFile as pactReadFile, writeTextFile as pactWriteFile, pactRoot as resolvePactRoot, pactRootFor, pactWorktrees } from "../lib/pactFs.mjs";
+import { listDir as pactListDir, readTextFile as pactReadFile, writeTextFile as pactWriteFile, pactRoot as resolvePactRoot, pactRootFor, pactWorktrees, pactWorktreeAction } from "../lib/pactFs.mjs";
 import { gitChangedFiles as pactChangedFiles, gitFileAtHead as pactFileAtHead } from "../lib/pactGit.mjs";
 import { readIdeState as pactReadIdeState, writeIdeState as pactWriteIdeState } from "../lib/pactIdeState.mjs";
 import { forwardRequestHeaders, buildUpgradeRequest } from "../lib/mirror.mjs";
@@ -270,6 +270,15 @@ export function createBridge(opts = {}) {
     // down the tunnel (repo-confined by pactFs). Same one-shot COMMAND/RESULT shape as workspaceImage.
     if (frame.cmd.type === "pactWorktrees") {
       const result = { ok: true, worktrees: pactWorktrees(paths.root).map((w) => ({ name: w.name, branch: w.branch, isMain: !!w.isMain })) };
+      if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
+      return;
+    }
+    // Worktree lifecycle — create / remove / merge-to-main — forwarded down the tunnel so REMOTE (mobile via
+    // the relay) can manage worktrees exactly like local. It's a git op on THIS machine, gated ancient-only
+    // at the relay (same model as pactWrite). `merge` is conflict-safe (see mergeWorktree).
+    if (frame.cmd.type === "pactWorktree") {
+      const a = frame.cmd.args || {};
+      const result = pactWorktreeAction(paths.root, a.action || "", a.name || "");
       if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
       return;
     }
