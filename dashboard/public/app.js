@@ -2228,6 +2228,8 @@ let WS_ES = null;   // the Workspace EventSource (SSE stream of Claude session o
 let WS_LAST_MSG_AT = 0;    // Date.now() of the last message (real event OR heartbeat) this stream delivered
 let WS_STALE_TIMER = null;   // polls WS_LAST_MSG_AT; force-reconnects a stream that's gone quiet too long
 let WS_HEAL_TIMER = null;    // fast (~4s) local self-heal — surfaces a dropped reply in ~8s, not the 25s heartbeat gap
+// Close any open ★-bookmark popup when clicking outside it (registered once, module load).
+document.addEventListener("mousedown", (e) => { if (!e.target.closest || !e.target.closest(".ws-bm-wrap")) document.querySelectorAll(".ws-bm-pop.--show").forEach((x) => x.classList.remove("--show")); });
 let WS_EVER_CONNECTED = false;   // true after the FIRST successful "hello" — so only a later hello logs as a "reconnect"
 // Comfortably above the 25s server heartbeat: two missed pulses plus slack, not one, so an
 // ordinary single slow tick over a mobile link never triggers a needless reconnect.
@@ -6935,7 +6937,7 @@ function viewWorkspace() {
     try {
       localStorage.setItem(WS_STORE_KEY, JSON.stringify({
         v: 1, cols: st.cols, rows: st.rows, sidebarMode: st.sidebarMode, defaultMode: st.defaultMode, activeId: st.activeId,
-        panes: st.panes.map((p) => ({ id: p.id, sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree || "main", mode: p.mode, draft: p.draft || "", promptStates: p.promptStates || {} })),
+        panes: st.panes.map((p) => ({ id: p.id, sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree || "main", mode: p.mode, draft: p.draft || "", promptStates: p.promptStates || {}, bookmarks: Array.isArray(p.bookmarks) ? p.bookmarks : [] })),
       }));
     } catch { /* private mode / quota — the workspace still works, it just forgets */ }
   }
@@ -6951,6 +6953,7 @@ function viewWorkspace() {
       id: p.id || wsUuid(), sessionKey: p.sessionKey || wsUuid(), repo: p.repo || "", worktree: p.worktree || "main",
       mode: WS_MODE_IDS.has(p.mode) ? p.mode : st.defaultMode, draft: typeof p.draft === "string" ? p.draft : "",
       promptStates: (p.promptStates && typeof p.promptStates === "object" && !Array.isArray(p.promptStates)) ? p.promptStates : {},
+      bookmarks: Array.isArray(p.bookmarks) ? p.bookmarks.filter((x) => typeof x === "number") : [],
     }));
     while (st.panes.length < st.cols * st.rows) st.panes.push(newPane());
     st.activeId = st.panes.some((p) => p.id === s.activeId) ? s.activeId : st.panes[0].id;
@@ -7304,6 +7307,63 @@ function viewWorkspace() {
     p.promptStates[m.at] = "d"; m._intrState = "d"; m._intrBtns = false; m._node = null;
     saveLayout(); paintPane(p);
   }
+  // ---- bookmark a response (★) + jump to it -------------------------------------------------------
+  // Each response can be starred (persisted per pane by its `at`). A ★ button in the pane controls opens a
+  // list of starred responses; picking one reveals + scrolls to it. Stamped onto messages each render.
+  function wsMarkBookmarks(p) {
+    if (!p || !Array.isArray(p.transcript)) return;
+    const bm = new Set(Array.isArray(p.bookmarks) ? p.bookmarks : []);
+    p.transcript.forEach((m) => {
+      if (!m) return;
+      m._paneId = p.id;
+      if (m.role === "assistant" || m.kind === "assistant") { const b = typeof m.at === "number" && bm.has(m.at); if (m._bookmarked !== b) { m._bookmarked = b; m._node = null; } }
+    });
+  }
+  function wsToggleBookmark(m) {
+    const p = st.panes.find((x) => x.id === m._paneId); if (!p || typeof m.at !== "number") return;
+    p.bookmarks = Array.isArray(p.bookmarks) ? p.bookmarks : [];
+    const i = p.bookmarks.indexOf(m.at);
+    if (i >= 0) p.bookmarks.splice(i, 1); else p.bookmarks.push(m.at);
+    m._bookmarked = i < 0; m._node = null;
+    const ui = paneUI.get(p.id); if (ui) ui._txRef = null;   // force a full transcript re-render so a star on an OLD (cached) turn updates too
+    saveLayout(); paintPane(p);
+    if (ui && ui._bmPop) wsRenderBookmarkList(p);   // keep an open list in sync
+  }
+  function wsScrollToResponse(p, at) {
+    p._showAllTurns = true;   // the target may be behind "show earlier" — reveal everything first
+    paintPane(p);
+    const m = p.transcript.find((x) => x && (x.role === "assistant" || x.kind === "assistant") && x.at === at);
+    if (m && m._node) {
+      requestAnimationFrame(() => { m._node.scrollIntoView({ behavior: "smooth", block: "center" }); m._node.classList.add("ws-bm-flash"); setTimeout(() => m._node.classList.remove("ws-bm-flash"), 1600); });
+      return;
+    }
+    // Not in the loaded window (a big conversation ships only its tail) — fetch the whole history, then jump
+    // once it lands (see the resync handler's p._pendingBookmarkScroll).
+    if (p.sessionKey) { p._pendingBookmarkScroll = at; wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey, full: true } }); }
+  }
+  // Rows for the starred-responses list (R#n + a snippet); picking one jumps to it. Shared by the desktop
+  // popup and the mobile sheet. `onPick` closes whichever container is open.
+  function wsBookmarkRows(p, onPick) {
+    const marks = (Array.isArray(p.bookmarks) ? p.bookmarks : []).slice().sort((a, b) => a - b);
+    if (!marks.length) return [el("div", { class: "ws-bm-empty" }, ["No bookmarks yet — tap the ☆ on any response."])];
+    return marks.map((at) => {
+      const m = p.transcript.find((x) => x && (x.role === "assistant" || x.kind === "assistant") && x.at === at);
+      const label = m ? ("R#" + wsNumFmt(m._rnum || 0)) : "R#?";
+      const snip = m ? String(m.text || "").replace(/[#*`>_~-]/g, "").replace(/\s+/g, " ").trim().slice(0, 76) : "(older — loads on open)";
+      const row = el("div", { class: "ws-bm-row" }, [el("span", { class: "ws-bm-rn" }, [label]), el("span", { class: "ws-bm-snip" }, [snip || "(empty)"])]);
+      const pick = () => { wsScrollToResponse(p, at); if (onPick) onPick(); };
+      row.addEventListener("click", pick); row.addEventListener("touchend", (e) => { e.preventDefault(); pick(); });
+      return row;
+    });
+  }
+  function wsRenderBookmarkList(p) {   // desktop: fill the popup anchored to the ★ button
+    const ui = paneUI.get(p.id); if (!ui || !ui._bmPop) return;
+    ui._bmPop.replaceChildren(el("div", { class: "ws-bm-hd" }, ["★ Bookmarked responses"]), ...wsBookmarkRows(p, () => ui._bmPop.classList.remove("--show")));
+  }
+  function wsOpenBookmarkSheet(p) {   // mobile: the same list as a bottom sheet
+    if (!p) return;
+    openSheet("★ Bookmarked responses", el("div", { class: "ws-bm-sheet" }, wsBookmarkRows(p, closeSheet)));
+  }
   function renderItem(m) {
     if (m.role === "user" || m.kind === "user") {
       const kids = [wsNumBadge("P", m._pnum), el("b", {}, ["you  "])];
@@ -7341,7 +7401,11 @@ function viewWorkspace() {
       }
       return line("ws-user" + (m._intrState === "d" ? " ws-discarded" : m._intrState === "i" ? " ws-interrupted" : ""), kids);
     }
-    if (m.role === "assistant" || m.kind === "assistant") return line("ws-assistant", [wsNumBadge("R", m._rnum), ...renderAssistantText(m.text)]);
+    if (m.role === "assistant" || m.kind === "assistant") {
+      const star = el("button", { class: "ws-bm-star" + (m._bookmarked ? " on" : ""), title: m._bookmarked ? "Bookmarked — click to remove" : "Bookmark this response" }, [m._bookmarked ? "★" : "☆"]);
+      star.addEventListener("click", (e) => { e.stopPropagation(); wsToggleBookmark(m); });
+      return line("ws-assistant", [wsNumBadge("R", m._rnum), star, ...renderAssistantText(m.text)]);
+    }
     if (m.kind === "tool_use") return line("ws-tool", [el("i", { class: "ti ti-tool" }, []), " ", (m.tools || []).map((t) => t.name).join(", ")]);
     if (m.kind === "tool_result") return line("ws-toolres", ["✓ tool result"]);
     if (m.kind === "result") return line("ws-result", [`— done · ${(m.usage?.output_tokens || 0)} out tok`]);
@@ -7446,6 +7510,7 @@ function viewWorkspace() {
     const t = ui.transcriptEl;
     wsStampNumbers(p);   // assign each prompt/response its absolute P#/R# before turns render
     wsMarkInterrupt(p);  // recognise/paint interrupted (dark blue) + discarded (red) prompts + their buttons
+    wsMarkBookmarks(p);  // stamp which responses are starred (+ each message's pane id, for jump-to)
     const allTurns = splitTurns(p.transcript);
     const showAll = !!p._showAllTurns;
     const turns = showAll ? allTurns : allTurns.slice(-WS_TURN_RENDER_CAP);
@@ -7677,7 +7742,17 @@ function viewWorkspace() {
     // VERTICAL column of round icon buttons (attach / stop / send) beside a full-width text box —
     // WhatsApp-style — so the typing area isn't squeezed to nothing when Stop and Send both show.
     const sendWrap = el("div", { class: "ws-send-wrap" }, [sendBtn]);   // relative host so the Live/Held bulb can dock above Send
-    const composeBtns = el("div", { class: "ws-compose-btns" }, [attachBtn, stopBtn, sendWrap]);
+    // ★ Bookmarks — a button that opens a list of this conversation's starred responses; picking one jumps to it.
+    const bmBtn = el("button", { class: "ws-bm-btn", type: "button", title: "Bookmarked responses — jump to a starred answer" }, ["★"]);
+    const bmPop = el("div", { class: "ws-bm-pop" }, []);
+    const bmWrap = el("div", { class: "ws-bm-wrap" }, [bmBtn, bmPop]);
+    bmBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const show = !bmPop.classList.contains("--show");
+      document.querySelectorAll(".ws-bm-pop.--show").forEach((x) => x.classList.remove("--show"));   // one open at a time
+      if (show) { wsRenderBookmarkList(p); bmPop.classList.add("--show"); }
+    });
+    const composeBtns = el("div", { class: "ws-compose-btns" }, [bmWrap, attachBtn, stopBtn, sendWrap]);
     const composeRow = el("div", { class: "ws-compose" }, [imgFileInput, promptEl, composeBtns]);
     const composeExtras = el("div", { class: "ws-compose-extras" }, [imgPreviewWrap, imgErr]);
     // A slim, ALWAYS-visible identity readout — plain text, not a control — so which
@@ -7794,7 +7869,7 @@ function viewWorkspace() {
     // controller can insert its relative wrapper in place around it.
     const stick = attachStickController(transcriptEl, { wrapClass: "stick-wrap-ws" });
     stick.dockMode(sendWrap, "stick-mode--dock");   // move the Live/Held bulb from the transcript to just above Send (doesn't obstruct text)
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, stick, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, stopBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, stick, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, stopBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _bmPop: bmPop, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
     if (p.draft) { promptEl.value = p.draft; wsAutoResizePrompt(promptEl); }   // restore the saved compose draft after a view switch / reload
     return paneRoot;
   }
@@ -8093,12 +8168,13 @@ function viewWorkspace() {
     const chatsB = mb("💬", "Conversations — switch, add, or close", () => openSheet("Conversations", convosSheetBody()), "ws-mcbtn-chats");
     const setB = mb("⚙", "Pane settings — repo, worktree, model, effort, mode", openSettingsSheet);
     const attachB = mb("📎", "Attach image", () => { const ui = paneUI.get(st.activeId); if (ui && ui.attachBtn) ui.attachBtn.click(); });
+    const bmB = mb("★", "Bookmarked responses — jump to a starred answer", () => wsOpenBookmarkSheet(activePane()), "ws-mcbtn-bm");
     const syncB = mb("↻", "Sync now — re-fetch the latest state (no page reload)", () => { const p = activePane(); if (p && p.sessionKey) wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey, full: !!p._showAllTurns } }); });
     const stopB = mb("■", "Stop the current response (keeps the conversation)", () => { const p = activePane(); if (p && p.sessionKey) wsPost("stop", { sessionKey: p.sessionKey }); }, "ws-mcbtn-stop");
     stopB.hidden = true;
     const sendB = mb("➤", "Send", () => send(activePane()), "ws-mcbtn-send");
     wsMBar._sendB = sendB; wsMBar._stopB = stopB; wsMBar._chatsB = chatsB;
-    wsMBar.replaceChildren(menuB, chatsB, setB, attachB, el("span", { class: "ws-spacer" }, []), syncB, stopB, sendB);
+    wsMBar.replaceChildren(menuB, chatsB, setB, attachB, bmB, el("span", { class: "ws-spacer" }, []), syncB, stopB, sendB);
   }
   // Keep the bottom bar's send/stop in step with the active pane, and home that pane's Live/Held bulb in
   // the mode strip (each pane owns its own bulb; only the visible pane's belongs in the shared strip).
@@ -8159,7 +8235,9 @@ function viewWorkspace() {
     grid.style.setProperty("--ws-rows", st.rows);
     paneUI.clear();
     grid.replaceChildren(...st.panes.map(buildPane));
-    for (const p of st.panes) paintPane(p);
+    // A rebuild makes fresh transcript DOM (scrollTop 0), so entering the workspace / a layout change would
+    // otherwise leave each conversation scrolled to the TOP. Land at the bottom (latest message) instead.
+    for (const p of st.panes) { p._scrollBottomNext = true; paintPane(p); }
     if (st.isMobile) syncMobileBar();   // panes were rebuilt → re-home the active bulb + refresh send/stop
   }
 
@@ -8707,6 +8785,9 @@ function viewWorkspace() {
           // fired on the (lost) result never did, so it'd sit "queued" forever. Release it here now that
           // the true status is known. (No-op if still busy or nothing's queued.)
           drainQueue(p);
+          // A bookmark jump to a response that wasn't loaded triggered a full resync (wsScrollToResponse) —
+          // now that the whole history has landed, complete the jump.
+          if (p._pendingBookmarkScroll != null) { const at = p._pendingBookmarkScroll; p._pendingBookmarkScroll = null; requestAnimationFrame(() => wsScrollToResponse(p, at)); }
         }
         return;
       }

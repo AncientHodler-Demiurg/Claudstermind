@@ -4,7 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.97] - 2026-08-19
+## [1.4.98] - 2026-08-19
+
+### Fixed
+- **Entering the Core workspace now lands each conversation at the bottom (latest message).** Rebuilding the
+  pane grid (on view-enter / a layout change) makes fresh transcript DOM, which starts scrolled to the TOP —
+  so the conversation opened scrolled up instead of at the newest turn. It now force-scrolls to the bottom.
+
+### Added
+- **Bookmark responses in the Core cockpit + jump to them.** Every response has a **☆ star** (top-right of the
+  bubble); tap it to bookmark (fills gold). A **★ button** — in the pane's compose row on desktop and in the
+  mobile bottom bar — opens a list of this conversation's starred responses (each shown as `R#n` + a snippet).
+  Picking one **reveals and smooth-scrolls the chat to that answer** (fetching the full history first if it's
+  an older one beyond the loaded window) and briefly flashes it. Bookmarks persist per conversation (browser
+  storage, per-device). (Pact chat can get the same treatment — say the word.)
+
+
 
 ### Fixed
 - **A dropped reply on a big Pact conversation now recovers instead of staying invisible.** Root cause: the
