@@ -4,7 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.94] - 2026-08-19
+## [1.4.95] - 2026-08-19
+
+### Added
+- **An engine-restarting deploy/reload can now WAIT for running agents to finish instead of only offering
+  "do it anyway (lose their work)".** The busy-agent guard used to be two choices — cancel, or interrupt the
+  live turns. It's now three: **"Wait for them, then deploy"** (the primary action — drains to idle, then
+  deploys, so nothing gets cut off), **"Deploy now anyway"** (the old behavior), or Cancel. Picking "wait"
+  opens a small live panel that polls the engine's busy count until it hits zero (a new turn starting just
+  extends the wait), with "Deploy now anyway" / Cancel escape hatches. This is the fix for the recurring
+  "I deployed an engine change and it killed the turn I was waiting on." Same three-way choice on the
+  local Reload guard. (`showModal` gained an optional third button to support it.)
+
+
 
 ### Fixed
 - **A Pact conversation whose worktree gets merged & removed now flips back to `main` automatically**, instead

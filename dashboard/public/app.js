@@ -1106,6 +1106,42 @@ function viewDeploy() {
     procBox.replaceChildren(...kids);
   }
 
+  // Drain: wait for the agent engine to go IDLE (no in-flight turns) before an engine-restarting deploy, so
+  // it can't cut a live turn short — the fix for "I deployed and it killed my running turn". Polls the same
+  // authoritative busy count the guard uses; a new turn starting just keeps the wait going until it's quiet.
+  // Resolves true (idle → deploy), "now" (deploy immediately anyway), or false (cancel). Live count + Esc/Cancel.
+  function deployWaitForIdle() {
+    return new Promise((resolve) => {
+      let done = false, timer = null;
+      const countEl = el("span", { class: "deploy-drain-count" }, ["(checking…)"]);
+      const finish = (r) => { if (done) return; done = true; clearTimeout(timer); document.removeEventListener("keydown", onKey); overlay.remove(); resolve(r); };
+      const onKey = (e) => { if (e.key === "Escape") finish(false); };
+      const nowBtn = el("button", { class: "ghost", style: "background:#f87171;border-color:#f87171" }, ["Deploy now anyway"]);
+      nowBtn.addEventListener("click", () => finish("now"));
+      const cancelBtn = el("button", { class: "ghost" }, ["Cancel"]);
+      cancelBtn.addEventListener("click", () => finish(false));
+      const overlay = el("div", { class: "modal-overlay" }, [
+        el("div", { class: "modal" }, [
+          el("div", { class: "modal-hd" }, [el("span", { class: "dot" }), "⏳ Waiting for agents to finish"]),
+          el("div", { class: "modal-bd" }, [el("div", { class: "modal-sub" }, ["Deploying restarts the agent engine. Holding until no turn is running so nothing gets cut off.  ", countEl])]),
+          el("div", { class: "modal-ft" }, [cancelBtn, nowBtn]),
+        ]),
+      ]);
+      document.body.append(overlay);
+      document.addEventListener("keydown", onKey);
+      const poll = async () => {
+        if (done) return;
+        let count = null;
+        try { const d = await (await fetch("/api/admin/processes", { cache: "no-store" })).json(); count = (d && d.busy && d.busy.count) || 0; } catch { count = null; }
+        if (done) return;
+        if (count === 0) return finish(true);   // idle → safe to deploy
+        countEl.textContent = count == null ? "(checking…)" : (count === 1 ? "1 agent still working…" : count + " agents still working…");
+        timer = setTimeout(poll, 3000);
+      };
+      poll();
+    });
+  }
+
   // The deploy confirmation — a custom in-app modal (never window.confirm) PLUS the busy-agent
   // guard (T4.4). The deploy button's only click path awaits this, so the guard is impossible to
   // bypass. The plan + busy count are re-fetched here at click time (not read from a possibly-stale
@@ -1119,12 +1155,21 @@ function viewDeploy() {
     } catch { /* keep the last known plan/busy — fail toward the standard confirm below */ }
     const count = (busy && busy.count) || 0;
     if (plan && plan.daemonAffected && count > 0) {
-      const goOn = await showModal({
+      // Three-way: WAIT for the agents to finish then deploy (safe, no interruption) · deploy NOW anyway
+      // (their in-flight turns are cut off) · cancel. "Wait" is the primary action — it's what stops the
+      // recurring "I deployed and it killed my running turn".
+      const choice = await showModal({
         title: count === 1 ? "1 agent still working" : count + " agents still working",
-        danger: true, confirmLabel: "Deploy anyway",
-        sub: `This deploy restarts the agent engine (sessiond), so ${count === 1 ? "that agent's" : "those agents'"} unsettled work will be lost. Deploy anyway?`,
+        confirmLabel: "Wait for them, then deploy", thirdLabel: "Deploy now anyway",
+        sub: `This deploy restarts the agent engine (sessiond), which CUTS OFF any turn still running — a mid-turn reply is lost. Wait for ${count === 1 ? "it" : "them"} to finish first, or deploy now anyway?`,
       });
-      if (!goOn) return false;
+      if (choice === false) return false;                       // Cancel
+      if (choice === true) {                                    // Wait, then deploy → drain to idle
+        const drained = await deployWaitForIdle();
+        if (drained === false) return false;                    // bailed out of the wait
+        // drained === true (now idle) or "now" (deploy immediately) → fall through to the final confirm
+      }
+      // choice === "third" (Deploy now anyway) → fall through, interrupting the running turn(s)
     }
     return await showModal({ title: "Deploy to live", confirmLabel: "Deploy",
       sub: "Deploy the current build to brain.ancientholdings.eu? The relay rebuilds (~1 min)." });
@@ -1143,12 +1188,14 @@ function viewDeploy() {
     } catch { /* keep last known — fail toward the standard confirm below */ }
     const count = (busy && busy.count) || 0;
     if (daemonHit && count > 0) {
-      const goOn = await showModal({
+      const choice = await showModal({
         title: count === 1 ? "1 chat still working" : count + " chats still working",
-        danger: true, confirmLabel: "Reload anyway",
-        sub: `This reload restarts the session engine, so ${count === 1 ? "that ongoing chat" : "those " + count + " ongoing chats"} will be interrupted and ${count === 1 ? "its" : "their"} unfinished reply lost. It's recommended to let ${count === 1 ? "it" : "them"} finish first, then reload. Reload anyway?`,
+        confirmLabel: "Wait for them, then reload", thirdLabel: "Reload now anyway",
+        sub: `This reload restarts the session engine, so ${count === 1 ? "that ongoing chat" : "those " + count + " ongoing chats"} will be interrupted and ${count === 1 ? "its" : "their"} unfinished reply lost. Wait for ${count === 1 ? "it" : "them"} to finish first, or reload now anyway?`,
       });
-      return !!goOn;   // the consequence was spelled out + confirmed — no second generic prompt
+      if (choice === false) return false;            // Cancel
+      if (choice === true) { if ((await deployWaitForIdle()) === false) return false; }   // Wait → drain to idle
+      return true;                                   // drained idle / "now" / "reload now anyway" → proceed
     }
     return await showModal({ title: "Reload the local dashboard", confirmLabel: "Reload",
       sub: daemonHit
@@ -1935,7 +1982,7 @@ async function gitPost(pathq, body, btn, g) {
 /* ---------- themed modal — replaces window.prompt/confirm ---------- */
 // A promise-based dialog matching the dashboard theme. `editable` shows a textarea
 // (returns its text on confirm); otherwise it's a confirm dialog (returns true).
-function showModal({ title, sub, value = "", editable = false, confirmLabel = "Confirm", danger = false }) {
+function showModal({ title, sub, value = "", editable = false, confirmLabel = "Confirm", danger = false, thirdLabel = null }) {
   return new Promise((resolve) => {
     let ta = null;
     const finish = (result) => { document.removeEventListener("keydown", onKey); overlay.remove(); resolve(result); };
@@ -1947,6 +1994,10 @@ function showModal({ title, sub, value = "", editable = false, confirmLabel = "C
     const confirmBtn = el("button", { class: "ghost btn-primary", style: danger ? "background:#f87171;border-color:#f87171" : "" },
       [confirmLabel]);
     confirmBtn.addEventListener("click", () => finish(editable ? ta.value : true));
+    // An optional THIRD action (distinct from confirm/cancel) — resolves "third". Used e.g. by the deploy
+    // guard: [Wait for agents, then deploy] (confirm) · [Deploy now anyway] (third) · [Cancel].
+    const thirdBtn = thirdLabel ? el("button", { class: "ghost" }, [thirdLabel]) : null;
+    if (thirdBtn) thirdBtn.addEventListener("click", () => finish("third"));
     const cancelBtn = el("button", { class: "ghost" }, ["Cancel"]);
     cancelBtn.addEventListener("click", () => finish(editable ? null : false));
 
@@ -1959,7 +2010,7 @@ function showModal({ title, sub, value = "", editable = false, confirmLabel = "C
         ]),
         el("div", { class: "modal-ft" }, [
           editable ? el("span", { class: "modal-hint" }, ["⌘/Ctrl+Enter to confirm · Esc to cancel"]) : "",
-          cancelBtn, confirmBtn,
+          cancelBtn, thirdBtn || "", confirmBtn,
         ]),
       ]),
     ]);
