@@ -4,7 +4,29 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.92] - 2026-08-19
+## [1.4.93] - 2026-08-19
+
+### Fixed
+- **Restarting the engine mid-turn no longer loses the reply.** `sessiond`'s shutdown handler used to just
+  close its socket and exit — so a `systemctl restart` (SIGTERM) killed any in-flight turn and dropped the
+  response blocks it had already produced (the "P#97 got no R#350" incident). It now **flushes every live
+  session to disk before exiting** (`WorkspaceManager.persistAll()`), inside the ~90s graceful SIGTERM window.
+  The turn is still cut short, but nothing generated so far vanishes.
+- **The deploy-safety classifier was under-reporting engine changes.** `DAEMON_PATHS` (the list that decides
+  whether a deploy "restarts the agent engine — agents interrupted" vs "web-only — agents keep running")
+  omitted several files the engine actually loads via `lib/workspace.mjs`: **`workspaceStore.mjs`,
+  `worktrees.mjs`, `claudeKeys.mjs`, `protocol.mjs`, and `agent/agent.mjs`**. A deploy changing one of those
+  (e.g. the persistence store) would have been mislabeled "web-only — safe with agents running" when it
+  actually needs an engine restart. Now all engine files are listed, so the deploy page's warning + working-
+  agent count is accurate. Regression test pins the full set.
+
+### Note
+- The deploy page **already** distinguishes engine-affecting deploys ("agents interrupted") from web-only
+  ones and shows how many agents are working — so deploying through the UI is guarded. The interruption that
+  hit P#97 came from a **manual `systemctl restart claudstermind-sessiond`** (the ats/swp-merge command),
+  which bypasses that UI guard entirely; the graceful flush above is what now protects even that raw path.
+
+
 
 ### Changed
 - **The P#/R# position medallions are bigger and easier to read**, and their numbers now use **thousand

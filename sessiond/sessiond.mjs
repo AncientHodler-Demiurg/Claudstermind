@@ -193,10 +193,17 @@ function main() {
   if (existsSync(socketPath)) {
     try { unlinkSync(socketPath); } catch { /* not ours / in use — listen will report it */ }
   }
-  const { server } = createSessiond({ socketPath });
+  const { server, workspace } = createSessiond({ socketPath });
   server.on("listening", () => console.log(`[sessiond] listening on ${socketPath}`));
   server.on("error", (err) => { console.error("[sessiond] server error:", err.message); process.exitCode = 1; });
+  let shuttingDown = false;
   const shutdown = () => {
+    if (shuttingDown) return; shuttingDown = true;
+    // FLUSH FIRST — before we drop the socket or exit. `systemctl restart` sends SIGTERM (a graceful window,
+    // ~90s by default) before any hard SIGKILL, so we have ample time to persist. This saves the response
+    // blocks a live turn has already produced, so restarting the engine mid-turn no longer loses the reply —
+    // the turn is still cut short, but nothing generated so far vanishes with the process.
+    try { const n = workspace.persistAll(); if (n) console.log(`[sessiond] flushed ${n} in-flight session(s) before shutdown`); } catch (e) { console.error("[sessiond] flush on shutdown failed:", e && e.message); }
     try { server.close(); } catch {}
     try { if (existsSync(socketPath)) unlinkSync(socketPath); } catch {}
     process.exit(0);
