@@ -5875,8 +5875,10 @@ function pactStampNumbers(t) {
     else if (m.role === "assistant") { const n = ++r; if (m._rnum !== n) { m._rnum = n; m._node = null; } }
   }
 }
-// A small corner badge: P#12 on a prompt, R#34 on a response. Non-interactive — just a positional label.
-function pactNumBadge(kind, n) { return (typeof n === "number") ? el("span", { class: "pc-num pc-num-" + kind.toLowerCase(), title: (kind === "P" ? "Prompt" : "Response") + " #" + n + " in this conversation" }, [kind + "#" + n]) : ""; }
+// Format a position number with thousand separators (locale-independent): 1349 → "1,349".
+function wsNumFmt(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+// A corner badge: P#12 on a prompt, R#1,349 on a response. Non-interactive — just a positional label.
+function pactNumBadge(kind, n) { return (typeof n === "number") ? el("span", { class: "pc-num pc-num-" + kind.toLowerCase(), title: (kind === "P" ? "Prompt" : "Response") + " #" + wsNumFmt(n) + " in this conversation" }, [kind + "#" + wsNumFmt(n)]) : ""; }
 function pactChatMsgNode(m) {
   if (m.role === "user") {
     // `m.images` ride two shapes: a just-sent message carries raw { dataUrl } (rendered inline);
@@ -7094,7 +7096,7 @@ function viewWorkspace() {
       else if (m.role === "assistant" || m.kind === "assistant") m._rnum = ++rn;
     }
   }
-  function wsNumBadge(kind, n) { return (typeof n === "number") ? el("span", { class: "ws-num ws-num-" + kind.toLowerCase(), title: (kind === "P" ? "Prompt" : "Response") + " #" + n }, [kind + "#" + n]) : ""; }
+  function wsNumBadge(kind, n) { return (typeof n === "number") ? el("span", { class: "ws-num ws-num-" + kind.toLowerCase(), title: (kind === "P" ? "Prompt" : "Response") + " #" + wsNumFmt(n) }, [kind + "#" + wsNumFmt(n)]) : ""; }
   function renderItem(m) {
     if (m.role === "user" || m.kind === "user") {
       const kids = [wsNumBadge("P", m._pnum), el("b", {}, ["you  "])];

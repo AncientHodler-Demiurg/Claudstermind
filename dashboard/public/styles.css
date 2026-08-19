@@ -642,8 +642,8 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .ws-line.ws-user { color: #fff; background: #2f6feb; border-radius: 8px; padding: 7px 10px; align-self: flex-end; max-width: 90%; position: relative; }
 /* Absolute prompt/response number tags (P#n / R#n) — a non-interactive corner label you can refer to.
    Counts the whole conversation, including turns not currently on screen (see server promptOffset). */
-.ws-num { position: absolute; top: -8px; z-index: 1; font: 700 9px ui-monospace, monospace; line-height: 1.55;
-  padding: 0 5px; border-radius: 7px; letter-spacing: .4px; pointer-events: none; white-space: nowrap; box-shadow: 0 1px 2px rgba(0,0,0,.35); }
+.ws-num { position: absolute; top: -10px; z-index: 1; font: 700 11.5px ui-monospace, monospace; line-height: 1.5;
+  padding: 1px 7px; border-radius: 8px; letter-spacing: .4px; pointer-events: none; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
 .ws-num-p { right: 6px; background: #1b4fc4; color: #dbe6ff; border: 1px solid rgba(255,255,255,.30); }
 .ws-num-r { left: 6px; background: var(--accent); color: #1a0a1e; }
 /* A message typed and sent while Claude was still working on the previous turn — "frozen in
@@ -1665,8 +1665,8 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pc-asst { align-self: flex-start; background: var(--chip); position: relative; border: 1px solid var(--line); }   /* boxed like a prompt, so one response = one rectangle */
 /* Absolute position number for each prompt (P#n) and response (R#n) — a non-interactive corner tag you can
    refer to ("re-read R#34"). Counts the whole conversation, including messages not currently on screen. */
-.pc-num { position: absolute; top: -8px; z-index: 1; font: 700 9px ui-monospace, monospace; line-height: 1.55;
-  padding: 0 5px; border-radius: 7px; letter-spacing: .4px; pointer-events: none; white-space: nowrap; box-shadow: 0 1px 2px rgba(0,0,0,.35); }
+.pc-num { position: absolute; top: -10px; z-index: 1; font: 700 11.5px ui-monospace, monospace; line-height: 1.5;
+  padding: 1px 7px; border-radius: 8px; letter-spacing: .4px; pointer-events: none; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
 .pc-num-p { right: 6px; background: #1b4fc4; color: #dbe6ff; border: 1px solid rgba(255,255,255,.30); }
 .pc-num-r { left: 6px; background: var(--accent); color: #1a0a1e; }
 .pc-asst-body :first-child { margin-top: 0; } .pc-asst-body :last-child { margin-bottom: 0; }

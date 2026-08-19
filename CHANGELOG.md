@@ -4,6 +4,12 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.4.92] - 2026-08-19
+
+### Changed
+- **The P#/R# position medallions are bigger and easier to read**, and their numbers now use **thousand
+  separators** (`R#1,349` instead of `R#1349`). Applied in both the Core cockpit and the Pact chat.
+
 ## [1.4.91] - 2026-08-19
 
 ### Added
