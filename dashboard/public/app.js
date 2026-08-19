@@ -2246,6 +2246,12 @@ const WS_HEAL_ACTIVE_WINDOW_MS = 10 * 60_000;
 // WS_HEAL_QUIET_MS so a reply whose stream events were dropped surfaces in ~8s instead of ~20-25s — the
 // "round looks done but nothing showed up" gap. Kept comfortably above a resync round-trip so it can't stack.
 const WS_HEAL_ACTIVE_QUIET_MS = 8_000;
+// Matches the server's WS_RESYNC_MSG_CAP (lib/workspace.mjs): a capped resync ships at most this many
+// messages. When a tab's LOCAL transcript already holds more than this (its capped tail plus an
+// optimistically-shown prompt, or a fully-revealed big history), a capped resync is SHORTER than local, so
+// pactResyncDecision's `incoming >= local` guard rejects it — even when it carries a dropped reply. In that
+// case a resync must be `full` to beat the guard. Keep in sync with the server constant.
+const PACT_RESYNC_CAP = 250;
 /* ---------- relay: the tunnel between this LocalHost and the online site ----------
    Symmetric tab. On the LOCAL dashboard it CONTROLS the bridge (enable/disable, address,
    device secret) and shows whether the remote is online + receiving. On the ONLINE relay
@@ -5113,12 +5119,18 @@ function pactChatSelfHeal() {
   const now = Date.now();
   for (const t of PACT_CHAT.tabs) {
     if (!t.key) continue;
+    // When the local transcript already exceeds the server cap, a capped resync is SHORTER than local, so the
+    // `incoming >= local` guard would REJECT it — even when it carries the dropped reply. Fetch `full` then, so
+    // incoming ≥ local and the reply surfaces. Busy branch only fires when stuck, so full is fine there; the
+    // idle branch fires every ~8s, so it asks for full ONLY when actually stuck (a trailing unanswered prompt)
+    // to avoid re-pulling a big history needlessly.
+    const bigLocal = !!(t.msgs && t.msgs.length > PACT_RESYNC_CAP);
     if (pactChatBusy(t) && (now - (t._lastEventAt || 0)) > WS_HEAL_QUIET_MS && (now - (t._healAt || 0)) > WS_HEAL_QUIET_MS) {
       t._healAt = now;
-      wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true } });
+      wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true, full: bigLocal } });
     } else if (t.id === PACT_CHAT.activeId && !pactChatBusy(t) && (now - (t._lastActiveAt || t._lastResultAt || 0)) < WS_HEAL_ACTIVE_WINDOW_MS && (now - (t._statusSyncAt || 0)) > WS_HEAL_ACTIVE_QUIET_MS) {
       t._statusSyncAt = now;
-      wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true } });
+      wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true, full: bigLocal && pactInterruptedIdx(t) >= 0 } });
     }
   }
 }
@@ -5530,7 +5542,10 @@ function pactChatCatchUp(t) {
   // `full` when this tab already holds its COMPLETE history (not truncated): a capped catch-up would be
   // SHORTER than what's on screen, so the resync length-guard would reject it and a new tail turn would be
   // missed. A truncated tab (showing only the tail) takes the cheap capped catch-up.
-  if (t && t.key) wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true, full: t._transcriptTruncated === false } });
+  // `full` when the tab already holds its complete history, OR when its local transcript exceeds the server
+  // cap (so a capped resync would be rejected by the length-guard and a dropped reply would never land).
+  // Switching to a tab is on-demand, so a one-off full fetch to guarantee it's current is worth it.
+  if (t && t.key) wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true, full: t._transcriptTruncated === false || !!(t.msgs && t.msgs.length > PACT_RESYNC_CAP) } });
 }
 function pactChatConvoStateCls(t) { return t && t.status === "deepwork" ? " --deep" : (pactChatBusy(t) ? " --busy" : ""); }
 function pactChatConvoStateLabel(t) {

@@ -4,7 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.96] - 2026-08-19
+## [1.4.97] - 2026-08-19
+
+### Fixed
+- **A dropped reply on a big Pact conversation now recovers instead of staying invisible.** Root cause: the
+  Pact resync only replaces the on-screen transcript when the incoming one is `>=` as long (to avoid
+  clobbering an optimistically-shown prompt). But a big conversation is loaded as its capped 250-message
+  tail, and your just-sent prompt made the local copy 251 — so the self-heal's *capped* resync (250) was
+  `< 251` and got **rejected**, even though it carried the reply that had actually been generated and saved.
+  The result: the answer was on disk but never appeared. Now, when a tab's local transcript exceeds the cap
+  (`PACT_RESYNC_CAP`), the self-heal (when stuck on an unanswered prompt) and the catch-up-on-switch request
+  the **full** transcript, which is guaranteed to be `>=` local, so the dropped reply surfaces within seconds.
+  (The Core cockpit was unaffected — it replaces unconditionally and doesn't optimistically append.)
+
+
 
 ### Added
 - **Interrupted-prompt management, in both the Core cockpit and the Pact chat.** A prompt whose turn was cut
