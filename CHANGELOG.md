@@ -4,7 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.93] - 2026-08-19
+## [1.4.94] - 2026-08-19
+
+### Fixed
+- **A Pact conversation whose worktree gets merged & removed now flips back to `main` automatically**, instead
+  of staying stuck showing the dead worktree. When the agent (or you) merges a worktree into main and removes
+  it, the tab's binding was left pointing at a checkout that no longer exists — so its next prompt would fail
+  "worktree not found". Now the client reconciles every conversation's worktree binding against the live
+  worktree list — on load, after any worktree op, and after each turn finishes — and any tab bound to a
+  removed worktree returns to `main` with a note. The worktree self-heal was also taught not to re-bind a
+  conversation to a worktree that no longer exists. (Merging via the UI's "Merge & return" already did this;
+  this covers the case where the agent runs the git merge/remove itself, which the client can't observe live.)
+
+
 
 ### Fixed
 - **Restarting the engine mid-turn no longer loses the reply.** `sessiond`'s shutdown handler used to just

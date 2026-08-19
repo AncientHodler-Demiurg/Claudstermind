@@ -3046,9 +3046,32 @@ async function pactEdLoadWorktrees() {
   let d; try { d = await (await fetch("/api/pact/worktrees")).json(); } catch { return; }
   if (d && d.ok && Array.isArray(d.worktrees) && d.worktrees.length) {
     PACT_ED.worktrees = d.worktrees;
+    pactReconcileWorktrees(d.worktrees);                     // a conversation whose worktree was removed → back on main
     for (const g of PACT_ED.groups) pactEdRenderGroup(g);   // reveal/refresh the box selectors
     if (PACT_CHAT && PACT_CHAT.host && typeof pactChatRender === "function") pactChatRender();   // and the chat-head selector
   }
+}
+// When a worktree is merged & removed — whether via the UI's "Merge & return" OR by the AGENT running the git
+// commands itself (which the client can't observe live) — any conversation still BOUND to it is now pointing
+// at a checkout that no longer exists; its next prompt would fail "worktree not found". Flip those tabs back
+// to main and drop a visible marker, so returning to main happens automatically instead of stranding the tab.
+function pactReconcileWorktrees(worktrees) {
+  if (!PACT_CHAT || !Array.isArray(PACT_CHAT.tabs)) return;
+  const have = new Set((worktrees || []).map((w) => w && w.name).filter(Boolean));
+  let changed = false;
+  for (const t of PACT_CHAT.tabs) {
+    if (t.worktree && t.worktree !== "main" && !have.has(t.worktree)) {
+      const gone = t.worktree;
+      t.worktree = undefined;                               // ← back on main; the next prompt runs there
+      // A transient note for immediate feedback; the persistent "returned to main" separator is derived from
+      // the transcript once the next (main) turn runs (pactDeriveMigrations sees the worktree→main transition),
+      // so no explicit marker is added here — that would double it.
+      if (Array.isArray(t.msgs)) t.msgs.push({ kind: "note", text: `⌥ Worktree "${gone}" was merged & removed — this conversation is back on main.` });
+      t._forceBottom = true;
+      changed = true;
+    }
+  }
+  if (changed) { pactStateSave(); pactChatRender(); const a = pactChatActive && pactChatActive(); if (a) pactChatPaint(a); }
 }
 // ---- Stage-3: worktree lifecycle from the Pact IDE (create / merge-to-main / remove) --------------
 function pactWorktreeMenu(x, y) {
@@ -4703,6 +4726,11 @@ function pactRestoreChat(ch) {
   const ai = Number.isInteger(ch.activeIndex) && ch.activeIndex >= 0 && ch.activeIndex < PACT_CHAT.tabs.length ? ch.activeIndex : 0;
   PACT_CHAT.activeId = PACT_CHAT.tabs[ai].id;
   pactChatRender();
+  // Now that the tabs are restored, (re)fetch the worktree list and reconcile bindings — a conversation
+  // bound to a worktree that was merged & removed while you were away flips back to main on open. Re-run
+  // here (not just from pactEdInit) so it can't miss the tabs by racing their restore. Guarded so it only
+  // ever reconciles against the REAL fetched list, never the default [main] (which would revert everything).
+  if (PACT_ED) pactEdLoadWorktrees();
   // Rehydrate every restored tab's transcript from disk (a reload otherwise leaves each tab EMPTY
   // even though its conversation is safely saved). Same mechanism a Resume uses: correlate the
   // returned `transcript` frame (keyed by the session's own id) to THIS tab via `_pendingOpen`, and
@@ -5285,7 +5313,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       wsPost("control", { action: "contextUsage", args: { sessionKey: t.key } });
       wsPost("control", { action: "usageLimits" });   // account-wide plan usage moves each turn — refresh the badge
       t._lastResultAt = Date.now();   // a deepwork/background phase can follow a "result" — see the heartbeat
-      pactChatPaint(t); pactEdCheckAgentEdits(); pactEdCheckChangedFiles();
+      pactChatPaint(t); pactEdCheckAgentEdits(); pactEdCheckChangedFiles(); pactEdLoadWorktrees();   // a turn may have created/merged/removed a worktree — refresh + reconcile bindings
       pactChatDrainQueue(t);   // turn done → release anything typed mid-turn, merged into one prompt
       pactOutboxFlush();       // …and any queue recovered from a deploy/reload that was waiting on this turn
       return;
@@ -5642,7 +5670,11 @@ function pactChatReinjectMigrations(t) {
 function pactChatHealWorktree(t) {
   if (!t || t.worktree || !Array.isArray(t.msgs)) return;
   const lastWt = [...t.msgs].reverse().find((m) => m && typeof m.worktree === "string" && m.worktree)?.worktree;
-  if (lastWt && lastWt !== "main") { t.worktree = lastWt; pactStateSave(); }
+  // Only restore a binding to a worktree that STILL EXISTS. If the conversation's last turn ran in a worktree
+  // that has since been merged+removed, it belongs on main now — restoring the dead binding would just make
+  // the next prompt fail "worktree not found".
+  const exists = (name) => (PACT_ED && Array.isArray(PACT_ED.worktrees)) ? PACT_ED.worktrees.some((w) => w.name === name) : true;
+  if (lastWt && lastWt !== "main" && exists(lastWt)) { t.worktree = lastWt; pactStateSave(); }
 }
 // The head ⇄ menu for a STARTED conversation: migrate to another worktree, merge back + return to main, or
 // return to main without merging.
