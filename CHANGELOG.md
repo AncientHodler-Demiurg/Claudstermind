@@ -4,7 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.89] - 2026-08-19
+## [1.4.90] - 2026-08-19
+
+### Fixed
+- **A reply whose stream events were dropped now shows up in ~8 seconds instead of up to ~25.** The
+  "round looks done but nothing appeared after my prompt" desync is recovered by the self-heal re-verify, but
+  on the **desktop Core cockpit** that only ran on the 25-second heartbeat (it had no fast local timer like
+  the Pact chat's), so a dropped reply could sit invisible for up to ~25s. Added a fast **~4s local self-heal
+  timer** (`WS_HEAL_TIMER`) to the Core cockpit — armed on stream open, cleared on leave — and tightened the
+  idle-looking-but-recently-active re-verify throttle to **~8s** (`WS_HEAL_ACTIVE_QUIET_MS`) on both Core and
+  Pact. The "busy but silent" recovery keeps its 20s threshold (a pane legitimately mid-thought can be quiet
+  briefly). Net: a dropped reply/`result` surfaces roughly 3× faster, whether or not the stream is still
+  delivering heartbeats.
+
+
 
 ### Fixed
 - **The Pact chat box now populates fast on load instead of sitting blank for ~5 seconds.** The load path

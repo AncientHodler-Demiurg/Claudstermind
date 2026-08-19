@@ -528,7 +528,7 @@ function render() {
   if (VIEW !== "cascade" && CASCADE_TIMER) { clearInterval(CASCADE_TIMER); CASCADE_TIMER = null; }
   if (VIEW !== "ops" && OPS_TIMER) { clearInterval(OPS_TIMER); OPS_TIMER = null; }
   if (VIEW !== "relay" && RELAY_TIMER) { clearInterval(RELAY_TIMER); RELAY_TIMER = null; }
-  if (VIEW !== "workspace" && WS_ES) { try { WS_ES.close(); } catch {} WS_ES = null; }
+  if (VIEW !== "workspace" && WS_ES) { try { WS_ES.close(); } catch {} WS_ES = null; if (WS_HEAL_TIMER) { clearInterval(WS_HEAL_TIMER); WS_HEAL_TIMER = null; } }
   if (!(VIEW === "admin" && ADMIN_SECTION === "deploy") && DEPLOY_ES) { try { DEPLOY_ES.close(); } catch {} DEPLOY_ES = null; }
   if (!(VIEW === "admin" && ADMIN_SECTION === "deploy") && RESTART_ES) { try { RESTART_ES.close(); } catch {} RESTART_ES = null; }
   if (VIEW !== "git" && GIT_TIMER) { clearInterval(GIT_TIMER); GIT_TIMER = null; }
@@ -2176,6 +2176,7 @@ let RELAY_TIMER = null;
 let WS_ES = null;   // the Workspace EventSource (SSE stream of Claude session output)
 let WS_LAST_MSG_AT = 0;    // Date.now() of the last message (real event OR heartbeat) this stream delivered
 let WS_STALE_TIMER = null;   // polls WS_LAST_MSG_AT; force-reconnects a stream that's gone quiet too long
+let WS_HEAL_TIMER = null;    // fast (~4s) local self-heal — surfaces a dropped reply in ~8s, not the 25s heartbeat gap
 let WS_EVER_CONNECTED = false;   // true after the FIRST successful "hello" — so only a later hello logs as a "reconnect"
 // Comfortably above the 25s server heartbeat: two missed pulses plus slack, not one, so an
 // ordinary single slow tick over a mobile link never triggers a needless reconnect.
@@ -2190,6 +2191,10 @@ const WS_HEAL_QUIET_MS = 20_000;
 // "done" while the agent kept working. This bounds the polling (one scoped resync per tab) yet is long enough
 // to bridge a real outage; once a resync catches the deepwork, the busy-branch takes over and self-sustains.
 const WS_HEAL_ACTIVE_WINDOW_MS = 10 * 60_000;
+// How often an idle-LOOKING but recently-active pane/tab re-verifies against the server. Shorter than
+// WS_HEAL_QUIET_MS so a reply whose stream events were dropped surfaces in ~8s instead of ~20-25s — the
+// "round looks done but nothing showed up" gap. Kept comfortably above a resync round-trip so it can't stack.
+const WS_HEAL_ACTIVE_QUIET_MS = 8_000;
 /* ---------- relay: the tunnel between this LocalHost and the online site ----------
    Symmetric tab. On the LOCAL dashboard it CONTROLS the bridge (enable/disable, address,
    device secret) and shows whether the remote is online + receiving. On the ONLINE relay
@@ -5015,7 +5020,7 @@ function pactChatInit(host) {
   clearInterval(PACT_TICK_TIMER);
   PACT_TICK_TIMER = setInterval(pactChatTickTimer, 1000);   // live "thinking… M:SS" elapsed readout
   clearInterval(PACT_HEAL_TIMER);
-  PACT_HEAL_TIMER = setInterval(pactChatSelfHeal, 8000);    // recover a stuck tab even if the stream stops delivering heartbeats
+  PACT_HEAL_TIMER = setInterval(pactChatSelfHeal, 4000);    // recover a stuck tab even if the stream stops delivering heartbeats (~8s with the WS_HEAL_ACTIVE_QUIET_MS throttle)
 }
 // Ask the server for the authoritative state of any tab that's stuck (marked busy but silent), or the
 // active tab that looks idle right after a turn (a dropped deepwork status). Runs on the SSE heartbeat AND
@@ -5030,7 +5035,7 @@ function pactChatSelfHeal() {
     if (pactChatBusy(t) && (now - (t._lastEventAt || 0)) > WS_HEAL_QUIET_MS && (now - (t._healAt || 0)) > WS_HEAL_QUIET_MS) {
       t._healAt = now;
       wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true } });
-    } else if (t.id === PACT_CHAT.activeId && !pactChatBusy(t) && (now - (t._lastActiveAt || t._lastResultAt || 0)) < WS_HEAL_ACTIVE_WINDOW_MS && (now - (t._statusSyncAt || 0)) > WS_HEAL_QUIET_MS) {
+    } else if (t.id === PACT_CHAT.activeId && !pactChatBusy(t) && (now - (t._lastActiveAt || t._lastResultAt || 0)) < WS_HEAL_ACTIVE_WINDOW_MS && (now - (t._statusSyncAt || 0)) > WS_HEAL_ACTIVE_QUIET_MS) {
       t._statusSyncAt = now;
       wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true } });
     }
@@ -8246,31 +8251,7 @@ function viewWorkspace() {
     // A real (not comment-only) pulse from the server — see the matching server-side comment.
     // No pane state to update here; `WS_ES.onmessage` (below) already stamped `lastStreamMsgAt`
     // for EVERY message including this one, which is this event's entire purpose.
-    if (kind === "heartbeat") {
-      // Self-heal a stuck pane: if a completion ("result") event was silently dropped (e.g. the SSE
-      // subscriber was momentarily evicted), the pane sits on "Working…" forever until a manual
-      // reload. A genuinely active turn streams events constantly, so a pane that's still marked busy
-      // yet has gone quiet for a while is almost certainly one whose end-of-turn we missed — ask the
-      // server for its true current state. Harmless if it really is still working (server says so).
-      const now = Date.now();
-      for (const p of st.panes) {
-        if (!p.sessionKey || p.readonly) continue;
-        // `full` preserves a pane that's showing its whole history ("Show earlier" was clicked): a plain resync
-        // ships only the tail (transcript cap), which would otherwise re-truncate the revealed older messages.
-        const args = { sessionKey: p.sessionKey, full: !!p._showAllTurns };
-        if (paneBusy(p) && (now - (p._lastEventAt || 0)) > WS_HEAL_QUIET_MS) {
-          p._lastEventAt = now;   // don't re-fire every heartbeat while the resync round-trips
-          wsPost("control", { action: "resync", args });
-        } else if (!paneBusy(p) && (now - (p._lastEventAt || 0)) < WS_HEAL_ACTIVE_WINDOW_MS && (now - (p._statusSyncAt || 0)) > WS_HEAL_QUIET_MS) {
-          // Idle-LOOKING but recently active: the SDK can keep producing in a "deepwork" phase after a turn's
-          // "result" idles the pane, and that status event is easy to miss on a flaky link — leaving the pane
-          // showing "done" while the agent works on. Verify against the server (which knows the true status).
-          p._statusSyncAt = now;
-          wsPost("control", { action: "resync", args });
-        }
-      }
-      return;
-    }
+    if (kind === "heartbeat") { wsSelfHeal(); return; }
     if (kind === "presence") { st.presence = Array.isArray(data.connections) ? data.connections : []; renderPresence(); renderLiveStats(); renderHistory(); return; }
     if (kind === "state") {
       if (Array.isArray(data.worktrees)) {
@@ -8580,6 +8561,30 @@ function viewWorkspace() {
   // relay's per-browser fan-out — is fire-and-forget with no backlog, so a client that was
   // disconnected for even one event's duration loses it silently and permanently. This is the
   // fix: don't try to replay what was missed, just ask what's true right now.
+  // Recover a pane whose stream events were dropped (mobile NAT / relay hiccup): a stuck-"Working…" pane whose
+  // end-of-turn we missed, OR an idle-LOOKING pane that's secretly still in deepwork / whose reply never
+  // rendered ("round looks done but nothing showed up"). Ask the server for the truth. Driven by BOTH the 25s
+  // heartbeat AND a fast ~4s local timer (WS_HEAL_TIMER), throttled per-pane to ~8s, so a dropped reply
+  // surfaces in ~8s instead of up to ~25s. `full` preserves a fully-revealed pane (see resyncOpenPanes).
+  function wsSelfHeal() {
+    if (VIEW !== "workspace") return;
+    const now = Date.now();
+    for (const p of st.panes) {
+      if (!p.sessionKey || p.readonly) continue;
+      const args = { sessionKey: p.sessionKey, full: !!p._showAllTurns };
+      // Busy but silent: keep the longer 20s threshold — a pane legitimately mid-thought (before its first
+      // token, or between tool calls) can be quiet for a bit, and we don't want to resync it every few seconds.
+      if (paneBusy(p) && (now - (p._lastEventAt || 0)) > WS_HEAL_QUIET_MS && (now - (p._healAt || 0)) > WS_HEAL_QUIET_MS) {
+        p._healAt = now;   // throttle so a resync round-trip can't stack
+        wsPost("control", { action: "resync", args });
+      // Idle-LOOKING but recently active: the fast path. A dropped "result"/reply leaves the pane showing
+      // "done" with nothing under it — re-verify every ~8s so it surfaces quickly, not after the 25s heartbeat.
+      } else if (!paneBusy(p) && (now - (p._lastEventAt || 0)) < WS_HEAL_ACTIVE_WINDOW_MS && (now - (p._statusSyncAt || 0)) > WS_HEAL_ACTIVE_QUIET_MS) {
+        p._statusSyncAt = now;
+        wsPost("control", { action: "resync", args });
+      }
+    }
+  }
   function resyncOpenPanes() {
     // Default resync sends only the tail of the transcript (server caps it — see WS_RESYNC_MSG_CAP) so a
     // big conversation shows in a fraction of a second on mobile instead of transferring its whole history.
@@ -8589,6 +8594,10 @@ function viewWorkspace() {
   }
   function openStream() {
     try { WS_ES && WS_ES.close(); } catch {}
+    // Fast local self-heal — independent of the 25s heartbeat, so a dropped reply surfaces in ~8s even if the
+    // stream goes quiet (no heartbeats). Re-armed per stream; cleared first so reopens don't stack timers.
+    clearInterval(WS_HEAL_TIMER);
+    WS_HEAL_TIMER = setInterval(wsSelfHeal, 4000);
     // Identify this terminal so the server's presence roster can name it.
     const q = "?conn=" + encodeURIComponent(CONN.id) + "&label=" + encodeURIComponent(CONN.label);
     WS_ES = new EventSource("/api/workspace/stream" + q);
