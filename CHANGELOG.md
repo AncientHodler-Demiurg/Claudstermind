@@ -4,7 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.95] - 2026-08-19
+## [1.4.96] - 2026-08-19
+
+### Added
+- **Interrupted-prompt management, in both the Core cockpit and the Pact chat.** A prompt whose turn was cut
+  off before any reply (engine restart / dropped connection) is now **recognised automatically** — the tab is
+  idle, it's the trailing message, nothing answered it — and rendered **dark blue**. It gets two corner
+  buttons: a **green ▶ (resume)** on the left and a **red ✕ (discard)** on the right.
+  - **▶ Resume** tells the agent it was interrupted and to continue it — it sends a short *"resume my message
+    P#n, complete what it asked"* instruction (never a re-paste of your text), the agent picks the work back
+    up, and the prompt **stays dark blue** as a "was-interrupted, recaptured" record.
+  - **✕ Discard** marks it **red** (dead in the workflow); your **next prompt then tells the agent to
+    disregard it**, so it isn't included in processing.
+  - State (`interrupted` / `discarded`) is per-prompt and **persisted** — Pact via the IDE-state blob (syncs
+    across your devices), Core via browser storage (per-device). Once a reply lands the action buttons drop
+    but the colour stays, so the history of what was interrupted/discarded is preserved.
+
+
 
 ### Added
 - **An engine-restarting deploy/reload can now WAIT for running agents to finish instead of only offering

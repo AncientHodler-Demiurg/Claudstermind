@@ -4715,7 +4715,7 @@ function pactStateSnapshot() {
     rowFlex: Array.isArray(PACT_ED.rowFlex) ? PACT_ED.rowFlex.slice() : null,
   };
   const chat = {
-    tabs: PACT_CHAT.tabs.map((t) => ({ key: t.key, name: t.name, draft: t.draft || "", resume: t.resume || null, prime: !!t.prime, worktree: t.worktree || null, migrations: t.migrations || [] })),
+    tabs: PACT_CHAT.tabs.map((t) => ({ key: t.key, name: t.name, draft: t.draft || "", resume: t.resume || null, prime: !!t.prime, worktree: t.worktree || null, migrations: t.migrations || [], promptStates: t.promptStates || {} })),
     activeIndex: Math.max(0, PACT_CHAT.tabs.findIndex((t) => t.id === PACT_CHAT.activeId)),
   };
   const right = document.querySelector(".pact-right");
@@ -4770,6 +4770,8 @@ function pactRestoreChat(ch) {
       worktree: (ts.worktree && ts.worktree !== "main") ? ts.worktree : undefined,
       // recorded worktree-migration markers, re-injected into the transcript on rehydrate (see pactChatReinjectMigrations)
       migrations: Array.isArray(ts.migrations) ? ts.migrations.filter((m) => m && typeof m.at === "number") : [],
+      // interrupted/discarded prompt states ({ <at>: "i" | "d" }) survive reloads (and sync via IDE state)
+      promptStates: (ts.promptStates && typeof ts.promptStates === "object" && !Array.isArray(ts.promptStates)) ? ts.promptStates : {},
       // the prime (undeletable) conversation flag survives reloads; ensurePrime backfills older layouts
       prime: !!ts.prime };
   });
@@ -5578,6 +5580,14 @@ async function pactChatDispatch(t, text, images) {
   let payload = text;
   const firstMsg = !t.started;
   if (firstMsg) { t.started = true; payload = PACT_CHAT_PREAMBLE + "\n\n" + text; }   // orient the agent on the first message
+  // If interrupted prompts sitting just above were DISCARDED, tell the agent to skip them — this is what
+  // "the next prompt won't include it in its processing" means. Rides the PAYLOAD only, never the visible
+  // bubble (userMsg.text below stays clean).
+  const _discarded = pactTrailingDiscarded(t);
+  if (_discarded.length) {
+    const snips = _discarded.map((m) => `“${(m.text || "").replace(/\s+/g, " ").slice(0, 70)}”`).join("; ");
+    payload = `(Please DISREGARD my discarded message(s) above — do not act on ${_discarded.length > 1 ? "them" : "it"}: ${snips}. Act only on what follows.)\n\n` + payload;
+  }
   // Auto-name a still-default chat from its FIRST real user line (the clean `text`, never the skill
   // preamble). Keeps the tab + history readable; stored in the shared names map so both surfaces agree.
   if (firstMsg && t.key && !PACT_CHAT_NAMES[t.key] && /^Chat \d+$/.test(t.name || "")) {
@@ -5962,6 +5972,53 @@ function pactStampNumbers(t) {
 function wsNumFmt(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
 // A corner badge: P#12 on a prompt, R#1,349 on a response. Non-interactive — just a positional label.
 function pactNumBadge(kind, n) { return (typeof n === "number") ? el("span", { class: "pc-num pc-num-" + kind.toLowerCase(), title: (kind === "P" ? "Prompt" : "Response") + " #" + wsNumFmt(n) + " in this conversation" }, [kind + "#" + wsNumFmt(n)]) : ""; }
+// ===== INTERRUPTED PROMPTS =====================================================================
+// A prompt whose turn never produced a reply (an engine restart / dropped connection cut it off) is an
+// INTERRUPTED prompt: the tab is IDLE and this user message is the trailing one with no assistant reply after
+// it. We MARK it (persisted in t.promptStates by its `at`, so it survives reloads and — Pact — syncs across
+// devices) and colour it DARK BLUE. State per prompt: "i" = interrupted (dark blue), "d" = discarded (red).
+// The two corner buttons (only on the still-actionable trailing interrupted prompt): ▶ resume (tells the
+// agent it was interrupted and to continue it — no re-paste) · ✕ discard (marks it dead; the NEXT prompt
+// tells the agent to disregard it). Once a reply lands it's no longer trailing, so the buttons drop but the
+// dark-blue "was interrupted" record stays.
+function pactInterruptedIdx(t) {   // index of the trailing unanswered user prompt on an idle tab, or -1
+  if (!t || pactChatBusy(t) || !Array.isArray(t.msgs)) return -1;
+  for (let i = t.msgs.length - 1; i >= 0; i--) { const m = t.msgs[i]; if (!m) continue; if (m.role === "assistant") return -1; if (m.role === "user") return i; }
+  return -1;
+}
+function pactMarkInterrupt(t) {
+  if (!t || !Array.isArray(t.msgs)) return;
+  t.promptStates = t.promptStates || {};
+  const idx = pactInterruptedIdx(t);
+  let changed = false;
+  if (idx >= 0) { const at = t.msgs[idx].at; if (typeof at === "number" && !t.promptStates[at]) { t.promptStates[at] = "i"; changed = true; } }   // auto-recognise
+  t.msgs.forEach((m, i) => {
+    if (!m || m.role !== "user") return;
+    const st = (typeof m.at === "number") ? t.promptStates[m.at] : undefined;   // "i" | "d" | undefined
+    const btns = (i === idx) && st === "i";                                     // actionable only on the trailing, non-discarded one
+    if (m._intrState !== (st || "") || m._intrBtns !== btns) { m._intrState = st || ""; m._intrBtns = btns; m._node = null; }
+  });
+  if (changed) pactStateSave();
+}
+const PACT_RESUME_MSG = (n) => `↻ Resume: my message${typeof n === "number" ? " (P#" + wsNumFmt(n) + ")" : ""} above was interrupted before you finished it — please resume and complete exactly what it asked, as written (don't make me repeat it).`;
+function pactChatResumeInterrupted(m) {
+  const t = pactChatActive(); if (!t || !m) return;
+  m._intrBtns = false; m._node = null;   // being handled now → drop the buttons (stays dark blue as a record)
+  pactChatDispatch(t, PACT_RESUME_MSG(m._pnum), []);   // a short continue instruction — never a re-paste of the original text
+}
+function pactChatDiscardInterrupted(m) {
+  const t = pactChatActive(); if (!t || !m || typeof m.at !== "number") return;
+  t.promptStates = t.promptStates || {};
+  t.promptStates[m.at] = "d"; m._intrState = "d"; m._intrBtns = false; m._node = null;
+  pactStateSave(); pactChatPaint(t);
+}
+// The trailing DISCARDED prompts (after the last reply) whose exclusion the next real prompt must carry, so
+// the agent skips them. Returns [] when none.
+function pactTrailingDiscarded(t) {
+  const out = []; const ms = (t && t.msgs) || []; const ps = (t && t.promptStates) || {};
+  for (let i = ms.length - 1; i >= 0; i--) { const m = ms[i]; if (!m) continue; if (m.role === "assistant") break; if (m.role === "user" && typeof m.at === "number" && ps[m.at] === "d") out.unshift(m); }
+  return out;
+}
 function pactChatMsgNode(m) {
   if (m.role === "user") {
     // `m.images` ride two shapes: a just-sent message carries raw { dataUrl } (rendered inline);
@@ -5979,7 +6036,16 @@ function pactChatMsgNode(m) {
       })));
     }
     kids.push(m.text);
-    return el("div", { class: "pc-msg pc-user" }, [pactNumBadge("P", m._pnum), ...kids]);
+    const cls = "pc-msg pc-user" + (m._intrState === "d" ? " pc-discarded" : m._intrState === "i" ? " pc-interrupted" : "");
+    const extra = [];
+    if (m._intrBtns) {
+      const resume = el("button", { class: "pc-intr-btn pc-intr-resume", title: "Resume — tell the agent this prompt was interrupted and to continue it (no re-paste)" }, ["▶"]);
+      resume.addEventListener("click", (e) => { e.stopPropagation(); pactChatResumeInterrupted(m); });
+      const discard = el("button", { class: "pc-intr-btn pc-intr-discard", title: "Discard — mark it dead; your next prompt won't include it" }, ["✕"]);
+      discard.addEventListener("click", (e) => { e.stopPropagation(); pactChatDiscardInterrupted(m); });
+      extra.push(resume, discard);
+    }
+    return el("div", { class: cls }, [pactNumBadge("P", m._pnum), ...kids, ...extra]);
   }
   if (m.role === "assistant") {
     const kids = [];
@@ -6049,6 +6115,7 @@ function pactChatPaint(t) {
   // the older ones load in above it. `t._showFrom` is the revealed start index; it sticks as new messages
   // arrive at the tail, and never exceeds the cap start (so the tail always shows).
   pactStampNumbers(t);   // assign each prompt/response its absolute P#/R# before rendering the badges
+  pactMarkInterrupt(t);  // recognise/paint interrupted (dark blue) + discarded (red) prompts and their buttons
   const capStart = pactVisibleStart(t.msgs);
   const start = (typeof t._showFrom === "number") ? Math.max(0, Math.min(t._showFrom, capStart)) : capStart;
   const visibleMsgs = t.msgs.slice(start);
@@ -6853,7 +6920,7 @@ function viewWorkspace() {
     try {
       localStorage.setItem(WS_STORE_KEY, JSON.stringify({
         v: 1, cols: st.cols, rows: st.rows, sidebarMode: st.sidebarMode, defaultMode: st.defaultMode, activeId: st.activeId,
-        panes: st.panes.map((p) => ({ id: p.id, sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree || "main", mode: p.mode, draft: p.draft || "" })),
+        panes: st.panes.map((p) => ({ id: p.id, sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree || "main", mode: p.mode, draft: p.draft || "", promptStates: p.promptStates || {} })),
       }));
     } catch { /* private mode / quota — the workspace still works, it just forgets */ }
   }
@@ -6868,6 +6935,7 @@ function viewWorkspace() {
       ...newPane(),
       id: p.id || wsUuid(), sessionKey: p.sessionKey || wsUuid(), repo: p.repo || "", worktree: p.worktree || "main",
       mode: WS_MODE_IDS.has(p.mode) ? p.mode : st.defaultMode, draft: typeof p.draft === "string" ? p.draft : "",
+      promptStates: (p.promptStates && typeof p.promptStates === "object" && !Array.isArray(p.promptStates)) ? p.promptStates : {},
     }));
     while (st.panes.length < st.cols * st.rows) st.panes.push(newPane());
     st.activeId = st.panes.some((p) => p.id === s.activeId) ? s.activeId : st.panes[0].id;
@@ -7180,6 +7248,47 @@ function viewWorkspace() {
     }
   }
   function wsNumBadge(kind, n) { return (typeof n === "number") ? el("span", { class: "ws-num ws-num-" + kind.toLowerCase(), title: (kind === "P" ? "Prompt" : "Response") + " #" + wsNumFmt(n) }, [kind + "#" + wsNumFmt(n)]) : ""; }
+  // Interrupted-prompt handling (mirrors the Pact chat — see pactMarkInterrupt): recognise a prompt whose
+  // turn never replied (idle pane, trailing user message, no assistant after) → DARK BLUE, persisted in
+  // p.promptStates by `at`. "i" = interrupted (dark blue), "d" = discarded (red). Buttons only on the
+  // still-trailing interrupted one: ▶ resume (continue it) · ✕ discard (mark dead; excluded from next prompt).
+  function wsInterruptedIdx(p) {
+    if (!p || paneBusy(p) || !Array.isArray(p.transcript)) return -1;
+    for (let i = p.transcript.length - 1; i >= 0; i--) { const m = p.transcript[i]; if (!m) continue; if (m.role === "assistant" || m.kind === "assistant") return -1; if (m.role === "user" || m.kind === "user") return i; }
+    return -1;
+  }
+  function wsMarkInterrupt(p) {
+    if (!p || !Array.isArray(p.transcript)) return;
+    p.promptStates = p.promptStates || {};
+    const idx = wsInterruptedIdx(p);
+    let changed = false;
+    if (idx >= 0) { const at = p.transcript[idx].at; if (typeof at === "number" && !p.promptStates[at]) { p.promptStates[at] = "i"; changed = true; } }
+    p.transcript.forEach((m, i) => {
+      if (!m || !(m.role === "user" || m.kind === "user")) return;
+      const st = (typeof m.at === "number") ? p.promptStates[m.at] : undefined;
+      const wantState = st || "", wantBtns = (i === idx) && st === "i";
+      if (m._intrState !== wantState || m._intrBtns !== wantBtns) { m._intrState = wantState; m._intrBtns = wantBtns; m._node = null; }   // re-render on change (state changes only in the live last turn, so the turn cache stays valid)
+      m._paneId = p.id;
+    });
+    if (changed) saveLayout();
+  }
+  function wsTrailingDiscarded(p) {
+    const out = []; const tr = (p && p.transcript) || []; const ps = (p && p.promptStates) || {};
+    for (let i = tr.length - 1; i >= 0; i--) { const m = tr[i]; if (!m) continue; if (m.role === "assistant" || m.kind === "assistant") break; if ((m.role === "user" || m.kind === "user") && typeof m.at === "number" && ps[m.at] === "d") out.unshift(m); }
+    return out;
+  }
+  const WS_RESUME_MSG = (n) => `↻ Resume: my message${typeof n === "number" ? " (P#" + wsNumFmt(n) + ")" : ""} above was interrupted before you finished it — please resume and complete exactly what it asked, as written (don't make me repeat it).`;
+  function wsResumeInterrupted(m) {
+    const p = st.panes.find((x) => x.id === m._paneId); if (!p) return;
+    m._intrBtns = false; m._node = null;
+    dispatchPrompt(p, WS_RESUME_MSG(m._pnum), []);   // short continue instruction, not a re-paste
+  }
+  function wsDiscardInterrupted(m) {
+    const p = st.panes.find((x) => x.id === m._paneId); if (!p || typeof m.at !== "number") return;
+    p.promptStates = p.promptStates || {};
+    p.promptStates[m.at] = "d"; m._intrState = "d"; m._intrBtns = false; m._node = null;
+    saveLayout(); paintPane(p);
+  }
   function renderItem(m) {
     if (m.role === "user" || m.kind === "user") {
       const kids = [wsNumBadge("P", m._pnum), el("b", {}, ["you  "])];
@@ -7208,7 +7317,14 @@ function viewWorkspace() {
         kids.push(el("span", { class: "ws-deepwork-risk-tag" }, ["⚠ sent as Deep Work was wrapping up — reply may still be catching up"]));
         return line("ws-user ws-deepwork-risk", kids);
       }
-      return line("ws-user", kids);
+      if (m._intrBtns) {
+        const resume = el("button", { class: "ws-intr-btn ws-intr-resume", title: "Resume — tell the agent this prompt was interrupted and to continue it (no re-paste)" }, ["▶"]);
+        resume.addEventListener("click", (e) => { e.stopPropagation(); wsResumeInterrupted(m); });
+        const discard = el("button", { class: "ws-intr-btn ws-intr-discard", title: "Discard — mark it dead; your next prompt won't include it" }, ["✕"]);
+        discard.addEventListener("click", (e) => { e.stopPropagation(); wsDiscardInterrupted(m); });
+        kids.push(resume, discard);
+      }
+      return line("ws-user" + (m._intrState === "d" ? " ws-discarded" : m._intrState === "i" ? " ws-interrupted" : ""), kids);
     }
     if (m.role === "assistant" || m.kind === "assistant") return line("ws-assistant", [wsNumBadge("R", m._rnum), ...renderAssistantText(m.text)]);
     if (m.kind === "tool_use") return line("ws-tool", [el("i", { class: "ti ti-tool" }, []), " ", (m.tools || []).map((t) => t.name).join(", ")]);
@@ -7314,6 +7430,7 @@ function viewWorkspace() {
   function renderTranscriptInto(ui, p, tailExtras) {
     const t = ui.transcriptEl;
     wsStampNumbers(p);   // assign each prompt/response its absolute P#/R# before turns render
+    wsMarkInterrupt(p);  // recognise/paint interrupted (dark blue) + discarded (red) prompts + their buttons
     const allTurns = splitTurns(p.transcript);
     const showAll = !!p._showAllTurns;
     const turns = showAll ? allTurns : allTurns.slice(-WS_TURN_RENDER_CAP);
@@ -8775,6 +8892,12 @@ function viewWorkspace() {
   // the pane goes idle, not just a prompt typed while already idle.
   async function dispatchPrompt(p, text, images) {
     assignKey(p);
+    // Discarded interrupted prompts sitting just above → instruct the agent to skip them ("the next prompt
+    // won't include it in its processing"). Core echoes the sent text, so — unlike the Pact chat, where this
+    // rides a hidden payload — this note is visible in the next prompt bubble, which also makes the skip explicit.
+    const _disc = wsTrailingDiscarded(p);
+    let sendText = text;
+    if (_disc.length) { const snips = _disc.map((m) => `“${(m.text || "").replace(/\s+/g, " ").slice(0, 70)}”`).join("; "); sendText = `(Please DISREGARD my discarded message(s) above — do not act on ${_disc.length > 1 ? "them" : "it"}: ${snips}. Act only on what follows.)\n\n` + text; }
     // Don't append optimistically. The server echoes the accepted user turn to every terminal
     // (so a SHARED session shows the prompt in both windows), and refuses it with `busy` if a
     // turn is already running — appending here would show a prompt that was never actually sent.
@@ -8782,7 +8905,7 @@ function viewWorkspace() {
     // (see onPayload's "busy" handling), both are needed to re-queue this attempt exactly as if
     // paneBusy() had correctly seen it coming — not just the text.
     p._pendingText = text; p._pendingImages = images || [];
-    const body = { sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree, text, mode: p.mode, by: CONN.id };
+    const body = { sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree, text: sendText, mode: p.mode, by: CONN.id };
     if (images && images.length) body.images = images.map((img) => ({ mediaType: img.mediaType, base64Data: img.base64Data }));
     // Model/effort/fast-mode ride every prompt too — this is what actually applies them for a
     // BRAND NEW session (setModel/setEffort/setFastMode control actions only affect a session
