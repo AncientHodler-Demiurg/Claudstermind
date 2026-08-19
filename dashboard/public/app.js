@@ -5210,7 +5210,8 @@ function pactChatRoute({ kind, sessionKey, data }) {
         if (lastIn && tail[0] && lastIn.role === tail[0].role && (lastIn.text || "") === (tail[0].text || "")) tail = tail.slice(1);
         tt.msgs = pactPreserveElapsed(tt.msgs, incoming).concat(tail);
         tt._transcriptTruncated = !!(data && data.transcriptTruncated);   // baseline is the tail only — older history fetchable via "Show earlier"
-      } else if (incoming.length >= tt.msgs.length) { tt.msgs = pactPreserveElapsed(tt.msgs, incoming); tt._transcriptTruncated = !!(data && data.transcriptTruncated); }
+        pactSetNumOffsets(tt, data);   // absolute P#/R# numbering: how many prompts/responses precede this window
+      } else if (incoming.length >= tt.msgs.length) { tt.msgs = pactPreserveElapsed(tt.msgs, incoming); tt._transcriptTruncated = !!(data && data.transcriptTruncated); pactSetNumOffsets(tt, data); }
       pactChatReinjectMigrations(tt);   // splice the worktree-migration markers back into the rehydrated transcript
       pactChatHealWorktree(tt);         // recover a worktree binding the IDE-state layout may have lost
       pactChatSetLoading(tt, false);    // transcript arrived — drop the loader
@@ -5245,7 +5246,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
     case "resync": {
       const incoming = pactTranscriptToMsgs(d.transcript);
       const dec = pactResyncDecision(t.msgs.length, incoming.length, d.status, d.live);
-      if (dec.replace) { t.msgs = pactPreserveElapsed(t.msgs, incoming); pactChatReinjectMigrations(t); pactChatHealWorktree(t); t._transcriptTruncated = !!d.transcriptTruncated; }   // keep a live-stamped "Thought for …" the daemon hasn't persisted yet; re-add migration markers; recover a lost worktree binding
+      if (dec.replace) { t.msgs = pactPreserveElapsed(t.msgs, incoming); pactChatReinjectMigrations(t); pactChatHealWorktree(t); t._transcriptTruncated = !!d.transcriptTruncated; pactSetNumOffsets(t, d); }   // keep a live-stamped "Thought for …" the daemon hasn't persisted yet; re-add migration markers; recover a lost worktree binding; refresh P#/R# offsets
       pactChatSetLoading(t, false);   // a resync also satisfies an in-flight load — drop the loader
       if (d.usage) t.usage = d.usage;
       if (d.status) t.status = d.status;
@@ -5859,6 +5860,23 @@ function pactRenderUsageLimits() {
   elMain.classList.toggle("--warn", r.max >= 80 && r.max < 95);   // amber as you approach a limit
   elMain.classList.toggle("--hot", r.max >= 95);                  // red when nearly capped
 }
+// Store the ABSOLUTE numbering offsets from a transcript/resync reply: how many prompts (user) and responses
+// (assistant) precede the loaded window. Lets P#/R# count the messages that weren't shipped, so a number
+// refers to the same turn no matter how much of the history is on screen.
+function pactSetNumOffsets(t, data) { if (!t) return; t._promptOffset = (data && data.promptOffset) || 0; t._responseOffset = (data && data.responseOffset) || 0; }
+// Stamp each prompt/response with its absolute number (P#n / R#n), counting from the offset. Skips tool rows,
+// migration markers, notes, etc. Invalidates a cached node whose number changed so the badge re-renders.
+function pactStampNumbers(t) {
+  if (!t || !Array.isArray(t.msgs)) return;
+  let p = t._promptOffset || 0, r = t._responseOffset || 0;
+  for (const m of t.msgs) {
+    if (!m) continue;
+    if (m.role === "user") { const n = ++p; if (m._pnum !== n) { m._pnum = n; m._node = null; } }
+    else if (m.role === "assistant") { const n = ++r; if (m._rnum !== n) { m._rnum = n; m._node = null; } }
+  }
+}
+// A small corner badge: P#12 on a prompt, R#34 on a response. Non-interactive — just a positional label.
+function pactNumBadge(kind, n) { return (typeof n === "number") ? el("span", { class: "pc-num pc-num-" + kind.toLowerCase(), title: (kind === "P" ? "Prompt" : "Response") + " #" + n + " in this conversation" }, [kind + "#" + n]) : ""; }
 function pactChatMsgNode(m) {
   if (m.role === "user") {
     // `m.images` ride two shapes: a just-sent message carries raw { dataUrl } (rendered inline);
@@ -5876,7 +5894,7 @@ function pactChatMsgNode(m) {
       })));
     }
     kids.push(m.text);
-    return el("div", { class: "pc-msg pc-user" }, kids);
+    return el("div", { class: "pc-msg pc-user" }, [pactNumBadge("P", m._pnum), ...kids]);
   }
   if (m.role === "assistant") {
     const kids = [];
@@ -5887,7 +5905,7 @@ function pactChatMsgNode(m) {
     if (typeof window.mdRender === "function") body.innerHTML = window.mdRender(m.text); else body.textContent = m.text;
     wsAttachCopyButtons(body);   // ⧉ copy on every code block (handoff windows etc.)
     kids.push(body);
-    return el("div", { class: "pc-msg pc-asst" }, kids);
+    return el("div", { class: "pc-msg pc-asst" }, [pactNumBadge("R", m._rnum), ...kids]);
   }
   if (m.kind === "tool_use") {
     // Expandable, like the Core cockpit: the tool names show at a glance; tap to reveal each call's
@@ -5945,6 +5963,7 @@ function pactChatPaint(t) {
   // where it is — the stick controller's anchor restore holds the message you're reading in place while
   // the older ones load in above it. `t._showFrom` is the revealed start index; it sticks as new messages
   // arrive at the tail, and never exceeds the cap start (so the tail always shows).
+  pactStampNumbers(t);   // assign each prompt/response its absolute P#/R# before rendering the badges
   const capStart = pactVisibleStart(t.msgs);
   const start = (typeof t._showFrom === "number") ? Math.max(0, Math.min(t._showFrom, capStart)) : capStart;
   const visibleMsgs = t.msgs.slice(start);
@@ -7064,9 +7083,21 @@ function viewWorkspace() {
     if (last < text.length) parts.push(...renderProseBlock(text.slice(last)));
     return parts;
   }
+  // Absolute prompt/response numbering (P#n / R#n), stamped on the transcript so a cached turn node keeps its
+  // number, counting from the server-sent offsets so it includes prompts/responses not currently loaded.
+  function wsStampNumbers(p) {
+    if (!p || !Array.isArray(p.transcript)) return;
+    let pn = p._promptOffset || 0, rn = p._responseOffset || 0;
+    for (const m of p.transcript) {
+      if (!m) continue;
+      if (m.role === "user" || m.kind === "user") m._pnum = ++pn;
+      else if (m.role === "assistant" || m.kind === "assistant") m._rnum = ++rn;
+    }
+  }
+  function wsNumBadge(kind, n) { return (typeof n === "number") ? el("span", { class: "ws-num ws-num-" + kind.toLowerCase(), title: (kind === "P" ? "Prompt" : "Response") + " #" + n }, [kind + "#" + n]) : ""; }
   function renderItem(m) {
     if (m.role === "user" || m.kind === "user") {
-      const kids = [el("b", {}, ["you  "])];
+      const kids = [wsNumBadge("P", m._pnum), el("b", {}, ["you  "])];
       // Root-caused a real "the image disappears from the UI the instant I hit send" report: the
       // image was always saved server-side and attached to the persisted turn — this pane just
       // never rendered it. `m.images`/`m.workspaceId` now ride the live "user" event AND the
@@ -7094,7 +7125,7 @@ function viewWorkspace() {
       }
       return line("ws-user", kids);
     }
-    if (m.role === "assistant" || m.kind === "assistant") return line("ws-assistant", renderAssistantText(m.text));
+    if (m.role === "assistant" || m.kind === "assistant") return line("ws-assistant", [wsNumBadge("R", m._rnum), ...renderAssistantText(m.text)]);
     if (m.kind === "tool_use") return line("ws-tool", [el("i", { class: "ti ti-tool" }, []), " ", (m.tools || []).map((t) => t.name).join(", ")]);
     if (m.kind === "tool_result") return line("ws-toolres", ["✓ tool result"]);
     if (m.kind === "result") return line("ws-result", [`— done · ${(m.usage?.output_tokens || 0)} out tok`]);
@@ -7197,6 +7228,7 @@ function viewWorkspace() {
   // back to a full replaceChildren whenever the stable prefix can't be trusted.
   function renderTranscriptInto(ui, p, tailExtras) {
     const t = ui.transcriptEl;
+    wsStampNumbers(p);   // assign each prompt/response its absolute P#/R# before turns render
     const allTurns = splitTurns(p.transcript);
     const showAll = !!p._showAllTurns;
     const turns = showAll ? allTurns : allTurns.slice(-WS_TURN_RENDER_CAP);
@@ -8347,6 +8379,7 @@ function viewWorkspace() {
         if ((p._gen || 0) !== req.gen) continue;   // this pane has moved on since the request — discard, don't apply
         p.transcript = wsBackfillTurnWorkspace(data.transcript || [], data.workspaceId || wsWorkspaceId(data.repo || p.repo, data.worktree || p.worktree));
         p._transcriptTruncated = !!data.transcriptTruncated;   // server sent only the tail — more is fetchable via "Show earlier"
+        p._promptOffset = data.promptOffset || 0; p._responseOffset = data.responseOffset || 0;   // absolute P#/R# numbering (counts the un-shipped ones)
         p._expandedGroups = new Set();   // a freshly-(re)opened transcript has no expand state yet
         p._showAllTurns = false;         // a (re)opened conversation starts capped to recent turns
         p._scrollBottomNext = true;      // …and lands at the bottom (latest), not scrolled up
@@ -8442,7 +8475,7 @@ function viewWorkspace() {
       if (data.kind === "resync") {
         for (const p of targets) {
           const prevStatus = p.status, prevLen = (p.transcript || []).length;
-          if (Array.isArray(data.transcript)) { p.transcript = wsBackfillTurnWorkspace(data.transcript, data.workspaceId || wsWorkspaceId(p.repo, p.worktree)); p._transcriptTruncated = !!data.transcriptTruncated; }
+          if (Array.isArray(data.transcript)) { p.transcript = wsBackfillTurnWorkspace(data.transcript, data.workspaceId || wsWorkspaceId(p.repo, p.worktree)); p._transcriptTruncated = !!data.transcriptTruncated; p._promptOffset = data.promptOffset || 0; p._responseOffset = data.responseOffset || 0; }
           if (data.status) p.status = data.status;
           if (data.usage) p.usage = data.usage;
           if (data.mode) p.mode = data.mode;

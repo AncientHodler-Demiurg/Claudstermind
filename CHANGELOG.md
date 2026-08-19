@@ -4,7 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.90] - 2026-08-19
+## [1.4.91] - 2026-08-19
+
+### Added
+- **Every prompt and response now carries an absolute position number you can refer to** — `P#12` on a
+  prompt, `R#34` on a response — a small non-interactive corner tag, in **both** the Core cockpit and the
+  Pact chat. The counters are independent (prompts vs responses) and count the WHOLE conversation, including
+  turns not currently on screen: the server reports how many prompts/responses precede the loaded window
+  (`promptOffset` / `responseOffset` on the capped transcript), so a number means the same thing whether the
+  history is fully loaded, truncated to the tail, or partly hidden behind "Show earlier". So you can say
+  "re-read R#34" or "go back to P#9" and it's unambiguous.
+- **Agent responses now sit in their own rectangle**, like prompts do, so one response = one box = one number
+  (a turn that streams several answer blocks gets one numbered box each). Prompts keep their blue box; the
+  orange/red queued-prompt boxes are unchanged. Tool-call rows are not boxed or numbered — only prompts and
+  responses. Test: `lib/workspace.test.mjs` (offsets on a capped transcript).
+
+
 
 ### Fixed
 - **A reply whose stream events were dropped now shows up in ~8 seconds instead of up to ~25.** The
