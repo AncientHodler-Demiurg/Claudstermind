@@ -4,7 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.5.1] - 2026-08-20
+## [1.5.2] - 2026-08-20
+
+### Added
+- **A per-box "✓ Keep (N)" button in the Pact editor**, so you can accept the agent's edits to *just that
+  box* — the one tied to its worktree — instead of only the global "Keep All". When a box (e.g. one bound to
+  the `dpdc` worktree) shows agent edits, a green **✓ Keep (N)** appears in its footer that accepts only that
+  box's changes and leaves other boxes' pending diffs alone. The global **Keep All** stays as a convenience
+  for accepting every box at once.
+
+
 
 ### Fixed
 - **Switching to a conversation on a phone now lands on its latest response.** The real cause the earlier

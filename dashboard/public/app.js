@@ -3519,6 +3519,14 @@ function pactEdRenderGroup(g) {
   // All box controls live on a slim bottom strip (footer): contextual Run/preview on the left; font,
   // split, close, and the Find/Replace toggles on the right. Keeps the header clean for file names. (v1.4.5)
   const ctx = [];
+  // Per-box "Keep" — accept the agent's edits to the files OPEN IN THIS BOX (the box tied to this worktree),
+  // NOT a global save-all. So keeping the agent's changes on your dpdc-worktree box doesn't touch a main-box.
+  const _gd = pactEdGroupDiffCount(g);
+  if (_gd) {
+    const keep = el("button", { class: "pact-ed-keep", title: "Keep the agent's edits to THIS box's files" + (g.worktree && g.worktree !== "main" ? ` (worktree “${g.worktree}”)` : "") + " — accept + resume editing" }, [`✓ Keep (${_gd})`]);
+    keep.addEventListener("click", (e) => { e.stopPropagation(); pactEdKeepGroup(g); });
+    ctx.push(keep);
+  }
   // Worktree binding for THIS box (Stage-1): when more than the main checkout exists, a small selector
   // ties the box to one worktree — every file opened in it reads/saves from that checkout, isolated from
   // the other boxes' worktrees. Hidden when only `main` exists (no clutter until you actually make one).
@@ -4403,6 +4411,15 @@ function pactEdKeepAll() {
   if (!PACT_ED) return;
   for (const g of PACT_ED.groups) for (const t of g.tabs) { if (t.agentDiff) { t.agentDiff = null; t.diffBase = undefined; } }
   pactEdLayout(); pactEdUpdateSaveBar();
+}
+// How many files in THIS box carry an unaccepted agent edit.
+function pactEdGroupDiffCount(g) { return g && Array.isArray(g.tabs) ? g.tabs.filter((t) => t.agentDiff).length : 0; }
+// Accept the agent's edits to the files in ONE box only (the box tied to that worktree) — leaves other
+// boxes' diffs untouched. Re-renders just this box out of diff mode; the global count/button refreshes too.
+function pactEdKeepGroup(g) {
+  if (!PACT_ED || !g) return;
+  for (const t of g.tabs) { if (t.agentDiff) { t.agentDiff = null; t.diffBase = undefined; } }
+  pactEdRenderGroup(g); pactEdUpdateSaveBar();
 }
 // ---- "N files changed by the agent" — a secondary tab in the file-tree column ----
 // After a chat turn, list EVERY file the agent changed in the repo (the working-tree diff vs HEAD),
