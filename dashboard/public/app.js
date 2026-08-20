@@ -3115,22 +3115,38 @@ async function pactEdLoadWorktrees() {
 // at a checkout that no longer exists; its next prompt would fail "worktree not found". Flip those tabs back
 // to main and drop a visible marker, so returning to main happens automatically instead of stranding the tab.
 function pactReconcileWorktrees(worktrees) {
-  if (!PACT_CHAT || !Array.isArray(PACT_CHAT.tabs)) return;
   const have = new Set((worktrees || []).map((w) => w && w.name).filter(Boolean));
-  let changed = false;
-  for (const t of PACT_CHAT.tabs) {
-    if (t.worktree && t.worktree !== "main" && !have.has(t.worktree)) {
-      const gone = t.worktree;
-      t.worktree = undefined;                               // ← back on main; the next prompt runs there
-      // A transient note for immediate feedback; the persistent "returned to main" separator is derived from
-      // the transcript once the next (main) turn runs (pactDeriveMigrations sees the worktree→main transition),
-      // so no explicit marker is added here — that would double it.
-      if (Array.isArray(t.msgs)) t.msgs.push({ kind: "note", text: `⌥ Worktree "${gone}" was merged & removed — this conversation is back on main.` });
-      t._forceBottom = true;
-      changed = true;
+  // CHAT tabs bound to a removed worktree → back to main.
+  if (PACT_CHAT && Array.isArray(PACT_CHAT.tabs)) {
+    let changed = false;
+    for (const t of PACT_CHAT.tabs) {
+      if (t.worktree && t.worktree !== "main" && !have.has(t.worktree)) {
+        const gone = t.worktree;
+        t.worktree = undefined;                               // ← back on main; the next prompt runs there
+        // A transient note for immediate feedback; the persistent "returned to main" separator is derived from
+        // the transcript once the next (main) turn runs (pactDeriveMigrations sees the worktree→main transition),
+        // so no explicit marker is added here — that would double it.
+        if (Array.isArray(t.msgs)) t.msgs.push({ kind: "note", text: `⌥ Worktree "${gone}" was merged & removed — this conversation is back on main.` });
+        t._forceBottom = true;
+        changed = true;
+      }
     }
+    if (changed) { pactStateSave(); pactChatRender(); const a = pactChatActive && pactChatActive(); if (a) pactChatPaint(a); }
   }
-  if (changed) { pactStateSave(); pactChatRender(); const a = pactChatActive && pactChatActive(); if (a) pactChatPaint(a); }
+  // EDITOR boxes bound to a removed worktree → back to main + reload their files (fixes "⚠ worktree not found").
+  if (PACT_ED && Array.isArray(PACT_ED.groups)) {
+    let edChanged = false;
+    for (const g of PACT_ED.groups) {
+      if (g.worktree && g.worktree !== "main" && !have.has(g.worktree)) { pactEdRevertGroupToMain(g); edChanged = true; }
+    }
+    // The file TREE follows a box; if it was pointed at the removed worktree, snap it back to main too.
+    if (PACT_ED._treeWt && PACT_ED._treeWt !== "main" && !have.has(PACT_ED._treeWt)) {
+      PACT_ED._treeWt = "main";
+      if (PACT_ED.treeHdWt) { PACT_ED.treeHdWt.textContent = ""; PACT_ED.treeHdWt.hidden = true; }
+      if (typeof pactTreeRefresh === "function") pactTreeRefresh();
+    }
+    if (edChanged) pactStateSave();
+  }
 }
 // ---- Stage-3: worktree lifecycle from the Pact IDE (create / merge-to-main / remove) --------------
 function pactWorktreeMenu(x, y) {
@@ -3204,6 +3220,23 @@ async function pactEdSetGroupWorktree(g, wt) {
   pactEdRenderGroup(g);
   if (g.id === PACT_ED.activeId) pactEdSyncTreeToActiveBox();   // the active box changed worktree → re-point the tree
   pactStateSave();
+}
+// Force a box back to main because its worktree was REMOVED (merged & deleted — via the UI or by the agent's
+// own git). Unlike pactEdSetGroupWorktree this can't honour a dirty-file guard: the worktree is gone, so those
+// edits couldn't be saved there anyway — reload each file from the main checkout so the box is usable again
+// instead of stuck on "⚠ worktree not found".
+async function pactEdRevertGroupToMain(g) {
+  if (!g) return;
+  g.worktree = undefined;
+  for (const t of g.tabs) { t.worktree = "main"; t.loaded = false; t.dirty = false; t.agentDiff = null; t.diffBase = undefined; t.headContent = undefined; t.error = null; }
+  pactEdRenderGroup(g);
+  for (const t of g.tabs) {
+    let d; try { d = await (await fetch("/api/pact/file?path=" + encodeURIComponent(t.path) + pactWtQ("main"))).json(); } catch { d = { ok: false, error: "unreachable" }; }
+    if (d.ok) { t.content = d.content; t.saved = d.content; t.dirty = false; t.loaded = true; t.error = null; }
+    else { t.error = (d.error || "not found in main"); t.loaded = true; }
+  }
+  pactEdRenderGroup(g);
+  if (g.id === PACT_ED.activeId) pactEdSyncTreeToActiveBox();
 }
 function pactEdAddGroup() {
   if (!PACT_ED || PACT_ED.groups.length >= 8) return;

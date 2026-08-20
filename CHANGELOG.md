@@ -4,7 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.98] - 2026-08-19
+## [1.4.99] - 2026-08-20
+
+### Fixed
+- **A Pact editor box whose worktree was removed now falls back to main instead of showing "⚠ worktree not
+  found".** 1.4.94 taught the *chat* to return to main when its worktree is merged & removed, but the
+  *editor* boxes (and the file tree) kept pointing at the dead checkout. Now the same reconcile covers them:
+  when the live worktree list no longer contains a box's worktree, the box flips back to main and **reloads
+  its open files from the main checkout**, and the file tree snaps back to main too. Runs on load, after any
+  worktree operation, and after each turn — so a worktree the agent merges & deletes itself is picked up.
+
+
 
 ### Fixed
 - **Entering the Core workspace now lands each conversation at the bottom (latest message).** Rebuilding the
