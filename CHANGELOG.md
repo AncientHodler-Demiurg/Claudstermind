@@ -4,7 +4,24 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.4.99] - 2026-08-20
+## [1.5.0] - 2026-08-20
+
+### Fixed
+- **Opening the app now lands the Core conversation at the bottom (latest), not scrolled up at the top.**
+  1.4.98 fixed view-*switching*, but on a fresh app open the transcript loads *asynchronously* (via the
+  resync on stream `hello`) AFTER the grid is built, and that path never forced the scroll. It now lands at
+  the bottom on that initial load, with a next-frame re-pin so it can't land a few lines short while the
+  layout settles.
+
+### Added
+- **Delete a bookmark from the list** — each row in the ★ bookmark list now has a **×** to remove it (the
+  star on the response itself still toggles too). Works on desktop and mobile, and updates the list in place.
+- **Bookmarks now work in the Pact chat too** (previously Core-only). Every Pact response has a **☆ star**;
+  a **★ button** — in the chat head on desktop and the Pact mobile bar — opens the list of starred responses;
+  picking one reveals + scrolls to it (fetching full history first if it's older than the loaded window).
+  Pact bookmarks are stored in the IDE-state blob, so they **sync across your devices**.
+
+
 
 ### Fixed
 - **A Pact editor box whose worktree was removed now falls back to main instead of showing "⚠ worktree not

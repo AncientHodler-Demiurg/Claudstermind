@@ -4756,7 +4756,7 @@ function pactStateSnapshot() {
     rowFlex: Array.isArray(PACT_ED.rowFlex) ? PACT_ED.rowFlex.slice() : null,
   };
   const chat = {
-    tabs: PACT_CHAT.tabs.map((t) => ({ key: t.key, name: t.name, draft: t.draft || "", resume: t.resume || null, prime: !!t.prime, worktree: t.worktree || null, migrations: t.migrations || [], promptStates: t.promptStates || {} })),
+    tabs: PACT_CHAT.tabs.map((t) => ({ key: t.key, name: t.name, draft: t.draft || "", resume: t.resume || null, prime: !!t.prime, worktree: t.worktree || null, migrations: t.migrations || [], promptStates: t.promptStates || {}, bookmarks: Array.isArray(t.bookmarks) ? t.bookmarks : [] })),
     activeIndex: Math.max(0, PACT_CHAT.tabs.findIndex((t) => t.id === PACT_CHAT.activeId)),
   };
   const right = document.querySelector(".pact-right");
@@ -4813,6 +4813,7 @@ function pactRestoreChat(ch) {
       migrations: Array.isArray(ts.migrations) ? ts.migrations.filter((m) => m && typeof m.at === "number") : [],
       // interrupted/discarded prompt states ({ <at>: "i" | "d" }) survive reloads (and sync via IDE state)
       promptStates: (ts.promptStates && typeof ts.promptStates === "object" && !Array.isArray(ts.promptStates)) ? ts.promptStates : {},
+      bookmarks: Array.isArray(ts.bookmarks) ? ts.bookmarks.filter((x) => typeof x === "number") : [],   // starred responses (sync via IDE state)
       // the prime (undeletable) conversation flag survives reloads; ensurePrime backfills older layouts
       prime: !!ts.prime };
   });
@@ -5388,6 +5389,8 @@ function pactChatRoute({ kind, sessionKey, data }) {
       // it follows the tail; if they'd scrolled up, it stays put and lights the "↓ New output" pill.
       pactChatPaint(t);
       pactChatDrainQueue(t);   // a turn that finished during downtime just landed — release any queued follow-up
+      // A bookmark jump to a response not in the loaded window triggered a full resync — now complete the jump.
+      if (t._pendingBookmarkScroll != null) { const at = t._pendingBookmarkScroll; t._pendingBookmarkScroll = null; requestAnimationFrame(() => pactChatScrollToResponse(t, at)); }
       return;
     }
     // A prompt echoed from ANOTHER device (own sends are guarded out) → a turn is starting here: (re)start
@@ -6069,6 +6072,56 @@ function pactTrailingDiscarded(t) {
   for (let i = ms.length - 1; i >= 0; i--) { const m = ms[i]; if (!m) continue; if (m.role === "assistant") break; if (m.role === "user" && typeof m.at === "number" && ps[m.at] === "d") out.unshift(m); }
   return out;
 }
+// ---- bookmark a Pact response (★) + jump to it (mirrors the Core cockpit; bookmarks sync via IDE state) ----
+function pactMarkBookmarks(t) {
+  if (!t || !Array.isArray(t.msgs)) return;
+  const bm = new Set(Array.isArray(t.bookmarks) ? t.bookmarks : []);
+  for (const m of t.msgs) { if (!m || m.role !== "assistant") continue; const b = typeof m.at === "number" && bm.has(m.at); if (m._bookmarked !== b) { m._bookmarked = b; m._node = null; } }
+}
+function pactChatToggleBookmark(m) {
+  const t = pactChatActive(); if (!t || !m || typeof m.at !== "number") return;
+  t.bookmarks = Array.isArray(t.bookmarks) ? t.bookmarks : [];
+  const i = t.bookmarks.indexOf(m.at);
+  if (i >= 0) t.bookmarks.splice(i, 1); else t.bookmarks.push(m.at);
+  m._bookmarked = i < 0; m._node = null;
+  pactStateSave(); pactChatPaint(t);
+}
+function pactChatRemoveBookmark(t, at) {
+  if (!t) return;
+  t.bookmarks = (Array.isArray(t.bookmarks) ? t.bookmarks : []).filter((x) => x !== at);
+  const m = t.msgs.find((x) => x && x.role === "assistant" && x.at === at);
+  if (m) { m._bookmarked = false; m._node = null; }
+  pactStateSave(); pactChatPaint(t);
+}
+function pactChatScrollToResponse(t, at) {
+  if (!t) return;
+  const idx = t.msgs.findIndex((x) => x && x.role === "assistant" && x.at === at);
+  if (idx < 0) { if (t.key) { t._pendingBookmarkScroll = at; wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true, full: true } }); } return; }
+  t._showFrom = 0;   // reveal older messages so the target is in the DOM
+  pactChatPaint(t);
+  const m = t.msgs[idx];
+  requestAnimationFrame(() => { if (m && m._node && m._node.scrollIntoView) { m._node.scrollIntoView({ behavior: "smooth", block: "center" }); m._node.classList.add("ws-bm-flash"); setTimeout(() => m._node.classList.remove("ws-bm-flash"), 1600); } });
+}
+function pactBookmarkRows(t, onPick, refresh) {
+  const marks = (Array.isArray(t.bookmarks) ? t.bookmarks : []).slice().sort((a, b) => a - b);
+  if (!marks.length) return [el("div", { class: "ws-bm-empty" }, ["No bookmarks yet — tap the ☆ on any response."])];
+  return marks.map((at) => {
+    const m = t.msgs.find((x) => x && x.role === "assistant" && x.at === at);
+    const label = m ? ("R#" + wsNumFmt(m._rnum || 0)) : "R#?";
+    const snip = m ? String(m.text || "").replace(/[#*`>_~-]/g, "").replace(/\s+/g, " ").trim().slice(0, 76) : "(older — loads on open)";
+    const del = el("button", { class: "ws-bm-del", type: "button", title: "Remove this bookmark" }, ["×"]);
+    const remove = (e) => { e.preventDefault(); e.stopPropagation(); pactChatRemoveBookmark(t, at); if (refresh) refresh(); };
+    del.addEventListener("click", remove); del.addEventListener("touchend", remove);
+    const row = el("div", { class: "ws-bm-row" }, [el("span", { class: "ws-bm-rn" }, [label]), el("span", { class: "ws-bm-snip" }, [snip || "(empty)"]), del]);
+    const pick = () => { pactChatScrollToResponse(t, at); if (onPick) onPick(); };
+    row.addEventListener("click", pick); row.addEventListener("touchend", (e) => { e.preventDefault(); pick(); });
+    return row;
+  });
+}
+function pactRenderBookmarkPop(pop, t) {   // fill the Pact head's ★ popup (same --show lifecycle as Core)
+  const refresh = () => pop.replaceChildren(el("div", { class: "ws-bm-hd" }, ["★ Bookmarked responses"]), ...pactBookmarkRows(t, () => pop.classList.remove("--show"), refresh));
+  refresh();
+}
 function pactChatMsgNode(m) {
   if (m.role === "user") {
     // `m.images` ride two shapes: a just-sent message carries raw { dataUrl } (rendered inline);
@@ -6106,7 +6159,9 @@ function pactChatMsgNode(m) {
     if (typeof window.mdRender === "function") body.innerHTML = window.mdRender(m.text); else body.textContent = m.text;
     wsAttachCopyButtons(body);   // ⧉ copy on every code block (handoff windows etc.)
     kids.push(body);
-    return el("div", { class: "pc-msg pc-asst" }, [pactNumBadge("R", m._rnum), ...kids]);
+    const star = el("button", { class: "ws-bm-star" + (m._bookmarked ? " on" : ""), title: m._bookmarked ? "Bookmarked — click to remove" : "Bookmark this response" }, [m._bookmarked ? "★" : "☆"]);
+    star.addEventListener("click", (e) => { e.stopPropagation(); pactChatToggleBookmark(m); });
+    return el("div", { class: "pc-msg pc-asst" }, [pactNumBadge("R", m._rnum), star, ...kids]);
   }
   if (m.kind === "tool_use") {
     // Expandable, like the Core cockpit: the tool names show at a glance; tap to reveal each call's
@@ -6166,6 +6221,7 @@ function pactChatPaint(t) {
   // arrive at the tail, and never exceeds the cap start (so the tail always shows).
   pactStampNumbers(t);   // assign each prompt/response its absolute P#/R# before rendering the badges
   pactMarkInterrupt(t);  // recognise/paint interrupted (dark blue) + discarded (red) prompts and their buttons
+  pactMarkBookmarks(t);  // stamp which responses are starred
   const capStart = pactVisibleStart(t.msgs);
   const start = (typeof t._showFrom === "number") ? Math.max(0, Math.min(t._showFrom, capStart)) : capStart;
   const visibleMsgs = t.msgs.slice(start);
@@ -6289,6 +6345,16 @@ function pactChatRender() {
   hist.addEventListener("click", () => pactChatToggleHistory());
   const sync = el("button", { class: "pact-ed-ico", title: "Sync now — re-fetch this conversation's authoritative state (fixes a desync between two open clients)" }, ["↻"]);
   sync.addEventListener("click", () => pactChatForceResync(sync));
+  const bm = el("button", { class: "pact-ed-ico pc-bm-ico", title: "Bookmarked responses — jump to a starred answer" }, ["★"]);
+  const bmPop = el("div", { class: "ws-bm-pop --down" }, []);   // opens downward (the head is at the top)
+  const bmWrap = el("span", { class: "ws-bm-wrap" }, [bm, bmPop]);
+  bm.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const a = pactChatActive();
+    const show = !bmPop.classList.contains("--show");
+    document.querySelectorAll(".ws-bm-pop.--show").forEach((x) => x.classList.remove("--show"));   // one open at a time
+    if (show && a) { pactRenderBookmarkPop(bmPop, a); bmPop.classList.add("--show"); }
+  });
   const modeSel = el("select", { class: "wsel wsel-sm pc-mode", title: "Permission mode for these Pact sessions" },
     WS_MODES.map((m) => el("option", { value: m.id }, [m.short])));
   modeSel.value = PACT_CHAT.mode;
@@ -6307,7 +6373,7 @@ function pactChatRender() {
   // beyond main exists, and LOCKED once the conversation has started (changing cwd mid-chat is confusing).
   // The worktree control now lives ALWAYS-VISIBLE in the compose bar (lower-left, see `wtPill` below), so
   // you can always see + change which checkout a conversation runs in — even before any worktree exists.
-  const headKids = [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, el("span", { class: "ws-spacer" }, []), usageEl, modeSel, chatCollapse];
+  const headKids = [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, bmWrap, el("span", { class: "ws-spacer" }, []), usageEl, modeSel, chatCollapse];
   const head = el("div", { class: "pact-zone-hd pc-head" }, headKids);
   const scroll = el("div", { class: "pc-scroll" }, []);
   const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (⌘/Ctrl+Enter to send)" });
@@ -6693,12 +6759,19 @@ function viewPactMobile() {
     const chatsB = tbtn("💬", "Conversations", openChatConvos, "pactm-cbtn-chats");
     chatsB.dataset.n = String((PACT_CHAT && PACT_CHAT.tabs.length) || 0);
     const histB = tbtn("🕐", "History", openChatHistory);
+    const bmB = tbtn("★", "Bookmarked responses — jump to a starred answer", () => {
+      const a = pactChatActive(); if (!a) return;
+      const body = el("div", { class: "ws-bm-sheet" }, []);
+      const refresh = () => body.replaceChildren(...pactBookmarkRows(a, closeSheet, refresh));
+      refresh();
+      openSheet("★ Bookmarked responses", body);
+    }, "pactm-cbtn-bm");
     const syncB = tbtn("↻", "Sync now — re-fetch the latest state (no page reload)", () => pactChatForceResync(syncB));
     const stopB = tbtn("■", "Stop", () => { const a = pactChatActive(); if (a && a.key) wsPost("stop", { sessionKey: a.key }); }, "pactm-cbtn-stop");
     stopB.hidden = true;
     const sendB = tbtn("➤", "Send", () => pactChatSend(pactChatActive()), "pactm-cbtn-send");
     const spacer = el("span", { class: "ws-spacer" }, []);
-    const bar = el("div", { class: "pactm-cbar" }, [menuB, upB, chatsB, histB, spacer, syncB, stopB, sendB]);
+    const bar = el("div", { class: "pactm-cbar" }, [menuB, upB, chatsB, histB, bmB, spacer, syncB, stopB, sendB]);
     // v1.3.8 — pin the compose to a single line so a long draft stops expanding upward into the
     // transcript. Toggle sits just before the send cluster; state persists across reloads.
     // A thin "drawer" strip UNDER the control bar that hosts the Live/Held scroll-mode bulb — always
@@ -7374,16 +7447,26 @@ function viewWorkspace() {
     // once it lands (see the resync handler's p._pendingBookmarkScroll).
     if (p.sessionKey) { p._pendingBookmarkScroll = at; wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey, full: true } }); }
   }
-  // Rows for the starred-responses list (R#n + a snippet); picking one jumps to it. Shared by the desktop
-  // popup and the mobile sheet. `onPick` closes whichever container is open.
-  function wsBookmarkRows(p, onPick) {
+  function wsRemoveBookmark(p, at) {
+    p.bookmarks = (Array.isArray(p.bookmarks) ? p.bookmarks : []).filter((x) => x !== at);
+    const m = p.transcript.find((x) => x && (x.role === "assistant" || x.kind === "assistant") && x.at === at);
+    if (m) { m._bookmarked = false; m._node = null; }
+    const ui = paneUI.get(p.id); if (ui) ui._txRef = null;   // full re-render so the star clears on a cached turn
+    saveLayout(); paintPane(p);
+  }
+  // Rows for the starred-responses list (R#n + snippet + a × to remove); picking one jumps to it. Shared by
+  // the desktop popup and the mobile sheet. `onPick` closes the container; `refresh` rebuilds it after a delete.
+  function wsBookmarkRows(p, onPick, refresh) {
     const marks = (Array.isArray(p.bookmarks) ? p.bookmarks : []).slice().sort((a, b) => a - b);
     if (!marks.length) return [el("div", { class: "ws-bm-empty" }, ["No bookmarks yet — tap the ☆ on any response."])];
     return marks.map((at) => {
       const m = p.transcript.find((x) => x && (x.role === "assistant" || x.kind === "assistant") && x.at === at);
       const label = m ? ("R#" + wsNumFmt(m._rnum || 0)) : "R#?";
       const snip = m ? String(m.text || "").replace(/[#*`>_~-]/g, "").replace(/\s+/g, " ").trim().slice(0, 76) : "(older — loads on open)";
-      const row = el("div", { class: "ws-bm-row" }, [el("span", { class: "ws-bm-rn" }, [label]), el("span", { class: "ws-bm-snip" }, [snip || "(empty)"])]);
+      const del = el("button", { class: "ws-bm-del", type: "button", title: "Remove this bookmark" }, ["×"]);
+      const remove = (e) => { e.preventDefault(); e.stopPropagation(); wsRemoveBookmark(p, at); if (refresh) refresh(); };
+      del.addEventListener("click", remove); del.addEventListener("touchend", remove);
+      const row = el("div", { class: "ws-bm-row" }, [el("span", { class: "ws-bm-rn" }, [label]), el("span", { class: "ws-bm-snip" }, [snip || "(empty)"]), del]);
       const pick = () => { wsScrollToResponse(p, at); if (onPick) onPick(); };
       row.addEventListener("click", pick); row.addEventListener("touchend", (e) => { e.preventDefault(); pick(); });
       return row;
@@ -7391,11 +7474,15 @@ function viewWorkspace() {
   }
   function wsRenderBookmarkList(p) {   // desktop: fill the popup anchored to the ★ button
     const ui = paneUI.get(p.id); if (!ui || !ui._bmPop) return;
-    ui._bmPop.replaceChildren(el("div", { class: "ws-bm-hd" }, ["★ Bookmarked responses"]), ...wsBookmarkRows(p, () => ui._bmPop.classList.remove("--show")));
+    const refresh = () => wsRenderBookmarkList(p);
+    ui._bmPop.replaceChildren(el("div", { class: "ws-bm-hd" }, ["★ Bookmarked responses"]), ...wsBookmarkRows(p, () => ui._bmPop.classList.remove("--show"), refresh));
   }
   function wsOpenBookmarkSheet(p) {   // mobile: the same list as a bottom sheet
     if (!p) return;
-    openSheet("★ Bookmarked responses", el("div", { class: "ws-bm-sheet" }, wsBookmarkRows(p, closeSheet)));
+    const body = el("div", { class: "ws-bm-sheet" }, []);
+    const refresh = () => body.replaceChildren(...wsBookmarkRows(p, closeSheet, refresh));
+    refresh();
+    openSheet("★ Bookmarked responses", body);
   }
   function renderItem(m) {
     if (m.role === "user" || m.kind === "user") {
@@ -8103,6 +8190,10 @@ function viewWorkspace() {
       renderTranscriptInto(ui, p, tailExtras);
     }
     if (ui.stick) ui.stick.apply(wasNearBottom); else if (wasNearBottom) ui.transcriptEl.scrollTop = ui.transcriptEl.scrollHeight;
+    // A forced jump to the bottom (fresh open / view-enter / app-open initial load) can land short if the
+    // transcript's layout is still settling (code blocks, wrapping) — re-pin on the next frame so it's truly
+    // at the latest message, not a few lines above it.
+    if (forceBottom) _raf(() => { const el2 = ui.transcriptEl; if (el2) { if (ui.stick && ui.stick.pin) ui.stick.pin(); else el2.scrollTop = el2.scrollHeight; } });
     syncMobileTabDots();   // keep the mobile tab's status dot in step (cheap; no-op on desktop)
     if (st.isMobile && p.id === st.activeId) syncMobileBar();   // reflect the active pane's busy state in the bottom bar
   }
@@ -8803,7 +8894,10 @@ function viewWorkspace() {
       if (data.kind === "resync") {
         for (const p of targets) {
           const prevStatus = p.status, prevLen = (p.transcript || []).length;
-          if (Array.isArray(data.transcript)) { p.transcript = wsBackfillTurnWorkspace(data.transcript, data.workspaceId || wsWorkspaceId(p.repo, p.worktree)); p._transcriptTruncated = !!data.transcriptTruncated; p._promptOffset = data.promptOffset || 0; p._responseOffset = data.responseOffset || 0; }
+          if (Array.isArray(data.transcript)) { p.transcript = wsBackfillTurnWorkspace(data.transcript, data.workspaceId || wsWorkspaceId(p.repo, p.worktree)); p._transcriptTruncated = !!data.transcriptTruncated; p._promptOffset = data.promptOffset || 0; p._responseOffset = data.responseOffset || 0;
+            // Initial load (this pane was empty until now — the app-open path fills it via resync on `hello`,
+            // AFTER the grid was built): land at the bottom (latest), not scrolled up at the top.
+            if (prevLen === 0 && p.transcript.length > 0) p._scrollBottomNext = true; }
           if (data.status) p.status = data.status;
           if (data.usage) p.usage = data.usage;
           if (data.mode) p.mode = data.mode;

@@ -666,11 +666,16 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .ws-bm-pop { position: absolute; bottom: calc(100% + 8px); right: 0; min-width: 250px; max-width: 340px; max-height: 300px; overflow-y: auto;
   background: #0e1420; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 26px rgba(0,0,0,.55); padding: 6px; z-index: 50; display: none; }
 .ws-bm-pop.--show { display: block; }
+.ws-bm-pop.--down { bottom: auto; top: calc(100% + 8px); }   /* opens below the anchor (Pact head ★) */
+.pc-bm-ico.pact-ed-ico { color: #fbbf24; }
 .ws-bm-hd { font-size: 11px; font-weight: 700; color: var(--ink-mute); padding: 4px 8px 7px; }
 .ws-bm-row { display: flex; gap: 9px; align-items: baseline; padding: 7px 8px; border-radius: 7px; cursor: pointer; }
 .ws-bm-row:hover { background: var(--chip); }
 .ws-bm-rn { flex: 0 0 auto; font: 700 10px ui-monospace, monospace; color: var(--accent); }
 .ws-bm-snip { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--ink-dim); }
+.ws-bm-del { flex: 0 0 auto; width: 24px; height: 24px; border: none; background: transparent; color: var(--ink-mute);
+  font-size: 17px; line-height: 1; cursor: pointer; border-radius: 6px; -webkit-tap-highlight-color: transparent; }
+.ws-bm-del:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
 .ws-bm-empty { padding: 10px 8px; font-size: 12px; color: var(--ink-mute); }
 .ws-bm-flash { animation: wsBmFlash 1.6s ease-out; }
 @keyframes wsBmFlash { 0% { box-shadow: 0 0 0 3px #fbbf24; } 100% { box-shadow: 0 0 0 3px transparent; } }
