@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.1] - 2026-08-20
+
+### Fixed
+- **Switching to a conversation on a phone now lands on its latest response.** The real cause the earlier
+  fixes missed: on mobile every Core pane is in the DOM but CSS-hidden, and a pane whose transcript loaded
+  *while hidden* can't scroll (its `scrollHeight` is ~0), so it sat at the top — and switching to it (which
+  just un-hides it) never re-scrolled. Now activating a pane on mobile **re-follows the tail** once it's
+  visible (only when it was pinned to the bottom, so a pane you'd deliberately scrolled up in keeps its
+  place). Also force the bottom on a desktop Pact tab switch, which had the same gap.
+
 ## [1.5.0] - 2026-08-20
 
 ### Fixed

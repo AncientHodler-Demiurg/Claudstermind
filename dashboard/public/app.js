@@ -6336,7 +6336,7 @@ function pactChatRender() {
     if (t.prime) { tail = el("span", { class: "pc-tab-prime", title: "Prime conversation — always open, can't be closed" }, ["★"]); }
     else { tail = el("span", { class: "pc-tab-x", title: "Close chat" }, ["×"]); tail.addEventListener("click", (e) => { e.stopPropagation(); pactChatCloseTab(t.id); }); }
     const tab = el("div", { class: "pc-tab" + (t.id === PACT_CHAT.activeId ? " --active" : "") + (t.prime ? " --prime" : "") + (t.worktree ? " --wt" : "") }, [dot, nameEl, wtMark, tail]);
-    tab.addEventListener("click", () => { if (t.id === PACT_CHAT.activeId) return; pactChatSaveDraft(); PACT_CHAT.activeId = t.id; pactChatRender(); pactStateSave(); pactChatCatchUp(t); });
+    tab.addEventListener("click", () => { if (t.id === PACT_CHAT.activeId) return; pactChatSaveDraft(); PACT_CHAT.activeId = t.id; t._forceBottom = true; pactChatRender(); pactStateSave(); pactChatCatchUp(t); });
     return tab;
   });
   const add = el("button", { class: "pact-ed-ico", title: "New Pact chat" }, ["＋"]);
@@ -8203,7 +8203,15 @@ function viewWorkspace() {
     st.activeId = id;
     for (const p of st.panes) paneUI.get(p.id)?.root.classList.toggle("on", p.id === id);
     renderSidebar();
-    if (st.isMobile) { renderMobileTabs(); syncMobileBar(); }
+    if (st.isMobile) {
+      renderMobileTabs(); syncMobileBar();
+      // On a phone every pane is in the DOM but CSS-hidden; a pane whose transcript loaded WHILE hidden
+      // couldn't scroll (scrollHeight was ~0), so it sits at the top. Now it's the visible one — re-follow the
+      // tail so switching to a chat lands on its latest response. Only when it was pinned to the bottom (i.e.
+      // the reader hadn't scrolled up in it), so a deliberately-scrolled-up pane keeps its place.
+      const ui = paneUI.get(id);
+      if (ui && ui.stick) requestAnimationFrame(() => { if (ui.stick.pinned && ui.stick.pin) ui.stick.pin(); });
+    }
     saveLayout();
     reportAttach();   // presence follows the active pane's workspace
   }
