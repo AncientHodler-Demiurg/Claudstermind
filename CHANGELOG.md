@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.3] - 2026-08-22
+
+### Changed
+- **The Pact worktree menu (the ⌥ button in the file-tree header) is now a switcher, not just a manager.**
+  Previously it only listed the *named* worktrees (each with merge/remove), and deliberately left `main` out —
+  so once the tree was on a worktree like `swp` there was no obvious way to get back to `main` from that menu.
+  Now the top of the menu is **"Switch box + tree to:"** listing every worktree **including ⌂ main** (a ✓ marks
+  the current one); clicking one switches the active box, and the file tree follows it. The lifecycle actions
+  (create, and merge-into-main / remove) moved below into **"Merge / remove a worktree…"**. The per-box footer
+  dropdown (which already had ⌂ main) still works the same way; this just makes switching to main reachable from
+  the tree header too.
+
 ## [1.5.2] - 2026-08-20
 
 ### Added

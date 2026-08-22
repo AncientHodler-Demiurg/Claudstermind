@@ -1,37 +1,454 @@
 # State — StoaExplorer
 
-- **Version at close:** `0.5.0` (from `frontend/src/constants/version.ts`, latest changelog entry dated 20.03.2026; backend has no separate version file)
-- **Branch / HEAD:** `master` at `29fe515` (clean against `origin/master`); uncommitted: `CLAUDE.md` rewritten this session (see LOG)
-- **Open plan:** **Ouronet Explorer** spin-off (explorer.ouro.network) — **spec phase**. Docs in `docs/ouronet-explorer/` (hierarchy): **`SPEC.md` = master product spec (authoritative, consolidates everything; 7 phases P0–P6)** · `00-EXPANDED-PROMPT.md` discussion seed · `01-SPEC-account-view.md` Phase-1 detail · `02-EVENT-CATALOGUE.md` + `_events_register.md`/`_events.json` event model · `03-EVENT-TO-TALOS.md` + `_talos_to_events.json` event→Talos map · scripts `_extract_events.py`/`_map_events_to_talos.py`/`_probe_shape.py`. Gating decisions locked (see LEARNINGS). Backend coupling decided in spec = extend in-process as additive `OuronetModule` with a cursor-based extractor that never touches `sync.service.ts`. Event model fully verified live against prod API 2026-06-14 (shape/filter/params/number-shapes all confirmed — see LEARNINGS). Remaining verification debt is node-read-side only (tx PK ordering for the cursor, ns-qualified `UR_*` read path, `DPTF.URBalance` name, address URL round-trip) + minor (SWP|C>LIMIT args, SPW typo decision).
+## 🔑 INFRA ACCESS (discovered 2026-08-18) — I can operate the explorer server directly
 
-**BeeDev initialized 2026-06-14** (`.bee/` created; multi-stack config: nestjs@backend + react@frontend, eslint+jest backend / eslint+none frontend; implementation_mode premium; agent_teams enabled; research recommended; `.bee/` tracked in git; CLAUDE.md got a `# BeeDev` section; context extracted to `.bee/{STACK,ARCHITECTURE,CONVENTIONS,CONCERNS,CONTEXT}.md`; fixed a stale notify.sh path in `~/.claude/settings.json` 4.3.0→4.5.1). **Bee spec created 2026-06-14** (`/bee:new-spec --from-discussion` from SPEC.md): MVP-focused = Foundations + Account view (our P0+P1). Spec at `.bee/specs/2026-06-14-ouronet-explorer-mvp/` (requirements.md, spec.md, phases.md, ROADMAP.md). 4 phases: 1 Foundations (shared number parser + event matcher + event-spec codegen from _events.json + derived entities/migration + module/API skeleton), 2 Derivation Layer (cursor extractor by created_at+request_key, backfill, resync/status, isolated+idempotent+crash-safe), 3 Account API + live reads (OuronetNodeService, account/transactions/tokens/nfts, batched balance read, glyph URL round-trip, live-read failure contract), 4 Frontend (frontend-ouronet SPA + Account page). Spec-reviewed: 4 issues fixed (parser-consolidation-is-behavior-widening-not-noop + pinned contract; live-read failure → explicit-unavailable-not-zero; count fan-out → single batched node read) + 3 advisories. Later product stages (Assets/Modules/Pools/Dashboard/Deploy = our P2–P6) are separate future Bee specs. **Repo layout decided 2026-06-14:** shared backend (Ouronet = isolated `backend/src/modules/ouronet/`), separate frontends — rename `frontend/` → `frontend-stoa/` (path-only) + new `frontend-ouronet/`; update docker dev/prod compose + nginx build-context paths. NOT two separate backends (one indexer, one DB — never two crawlers). Rename is a Phase-1 deliverable.
+From the node host (`~ancientbox`, the home Kadena-CE node machine) there is passwordless **root SSH** to the
+explorer VPS via `~/.ssh/config` alias **`stoanodeprime`** → `85.215.141.198`. That box runs the ENTIRE explorer
+stack in Docker: `explorer_backend_kadena_prod` (the block-sucker), `explorer_postgres_kadena_prod`,
+`explorer_redis_kadena_prod`, plus the base `explorer_backend_prod` + frontends + `explorer_redis_prod`. Repo
+checkout: **`/opt/stoa-explorer`** (branch `feature/kadena-explorer`), node 20 / npm 10 on the host.
+- **Deploy:** `/opt/stoa-explorer/scripts/deploy/deploy.sh <backend|frontend|frontend-ouronet|kadena-backend|kadena-frontend|all>`.
+  `all` = what the admin button sends. BUILD IS THE GATE — a failed build leaves the running container serving
+  (safe to try untested code). Does `git pull --ff-only` first (keep the VPS tree clean or it aborts).
+- **Adding a backend npm dep** (blocked from the node host — local node_modules is broken, and prod builds with
+  `npm ci`): do it here — `cd /opt/stoa-explorer/backend && npm install <pkg> --package-lock-only`, copy
+  package.json + package-lock.json back to the working checkout, `git checkout` them on the VPS to keep its tree
+  clean, commit+push from the box that has the GH token. (Used this to add @keyv/redis.)
+- Kadena backend env already has `REDIS_HOST=kadena-redis` / `REDIS_PORT=6379` / `REDIS_PASSWORD=…` wired to the
+  redis container (password-protected).
 
-**`/bee:plan-all` run 2026-06-14:** all 4 phases planned (22 tasks; Foundations 6/2 waves, Derivation 4/3, Account-API 4/3, Frontend 8/2), plan-checker clean (after adding per-task wave/files_touched fields). Cross-plan LLM review (4 agents) found **BLOCKING issues — HALTED** (see `.bee/specs/2026-06-14-ouronet-explorer-mvp/REVIEW-plan-all.md`). Root causes are event-model errors in my own spec/02-catalogue (see LEARNINGS "Event-model CORRECTIONS"): DPSF/DPNF aren't event prefixes (collectables=DPDC*+son/verb), participant tokens=sender/receiver/client/patron not just "account", transfers=CLASS-*-TRANSFER not DEBIT/CREDIT, salience≠defcap-letter category. Fix pass done (2 iterations, re-verified vs `_events.json`): owner decided D1 (derive DPSF/DPNF from DPDC family + verb/son, keep 4 tabs) + D2 (scalar count). **Plans now CONVERGED & PLAN_REVIEWED** — plan-compliance APPROVED (15/15 REQ), plan-checker clean, collectable path verified. Key implementation fact baked in: collectable SFT/NFT class = event-name **verb suffix** (`-NFT`/`-SFT`), NOT a `son` field (absent on BURN-NFT/BURN-SFT); `DPDC-T|C>TRANSFER` is array fan-out (per-id sons[i]); account tokens include `-account`-suffixed forms. **`/bee:ship` in progress on branch `feature/ouronet-explorer` (created off master 2026-06-14).** Phase 1 Foundations EXECUTED — 6/6 tasks, all real code with passing scoped tests: shared `backend/src/common/ouronet/parse-number.ts` (`parseOuronetNumber`, 23✓, 5 divergent copies consolidated), `modules/ouronet/event-matcher.ts` (13✓, 37 prefixes, DPSF/DPNF excluded), event-spec codegen `backend/scripts/gen-event-spec.ts` + `modules/ouronet/event-spec.generated.ts` (331 events, 30✓), 3 derived entities + migration `CreateOuronetDerivedTables`, `OuronetModule` + `/api/v1/ouronet` skeleton (registered in app.module.ts), and `frontend/`→`frontend-stoa/` rename (git mv + docker path updates). Phase-1 checkboxes ticked; Status=EXECUTED (per-phase review pending). **SHIP COMPLETE 2026-06-14** — all 4 phases EXECUTED + REVIEWED (22 tasks), each via TDD with passing scoped specs. Built: backend `src/modules/ouronet/` (23 files: matcher, event-spec codegen+331-event registry, deriver, cursor reader, extractor service+controller, node service, account service+activity+controller, module, 3 entities) + `common/ouronet/parse-number.ts` + migration; `frontend-ouronet/` SPA (Account page, tx tab, holdings tabs, address search, Ouronet theme). Final cross-phase review: 15/15 REQ covered; flows verified sound (glyph round-trip, atomic/idempotent/crash-safe ingestion, isolation, LiveField never-0, salience+numeric-height ordering, DPDC array fan-out); 4 findings auto-fixed (SG-001 ELITE/UNITY salience, F-BUG-001 page-size 25→20, SG-002 holdings assetType filter, F-BUG-003 creationTime bigint type). **Open debt (needs Docker/CI, NOT code defects): full `nest build`+suite + `frontend-ouronet` `tsc -b && vite build` (this box has no root node_modules/Docker); node-read Pact fn names `[VERIFY]` in OuronetNodeService (URBalance/UR_TrueFungibleData/UR_Account — F-BUG-004: confirm DPSF/DPNF balance read).** **Committed + pushed 2026-06-14:** commit `958d467` (206 files, +18732/−388) on `feature/ouronet-explorer` → pushed to `origin` (github.com/StoaChain/stoa-explorer); PR link available. node_modules correctly gitignored. Next: deploy to explorer.ouro.network (P6) — backend redeploy w/ OuronetModule + run `CreateOuronetDerivedTables` migration (prod TYPEORM_SYNC=false); add a `frontend-ouronet` prod service (copy of `frontend` block: Dockerfile.frontend-ouronet building frontend-ouronet/, host port e.g. 127.0.0.1:8200→80, same nginx.conf — /api proxies to the shared backend); host reverse-proxy vhost + TLS for explorer.ouro.network → 8200; DNS A record. Docker build IS the real build gate (local env couldn't run it). Confirm node-read Pact fn names against live node post-deploy. Env notes: this box has NO local node_modules at repo root / Docker unreachable (agents installed backend/node_modules ad hoc to run scoped jest); full build/test gate must run in Docker/CI. Minor: a 6th `parseAmount` in `blocks/block-emissions.service.ts:140` + an inline rich-list `syncChain` unwrap were intentionally left (outside the named 5); `accounts.service.spec.ts`/`sync.service.spec.ts` have ~14 PRE-EXISTING DI/setup failures (unrelated to our changes). Upstream `docs/ouronet-explorer/02-EVENT-CATALOGUE.md` still has old looser phrasings — bee `spec.md` carries the authoritative taxonomy; optional follow-up to reconcile.
 
-**DEPLOYED + LIVE 2026-06-14 at https://explorer.ouro.network** (server 85.215.141.198 `/opt/stoa-explorer`, root via `~/.ssh/id_ed25519`; host nginx :80/:443 behind Cloudflare; container `explorer_frontend_ouronet_prod`@127.0.0.1:8201 via `docker/production/Dockerfile.frontend-ouronet` + `docker-compose.ouronet.yml`; shared `explorer_backend_prod` rebuilt with OuronetModule; 3 derived tables created via psql; extractor backfilled 215k+ rows). Account page **fully populated with real chain data**: header (type/Ouro/Ignis/Nonce/StoicTag/kadena-konto/guard/sovereign/governor), DPTF/DPOF tokens with $ values, DPSF/DPNF collectables with counts, Transactions(actions)/Gas tabs, Tx→explorer.stoachain.com links. **Data method (settled — see new top LEARNINGS entry):** immutable→DB index, mutable→live reads REUSING the `ouronet-ns.DPL-UR` aggregate functions OuronetUI uses (one aggregate read per section), run via `KadenaService.localQueryMaxGas` (1M — collectables scan all nonces). nginx vhost `explorer.ouro.network.conf` (:80+:443, self-signed origin cert; Cloudflare Full non-strict). Branch `feature/ouronet-explorer` pushed: 958d467 (MVP), f7c0132 (DPL-UR data + gas tab + tx links + deploy artifacts), b958b01/6663896 (.bak cleanup + `*.bak` gitignore). Runbook: `docs/ouronet-explorer/DEPLOY.md`. **Follow-ups:** history depth limited by START_HEIGHT; mega-holding accounts can exceed 1M gas → chunk id list; move to a Cloudflare Origin Cert for Full(strict); build native tx-detail view (replace the stoachain.com deep-link); reconcile 02-EVENT-CATALOGUE phrasings; later product phases P2–P6 (asset/module/pool pages, dashboard) = future bee specs.
-**Session 2026-06-15 (iteration — account redesign + tx classification + global feed + participant fix):** Three things landed and DEPLOYED + pushed (commits `d331d90`, `ce14ec7` on `feature/ouronet-explorer`). (1) **Account-view redesign + Pact-CODE tx classification** — new `backend/src/modules/ouronet/tx-classifier.ts` `classifyTx(code)` derives the REAL action from a tx's Pact code (not the gas-collect event): kinds `direct-call` (`ouronet-ns.MODULE.FN` → humanized headline + `method`), `stoic-construct` (code contains `IGNIS.UDC_CustomCodeCumulator`), `module-upgrade`/`interface-upgrade`/`upgrade` (with `upgrades[]`), `keyset` (define-keyset names), `other`. Activity service joins `transactions.code` and surfaces `kind/headline/method/upgrades/keysets` per tx group; **salience reordered so gas ranks LOWEST** (`transfer5/issuance|supply4/account-mgmt3/other2/gas1`). Account detail split `tokensCount/nftsCount` → four LiveFields `dptfCount/dpofCount/dpsfCount/dpnfCount`. Frontend header redesign (StoicTag+copy, single-line account/pubkey+copy, "Payment Key (Stoa Account)" rename, Sovereign/Governor smart-only else "Not applicable", expandable Guard, Nonce in header), removed Chain column, renders classification (Stoic Construct badge, expandable upgrade sub-rows, keyset names). (2) **Homepage GLOBAL transactions feed** — `getGlobalTransactions`/`getGlobalTransactionCount` on the activity service (same grouping/salience/classification/bucket logic as the account feed, NO account filter) + new `OuronetTransactionsController` `GET /api/v1/ouronet/transactions[/count]`. Frontend: extracted shared `TransactionTable.tsx` (presentational) from `TransactionsTab`, added `useOuronetGlobalTransactions(+count)` hooks + `GlobalTransactionsFeed`; LandingPage now shows "Latest Ouronet Transactions" (was an empty stub). Live: ~1500 action txs. (3) **Participant-account extraction BUG fixed** — the event-spec generator's `isAccountToken` only matched exact `account`/`-account`-suffix, so `account-*` param names were MISSED, leaving those txs attached to NO account (`account=''`). Affected 7 events: `CODEX|C>REGISTER-STOICTAG` (account-address), WIPE family `DPMF|C>PARTIAL-WIPE`/`TOTAL-WIPE`/`DPTF|C>WIPE`/`WIPE-SLIM` (account-to-be-wiped), SPARK `REEDEM-ALL`/`REEDEM-FEW` (account-to-redeem). Fix: `gen-event-spec.ts` now also matches `account-*`; regenerated `event-spec.generated.ts` (REGISTER-STOICTAG → `accountIndices:[1]`); added `event-spec.generated.spec.ts` regression test. **Prod data repaired** by deleting the 12 stale `account=''` rows for those events (9 STOICTAG + 3 WIPE-SLIM; others had 0 history) and resetting `ouronet_extractor_cursor` to NULL → extractor re-derived from start (idempotent `ON CONFLICT DO NOTHING`); confirmed 9/9 STOICTAG rows now carry the registrant glyph account. Backend 190 ouronet tests pass. **Deploy mechanics this session:** tar-over-SSH of changed source → `docker compose build backend && up -d backend` + `... -f docker-compose.ouronet.yml up -d --build frontend-ouronet`; re-derive via psql DELETE + cursor reset (no migration). **Gotchas hit:** (a) PowerShell here-string `@'...'@` syntax used inside the Bash tool injected a literal `@` into a commit subject — amend with `-F <winpath>` (git couldn't read a `/tmp/...` path on win32; wrote msg to `.git/AMEND_MSG.txt`); (b) heredoc-over-SSH and nested single-quote psql `-c` are fragile with multibyte glyph account strings — use a `.sql` file `docker cp`'d into the postgres container + `psql -f`; (c) BOTH frontend containers report Docker health "unhealthy" (pre-existing, 2+ weeks) — wget healthcheck hits `localhost:80`→IPv6 `::1` while nginx listens IPv4 `0.0.0.0:80`; cosmetic, serves fine; follow-up = point healthcheck at `127.0.0.1`. **New follow-ups:** From/To accounts not shown on the global feed (legs carry `role` not account string — would need account in the row to make them clickable); resync re-derives ALL ~215k txs (~36min) since cursor reset is the only built-in re-derive path — a targeted re-derive would be nicer; snake-token cards (Ouro/Auryn/Elite-Auryn/Ignis logos+variants) still deferred pending the owner's new read module.
-**Session 2026-06-15 (cont. — IGNIS→gas, function register, Ouronet Construct + create/update):** Pushed commits `dc9dabc`, `86ab480`. (1) **All IGNIS events → 'gas'** (was only IGNIS|C>COLLECT): `gen-event-spec.ts deriveSalienceClass` now `prefix==='IGNIS' → gas`. Fixes IGNIS|S>DISCOUNT winning the primary-event slot on the actions feed and puts ALL Ignis payments in the Gas tab. Prod data fixed in-place: `UPDATE ouronet_activity SET salience_class='gas' WHERE event_name LIKE 'IGNIS|%'` (52,637 rows other→gas). (2) **Function naming register** — extracted the 114 C_/A_ functions ACTUALLY CALLED in indexed history (regex over `transactions.code`, NOT the 1319 in source) → `docs/ouronet-explorer/_function_register.md` + `_function_names.json`; generated `backend/src/modules/ouronet/function-names.generated.ts` (via `backend/scripts/gen-function-names.py`) + `function-names.ts` (`normalizeFunctionId` strips Talos `TSdd-XX.` prefix, `displayFunctionName` = register lookup + humanize fallback). Presented register to owner for review; owner OVERRIDE so far: `STOAICO.A_Stake`→"StoaIco Contribution", `A_Unstake`→"StoaIco Withdrawal" (my guess, unconfirmed). **PENDING owner naming input** on domain terms: ATS snake ops (Brumate/Coil/Curl/Constrict/Cull/ColdRecovery/DirectRecovery), BLOODSHED tiers (Common/Rare/Epic/Legendary), KBN A_Step01-16 + NOSFERATU A_Step01-22 (bare "Step01"), ORBR Compress/Sublimate, VST Awake/Slumber/Freeze, SWP Firestarter/Fuel, DALOS RotateKadena (→"Rotate Payment Key"?), DPTF ClearDispo, DPSF MoveSetUriRole, LQD "Wrap Ur Stoa" vs "Wrap UrStoa". To apply: edit `_function_names.json` → rerun `gen-function-names.py` → redeploy. (3) **Ouronet Construct** — NEW tx kind for the `(namespace "ouronet-ns")` wrapper form (distinct from Stoic Construct = `IGNIS.UDC_CustomCodeCumulator`). Classifier (`tx-classifier.ts`) parses the bundle into `calls[]` (grouped fn calls + counts + displayName) and `deployments[]` (module/interface/keyset). New contract: **replaced `upgrades`/`keysets` with `calls` + `deployments`** (`{type,name,action:'create'|'update'|null}`). Frontend: **violet** "Ouronet Construct" badge (owner-chosen; Stoic stays yellow), expandable sub-rows ("Nx Name", "type: name — created/updated"). Verified live: the staking example `iGRWyl6B…` → "Ouronet Construct → 7× StoaIco Contribution". (4) **Create vs Update** — owner decision: first time a module/keyset is seen on the namespace = Create, else Update; interfaces ALWAYS Create (cannot upgrade). Built `ouronet_deployment(deploy_kind,name UNIQUE, first_seen_height, first_seen_request_key)` + `OuronetDeploymentService` (onInit + 60s interval scan of `transactions` for ouronet-ns defs, idempotent ON CONFLICT LEAST upsert, in-memory height cursor). Activity service `enrichDeployments` fills the action by comparing the tx's height+request_key to the earliest sighting. Migration `CreateOuronetDeployment1781700000000` applied in prod via psql; backfilled **72 modules / 97 interfaces / 21 keysets**. **IMPORTANT FACT: prod `transactions` min height = 25** — the indexer effectively has the WHOLE chain, so first-seen create/update is reliable (the START_HEIGHT=6357351 in code does NOT match prod reality; prod indexed from ~genesis). Backend 215 ouronet tests pass. **OPEN GAP (next step):** the feed is built from `ouronet_activity` (event-derived); **246 ouronet-code txs (235 of them pure deploy constructs: module/interface/keyset) emit NO ouronet event → no activity row → invisible in the feed**, so module/interface/keyset create/update only displays for constructs that ALSO emit events. Fix = ingest event-less ouronet txs: extend the cursor reader/source to carry `code` + sender, have the deriver emit a single generic activity row (account = tx signer/sender) for ouronet txs with no ouronet events, then re-derive. **Deploy mechanics unchanged** (tar-over-SSH → docker compose build; psql for DDL/data). **Tooling tip that worked:** for psql with multibyte glyph accounts, write a python verify script to `backend/scripts/_verify_*.py`, scp to /tmp, run remotely (raw strings for SQL files; `docker cp` the .sql into the postgres container, `psql -f`). Throwaway verify scripts deleted before commit; keep `gen-function-names.py`.
-**Session 2026-06-15 (cont.2 — complete register + event-less deploy ingestion):** Pushed `265dcd9`. (1) **Complete function register** — owner: register must include not-yet-called functions; the authoritative orchestrated list lives in the **Talos modules** (`OuronetPact/1_SOVEREIGN/STAGE_0x/3_Talos/*.pact`: TS01-A/C1-C4/P, TS02-C1-C3/DPAD) which re-expose callable fns as `(defun MODULE|C_Fn ...)`/`|A_Fn`. Built `backend/scripts/build-function-register.py` = Talos pipe-style fns (368) ∪ all dot-style `Module.C_/A_` defuns (launch/admin modules: STOAICO/DSP/KBN/NOSFERATU/BLOODSHED-*) ∪ existing reviewed entries (overrides preserved). Result **417 entries / 33 modules** (was 114 on-chain-only). Regenerated `function-names.generated.ts` + `docs/_function_names.json` + `_function_register.md`. The classifier already strips the Talos caller prefix via `normalizeFunctionId` so a call `TS01-A.DALOS|A_DeployStandardAccount` → key `DALOS|A_DeployStandardAccount`. **STILL PENDING owner naming corrections** for the 🔶 domain terms (see prior entry). (2) **Event-less Ouronet tx ingestion** — the feed is event-derived, so 246 ouronet-code txs with NO ouronet event (235 pure deploy constructs: `(namespace "ouronet-ns") (module/interface/define-keyset ...)`) were invisible. Fix: cursor reader now projects `code`+`sender`; deriver gained `isOuronetCode(code)` + emits ONE `(ouronet-construct)` fallback row (account = deployer `sender` — a `k:`/`c:` Kadena account; salience 'other' → actions bucket) when a tx produced zero event rows AND the code is ouronet. Extractor passes code+sender. Backfilled all 246 via cursor resync. **Verified live:** BRD first deploy → "Ouronet Construct, deployments [{module BRD, create}]"; a later DSP deploy → "{module DSP, update}". Most-upgraded ouronet modules: DPL-UR 78×, INFO-ONE 37×, DALOS 17×, DSP/SWP/ATS/STOAICO/SWPI 7-10×. Backend 223 tests. **Caveat:** deployer attribution = gas-paying `sender` (k:/c: account), not necessarily the governance authority; deploys show on that k: account's page + global feed (k: pages render but live ouronet DPL-UR reads return 'unavailable' since it isn't an ouronet glyph account). **Confirmed prod reality:** `transactions` spans the whole chain (min height 25), so first-seen create/update is fully reliable. **Process note:** three resyncs done this session (account-* fix, then IGNIS via in-place SQL UPDATE instead, then event-less) — each cursor reset re-derives ~215k txs (~30-36min, idempotent ON CONFLICT). A targeted/incremental re-derive would avoid full replays — still a follow-up. Build/verify tooling: temp python verify scripts under backend/scripts/_verify_*.py (scp→/tmp→run remotely, .sql via docker cp + psql -f for multibyte glyphs), deleted before commit; KEEP build-function-register.py + gen-function-names.py.
-**Session 2026-06-15 (cont.3 — actor-less event attribution):** Pushed `2938fdc`. Owner: "Release Stoic tag isn't showing." Root cause = a WHOLE CLASS of evented capabilities carry NO participant account in their params, so their `ouronet_activity` rows collapsed to the empty-account sentinel ('') and never appeared on any account page (only in the Gas tab via the IGNIS legs). 62 affected event types: `CODEX|C>RELEASE-STOICTAG` (params = tag only), ATS staking `ATSU|C>COIL/FUEL/BRUMATE/CURL/...`, `DPDC-S|C>MAKE`, `VST|C>FREEZE/SLUMBER`, `SWPU|*`, `GOV|DALOS_ADMIN`, `DSP|*-MINTER`, etc. Two sub-cases: (a) event truly has no account; (b) account present but under a role-name the generator doesn't recognize (`freezer`, `sleeper`, `vester`, `culler`, `recoverer`, `owner-konto`, `new-owner`, `sovereign`, …). Chose ONE robust fix instead of expanding the generator's account-name list (risky — many similar tokens are asset/pool ids like `ats`,`swpair`,`id`): the deriver's `findInitiatorAccount(events)` now attributes actor-less rows (the `spec.accountIndices.length===0` branch, role='initiator') to the tx INITIATOR — (1) `IGNIS|S>DISCOUNT` param0 (discounted actor), (2) `IGNIS|C>COLLECT` param0 (gas payer), (3) DOMINANT participant = most frequent non-empty account across the tx's NON-Ignis legs. #3 was essential: ATS/etc. construct txs are GASLESS (`IGNIS|S>FREE`, empty params, no discount/collect) but the actor (glyph) is all over the sibling DPTF legs. Existing rows fixed in place via SQL (no resync): UPDATE via IGNIS|S>DISCOUNT (793 rows) then dominant non-Ignis participant per request_key (1628 rows); only 28 pure `GOV|DALOS_ADMIN` markers (no participant anywhere) remain global-feed-only. Verified: "Release Stoic Tag" now shows in the actions feed on the releaser's glyph account (kind direct-call, headline "Release Stoic Tag"). 226 ouronet tests. **Reusable insight:** Ouronet's gas model means EVERY user tx has an IGNIS gas leg OR (gasless) the actor on action legs — so "tx initiator = IGNIS discount account, else dominant non-Ignis participant" is a reliable actor signal for any account-less event. In-place SQL re-attribution (dominant participant via window fn) avoided a 4th full resync.
-**Session 2026-06-15 (cont.4 — direct-call defining event + naming-review file):** Pushed `5def8bb`. Owner flagged a `DPNF|C_Make` tx showing "Make / DPDC-T|C>TRANSFER" — wrong event. Cause: a direct-call's `primaryEvent` was the highest-salience leg (transfer rank 5), not the function's own capability. DPNF|C_Make emits DPDC-S|C>MAKE + 4× DPDC-T|C>TRANSFER; salience surfaced the transfer. Fix in `ouronet-account-activity.service.ts buildRow`: for `direct-call`, override the salience pick with the leg whose event VERB (after last `>`) matches the function action word(s) (`Make`→`MAKE`→`DPDC-S|C>MAKE`), fallback to salience (helpers `selectByFunctionVerb`/`functionActionWords`/`verbOf`). Computed at READ time → no re-derive; verified live (primaryEvent now DPDC-S|C>MAKE). Headline stays the function display name (still "Make" until renamed). **Naming-review workflow delivered (owner will revise locally):** `backend/scripts/build-naming-review.py` → `docs/ouronet-explorer/_function_register.txt` = all 417 functions grouped by Talos module, each `functionId => display name  # main: <verb-matched event>` (the main-event hint comes from `_talos_to_events.json`, function→events map, 399 entries). Owner edits names in that file; `read-naming-review.py` parses `functionId => name` (ignores `# ...`) back into `_function_names.json`; then `gen-function-names.py` regenerates the TS, rebuild backend. **PENDING: owner revising `_function_register.txt`** (e.g. DPNF|C_Make → "Make NFT Set"/"Make a Set of NFTs"; plus the earlier 🔶 domain terms ATS/VST/SWP/BLOODSHED/KBN/NOSFERATU). When they return it: run read-naming-review.py → gen-function-names.py → ship function-names.generated.ts → rebuild backend (no re-derive; names are read-time). **Note:** the verb-match helper was verified live but not unit-tested (activity spec mock setup is heavy) — add a buildRow test when convenient.
-**Session 2026-06-15 (cont.6 — native tx page, Patron column, 50/page numbered pagination, landing reframe):** Pushed `3c75840` (pagination), `038287e` (tx page + patron). (1) **Pagination**: new shared `frontend-ouronet/src/components/Pagination.tsx` — 50/page (was 20), full control on TOP (prev/next + numbered pages with ellipsis to first/last `1 2 … 36` + "Go to page" input), compact prev/next + "Showing X–Y of Z" on BOTTOM. `TransactionTable` now takes `onPageChange(offset)` (was onPrev/onNext); both callers (GlobalTransactionsFeed, TransactionsTab) jump by absolute offset. (2) **Landing reframe**: hero now "Every transaction in the ouronet-ns namespace…", feed heading "All Ouronet Transactions" (the feed already covered all 1,751→1,753 after event-less ingestion). (3) **Native transaction browser** (`038287e`): SKIN-PORTED StoaExplorer's `TransactionDetailPage` into frontend-ouronet (page + `PactCodeViewer` + `useTransaction`/`useTransactionMovements` hooks + `api.transactions.get/movements` + `types/kadena.ts`), reskinned, on the SHARED backend (`/api/v1/transactions/:rk` + `/movements`). New route `/transactions/:requestKey`; feed tx-id now links INTERNAL (was deep-link to explorer.stoachain.com). **Link policy:** internal = tx-id, continuation pact-id, patron, Ouronet glyph (Ѻ./Σ.) accounts; EXTERNAL to explorer.stoachain.com = block height/hash, gas-paying account, multi-step pacts, Kadena/Stoa (k:/c:/named) accounts. Verified live: full tx page renders (request key/chain/block/gas/movements/code/signers/events/result). (4) **Patron column** = the Ignis gas payer. KEY FACT: `IGNIS|C>COLLECT` args = `patron:string interactor:string amount:decimal` and `IGNIS|S>DISCOUNT` = `patron:string idp:string` → **patron is param[0]**; `IGNIS|S>FREE` (no params) = gasless = PATRONLESS. Backend `OuronetAccountActivityService.loadPatrons()` queries the WHOLE table (not account-scoped) for the `account[0]` leg of IGNIS|C>COLLECT (preferred) / IGNIS|S>DISCOUNT per request_key → `patron: string|null` on the row. Frontend `shortPatron()` in `lib/formatAccount.ts`: `<prefix><first3AfterPrefix>…<last4>` (prefix ∈ Ѻ./Σ./k:/c:); null → muted "patronless"; links to /accounts/:patron. **Confirmed live: Stoic Constructs are patroned, Ouronet Constructs are patronless** (owner's model). Note: patron (gas payer) is distinct from the deriver's `initiator` (actor; falls back to dominant participant for gasless) — both come from IGNIS but patron is null for gasless while initiator isn't. **Still pending:** owner's edited `_function_register.txt` (display-name revisions); owner's DPL-UR headerV3-based account-independent function for the landing header (left free). **Patron unit test not added** (activity spec mocks heavy) — verified live.
-**Session 2026-06-15 (cont.7 — URL-backed state + failed-tx sentinel):** Pushed `b189426`. (1) **`(ouronet-construct)` sentinel leak fixed**: failed txs (and event-less ones) emit NO events, so the deriver tags them with the internal `(ouronet-construct)` sentinel eventName; it was leaking as the Event/Method sub-label on FAILED direct-calls (e.g. failed "Stoicism Minter"/"Deploy Standard Account" showed "(ouronet-construct)" under the headline). Fix in `TransactionTable.tsx`: `CONSTRUCT_SENTINEL` const, never render it as primaryEvent — the code-derived headline (the real attempted action) stands alone. (Kind is correctly direct-call; only the sub-label was wrong.) (2) **URL-backed pagination + tabs** (owner: "everything must have its own web link so Back works"): new `frontend-ouronet/src/lib/usePageParam.ts` hook stores page in `?page=` (page 1 omits param, pushes history); used by GlobalTransactionsFeed (landing) + TransactionsTab (account). AccountPage tabs now CONTROLLED via `?tab=` (was uncontrolled defaultValue); switching tabs clears `?page=`. Now navigating into a tx and pressing Back returns to the exact page/tab. Radix Tabs.Content unmounts inactive tabs so only the active feed reads `?page=` (no actions/gas collision). **Could not browser-verify (Chrome extension dropped mid-session)** but Docker build (tsc gate) passed + logic is simple; owner should hard-refresh (bundle index-7LCcHTBu.js). **Still pending (unchanged):** owner's edited `_function_register.txt`; owner's DPL-UR headerV3 account-independent fn for the landing header (left free).
-**Session 2026-06-15 (cont.8 — landing network header):** Pushed `e7e84ef`. Owner provided `(ouronet-ns.EXPLORER.URC_0001_LandingPage)` (NOT in local OuronetPact source — freshly deployed; called it live to learn the schema). It's a SELF-DESCRIBING object: four `*-supply` figures (ouro/auryn/elite-auryn/ignis) + zone label/value pairs `z{zone}-t{n}` (label) / `z{zone}-v{n}` (value). Live decode: supplies Ouro 2,229,548 / Auryn 571,021 / EliteAuryn 407,708 / Ignis 33,977,344; zone2 = Auryndex `2,[974.344.161.318]` + EliteAuryndex `1,[319.990.552.737]` (custom bracket format — render VERBATIM); zone3 = Ouronet Accounts {int:187}, IGNIS/STOA Gas Collection "ON / OFF", Asym.Liq.Prov./Liq.Boost "ON / ON", Ouronet IGNIS spent 144399.4528, Ouronet STOA spent 0. **Backend**: `OuronetNodeService.getLandingData()` = cached (LIVE_TTL 45s) `localQueryMaxGas(0, '(ouronet-ns.EXPLORER.URC_0001_LandingPage)')` (gas ~44.5k); `parseLanding()` builds supplies (fixed 4) + zones GENERICALLY via regex `^z(\d+)-([tv])(\d+)$` so new chain-side fields surface with zero backend change; values normalized (unwrap {int}/{decimal}, keep strings/numbers). New endpoint `GET /api/v1/ouronet/landing` on `OuronetController` (now injects OuronetNodeService). **Frontend**: `useOuronetLanding` hook + `LandingHeader.tsx` (stat cards: 4 supplies + each zone mapped generically; string values verbatim, numbers toLocaleString, notLive→"Network data unavailable"), rendered above the global feed in App.tsx LandingPage. **GOTCHA that broke the build**: a JSDoc comment containing `z*-t*/v*` — the `*/` substring CLOSED the block comment early → cascade of parse errors. Lesson: never put `*/` inside a `/** */` comment. Verified `tsc -p tsconfig.build.json` clean (the repo's `tsconfig.json` incl. specs has PRE-EXISTING spec-only type errors — cursor.reader.spec missing code/sender from the event-less change, cache/pact-modules specs — but `nest build` excludes specs so prod builds fine; jest passes). The frontend agent died mid-run (socket closed, 0 files) so I built the header by hand. **Could not browser-verify (Chrome extension still down)** but landing API confirmed live + Docker build passed; owner should hard-refresh (bundle index-_UbOBUZy.js). **Still pending:** owner's edited `_function_register.txt` (name revisions).
-**Session 2026-06-15 (cont.9 — landing header polish):** Pushed `0144d39`. (1) Supplies now thousand-separated client-side (`fmtSupply` parses the chain's numeric strings like "33977344.0000" → "33,977,344"); zone-2/3 values still verbatim (only supplies get separators). (2) Token LOGOS added: copied OURO/AURYN/ELITE-AURYN/Ignis SVGs from `D:/_Claude/StoaOuronet/OuronetUI/dist/images/coins/` → `frontend-ouronet/public/tokens/{ouro,auryn,elite-auryn,ignis}.svg` (served at /tokens/*.svg, confirmed 200); SUPPLY_LOGO map by supply key. (3) Layout per owner spec: row1 = 4 supply cards (logo + amount); row2 = 5 cards [Auryndex, EliteAuryndex, Ouronet Accounts (MIDDLE), IGNIS/STOA Gas Collection, Asym.Liq.Prov./Liq.Boost] built as `[zone2[0],zone2[1],zone3[0],zone3[1],zone3[2]]`; row3 = 2 cards [Ouronet IGNIS spent, Ouronet STOA spent] = `[zone3[3],zone3[4]]` (left-aligned in a 5-col grid). Bundle index-Xa7VxiWj.js. **Chrome extension still down all session** — couldn't browser-verify the rendered layout; logos+endpoint+build confirmed; owner to hard-refresh. **Asset source note:** OuronetUI lives at `D:/_Claude/StoaOuronet/OuronetUI/` (coin SVGs under dist/images/coins/) — also OuronetWebsite/public/assets/img/tokens/ has auryn/elite-auryn/ouroboros. **Still pending:** owner's edited `_function_register.txt`.
-**Session 2026-06-15 (cont.10 — action-first tx columns):** Pushed `53b9841`. Owner reviewed column order (referenced stoa list: Request Key/Chain/Block/Sender/Type/Gas/Status/Time) and CHOSE the action-first option I recommended. New tx-list columns: **Type/Method · Block · Patron · Amount · Gas · Age · Status**. Type/Method is FIRST and carries the request key BENEATH the action (sky-400 link → native /transactions/:rk; no separate Tx column). Block = `#height` linking `explorer.stoachain.com/blocks/<height>/<chainId>` (height+chainId already on the row, no backend change). Amount = two lines (value top, asset id beneath, value toLocaleString). Gas = chainweb gas used — backend `loadTxMeta` now also selects `transactions.gas` → `TxMeta.gas` → `AccountTransactionRow.gas` (mock returns no gas → null, safe). Dropped Counterparties (role labels not reader-meaningful) + Chain. Verified live (bundle served; rows render action→event→txid, block links, 2-line amounts, gas, patron). **Decision rationale:** for Ouronet the action ("StoaIco Contribution"/"Make"/"Ouronet Construct") is the story, so leading with it + hash-beneath reads better than hash-first; still stoa-familiar otherwise. Chrome MCP recovered this session (was down cont.7-9). **Still pending:** owner's edited `_function_register.txt` (display-name revisions).
-**Session 2026-06-15 (cont.11 — inline construct details, Result tooltip, deploy-call bug):** Pushed `71ce618`. (1) **Construct details now INLINE**: calls/deployments render beneath the badge in the same Type/Method cell (`ConstructDetails` div) instead of separate full-width TableRows (which looked like independent entries). (2) **Result column** (owner wanted the AncientHoldings codex-cronoton "result" tooltip — found at `StoaOuronet/AncientHoldings/pages/hub/codex-cronotons/[id].tsx`: dotted-underline trigger → group-hover dark box with pretty-printed `result.data`). Our `transactions.result` jsonb IS the Pact return value directly (e.g. `["Write succeeded",...]`/decimals array — NOT wrapped in {status,data}). Backend `loadTxMeta` joins `result` → `resultData` (pretty-printed) on the row; frontend `ResultCell` shows a hover "result" link with a **position:FIXED** tooltip (escapes the table's overflow-auto clip; pt-2 padding bridges so moving into it keeps hover). Failed txs show "—". (3) **BUG FIX (the "2× Collect WTEx / Collect WT" mystery)**: a construct that DEPLOYS a module/interface carries the module's FULL SOURCE; the call-extractor was matching internal call-sites inside that source (`(KDA|C_CollectWTEx ...)` etc.) as if the tx invoked them. `collectCalls` now runs `stripDefinitionBodies()` (removes balanced `(module ...)`/`(interface ...)` blocks via paren-depth) before scanning, so only real top-level calls count. Verified: EXPLORER-deploy construct now `calls=null`, deployments intact; resultData populated ("Loaded module ouronet-ns.EXPLORER…", "Successfully compressed…"). Columns now: Type/Method · Result · Block · Patron · Amount · Gas · Age · Status (COLUMN_COUNT 8). 228 ouronet tests (added classifier strip test + landing controller test). **Caveat:** stripDefinitionBodies paren-counter doesn't parse string-embedded parens — low risk (Pact docstrings rarely contain parens). **Still pending:** owner's edited `_function_register.txt`.
-**Session 2026-06-15 (cont.12 — subtab URLs, deep-links, Stoic badge):** Pushed `ccedac1` (frontend-only). (1) **Tx-detail subtabs URL-backed**: the main Tabs (code/data/signers/events/result) in `TransactionDetailPage` now controlled via `?tab=` (useSearchParams; default code, or data when no code). Verified `/transactions/:rk?tab=result` opens the Result tab directly. (Movements stoa/urstoa sub-tabs left uncontrolled.) (2) **Deep-links from the list**: the Type/Method event label links to `?tab=events`; the Result column "result" links to `?tab=result` (still shows the hover tooltip). To allow the label to be a link, the expand chevron is now a SEPARATE toggle button (was: whole label was the toggle). (3) **Stoic Construct badge width fix**: it stretched full-width because it sat in a `flex-col` (align stretch); now it's `[chevron-width spacer][content-width Badge]` in a flex row, matching the Ouronet Construct badge+arrow footprint. Dropped the redundant "Stoic Construct" sub-headline. **Still pending:** owner's edited `_function_register.txt`.
-**Session 2026-06-15 (cont.13 — IGNIS/STOA/TxGas columns + UI polish):** Pushed `7f2736a`. (1) **Three "collection" columns** added after Amount: **IGNIS Collection** = Σ of IGNIS|C>COLLECT amounts (summed over `role='account[0]'` legs ONLY — each COLLECT emits 2 legs account[0]=patron/account[1]=interactor with the SAME amount, so summing all would double-count; new `loadIgnisCollection`); **STOA Collection** = gas × gasPrice (the STOA gas fee — `gas_price` is stored in STOA/unit ≈1e-8, so NO /1e12; loadTxMeta now also selects gas_price); **Tx Gas** = raw gas units (the renamed old Gas col). Row fields `ignisCollection`/`stoaCollection` (+ existing `gas`). COLUMN_COUNT 8→10. Verified live (Burn 1.08 IGNIS matching owner's example, Smart Swap 5.94, STOA fees 0.00099186 etc). (2) Stoic + Ouronet construct badges now **equal fixed width** (`w-40 justify-center`) so they align (owner wanted Stoic = Ouronet width, not shorter). (3) Event sub-label (e.g. DSP|STOICISM-MINTER) links to the tx Events tab. (4) Result trigger recolored **amber-300** for visibility. **KEY OURONET GAS/IGNIS FACTS (owner-provided, for the next feature):** IGNIS|C>COLLECT params = [patron, interactor, amount]; IGNIS|S>DISCOUNT params = [account, "46.0%"] (discount on ignis cost). The interactor `|` (1-char) = the **DALOS account = the Ouronet Gas Tanker Collector**. Smart accounts have a **25% royalty** — when a tx interacts with one, that smart account captures part of the IGNIS cost (a 2nd IGNIS|C>COLLECT to it). Accounts a construct interacts with re: IGNIS = **"IGNIS interactors"**. **10 IMMUTABLE OURONET SMART ACCOUNTS (Σ. glyphs) with special roles** — owner gave the full glyph strings in chat (cont.13 msg): AQP, AUTOSTAKE (=the IGNIS|C>COLLECT recipient smart acct in examples), COLLECTABLES, CUSTODIANS, DALOS (gas tanker/`|`), DEMIOURGOS, DISPENSER (=DSP minter), LIQUID, OUROBOROS, VESTING. **TODO: build a known-accounts registry** (glyph→role label) to label these on the patron column / account pages / tx-detail IGNIS-interactor breakdown; transcribe glyphs from the chat msg or pull from chain (don't hand-retype — error-prone). Owner will add StoicTags to them; asked for hero-tag suggestions (gave Greek-myth set in reply). **Still pending:** owner's edited `_function_register.txt`.
-**Session 2026-06-15 (cont.14 — grouped Gas/Collection column + STOA mechanism):** Pushed `8300b85`. (1) The 3 gas figures are now ONE "Gas / Collection" column with 3 stacked logo-tagged lines: **IGNIS** collected (`Ω` red, top), **STOA** collected (`❖` yellow, middle), **Tx Gas** (lucide `Flame` gold, bottom). New `GasCell`; COLUMN_COUNT 10→8. (2) **STOA Collection meaning CORRECTED** (was wrongly gas×gasPrice). Investigated the pact: native STOA usage fee is collected by `ouronet-ns.IGNIS.KDA|C_CollectWTEx` (called via `TS01-A::XB_DynamicFuelKDA` present in fee-collecting functions) using `URC_SplitKDAPrices` → **10% → Demiourgos.Holdings (demiurgoi[2]), 20% → DALOS (Ouronet Gas Station), 30% → Ouronet Maintenance (demiurgoi[1]), 40% → Ouroboros (LiquidKadenaIndex pitstop)**, via `C_TransferDalosFuel` = plain coin/STOA transfers (NO dedicated event). Fires only `(if (not trigger))` i.e. when the KDA collection switch is ON; **currently OFF** (landing header "IGNIS / STOA Gas Collection: ON / OFF"), so 0 STOA collected → column shows "—" (set `stoaCollection: null` in buildRow). **TODO (when STOA ON / for historical ON txs):** sum the STOA split coin-transfers to those 4 collector KADENA accounts (needs their k: addresses via DALOS::UR_AccountKadena, ties to the known-accounts registry). (3) **Owner suggested + TODO:** index ALL Talos functions into a register flagging per-function {collectsIgnis, collectsStoa (body has XB_DynamicFuelKDA/XE_ConditionalFuelKDA/KDA|C_Collect), patronless} — useful to drive "—" vs "0" vs amount display. **Reference:** KDA|C_CollectWTEx + the WT/WTEx funcs are in `1_SOVEREIGN/STAGE_01/2_Core/02_IGNIS.pact` (~660-694); split in DALOS::URC_SplitKDAPrices. **Still pending:** owner's `_function_register.txt`; known-accounts registry (10 Σ. accounts) — same blocker (need glyph strings in a file).
-**Session 2026-06-15 (cont.15 — title→Code link + Gas Stations block):** Pushed `d881a9f`, `975ddb1` (frontend-only). (1) Type/Method links retargeted: the function TITLE / construct badge → `?tab=code` (was wrongly `?tab=events`); the raw event sub-label → `?tab=events`; the request-key link stays default (= Code). `codeTo`/`eventsTo` in ActivityCell. (2) **Gas Stations block** on the landing page (`GasStations.tsx`, under LandingHeader, above the feed): out-links to StoaChain explorer (`explorer.stoachain.com/accounts/<acct>`) for **Ouronet Gas Station = `c:iQQFWj6gWtpGEzhM_O5ekW1QtnQQy55R8BRPGhj_0FU`** (chain 0 only — this is the gas-paying `c:` account seen on tx details) and the cross-chain pair **`kadena-xchain-gas`** + **`stoa-xchain-gas`** (named accounts, all chains). Fuel-pump icon cards. **Still pending:** Talos function register (collectsIgnis/STOA/patronless); known-accounts registry for the 10 Σ. smart accounts (need glyphs in a file) → enables IGNIS-interactor labels + STOA split amounts; owner's edited `_function_register.txt`.
-**Session 2026-06-15 (cont.16 — landing activity stat bar):** Pushed `1291370`. New **`GET /api/v1/ouronet/transactions/stats`** → `{totalTransactions, totalGas}` (activity service `getOuronetStats`: `SELECT COUNT(*), SUM(gas) FROM transactions WHERE EXISTS ouronet_activity` — one tx row per request_key). Frontend `OuronetStatsBar` (4 big-number cards, top of landing, above LandingHeader): **Ouronet Transactions** (count), **Total Gas Consumed** (gas units, thousand-sep), **Full Stoa Blocks** = totalGas/2,000,000, **Full Kadena Blocks** = totalGas/150,000 (block-equivs derived client-side; STOA_BLOCK_GAS=2e6, KADENA_BLOCK_GAS=150e3). Live: 1,758 txs / 575,343,966 gas → 287.67 Stoa-blocks / 3,835.63 Kadena-blocks. `useOuronetStats` hook + `api.ouronet.stats()`. **Still pending:** Talos function register (collectsIgnis/STOA/patronless); known-accounts registry (10 Σ. accounts → need glyphs in a file → IGNIS-interactor labels + STOA split amounts); owner's edited `_function_register.txt`.
-**Session 2026-06-15 (cont.17 — STOA Collection from the fee split):** Pushed `97752cb`. Owner: RegisterStoicTag (and similar) collect native STOA REGARDLESS of the KDA-collection switch. Confirmed via tx VRE79n events: payer sends a 10/20/30/40 split `0.7/1.4/2.1/2.8 = 7.0 STOA` to 4 FIXED collectors; the tiny gas fee is sent FROM the gas station (c:iQQF) to the miner (so excluded). **STOA Collection** now = SUM of coin `TRANSFER` amounts whose receiver ∈ the 4 fixed collectors (`loadStoaCollection`; amount param handled as plain number OR {decimal} via jsonb_typeof CASE). **The 4 STOA fee collector kadena accounts (hardcoded in `STOA_FEE_COLLECTORS`):** 10% `k:afa4d5ec4f1070e58badaac237fbf16c19c0b08dd4b981b3e91937943714138d` (Demiourgos Holdings), 20% `c:iQQFWj6gWtpGEzhM_O5ekW1QtnQQy55R8BRPGhj_0FU` (DALOS gas station = the Ouronet Gas Station), 30% `k:2cc72ef06136150f52c01dcc3a135dbd03e5328fafd71442a933619b9337456c` (Ouronet maintenance / cto = demiurgoi[1]), 40% `c:XM-pkmuB5XUQlp87ZYSbfKt8qzmHY6O2EHAzMRVBt3k` (Ouroboros). Verified live: RegisterStoicTag rows show STOA 3.2–12; non-collecting rows "—". Frontend unchanged (GasCell ❖ line already reads stoaCollection). **StoicTag hero suggestions given** (Charon=DALOS, Prometheus=DEMIOURGOS, Jörmungandr=OUROBOROS, Poseidon=LIQUID, Chronos=VESTING, Hydra=AUTOSTAKE, Hephaestus=COLLECTABLES, Argus=CUSTODIANS, Themis=AQP, Demeter=DISPENSER). **Still pending:** Talos function register (collectsIgnis/STOA/patronless); known-accounts registry (10 Σ. accounts — glyphs needed in a file); owner's edited `_function_register.txt`.
-- **Last session (2026-06-14):** kicked off Ouronet Explorer. Mapped existing explorer + Ouronet domain; wrote expanded-prompt discussion seed; locked scope/pricing/MVP decisions. No code changed.
-- **Prior session (2026-04-22):** rewrote CLAUDE.md (15 KB autonomous-workflow scaffold → 5 KB practical repo doc). Scaffolded this Claudstermind entry. No code changed.
-- **Known outstanding:**
-  - `CLAUDE.md` rewrite is unstaged — owner to review + commit (no version bump needed; docs-only)
-  - `sync.service.ts:76` hardcodes `chainCount: 10`; older README prose says 20 — README is wrong, leave the code alone
-  - `START_HEIGHT` is hardcoded at `6357351` in `sync.service.ts` — changing it is a full re-index decision
-  - `configuration.ts` default `KADENA_NETWORK_ID` = `stoa` while README example `.env` says `mainnet01` — README example is stale; compose + config.ts are authoritative
-  - README also quotes port `3100` / `5450` / `6400` in older copy paths — real ports are `3000` / `5432` / `6379`
-- **Drift notes:** Only known drift is the README's stale ports + network ID (above). No manual DB edits reported, no uncommitted source changes pending.
+
+> Current-state snapshot. Reconciled 2026-08-10 after ~2 months / 99 commits of undocumented work
+> done in Windows/Claude-Desktop sessions. Granular per-session narrative lives in `LOG.md`; this
+> file is the "where things stand right now" view.
+
+## ⚡ INDEXER BACKFILL SPEEDUP — PUSHED (2026-08-17)
+
+Kadena mainnet backfill was ETA ~55 days at ~64k blk/hr (39.4M/124M blocks). Diagnosed: the
+FETCH path was already batched (3 requests per 50-block chunk, gzip proxy on); the bottleneck was
+the WRITE path + per-tick overhead that GROWS with the DB — so it got slower the more it indexed.
+Fix in shared `backend/` (`06323f2`, `feature/kadena-explorer`) → helps BOTH Kadena + StoaChain:
+
+1. **Killed the per-tick COUNT(\*).** `syncChainHeights` ran `blocksService.count()` +
+   `transactionsService.count()` (two full scans of the 39M / 3.8M-row tables) on EVERY 5s tick just
+   for a stats emit. Now `getIndexedCounts()` does a real COUNT at most once/min and advances cached
+   totals by what each tick writes (`bumpIndexedCounts`). This was the overhead that scaled with DB
+   size and made it feel like it was slowing down.
+2. **Bulk block + tx insert** (new `persistBatch` in sync.service.ts). Replaced per-block
+   `findByHash`+`save` and per-tx `findByRequestKey`+`save` with one
+   `INSERT ... ON CONFLICT DO NOTHING RETURNING` per table per chunk (new `bulkInsert()` on
+   Blocks/TransactionsService). Only rows actually inserted get transfers extracted, so a
+   resumed/duplicate range does no extra work. ~100+ queries per 50-block chunk → ~2.
+3. **Gated live WS emits** to blocks within 50 heights of tip (`TIP_EMIT_WINDOW`) — deep backfill has
+   no watcher; frontend still gets height via the indexed-height emit.
+4. **pg pool 10 → 30** (`extra.max`, override `DB_POOL_MAX`) so 20 parallel chains don't starve.
+
+**Round 1 DEPLOYED + MEASURED: ~64k → ~342k blk/hr (≈5.3×), ETA ~55d → ~10d.** Confirmed working.
+
+**Round 2 DEPLOYED + MEASURED: ~342k → ~2.34M blk/hr, ETA ~10d → ~1d 11h. ≈36× over the original 64k.**
+Owner called it "more than enough" — the write path is no longer the bottleneck; throughput is now bounded by
+node serve/sync speed. Round 3 (transfer/coinbase batching) intentionally PARKED, not needed. Round 2 levers:
+- **A. `synchronous_commit=off`** via TypeORM `extra.options: '-c synchronous_commit=off'` (per-connection
+  startup opt, both backends on deploy; `PG_SYNC_COMMIT=on` reverts). The WAL fsync per commit was the
+  dominant bulk-insert cost. Safe for a derived store (OS crash loses <1s of blocks, re-synced next tick).
+- **B. Batch 50 → 250 blocks/tick** (`SYNC_BATCH_SIZE`), amortising fixed per-tick cost. Node capping a
+  header page / payload batch degrades gracefully (short page continues next tick).
+- **C. Cached per-chain indexed min/max/count** — the indexed-height emit ran a MIN/MAX/COUNT scan per chain
+  EVERY tick (grew with DB); now seeded once from DB, advanced in memory (`updateChainStats`; `persistBatch`
+  returns `{blockCount,minHeight,maxHeight}`). Expected → 700k–1M+ blk/hr, ETA ~3–5d.
+
+**Round 2b HARDENING PUSHED (`300b4a3`)** — batch 250→500 AND fixed a latent infinite-loop: the single bulk
+INSERT per batch could overflow Postgres's **65535 bind-parameter cap** on a busy range (a batch's txs
+accumulate across all its blocks; >~3,640 tx rows = ~18 cols/row throws the INSERT), leaving the chain's
+height unadvanced → it re-fetches the SAME range every tick forever = wedged sync. Not hit yet only because
+backfill is in near-empty early history. FIX: `Blocks/TransactionsService.bulkInsert` now chunk at
+`INSERT_CHUNK_ROWS=1000` (exported from blocks.service, ≤18k params/statement) so the cap is unreachable at
+any batch size / tx density; a chunk that still fails is retried row-by-row (poison row logged + skipped, chain
+keeps advancing). `SYNC_BATCH_SIZE` default 500 (near node per-request cap; higher just yields partial pages).
+
+Remaining lever (round 3 if wanted): **transfer + coinbase extraction is still per-row** — the last per-tx
+write cost. Batch those into bulk transfer inserts next. Dropping secondary indexes during backfill was
+considered + rejected (API is live, queries would suffer).
+
+**DB scaling headroom (owner asked):** Postgres has NO practical size ceiling for this — 32 TB/table default,
+effectively unbounded DB. Full Kadena index (~124M blocks + txs + transfers) ballparks ~100–300 GB incl.
+indexes → fine on any decent VPS disk. You hit DISK and QUERY-PERF limits long before any Postgres internal
+limit, both manageable (native table partitioning by chain_id/height, hot indexes, cached aggregates — already
+doing the last). Only reason to ever switch engines = heavy real-time OLAP analytics (→ ClickHouse/Timescale);
+for an explorer's point-lookups + recent lists, Postgres scales here comfortably (chainweb-data uses it too).
+
+The node **backup API** (`/make-backup`) idea was raised + rejected as a shortcut: it dumps the
+node's internal RocksDB/Pact-SQLite, not SQL our indexer can read. The real "index mainnet in days"
+tool is Kadena's `chainweb-data` (Haskell, bulk gap-fill into Postgres) — a bigger arch change,
+unneeded once our own writes are batched (node is local, transport isn't the bottleneck).
+
+## ✅ OURONET SUCCESS/FAILED SPLIT — PUSHED (2026-08-16)
+
+Ported the Stoa/Kadena dashboard split to the Ouronet landing stat bar (`4665820`, ouronet v0.14.1,
+`feature/kadena-explorer`). Was the last of the three explorers still showing single-figure totals.
+
+- **Backend** `ouronet-account-activity.service.ts::getOuronetStats()` now returns `totalWastedGas`,
+  `totalSuccessfulTxns`, `totalFailedTxns` alongside the existing `totalTransactions`/`totalGas`, via
+  `COUNT/SUM(...) FILTER (WHERE t.status = 'success'|'failure')` over the same `ouronet_activity`-scoped
+  tx set. Controller `@Get('stats')` return type widened to match.
+- **Frontend** `OuronetStatsBar.tsx`: new local `SplitStat` helper (green "good" headline + smaller red
+  "bad" line + labels/sub). Ouronet has **NO `LiveValue`** component — used plain
+  `text-green-600 dark:text-green-400` / `text-red-600 dark:text-red-400` spans. Cards: Transactions
+  (ok/failed + total sub), Total Gas (used/wasted + "% wasted" sub), Avg Gas/Tx (gas per ok / per failed
+  tx), plus the two Full-Block-equivalent cards. Grid widened to `lg:grid-cols-5`. `OuronetStats` type
+  extended in `types/ouronet.ts`; `client.ts` needed no change (already typed to `OuronetStats`).
+- **Gotcha:** ouronet's local `tsc -b` reports pre-existing errors for `@ancientpantheon/codex/*`
+  (workspace package absent from local install, present in Docker build ctx) and `buffer` polyfill —
+  NOT my files. Verify your own files aren't in the error list rather than expecting exit 0.
+
+## 🟡 KADENA LIVE-DASHBOARD BUILD — PUSHED, AWAITING DEPLOY (2026-08-11)
+
+Node is up + streaming; explorer wired to it and indexing. Three dashboard fixes built for the live indexing
+experience, all on `feature/kadena-explorer` (the branch the prod server tracks), waiting for one DEPLOY press:
+
+1. **Live socket updates** (`477b716`, v0.1.3) — `nginx.kadena.conf` was missing a `/socket.io/` proxy, so the
+   WS handshake fell through to the SPA and the dashboard sat on "Connecting…". Added the proxy (same-origin on
+   denascan, unlike Stoa). After deploy, blocks/heights stream live instead of only-on-refresh.
+2. **Grey pre-split chains** (`dccda97`, v0.1.4) — `frontend-kadena/DashboardPage.tsx`: chains 10-19 render
+   greyed/inactive (0/0/0 + "not yet") until the **backfill frontier** (max `maxIndexedHeight` across chains 0-9)
+   passes the graph-split height **852,054**, then activate. Kills the phantom 5.8M network-height showing on
+   chains that didn't exist yet. Const `KADENA_GRAPH_SPLIT_HEIGHT` (frontend-only; there's still no such
+   constant in backend code — only a comment at `sync.service.ts`).
+3. **Live per-chain KDA supply** (`dccda97`) — NEW `backend/src/modules/balance/`: `AccountBalance` +
+   `BalanceLedgerCursor` entities + `BalanceLedgerService`. Folds the `transfers` table into per-account KDA
+   balances behind its **own cursor + @Interval(6s)**, fully decoupled from the indexer's write path (can't
+   stall block ingestion). Exactly-once via a transactional cursor advance (cursor stores the FULL-precision
+   `to_char(created_at,'…US')` string, not a ms Date — same-block transfers share `created_at`, so a truncated
+   cursor would double-count). Per-chain supply = `SUM(balance) WHERE balance>0`. `StatsService.getSupply` now
+   returns this on `hasLocalCoinSupply=false` (Kadena) instead of empty; StoaChain keeps its Pact path. Ledger
+   only runs when `!hasLocalCoinSupply`; **self-heals** (TRUNCATE balances + null cursor) if `transfers` is
+   found empty (admin rebuild) so it never double-counts. Composite `(created_at,id)` index added to `transfers`.
+   The dashboard's ◇ Supply line + 🔥 Gas line already existed — they just read empty before; now they populate
+   and refresh on the 10s `useSupply`/`useGasUsage` poll.
+
+Typecheck: new backend files + `stats.service`/`transfer.entity` clean (remaining tsc errors are all pre-existing
+spec files + missing `@ancientpantheon/*` externals). Frontend greying verified by read (no local node_modules).
+**CAVEAT to verify against real data:** the fold captures coin FLOWS (transfers + coinbase `coin.TRANSFER`). If
+Kadena genesis allocations aren't emitted as transfers, per-chain supply is understated (net-observed, not true
+total) — acceptable as "coins the indexer has positively seen", growing live. Kadena coinbase reward path in the
+extractor is the standard `coin.TRANSFER` fallback (the STOA-reward regex won't match) — confirm coinbase rows appear.
+
+### Follow-on Kadena work pushed to `feature/kadena-explorer` (2026-08-12), still awaiting deploy
+4. **Coinbase supply** (`1f959fa`, v0.1.6) — CoinbaseLedgerService credits every block's miner from
+   chainweb's `miner_rewards.csv` schedule (verified). See LEARNINGS.
+5. **Genesis seed** (`f337b47`, v0.1.7) — 300M pre-mine from `token_payments.csv` seeded so supply =
+   genesis + mined + transfers. See LEARNINGS.
+6. **READ-node fix** (`a1fe499`, v0.1.8) — pact reads (modules/namespaces + account balances) were hitting
+   the Stoa built-in node, not the Kadena ingest node → Contracts page empty + balances 0. Fixed the read
+   lane to fall back to the ingest node for networks without a built-in. Verified: the miner account the
+   owner clicked actually holds ~10.68 KDA across chains 0-9 (page showed 0 only because of this bug).
+7. **Sync-progress panel** (`8802427`, v0.1.9) — `/api/v1/stats/sync` (SyncStatusService) + SyncCard:
+   explorer→node-tip progress (blocks/hr rate + ETA) and node→network-tip (~82% synced, est. from genesis
+   time). Shows only while >200×chainCount blocks behind; auto-hides when live. NOTE for the owner: at the
+   current indexing rate the explorer catching the node tip may take LONGER than the node's ~2-week sync —
+   the panel's ETA will make this concrete once deployed (rate ring warms in ~2 min).
+
+All of 1-7 ship in ONE deploy press. Backend tsc clean for all new files (pre-existing spec errors only).
+
+## 🟢 KADENA COLD EXPLORER DEPLOYED LIVE (2026-08-11)
+
+**https://denascan.ancientholdings.eu serves the cold Kadena explorer** — HTTP 200, `<title>Kadena Explorer</title>`,
+`/api` proxied to the Kadena backend which returns clean dead-mode data (`{chainCount:0,chains:[],...}`). Deployed on
+**StoaNode Prime** as a full isolated stack alongside the untouched live Stoa/Ouronet stack: `explorer_{backend,frontend,
+postgres,redis}_kadena_prod` (all healthy), compose project `production`, network `explorer_prod_network`. Server on
+branch `feature/kadena-explorer` @ `1bd3aaf` (fetched via the new read-only deploy key; PAT rotated + removed from
+`stoa-explorer`'s git remote). Backend in **dead mode** (`CHAIN_SOURCE_START_DEAD=true`, no node) — boots clean, no crash.
+**Emerald theme shipped (v0.1.1, commit `53c38e3`):** the copied StoaChain gold (`#ceac5f`) → emerald accent
+(`#10b981`) on a deep green-black ground, so Kadena reads distinct from Stoa-gold + Ouronet-violet. Token-driven
+in `frontend-kadena/src/index.css` (`--accent` + `--color-primary-*` ramp + green-tinted `--bg`/light neutrals) +
+2 component brand-gold stragglers (LiveValue, CrossChain). Deployed via git pull + rebuild kadena-frontend only;
+verified live (served CSS = emerald, 0 gold).
+**Kadena icon + deploy-button wiring (commit `af9ab15`, on server):** emerald "K" SVG favicon
+(`frontend-kadena/public/kadena-logo.svg`, dropped the copied Stoa `logo.png`, v0.1.2). **`kadena-backend` +
+`kadena-frontend` are now first-class deploy targets** in `scripts/deploy/lib.sh` (DEPLOY_TARGETS + service_container
++ built_image_id + COMPOSE_KADENA) and `deploy.sh` (build_one, `all` list, swap cases — kadena-backend build-then-swap
+w/ health wait, kadena-frontend plain recreate; isolated so a Kadena failure can't touch the live explorers). `bash -n`
+clean. Server pulled to af9ab15 (code only, nothing rebuilt). **Hitting the admin DEPLOY button now runs the NEW
+deploy.sh `all`** → builds all 5, swaps only changed: base **backend** (→ Kadena version entries in Update&deploy) +
+**frontend-ouronet** (→ Kadena admin menu + Node field + `/kadena-admin/` proxy) + **kadena-frontend** (→ icon);
+leaves the dead-mode **kadena-backend** + **frontend-stoa** untouched (unchanged). Backend swap has health-check +
+rollback. So one button press brings ALL Kadena admin mods online (and redeploys the live Stoa/Ouronet with the
+verified backward-compatible shared changes).
+**To go live:** ouroscan admin → **Kadena → Node** → paste the AncientIntel node URL → "Start indexing" (once the node
+finishes syncing, currently ~28%). **Minor follow-up:** the SyncService logs a dead-mode ERROR every 5s tick (harmless,
+caught — but noisy over days of dead mode; downgrade to debug). Full deploy details in the "COLD DEPLOY" section below.
+
+## Version / branch / HEAD
+
+- **`frontend-ouronet` @ `0.14.0`** (the active, greenfield admin-bearing SPA — `frontend-ouronet/src/constants/version.ts`).
+- **`frontend-stoa` @ `0.5.0`** (the mature public explorer; `frontend/` was renamed → `frontend-stoa/` back in the MVP phase).
+- **Backend has no version file** — versioning is per-frontend + the `update` module now reads "organ" versions at runtime.
+- **Branch:** `feature/ouronet-explorer` (NOT `master` — all Ouronet + seer-migration work lives here; never merged to master yet).
+- **HEAD:** `dae360a` "feat(deploy): one deploy button; build everything, swap what changed" (2026-08-10).
+- **Backend suite:** last recorded green at `81d809d` = **522 passing / 0 failing**; 76 `*.spec.ts` files now.
+
+## Working-tree state (important, mostly noise)
+
+- `git status` shows **~225 modified files** but this is **pure CRLF↔LF line-ending churn** from editing on
+  the Windows box: `git diff --stat` = 46,312 insertions == 46,312 deletions; `git diff -w --shortstat`
+  (whitespace-ignored) = **1 file / 1 line**. Treat the working tree as effectively clean.
+- One stray untracked `bash.exe.stackdump` (Windows/Git-Bash crash dump) — delete it.
+- Several `*.bak` files committed inside `backend/src/modules/ouronet/` and `frontend-ouronet/src/pages/`
+  (`ouronet-node.service.ts.bak`, `pools-index.ts.bak`, `pair-header.spec.ts.bak`, `AssetPage.tsx.bak`, …)
+  — leftovers, safe to prune.
+- **Recommendation to owner:** normalize line endings once (a `.gitattributes` `* text=auto eol=lf` +
+  `git add --renormalize .`) so the working tree stops churning on every cross-machine edit.
+
+## Next feature (SHAPING, not started) — Kadena Community Edition explorer ("denascan")
+
+Owner's brief (2026-08-10): add a **third frontend** = a Kadena explorer (`denascan.ancientholdings.eu`),
+essentially a copy of `frontend-stoa` with UrStoa / vault / rich-list / stoic graphics stripped, backed
+by a **second database** indexing the Kadena chain, with a **second admin tab** for that DB. Per-chain
+supply = sum of KDA across all positive addresses on that chain. Kadena = **20 chains** (vs Stoa's 10),
+tip ~7.13M/chain (~142.5M blocks total), graph transition 10→20 at height **852,054**.
+
+**Infra approach settled this session (research):** do NOT hammer the public endpoint for backfill —
+**self-host the Community Edition node** (`ghcr.io/kda-community/chainweb-node/ubuntu:latest`, service
+API :1848 = same API surface `KadenaService` already speaks, so a 2nd ingest source is near drop-in),
+and consider **`kda-community/chainweb-data`** (maintained Postgres indexer fork) as the ingest engine to
+avoid writing+backfilling a Kadena indexer. Supply reframed: read the node's own Pact `coin` table /
+Rosetta rather than building a from-genesis balance ledger. See `meta/shared-facts.md § Kadena Community
+Edition` for the org/endpoint facts.
+
+**✅ Snapshot FOUND (verified live 2026-08-10):** no genesis sync needed. RunOnFlux Flux-share mirrors serve a
+working full snapshot: `http://176.9.51.{184,185,186}:16127/apps/fluxshare/getfile/kda_bootstrap.tar.gz?token=…`
+= **342 GiB gzip, dated 2025-05-11** (all HTTP 200). Extract into a `kda-community` node's db dir → history to
+~May 2025, then P2P catches up ~15 months (days, not a month). A likely-smaller/fresher **compacted ~44GB**
+variant exists via the `runonflux/kadena-chainweb-node` Docker image (URL not yet extracted) — chase it if we
+want a smaller download. Old kadena-io bucket is DELETED; community `pact-db-snapshot` repo still empty. Details
++ caveats (tokens perishable, compaction is fine for indexing) in `meta/shared-facts.md § DB snapshot sources`.
+
+**BUILD STARTED — branch `feature/kadena-explorer` (off `feature/ouronet-explorer`), 2026-08-10.**
+**Wave 1 DONE (backend network-agnostic, all type-clean via `node node_modules/typescript/bin/tsc`; jest
+can't run locally — see LEARNINGS):** new `backend/src/config/network-profile.ts` = single source of truth
+for StoaChain↔Kadena divergence (chainCount, genesis/blockTime/epoch/capacityGas, feature flags
+hasLocalCoinSupply/hasUrStoaVault/vaultAddress; resolved by `KADENA_NETWORK_ID`, all params env-overridable;
+Kadena numeric values marked `[verify]`), wired into `configuration.ts` as `network.*`. Edits: `sync.service.ts`
+chainCount now derives from the cut (kills hardcoded 10 in stats emit + `syncAllChains` + `getChainStatus`);
+`gateway subscribe:all` uses `network.chainCount`; `stats.service` `getSupply` gated on `hasLocalCoinSupply`
+(Kadena returns empty), and hashrate-history + blockchain-load constants (genesis/blockTime/epoch/capacityGas)
+now read from the profile. **Finding:** the coinbase extractor already has a standard `coin` TRANSFER path
+("other Kadena chains") so Kadena coinbase needs NO change — Stoa text/TRANSMIT branches just no-op on Kadena
+data (verify vs real data once synced). **Wave 2 backend-deploy DONE:** `docker/production/docker-compose.kadena.yml` = full isolated Kadena stack
+(kadena-backend [same Dockerfile.backend, env `KADENA_NETWORK_ID=mainnet01`, `KADENA_NODE_URL=${KADENA_MAINNET_NODE_URL}`,
+`TYPEORM_SYNC=true` on the fresh DB] + kadena-postgres [own vol, 2G] + kadena-redis + kadena-frontend [refs
+Wave-3 `Dockerfile.frontend-kadena`]), additive override joining `explorer_prod_network`, base Stoa/Ouronet
+untouched. **KEY FINDING that de-risked Wave 2:** `PactReadService` (pythia) falls back to **direct-node** when
+Pythia is unconfigured (pact-read.service.ts:64-67,133-139) → the Kadena backend reads straight from its node,
+NO decoupling/module-surgery needed. Kadena backend = "same app, different env." **Remaining backend polish:**
+gate RichList-sync + Ouronet-extractor intervals to no-op off-Stoa (they'd hit the Kadena node with Stoa Pact
+calls — log noise, not a crash; add `hasOuronet` flag to network-profile + early-return). **RICH-LIST CORRECTION (owner, 2026-08-11):** Kadena KEEPS the generic (coin) rich list — only the **UrStoa
+Rich List + UrStoa Vault rich list** are dropped. First strip pass over-removed `RichListTab` (the coin list);
+restored it (subagent resumed). **Backend reality:** the Stoa rich list is a single Pact scan
+`(map (coin.UR_Details) (keys coin.coin-table))` — infeasible on Kadena (millions of accounts/chain; also
+Kadena's coin has `details` not `UR_Details`). So the **Kadena rich list is powered by the balance ledger, same
+subsystem as supply → both are Wave 5.** The rich-list `@Cron` Pact-scan is correctly gated off Kadena (my
+`hasUrStoaVault` gate stands); rich-list endpoints still serve (empty until the ledger populates). Frontend
+RichListTab restored so the UI is ready.
+
+**Wave 3 `frontend-kadena` DONE (copied from frontend-stoa, verified no dangling imports; full tsc/vite build =
+Docker gate, no local node_modules):** deleted UrStoaRichListTab/TempleSupplyCard/useRichList-UrStoa-parts (coin
+RichListTab KEPT/restored); stripped all UrStoa refs from App/Statistics/Dashboard/api-client/useAccounts/AccountPage/TransactionDetail; rebranded
+"Kadena Explorer", `networkId=mainnet01`, persist key `kadena-explorer-settings`, `VITE_API_URL=denascan`, own
+`version.ts` @ **0.1.0**; flipped 10→20 chains across ~10 files; **STOA→KDA** display-label swap (formatSTOA fn
+name kept). Docker: `docker/production/Dockerfile.frontend-kadena` (public nginx, no /auth) + `nginx.kadena.conf`
+(/api→kadena-backend:3000). **Frontend follow-ups (non-blocking, degrade gracefully on Kadena):** `BlockEmissionsCard`
+still shows StoaChain Yang/Yin emission model (Kadena has no Yang/Yin — endpoint is Stoa-specific); dead UrStoa
+string branches in `TransactionDetailPage EventTypeBadge` (inert); comment-only Stoa refs; `KeysetsPage` (no route).
+**Dev override DONE:** `docker/development/docker-compose.kadena.yml` (parallel dev stack, ports 3001/5174/5433/6380,
+backend reaches the local node via `host.docker.internal:1848`) — for local shakeout on AncientIntel once the node
+syncs. **=> ENTIRE BUILDABLE-NOW CORE COMPLETE** (backend + frontend-kadena + prod compose/Dockerfile/nginx + dev
+compose), all on `feature/kadena-explorer`. **FRONTEND DOCKER BUILD VERIFIED 2026-08-11** on AncientIntel:
+`docker build -f Dockerfile.frontend-kadena` → rolldown-vite v7.2.5, **2730 modules transformed, built in 564ms,
+0 errors**, 81.9MB image serves the dist SPA. So frontend-kadena is confirmed deployable (not just typecheck).
+Backend Docker build running to confirm the same. **BACKEND DOCKER BUILD ALSO VERIFIED** (`explorer-backend-test:local` 1.52GB, @ancientpantheon pulled fine via
+Docker — the local-node_modules gap doesn't affect the Docker build). **denascan.ancientholdings.eu vhost+TLS DONE
+on StoaNode Prime** (2026-08-11): certbot cert issued, HTTPS live, vhost proxies →127.0.0.1:8300 (kadena-frontend),
+mirrors ouroscan.conf; nginx -t clean, live sites untouched; returns 502 until the Kadena stack deploys. Recon:
+`/opt/stoa-explorer` = git checkout on `feature/ouronet-explorer` (⚠️ GitHub PAT embedded in its `.git/config`
+remote URL — owner should ROTATE), `.env` already has shared SESSION_SECRET/OIDC_*, host nginx = certbot per-domain
+vhosts in sites-enabled. **DEAD-MODE SHAKEOUT caught a real crash bug** (ran the built backend image locally in dead
+mode): `SyncService.onModuleInit` threw in dead mode → NestJS boot aborted → crash-loop, NOT a served cold site.
+Fixed: onModuleInit try/catch (best-effort initial sync), + `getChainHeights`/`getNetworkStats` now degrade to
+empty instead of 500 when the node is unreachable. **DEAD-MODE RE-VERIFIED WORKING (rebuilt image):** backend boots + stays up cold (no crash), ALL endpoints 200
+with clean empty bodies — `stats`→`{chainCount:0,...,chains:[]}`, `blocks/heights`→`[]`, `supply`→`{chains:[],totalSupply:0}`.
+So the cold explorer renders a clean empty state, not errors. Gap #3 CLOSED. Both prod images build + verified on
+AncientIntel (`explorer-backend-test:local`, `kadena-frontend-test:local` kept for reuse). **PAT recon:** the shared
+GitHub PAT `ghp_...` (still VALID, HTTP200) lives in 3 repos' `.git/config` remote URLs on StoaNode Prime
+(stoa-explorer, ouronetui, ouronetui-prod) — deploy-auth for `git pull` of the private repo; owner to rotate →
+deploy keys ideally. **Remaining to a live cold explorer:** re-verify cold boot serves, get the branch code onto StoaNode Prime (push+pull vs rsync — CRLF
+churn to handle), add Kadena `.env` values (KADENA_POSTGRES_PASSWORD/KADENA_REDIS_PASSWORD/ports), `docker compose
+-f docker-compose.yml -f docker-compose.kadena.yml up -d --build` the Kadena stack (additive, base stack untouched).
+**Remaining is deploy-time or new-feature:** W4 = `denascan` vhost/TLS + AncientIntel→prod node reachability
+(DuckDNS/tunnel for `KADENA_MAINNET_NODE_URL`) + wire kadena-backend/frontend into the deploy target picker (own
+versions) + admin Kadena DB tab in frontend-ouronet — most need the node synced + StoaNode Prime. W5 = balance
+ledger (powers BOTH rich list + per-chain supply). **DEAD-MODE / cold-turkey deploy SUPPORTED (owner wants: deploy cold, tap node link, indexing starts):** added
+`CHAIN_SOURCE_START_DEAD=true` path to `chain-source.service.ts envFallback()` (suppresses the hardcoded StoaChain
+node fallback so a cold Kadena backend never wrongly indexes StoaChain; `isConfigured()` helper added) +
+`KadenaService.getChainwebUrl()` throws a clean "dead mode" error when no node (sync loop's catch skips the tick →
+cold, empty, no crash). Prod compose now dead-starts (`CHAIN_SOURCE_START_DEAD:"true"`, `KADENA_NODE_URL` empty).
+Set-node endpoint already exists: **`PUT /api/v1/admin/chain-source`** (AncientGuard-gated). **NODE-URL ADMIN FIELD BUILT in the ouroscan admin (owner: the ouronet admin is the single control surface for
+ALL frontends+backends — correct).** All type-clean. Mechanism (cleaner than a server-to-server proxy): the hub
+session is a **signed cookie** (validated by `SESSION_SECRET`+OIDC, per `ancient.guard.ts`), so the Kadena backend
+just needs the SAME `SESSION_SECRET`+OIDC → the operator's ouroscan session validates there too. Pieces: (1)
+`frontend-ouronet/src/pages/admin/KadenaSourcePane.tsx` (new "Kadena node" pane, dead-mode aware — shows "cold — no
+node set" + "Start indexing" button; fetches/PUTs `/kadena-admin/chain-source`); (2) `AdminPage.tsx` — new
+`kadena-source` section between chain-source and database; (3) `nginx.ouronet.conf` — `/kadena-admin/` location using
+a **resolver+variable+rewrite** upstream (so ouroscan still BOOTS when kadena-backend is absent → 502 not a broken
+frontend; literal upstream would take ouroscan down); (4) `docker-compose.kadena.yml` — kadena-backend gets shared
+`SESSION_SECRET`+OIDC_* env (validates only, doesn't run the login flow → stays public read-only w/ one gated route).
+Same-origin cookie flow works (browser on ouroscan → /kadena-admin/ → nginx → kadena-backend gets the cookie).
+**Needs Docker/deploy verification** (auth flow + nginx can't run locally). Deploy note: resolver pattern means no
+hard ordering break, but set the node only after kadena-backend is up. **GROUPED KADENA ADMIN MENU + VERSION LIST (owner, 2026-08-11 — flat "Kadena node" item was wrong, and the deploy
+list lacked the Kadena version):** (A) Replaced the flat `kadena-source` item with a grouped **"Kadena"** admin
+section (`KadenaPane.tsx`) with hash-routed **sub-tabs Node + Database** (`#kadena/node`, `#kadena/database`).
+`AdminLayout` is flat (no nested sidebar) but `renderSection(id, sub)` supports sub-views via the hash, so one
+"Kadena" sidebar button → internal sub-tabs. Node sub = `KadenaSourcePane`; Database sub reuses `DatabasePane`
+(parameterized with an `endpoint` prop, backward-compatible) pointed at `/kadena-admin/database`. AdminPage
+renderSection now `(id, sub)`. (B) Added **Kadena Explorer** (`frontendVersion('frontend-kadena')` → v0.1.0) +
+**Kadena Backend** to `organ-versions.service.ts defaultEntities()` (the Update&deploy "THIS EXPLORER" list) +
+`Dockerfile.backend` now copies `frontend-kadena/src/constants/version.ts → entity-versions/frontend-kadena.txt`.
+All type-clean. Fuller Kadena admin (version/deploy sub-tabs) can add more `SUBS` entries + `/kadena-admin/` routes. Also still: denascan vhost/TLS on StoaNode Prime (DNS now
+primed by owner→StoaNode Prime IP), deploy target-picker wiring, frontend graceful "no node" empty state.
+**Frontend follow-up:** `BlockEmissionsCard` shows StoaChain
+Yang/Yin model on Kadena block-detail (wrong data — hide on Kadena or build a coinbase-reward variant). Backend
+polish: quiet remaining Ouronet module intervals on Kadena (idle-not-failing).
+
+**NODE SETUP IN PROGRESS (2026-08-10):** the Kadena CE node runs on **AncientIntel = this box**
+(`ancientbox-NucBox-EVO-T1`, the same machine as the Claude CLI — 16 cores / 62 GB RAM / 3.1 TB free on
+`/`, Docker 29.1.3, already hosts 4 `stoachain/stoa-node` containers). Everything staged under
+**`/home/ancientbox/kadena-ce/`** (NOT in the repo): `docker-compose.yml` (CE 3.2 image
+`ghcr.io/kda-community/chainweb-node/ubuntu:latest`, verified `chainweb-node-3.2`, service API bound to
+`127.0.0.1:1848`, `--allowReadsInLocal --header-stream`), `download-snapshot.sh` (running detached — pulling
+the 342 GiB Flux snapshot, **downlink-bound ~7 MB/s ⇒ ~13–14 h ETA**, resumable/mirror-rotating), and
+`start-when-ready.sh` (detached watcher → auto `docker compose up -d` when `SNAPSHOT_READY` appears). Logs in
+`kadena-ce/logs/`. Runbook: `kadena-ce/RUNBOOK.md`. Server-agent handoff doc:
+`StoaExplorer/docs/work/kadena-ce-node/NODE-SERVER-SETUP.md`. **Next check-in:** confirm snapshot extracted +
+node `/cut` advancing, then resume feature work. Owner is preparing the `denascan.ancientholdings.eu` domain.
+
+**TOPOLOGY SETTLED (owner, 2026-08-10):** the Kadena **node** is the ONLY thing on AncientIntel. **All explorer
+parts we build — Kadena backend + `explorer_kadena` DB + `frontend-kadena` — deploy to the SAME production
+server the explorer already runs on, "StoaNode Prime"** (= `85.215.141.198` / `/opt/stoa-explorer`, serving
+explorer.stoachain.com + explorer.ouro.network). Normal build→push→deploy; nothing is manually provisioned
+pre-deploy. Consequence: the prod Kadena backend reads the node **over the network**, so its `KADENA_NODE_URL`
+points at AncientIntel's reachable address (DuckDNS / port-forward / tunnel — AncientIntel is home-NAT/Telekom,
+IP rotates; resolve at deploy time, keep in env, never hardcode). My earlier "co-locate on AncientIntel"
+suggestion was WRONG and is overridden by this.
+
+**ARCHITECTURE DECISION (from a full code-map, 2026-08-10):** the backend is **single-tenant per process** —
+one unnamed TypeORM DataSource, all repos injected with no connection name, node/networkId/DB from env. So
+Kadena = **a SECOND backend process** running the SAME image with different env (`DATABASE_NAME=explorer_kadena`,
+`KADENA_NODE_URL=http://<node>:1848`, `KADENA_NETWORK_ID=mainnet01`), NOT a 2nd named DataSource in-process
+(that would touch ~12 modules — invasive). Precedent: `frontend-ouronet` + `docker-compose.ouronet.yml` already
+run a parallel stack. This flips the earlier "two connections in one backend" idea. Shared-code changes needed
+are small: (a) derive chainCount from the `/cut` (kill hardcoded `10` in `sync.service.ts:88,392,403` +
+`gateway:71 subscribe:all`; stats.service already derives it); (b) make StoaChain-specific bits no-op/config-gated
+for Kadena — coinbase text regex + `TRANSMIT` vault (`transfer-extractor.service.ts:173,194`), UrStoa vault addr
+`c:GjYb…FG3k`, `coin.UR_LocalCoinSupply` (`stats.service.ts:323`), rich-list (`urstoa-coin`), `C_TransferAcross`;
+(c) per-network chain params (genesis ts / epoch / capacity gas in `stats.service.ts:427-430,580-585`). Then
+Docker services (2nd backend + `explorer_kadena` PG + `frontend-kadena`), a copied+stripped `frontend-kadena`
+(strip UrStoa/vault/rich-list + `TempleSupplyCard.tsx` = the "stoic graphics"; ~13 files hardcode 10 chains→20),
+and a Kadena admin tab in `frontend-ouronet`. Full map lives in this session; Kadena entities (block/tx/transfer)
+are already generic (chainId smallint OK for 20, amount 20,12 OK for KDA's 12 decimals). Caveat: `@Interval(5000)`
+in sync.service is a compile-time literal so `SYNC_INTERVAL` config is currently dead.
+
+**Recommended staging (my lean, not yet owner-approved):** (1) stand up node + snapshot; (2) live-tail
+index first (cheap, visible in days) via a network-parameterized 2nd TypeORM connection; (3) copy/strip
+frontend → `frontend-kadena`; (4) defer per-address supply to a phase 2 (it forces full/seeded history).
+**Open forks for owner:** chainweb-data-as-engine vs own-schema indexer; where the node runs (prod box
+vs home 3.5TB box); how deep the backfill goes. Disk confirmed available by owner. Not yet run through
+`shape`/`plan`.
+
+## What landed since the last snapshot (2026-06-15 → 2026-08-10)
+
+Three parallel work streams. All on `feature/ouronet-explorer`.
+
+### 1. Ouronet asset / pool / pair pages (the "explore the assets themselves" layer)
+- **DPTF & DPOF token pages**, **SFT & NFT collection pages** (`AssetPage.tsx`), **ATS stake-pair pages**,
+  **SWP liquidity-pool pages** (`PoolsPage.tsx`).
+- A **pools + pairs index**, **asset-id cross-linking** (ids link through to their pages), and a unified
+  **"every transaction involving an asset" endpoint** (`081bca9`).
+- Backend: `ouronet-asset.controller.ts`, `asset-header.ts`, `pair-header.ts`, `pools-index.ts` in
+  `backend/src/modules/ouronet/`.
+
+### 2. Stoa dashboard + health monitor rebuild (`frontend-stoa`)
+- **Total Supply "temple"** — a glowing SVG Stoa gateway with a filling `❖`, promoted to a center golden
+  stat card; per-chain cards merging Supply/Height/Gas; live "+N" delta animations; total-gas metrics.
+- **Difficulty / hashrate-anomaly health monitor**: long-range block-time history, log-scale block-time
+  charts (as ×target), epoch-retarget timer, live-stall detection via time-since-last-block.
+- **Removed the Node Network statistics tab** (`95d8762`). Fixed misclassifying coin module upgrades as
+  cross-chain transfers.
+
+### 3. THE SEER MIGRATION (a.k.a. "Pantheonica" / Pantheonic re-shell) — the big architectural shift
+The Explorer joins the **Pantheon** as a **seer**: it observes, signs nothing, holds its own Codex
+*only* to authenticate to Pythia, and never adopts Khronoton. Design + plan docs live under
+`docs/work/explorer-seer-migration/` (governing design) and 12 sibling topic folders in `docs/work/`.
+
+**New backend modules** (all net-new since the snapshot):
+| Module | Purpose |
+|---|---|
+| `auth` | AncientHub **OIDC** auth-code + PKCE login (ported from Pythia's `apps/pythia/src/admin/`), `/api/me`, `requireAncient` gating on every mutation. |
+| `chain-source` | **Runtime, admin-owned ingest node** config — ordered fallback list (node1→node2→custom), health/manual switch, one source at a time. Ingest stays on a pinned node (never Pythia). |
+| `pythia` | **DualLinkConnector** + tick loop; routes Ouronet Pact `/local` reads and tx `/poll` through Pythia's gateway keyed with `x-pythia-key` (metered/earning). Serves DB when Pythia is down (no fabricated values). |
+| `codex` | Hosts the Explorer's own **Codex** in **server custody** (adapter over master-key sealed storage); linked Apollo halves; ported Download/Load from Mnemosyne. |
+| `vault` | **Sealed credential store** with generic master-key rotation (holds the Codex snapshot + connector key). |
+| `database` | **Index lifecycle** — schema-version stamp, state readout, gated rebuild; distinguishes unstamped vs empty DB. |
+| `deploy` | **On-box blue-green deployer** — host-side spool, build gate, phase progress w/ timers, healthcheck carry-over, real "organ adoption", one-button "build everything, swap what changed". NOT a copy of Mnemosyne's (deployed tree is rsync'd not a git checkout; 5-container stack where postgres/redis must not swap). |
+| `update` | **Organ version readout** with the seer marker — lists `pythia-client` + `codex` pulled with versions, shows **Khronoton explicitly not-pulled** (identifies the Explorer as a seer). |
+
+**Ingest mechanics** (topic 5): partially in — batched ingest fetches + fetch the cut once per tick
+landed (`02464d3`). Full move to per-chain header-updates **SSE stream** + `header/branch` + `payload/batch`
+was the design intent; verify how far it got.
+
+**Frontend / shell:**
+- **`packages/pantheonic/`** shared workspace package (Pantheonic 3-tier header, colour tokens, URL router,
+  identity block) — written once, themed twice per SPA by swapping `--accent` + background family.
+- **Admin lives ONLY in the Ouronet Explorer** (`ouroscan.ancientholdings.eu`) behind an `AdminGate`.
+  `explorer.stoachain.com` (Stoa) stays public-only with **no login affordance at all**. Rationale: one
+  backend ⇒ admin is single-instance state; two panels would be drift risk for no gain.
+- Ouronet admin panes (`frontend-ouronet/src/pages/admin/`): `ChainSourcePane`, `DatabasePane`,
+  `DeploySection`, `NetworkFallbackPane`, `PythiaPane`, `SecurityPane`, `UpdatePane`, `codex/`.
+- **Public Settings stripped** on both SPAs → appearance + read-only Pythia read-lane status + read-only
+  "node serving blocks" display + version/changelog. The old (fake) "StoaChain Node URL" field, API
+  Endpoints card, Quick Presets and network selector were all removed.
+- **Public hostname moved** → `ouroscan.ancientholdings.eu` (`682417a`) — Ouronet Explorer now shares a
+  registrable domain with the hub (needed for the OIDC cookie/session).
+
+Also on this branch (cross-project, likely shared tooling/ports): `feat(pythia)`, `feat(codex)`,
+`feat(vault)` commits and a `docs(admin)` note — these organs are shared Pantheon components.
+
+## Open / unverified
+
+- **Acceptance criteria in `docs/work/explorer-seer-migration/design.md` are checkboxes I could not verify
+  against the live deploy** (connector reaching `active` unattended, Pythia petitions counting the reads,
+  admin node-switch resuming ingest without regressing height, header-updates SSE at steady state). Treat
+  them as "built per git, live-verification pending".
+- **Branch not merged to master** — everything is on `feature/ouronet-explorer`.
+- **`README.md` is badly stale** — still says "NestJS + React", "20 parallel chains", old port diagram,
+  no mention of the seer architecture, frontends, or Ouronet. Low priority but misleading.
+- **CLAUDE.md** (repo) predates the migration — describes the old single-frontend `frontend/` layout,
+  no `frontend-stoa`/`frontend-ouronet` split, no seer/Pantheon modules. Should be refreshed.
+- Line-ending normalization (`.gitattributes`) — see working-tree note above.
+- `*.bak` files + `bash.exe.stackdump` to prune.
+
+## Longstanding facts still true (carried from prior snapshot)
+
+- StoaChain = **10 chains** (not 20); `KADENA_*` identifiers are legacy naming, API is unchanged.
+- `KadenaService` is the sole direct Chainweb HTTP client for **block ingest**; Ouronet **reads** now go
+  through `PythiaClient`. Don't add a third path.
+- Ouronet data method: immutable → DB index; mutable → live reads reusing `ouronet-ns.DPL-UR` aggregate
+  functions via `KadenaService.localQueryMaxGas` (now proxied through Pythia).
+- `transfers` two sources: on-chain `TRANSFER` + UrStoa `URV|STAKE`/`UNSTAKE`. Extractor is source of truth.
+- Prod `transactions` spans the whole chain (min height 25) despite `START_HEIGHT=6357351` in code.
+- `rolldown-vite` override on both frontends — don't swap back without verifying the build.
+
+## Still-pending owner items (from June)
+- Owner's edited `_function_register.txt` (display-name revisions) — check whether this got applied in the
+  99 commits (`0f11d18 docs: descriptive names for administrative functions in register` suggests partial).
+- Known-accounts registry for the 10 immutable Ouronet Σ. smart accounts (glyph → role label).

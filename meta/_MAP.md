@@ -53,7 +53,9 @@ Release-cascade unit for chain-agnostic infrastructure. GitHub org
 
 ## `_Websites/` — static, dependency-free sites
 
-`StoaWebsite/`, `OuronetWebsite/`, `StoaChainDocs/`.
+`StoaWebsite/`, `OuronetWebsite/`, `StoaChainDocs/`, `StoicDigest/`.
+
+- **`StoicDigest/`** — the weekly-digest content site for the whole Stoa economy (an "Arweave Weekly Digest" analogue): weekly articles reporting shipped work + philosophy, to make the ecosystem's largely-invisible engineering output public and verifiable. Planning corpus only as of 2026-08-11 (recommended stack: Astro + Tailwind v4 + MDX). Reads facts *from* every StoaChain-related project; writes to none. **Out of scope (never reported):** `AncientClients/Zarlo`, `AncientClients/StoicEngine`, `Tools/AncientWisdom` (private), `Tools/wasp-dev`. Brain entry: `brain/StoicDigest/`.
 
 ## `_Archive/` — retired / dormant
 

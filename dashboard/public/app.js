@@ -3152,13 +3152,22 @@ function pactReconcileWorktrees(worktrees) {
 function pactWorktreeMenu(x, y) {
   const wts = (PACT_ED && PACT_ED.worktrees) || [{ name: "main", isMain: true }];
   const named = wts.filter((w) => !w.isMain);
-  const items = [{ label: "＋ New worktree…", onClick: pactWorktreeCreate }];
+  const g = PACT_ED && PACT_ED.groups.find((gg) => gg.id === PACT_ED.activeId);
+  const cur = (g && g.worktree) || "main";
+  // SWITCH the active box (the file tree follows it) to a worktree — including ⌂ main, so you can always get
+  // back. A ✓ marks the current one. `main` is always listed here even though it isn't a "named" worktree.
+  const items = [{ label: "Switch box + tree to:", disabled: true }];
+  for (const w of wts) {
+    const nm = w.isMain ? "main" : w.name;
+    items.push({ label: (w.isMain ? "⌂ main" : "⌥ " + w.name) + (cur === nm ? "   ✓" : ""), onClick: () => { if (g) pactEdSetGroupWorktree(g, nm); } });
+  }
   items.push("---");
-  if (named.length) for (const w of named) items.push({ label: "⌥ " + w.name, submenu: [
+  items.push({ label: "＋ New worktree…", onClick: pactWorktreeCreate });
+  // Lifecycle (merge into main / remove) moved into a submenu so the top stays a clean switcher.
+  if (named.length) items.push({ label: "Merge / remove a worktree…", submenu: named.map((w) => ({ label: "⌥ " + w.name, submenu: [
     { label: "Merge into main", onClick: () => pactWorktreeMerge(w.name) },
     { label: "Remove worktree", onClick: () => pactWorktreeRemove(w.name) },
-  ] });
-  else items.push({ label: "No worktrees yet — create one to isolate parallel work", disabled: true });
+  ] })) });
   pactShowCtxMenu(x, y, items);
 }
 // A tidy in-app alert (reuses the styled modal, not a native popup): title + message + a single OK.
