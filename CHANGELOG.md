@@ -4,6 +4,24 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.4] - 2026-08-23
+
+### Fixed
+- **Bookmarking a *just-finished* response did nothing (the ☆ button "didn't engage").** Bookmarks are keyed
+  by a response's `at` timestamp, but the engine only stamped `at` when it *persisted* a turn — the live
+  `assistant` event it broadcast had none. So a freshly-finished reply had no `at`, and the star's click
+  handler bailed on its `typeof at === "number"` guard. (Reloading the conversation fixed it, because the
+  reloaded transcript *did* carry `at` — which is why older responses could be bookmarked but the newest one
+  couldn't.) The engine now stamps `at` **once** and puts it on both the persisted turn and the broadcast
+  event, so a reply is bookmarkable the instant it lands — and because it's the *same* value that gets
+  persisted, the bookmark survives the next resync (which replaces the message list wholesale). Affects both
+  the Pact chat and the Core cockpit (same broadcast path).
+
+> ⚠ **Engine change** — this touches `lib/workspace.mjs`, which the always-up `sessiond` engine loads, so
+> deploying it requires an engine restart that **hard-kills any in-flight turns**. Deploy it when nothing is
+> mid-turn. The web/app.js half is a normal safe web restart on its own, but the fix only fully works once the
+> engine restarts too.
+
 ## [1.5.3] - 2026-08-22
 
 ### Changed

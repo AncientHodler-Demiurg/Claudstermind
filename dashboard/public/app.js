@@ -5423,7 +5423,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
     // the response clock so the timer shows on this client too, not only where it was typed.
     case "user": if (!(d.by && d.by === PACT_CHAT.conn.id)) { t._turnStartedAt = Date.now(); t.msgs.push({ role: "user", text: d.text || "", images: d.images || [], workspaceId: d.workspaceId || PACT_WORKSPACE_ID }); pactChatPaint(t); } return;
     case "assistant_delta": if (!t._turnStartedAt) t._turnStartedAt = Date.now(); t.live = (t.live || "") + (d.text || ""); pactChatPaintLive(t); return;
-    case "assistant": t.live = ""; t._pendingText = null; t._pendingImages = null; t.msgs.push({ role: "assistant", text: d.text || "" }); pactChatPaint(t); return;
+    case "assistant": t.live = ""; t._pendingText = null; t._pendingImages = null; t.msgs.push({ role: "assistant", text: d.text || "", at: (typeof d.at === "number" ? d.at : undefined) }); pactChatPaint(t); return;
     case "tool_use": if (!t._turnStartedAt) t._turnStartedAt = Date.now(); t.live = ""; t.msgs.push({ kind: "tool_use", tools: d.tools || [] }); pactChatPaint(t); return;
     case "result":
       t.live = ""; t.status = "idle"; t._pendingText = null; t._pendingImages = null;
