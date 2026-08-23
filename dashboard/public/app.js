@@ -2759,6 +2759,13 @@ function pactVisibleStart(msgs, textCap = PACT_TEXT_RENDER_CAP, hardCap = PACT_M
 }
 // ===== end PACT VISIBLE-WINDOW pure helper =====
 const WS_STORE_KEY = "cm.workspace.v1";
+// A prompt QUEUED while the agent was mid-turn (the orange bubble) lived only in memory, so a reload lost
+// it — the bubble vanished and the message was never sent. This consume-once store durably carries every
+// pane's queue across a reload (written on pagehide, read + DELETED on boot), so the orange bubble survives
+// a refresh and drains automatically once the turn ends (resyncOpenPanes → resync reply → drainQueue). Kept
+// in its OWN key, separate from the layout, so an image-heavy queue that busts the quota can't take the
+// whole layout down with it. Deleted immediately after restore so a later unrelated reload can't resurrect it.
+const WS_QUEUE_KEY = "cm.workspace.queue.v1";
 // Mirrors PERMISSION_MODES in lib/claudeSession.mjs — the browser can't import it, so the
 // ids must stay in step with that list (the server ignores any it doesn't recognise).
 const WS_MODES = [
@@ -7091,6 +7098,40 @@ function viewWorkspace() {
     st.activeId = st.panes.some((p) => p.id === s.activeId) ? s.activeId : st.panes[0].id;
     return true;
   }
+  // Durably persist every pane's mid-turn queue (the orange bubbles) so a reload doesn't lose it. Text
+  // always survives; images ride along too but are dropped on a quota failure so at least the prompt text
+  // is kept (a queued image is rare; a lost prompt is not acceptable). Its own key — never the layout — so
+  // this can never corrupt or bloat the layout save.
+  function wsQueueSave() {
+    const build = (withImages) => {
+      const map = {};
+      for (const p of st.panes) if (p._queue && p._queue.length) {
+        const items = p._queue.filter((q) => q && typeof q.text === "string" && q.text).map((q) => ({ text: q.text, images: withImages && Array.isArray(q.images) ? q.images : [] }));
+        if (items.length) map[p.id] = items;
+      }
+      return map;
+    };
+    try {
+      const map = build(true);
+      if (!Object.keys(map).length) { localStorage.removeItem(WS_QUEUE_KEY); return; }
+      try { localStorage.setItem(WS_QUEUE_KEY, JSON.stringify(map)); }
+      catch { localStorage.setItem(WS_QUEUE_KEY, JSON.stringify(build(false))); }   // images too big for the quota — keep at least the text
+    } catch { /* private mode / quota — nothing more we can do */ }
+  }
+  // Consume-once: read the stranded queue back onto its pane, then DELETE the key so a later unrelated
+  // reload can't resurrect a stale queue. Called once at boot, before the stream opens.
+  function wsQueueRestore() {
+    let map = null;
+    try { map = JSON.parse(localStorage.getItem(WS_QUEUE_KEY) || "null"); localStorage.removeItem(WS_QUEUE_KEY); } catch { map = null; }
+    if (!map || typeof map !== "object") return;
+    for (const p of st.panes) {
+      const q = map[p.id];
+      if (Array.isArray(q) && q.length) {
+        const items = q.filter((x) => x && typeof x.text === "string" && x.text).map((x) => ({ text: x.text, images: Array.isArray(x.images) ? x.images : [] }));
+        if (items.length) p._queue = (p._queue || []).concat(items);
+      }
+    }
+  }
   /** Re-attach restored panes to their saved threads — but only for keys history actually
    *  knows, so a pane that never got a prompt doesn't trigger a "could not be opened" error. */
   function restorePanes() {
@@ -9296,18 +9337,13 @@ function viewWorkspace() {
 
   // ---- boot ----------------------------------------------------------------------
   if (!loadLayout()) { st.panes = [newPane()]; st.activeId = st.panes[0].id; }
-  // Fold any still-queued (orange) messages into the pane draft on a real unload, so a deploy/reload
-  // doesn't lose them — they come back in the compose box. (Core has no outbox; the draft is persisted.)
-  WS_PAGEHIDE_FN = () => {
-    for (const p of st.panes) {
-      if (p._queue && p._queue.length) {
-        const q = p._queue.map((x) => x && x.text).filter(Boolean).join("\n\n");
-        if (q) p.draft = p.draft ? (p.draft + "\n\n" + q) : q;
-        p._queue = null;
-      }
-    }
-    saveLayout();
-  };
+  // Restore any queue stranded by the last reload BEFORE the stream opens, so the orange bubble is already
+  // in place when resyncOpenPanes' resync reply fires drainQueue() and auto-sends it once the turn ends.
+  wsQueueRestore();
+  // On a real unload (deploy/reload), DURABLY save every pane's still-queued (orange) message rather than
+  // dumping it into the draft box (where it silently vanished from the conversation). It comes back as the
+  // same orange bubble on reload and auto-sends when the running turn finishes — matching the Pact outbox.
+  WS_PAGEHIDE_FN = () => { wsQueueSave(); saveLayout(); };
   if (!WS_PAGEHIDE_HOOKED) { WS_PAGEHIDE_HOOKED = true; window.addEventListener("pagehide", (e) => { if (!e.persisted && typeof WS_PAGEHIDE_FN === "function") { try { WS_PAGEHIDE_FN(); } catch {} } }); }
   defaultModeSel.value = st.defaultMode;   // the picker was built before the saved layout loaded
   renderLayoutPicker(); renderModeToggle(); rebuildGrid(); renderSidebar(); renderHistory(); setUsageTotal();

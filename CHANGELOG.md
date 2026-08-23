@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.5] - 2026-08-23
+
+### Fixed
+- **A prompt queued mid-turn (the orange bubble) vanished on reload in the Core cockpit.** When you send a
+  prompt while the agent is still working, it's held as an orange "queued" bubble and auto-sent when the turn
+  finishes. But that queue lived only in memory, and on a refresh the old unload handler quietly folded it
+  into the compose box's draft and cleared the queue — so the orange bubble disappeared from the conversation
+  and the message was *not* sent (it was sitting in the input box, easy to miss). The queue is now saved to a
+  durable, consume-once store on unload and restored on the next load, so the orange bubble survives a refresh
+  and **auto-sends the moment the running turn ends** (via the existing resync→drainQueue path) — matching the
+  Pact chat's outbox behaviour. Text always survives; attached images ride along too, and are dropped only if
+  they'd bust the storage quota (so at minimum the prompt text is never lost). Web-only — no engine restart.
+
 ## [1.5.4] - 2026-08-23
 
 ### Fixed
