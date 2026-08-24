@@ -2634,6 +2634,82 @@ function wsUsageLabel(usage, contextUsage) {
   return { text, ctxPct, title };
 }
 // ===== end WS USAGE pure helper =====
+// ===== WS WHATSAPP — Markdown → WhatsApp-formatting converter (unit-tested; see lib/wsWhatsApp.test.mjs)
+// A response is stored as Markdown, but WhatsApp only understands a small, DIFFERENT set: *bold*, _italic_,
+// ~strike~, ```monospace```, "- "/"1." lists, "> " quotes — and NO headings, NO [text](url) links, NO tables.
+// Copying raw Markdown would paste literal "## Heading" / "[x](url)" junk, so this maps Markdown onto what
+// WhatsApp actually renders: headings → bold, **x**/__x__ → *x*, *x* → _x_, ~~x~~ → ~x~, links → "text (url)",
+// code fences kept (language tag dropped), tables flattened. Pure + side-effect-free so the test can eval it.
+function wsMdInlineToWa(s) {
+  const codes = [];
+  // Protect inline `code` spans FIRST (park each as U+0003<index>U+0003) so their * _ ~ aren't read as
+  // emphasis; restored verbatim at the very end. Bold is parked as U+0001..U+0001 so the single-* italic pass
+  // can't re-capture it. Those control chars never occur in reply text, so they're collision-free sentinels.
+  s = s.replace(/`([^`]+)`/g, (_m, c) => { codes.push(c); return "\u0003" + (codes.length - 1) + "\u0003"; });
+  // Images ![alt](url) -> "alt: url" (or just the url); links [text](url) -> "text (url)" (or just the url).
+  s = s.replace(/!\[([^\]]*)\]\(\s*([^)\s]+)[^)]*\)/g, (_m, alt, url) => (alt ? alt + ": " + url : url));
+  s = s.replace(/\[([^\]]+)\]\(\s*([^)\s]+)[^)]*\)/g, (_m, t, url) => (t === url ? url : t + " (" + url + ")"));
+  s = s.replace(/\*\*([^*]+?)\*\*/g, (_m, x) => "\u0001" + x + "\u0001");   // **bold** -> parked
+  s = s.replace(/__([^_]+?)__/g, (_m, x) => "\u0001" + x + "\u0001");           // __bold__ -> parked
+  s = s.replace(/\*([^*\n]+?)\*/g, "_$1_");                                    // remaining single-* -> WhatsApp _italic_
+  s = s.replace(/~~([^~]+?)~~/g, "~$1~");                                         // ~~strike~~ -> ~strike~
+  s = s.replace(/\u0001([^\u0001]+)\u0001/g, "*$1*");                          // restore bold as *bold*
+  s = s.replace(/\u0003(\d+)\u0003/g, (_m, i) => "`" + codes[Number(i)] + "`");  // restore inline `code`
+  return s;
+}
+function mdToWhatsApp(md) {
+  const lines = String(md == null ? "" : md).replace(/\r\n?/g, "\n").split("\n");
+  const out = [];
+  let inFence = false;
+  for (const raw of lines) {
+    if (/^\s*```/.test(raw)) { out.push("```"); inFence = !inFence; continue; }   // fence toggle; drop the language tag
+    if (inFence) { out.push(raw); continue; }                                       // code content stays verbatim
+    const line = raw.replace(/\s+$/, "");
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { out.push("──────────"); continue; }  // horizontal rule
+    if (/\|/.test(line) && /^[\s|:\-]+$/.test(line)) continue;                          // table separator row → drop
+    const h = line.match(/^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/);
+    if (h) { out.push("*" + wsMdInlineToWa(h[2]) + "*"); continue; }                    // heading → bold
+    const bq = line.match(/^\s{0,3}>\s?(.*)$/);
+    if (bq) { out.push("> " + wsMdInlineToWa(bq[1])); continue; }                       // quote
+    const bl = line.match(/^(\s*)[-*+]\s+(.*)$/);
+    if (bl) { out.push(bl[1] + "- " + wsMdInlineToWa(bl[2])); continue; }               // bullet
+    const nl = line.match(/^(\s*)(\d+)\.\s+(.*)$/);
+    if (nl) { out.push(nl[1] + nl[2] + ". " + wsMdInlineToWa(nl[3])); continue; }       // numbered
+    if (line.trim().startsWith("|") && /\|/.test(line)) {                              // table row → flatten to " a | b "
+      out.push(line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => wsMdInlineToWa(c.trim())).join(" | ")); continue;
+    }
+    out.push(wsMdInlineToWa(line));
+  }
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+// ===== end WS WHATSAPP pure helper =====
+// Share one response's text (converted to WhatsApp formatting) — used by the ⤴ button on every assistant
+// bubble in BOTH workspaces. On a phone it opens the native share sheet (pick WhatsApp/anything); on desktop
+// (no navigator.share) it copies to the clipboard. Either way `btn` flashes ✓ so the tap is acknowledged.
+async function wsShareResponse(rawMd, btn) {
+  const text = mdToWhatsApp(rawMd || "");
+  const flash = (glyph, title) => {
+    if (!btn) return;
+    const prev = btn.textContent, prevTitle = btn.title;
+    btn.textContent = glyph; if (title) btn.title = title; btn.classList.add("copied");
+    setTimeout(() => { btn.textContent = prev; btn.title = prevTitle; btn.classList.remove("copied"); }, 1500);
+  };
+  if (navigator.share) {   // mobile: hand off to the OS share sheet (WhatsApp, Messages, …)
+    try { await navigator.share({ text }); flash("✓"); return; }
+    catch (e) { if (e && e.name === "AbortError") return; }   // user dismissed the sheet — do nothing
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try { await navigator.clipboard.writeText(text); flash("✓", "Copied — paste into WhatsApp"); return; }
+    catch { /* fall through to the execCommand fallback */ }
+  }
+  wsCopyFallback(text, (ok) => flash(ok ? "✓" : "✗", ok ? "Copied — paste into WhatsApp" : "Copy failed"));
+}
+// The ⤴ share button that sits next to the ★ on an assistant bubble (shared by Core + Pact).
+function wsShareBtn(rawMd) {
+  const b = el("button", { class: "ws-share-btn", type: "button", title: "Share this response (copies WhatsApp-formatted text)" }, ["⤴"]);
+  b.addEventListener("click", (e) => { e.stopPropagation(); wsShareResponse(rawMd, b); });
+  return b;
+}
 // ===== WS IMAGE — pure attach/encode helpers (sliced out for unit tests; see lib/wsImage.test.mjs)
 // Up to WS_IMG_MAX_COUNT images per prompt (Claude Code's own limit), riding the existing `prompt`
 // payload as `images: [{ mediaType, base64Data }, ...]` — see lib/workspace.mjs `_prompt`/`_saveImages`
@@ -6194,7 +6270,7 @@ function pactChatMsgNode(m) {
     kids.push(body);
     const star = el("button", { class: "ws-bm-star" + (m._bookmarked ? " on" : ""), title: m._bookmarked ? "Bookmarked — click to remove" : "Bookmark this response" }, [m._bookmarked ? "★" : "☆"]);
     star.addEventListener("click", (e) => { e.stopPropagation(); pactChatToggleBookmark(m); });
-    return el("div", { class: "pc-msg pc-asst" }, [pactNumBadge("R", m._rnum), star, ...kids]);
+    return el("div", { class: "pc-msg pc-asst" }, [pactNumBadge("R", m._rnum), wsShareBtn(m.text), star, ...kids]);
   }
   if (m.kind === "tool_use") {
     // Expandable, like the Core cockpit: the tool names show at a glance; tap to reveal each call's
@@ -7591,7 +7667,7 @@ function viewWorkspace() {
     if (m.role === "assistant" || m.kind === "assistant") {
       const star = el("button", { class: "ws-bm-star" + (m._bookmarked ? " on" : ""), title: m._bookmarked ? "Bookmarked — click to remove" : "Bookmark this response" }, [m._bookmarked ? "★" : "☆"]);
       star.addEventListener("click", (e) => { e.stopPropagation(); wsToggleBookmark(m); });
-      return line("ws-assistant", [wsNumBadge("R", m._rnum), star, ...renderAssistantText(m.text)]);
+      return line("ws-assistant", [wsNumBadge("R", m._rnum), wsShareBtn(m.text), star, ...renderAssistantText(m.text)]);
     }
     if (m.kind === "tool_use") return line("ws-tool", [el("i", { class: "ti ti-tool" }, []), " ", (m.tools || []).map((t) => t.name).join(", ")]);
     if (m.kind === "tool_result") return line("ws-toolres", ["✓ tool result"]);

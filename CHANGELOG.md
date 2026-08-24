@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.6] - 2026-08-23
+
+### Added
+- **A ⤴ Share button on every response** (next to the ★), in both the Core cockpit and the Pact chat. It
+  hands the reply off for sharing — on a phone it opens the native share sheet (pick WhatsApp, Messages,
+  anything); on desktop it copies to the clipboard (the button flashes ✓ / "paste into WhatsApp"). Because
+  WhatsApp understands only a small, *different* formatting set than Markdown, the text is **converted** on
+  the way out so it pastes in looking right instead of showing raw Markdown: headings → *bold*, `**x**` →
+  `*x*`, `*x*` → `_x_`, `~~x~~` → `~x~`, `[text](url)` → `text (url)`, code fences kept (language tag
+  dropped), bullet/numbered lists and `>` quotes preserved, tables flattened. The converter is a pure,
+  unit-tested helper (`lib/wsWhatsApp.test.mjs`). Web-only — no engine restart.
+
 ## [1.5.5] - 2026-08-23
 
 ### Fixed
