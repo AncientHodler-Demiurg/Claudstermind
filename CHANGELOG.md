@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.8] - 2026-08-28
+
+### Fixed
+- **Typing in the Pact compose box got interrupted — focus was thrown out of the field repeatedly**, forcing
+  a re-click to keep typing (worst while composing a long prompt). Root cause: every time an agent **turn
+  finished** (`result`), the client called `pactEdLoadWorktrees()`, which **unconditionally** rebuilt the
+  entire chat (`pactChatRender()`) — recreating the compose `<textarea>` and dropping your keyboard focus. If
+  the agent was working while you typed, this fired again and again. Two fixes: (1) `pactEdLoadWorktrees` now
+  rebuilds the chat head **only when the worktree list actually changed**, not on every turn — so an ordinary
+  turn no longer touches the compose box at all; (2) `pactChatRender` now **preserves compose focus + caret**
+  across any rebuild (only when you were actively typing in it), as a safety net for the rarer cases that do
+  legitimately rebuild (a worktree created/removed, a tab rebound to main). Your draft text was never lost —
+  only focus — and now that's kept too. Web-only — no engine restart.
+
 ## [1.5.7] - 2026-08-27
 
 ### Fixed

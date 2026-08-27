@@ -3187,10 +3187,16 @@ async function pactEdLoadWorktrees() {
   if (!PACT_ED) return;
   let d; try { d = await (await fetch("/api/pact/worktrees")).json(); } catch { return; }
   if (d && d.ok && Array.isArray(d.worktrees) && d.worktrees.length) {
+    const prevKey = (PACT_ED.worktrees || []).map((w) => w && w.name).join(",");
+    const nextKey = d.worktrees.map((w) => w && w.name).join(",");
     PACT_ED.worktrees = d.worktrees;
-    pactReconcileWorktrees(d.worktrees);                     // a conversation whose worktree was removed → back on main
+    pactReconcileWorktrees(d.worktrees);                     // a conversation whose worktree was removed → back on main (re-renders the chat itself only when it actually rebinds a tab)
     for (const g of PACT_ED.groups) pactEdRenderGroup(g);   // reveal/refresh the box selectors
-    if (PACT_CHAT && PACT_CHAT.host && typeof pactChatRender === "function") pactChatRender();   // and the chat-head selector
+    // Refresh the chat head's worktree selector ONLY when the worktree LIST actually changed — never on
+    // every load. pactEdLoadWorktrees runs on every turn `result`, and a blanket pactChatRender() there
+    // rebuilt the whole chat (compose textarea included), THROWING the user out of the field mid-typing —
+    // the reported focus-loss bug. When nothing changed there's nothing to refresh, so skip the rebuild.
+    if (nextKey !== prevKey && PACT_CHAT && PACT_CHAT.host && typeof pactChatRender === "function") pactChatRender();
   }
 }
 // When a worktree is merged & removed — whether via the UI's "Merge & return" OR by the AGENT running the git
@@ -6433,6 +6439,15 @@ function pactChatPaintLive(t) {
 function pactChatRender() {
   if (!PACT_CHAT) return;
   const host = PACT_CHAT.host;
+  // Preserve compose focus + caret across this rebuild. pactChatRender recreates the .pc-input textarea, so
+  // any rebuild fired while the user is typing (a turn finishing, a worktree change, a reconcile…) would
+  // otherwise throw them out of the field. The DRAFT text itself already survives (active.draft is updated on
+  // every keystroke and restored below); only focus/caret are lost. Restore ONLY when the compose was the
+  // focused element — so a tab-switch (they clicked elsewhere) doesn't wrongly yank focus back to the box.
+  const _prevInput = host && host.querySelector(".pc-input");
+  const _keepFocus = !!_prevInput && document.activeElement === _prevInput;
+  const _selStart = _keepFocus ? _prevInput.selectionStart : null;
+  const _selEnd = _keepFocus ? _prevInput.selectionEnd : null;
   const tabs = PACT_CHAT.tabs.map((t) => {
     const dot = el("span", { class: "pc-tab-dot" + (t.status === "thinking" || t.status === "deepwork" ? " busy" : "") });
     const label = (t.key && PACT_CHAT_NAMES[t.key]) || t.name;
@@ -6537,6 +6552,9 @@ function pactChatRender() {
   });
   const composeExtras = el("div", { class: "pc-compose-extras" }, [imgPreview, imgErr]);
   host.replaceChildren(head, scroll, composeExtras, compose);
+  // Re-focus the freshly-mounted compose + restore the caret if the user was typing when this rebuild ran
+  // (see the capture at the top) — so a background rebuild never interrupts typing. `input` IS the new node.
+  if (_keepFocus && input) { input.focus(); try { input.setSelectionRange(_selStart == null ? input.value.length : _selStart, _selEnd == null ? input.value.length : _selEnd); } catch { /* detached/unsupported — ignore */ } }
   const pcStick = attachStickController(scroll, { wrapClass: "stick-wrap-pc", nearPx: 4 });   // wrap now so the pill exists from the first paint
   pcStick.dockMode(sendWrap, "stick-mode--dock");   // Live/Held bulb sits above Send (desktop) — off the transcript text
   requestAnimationFrame(() => pactChatAutosize(input));   // size to any restored draft once the pane has real layout
