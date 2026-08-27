@@ -482,6 +482,8 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .ws-hist-hd { display: flex; align-items: center; gap: 7px; font-weight: 700; font-size: 12.5px; color: var(--ink); }
 .ws-hist-scope { font-weight: 500; font-size: 11px; color: var(--ink-dim); }
 .ws-hist-item { background: var(--chip); border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; display: flex; flex-direction: column; gap: 3px; }
+.ws-hist-item.ws-hist-click { cursor: pointer; }
+.ws-hist-item.ws-hist-click:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--chip)); }
 .ws-hist-line1 { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; }
 .ws-hist-meta { color: var(--ink-dim); font-size: 10.5px; }
 .ws-hist-first { font-size: 11.5px; color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

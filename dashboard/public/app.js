@@ -8708,8 +8708,10 @@ function viewWorkspace() {
     const openCount = liveSession ? clientsOnWorkspace(h.workspaceId) : 0;
     const openB = el("button", { class: "ws-ico", title: "Reopen read-only" }, ["👁"]);
     const resumeB = el("button", { class: "ws-ico", title: missing ? "This worktree was removed — resume recreates it" : "Resume live" }, ["▶"]);
-    openB.addEventListener("click", () => { reopen(key, "open"); onAction?.(); });
-    resumeB.addEventListener("click", () => {
+    // Resume this conversation into the SELECTED (active) box. Shared by the ▶ button AND a click anywhere on
+    // the row — the whole row is the affordance now, since clicking the tiny ▶ alone was easy to miss ("I
+    // clicked the conversation and nothing came in").
+    const resumeAction = () => {
       if (!missing) { reopen(key, "resume"); onAction?.(); return; }
       const ok = window.confirm(
         `The worktree "${h.worktree}" for ${label} was removed.\n\n` +
@@ -8719,8 +8721,10 @@ function viewWorkspace() {
       if (!ok) return;
       resumeAfterRecreatingWorktree(h.repo, h.worktree, key);
       onAction?.();
-    });
-    return el("div", { class: "ws-hist-item" + (missing ? " missing-worktree" : "") + (liveSession ? " ws-hist-live" : "") }, [
+    };
+    openB.addEventListener("click", (e) => { e.stopPropagation(); reopen(key, "open"); onAction?.(); });   // 👁 = explicit read-only
+    resumeB.addEventListener("click", (e) => { e.stopPropagation(); resumeAction(); });
+    const row = el("div", { class: "ws-hist-item ws-hist-click" + (missing ? " missing-worktree" : "") + (liveSession ? " ws-hist-live" : ""), title: "Click to resume this conversation in the selected box" }, [
       el("div", { class: "ws-hist-line1" }, [
         el("span", { class: "ws-hist-label" }, [
           el("b", {}, [label + (h.worktree && h.worktree !== "main" ? "@" + h.worktree : "")]),
@@ -8735,6 +8739,8 @@ function viewWorkspace() {
       el("div", { class: "ws-hist-first" }, [snippet != null ? "…" + snippet + "…" : (h.firstPrompt || "(no prompt)")]),
       el("div", { class: "ws-hist-actions" }, [el("span", { class: "ws-hist-when" }, [when]), el("span", { class: "ws-spacer" }, []), openB, resumeB]),
     ]);
+    row.addEventListener("click", resumeAction);
+    return row;
   }
   // Recreate-then-resume: the confirmed common case for a history row whose worktree is gone.
   // worktreeAdd's actual confirmation arrives asynchronously over the stream (the `data.worktrees`
@@ -8992,12 +8998,13 @@ function viewWorkspace() {
           // held (restorePanes re-opening two panes that legitimately share one key) is just
           // reconnecting, not adopting, and must not be flagged just because its legitimate twin
           // holds the same key too (see beginPendingOpen).
-          const clash = req.priorKey !== sessionKey && st.panes.find((x) => x !== p && x.sessionKey === sessionKey);
-          if (clash) { p.readonly = true; p.resume = null; note("That conversation is already open in another pane — reopened read-only here."); }
-          else {
-            p.sessionKey = sessionKey; p.readonly = false; p.resume = data.sessionId || null;
-            if (req.mode === "resume") note("Resuming — your next message continues this session.");
-          }
+          // Adopt the key EDITABLE, even if another box already holds it. Two boxes sharing one session is a
+          // supported, designed-for state (panesOf() fans every event to both; the server's single-writer
+          // turn-lock serialises sends) — so a conversation you Resume into a new box genuinely opens there
+          // ready to continue, instead of the old read-only refusal that "didn't properly bring it in".
+          const alsoOpen = req.priorKey !== sessionKey && st.panes.find((x) => x !== p && x.sessionKey === sessionKey);
+          p.sessionKey = sessionKey; p.readonly = false; p.resume = data.sessionId || null;
+          if (req.mode === "resume") note(alsoOpen ? "Resuming here — this conversation is also open in another box; both drive the same session." : "Resuming — your next message continues this session.");
         } else { p.readonly = true; p.resume = null; note("Reopened read-only. Pick the repo or Resume to continue."); }
         paintPane(p); setUsageTotal(); saveLayout();
       }

@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.9] - 2026-08-28
+
+### Changed
+- **Resuming a conversation from History into a new box now actually brings it in — editable.** Two things
+  were in the way: (1) only the tiny **▶** icon resumed a row — clicking the row itself did nothing, so
+  "click the conversation to continue it in the selected box" silently failed; the **whole row is clickable**
+  now (▶ and 👁 still work as before, 👁 = explicit read-only). (2) If the conversation was already open in
+  another box, resuming it into a new box forced it **read-only** with a note. That's now dropped: the box
+  opens **editable** and both boxes drive the one shared session (updates fan out to both; the server's
+  single-writer turn-lock serialises sends), so you can genuinely continue the discussion in the new box.
+  Web-only — no engine restart.
+
 ## [1.5.8] - 2026-08-28
 
 ### Fixed
