@@ -421,6 +421,30 @@ export function createRelay(opts = {}) {
       return sendJSON(res, 200, r || { ok: false, error: "no reply from the work machine" });
     }
 
+    // ---- remote Pact IDE: the agent's diffstat for a worktree since an acknowledged baseline tree,
+    // forwarded down the tunnel (the git repo lives on the work machine). Mirrors pactChanged above. ----
+    if (req.method === "GET" && path === "/api/pact/diffstat") {
+      if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The Pact workspace is ancient-only." });
+      if (!link.connected) return sendJSON(res, 503, { ok: false, error: "Local Claudstermind is not connected." });
+      const r = await link.relay("pactDiffstat", { worktree: url.searchParams.get("worktree") || "", base: url.searchParams.get("base") || "" }, 15_000);
+      return sendJSON(res, 200, r || { ok: false, error: "no reply from the work machine" });
+    }
+
+    // ---- remote Core cockpit bookmarks: shared ★ store, forwarded down the tunnel so a bookmark set on
+    // the phone shows on the desktop and vice-versa (the store lives beside the history on the work
+    // machine). Mirrors the Pact ide-state forward above. ----
+    if (path === "/api/workspace/bookmarks" && (req.method === "GET" || req.method === "PUT")) {
+      if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Bookmarks are ancient-only." });
+      if (!link.connected) return sendJSON(res, 503, { ok: false, error: "Local Claudstermind is not connected." });
+      if (req.method === "GET") {
+        const r = await link.relay("coreBookmarksGet", {}, 15_000);
+        return sendJSON(res, 200, r || { ok: false, error: "no reply from the work machine" });
+      }
+      const body = await readBody(req);
+      const r = await link.relay("coreBookmarksPut", { workspaceId: body.workspaceId || "", bookmarks: Array.isArray(body.bookmarks) ? body.bookmarks : [] }, 15_000);
+      return sendJSON(res, 200, r || { ok: false, error: "no reply from the work machine" });
+    }
+
     // ---- remote workspace: serve an attached prompt image (ancient-only) ----
     // Same shape as the local dashboard's own /api/workspace/image, forwarded down the tunnel as
     // a one-shot COMMAND/RESULT (agent/agent.mjs's "workspaceImage") — a single image fetch has

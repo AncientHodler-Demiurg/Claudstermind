@@ -24,7 +24,8 @@ import { fileURLToPath } from "node:url";
 import { readActivity, readLastBackup } from "../orchestrator/activity.mjs";
 import { listArchives, pruneArchives, deleteArchive } from "../orchestrator/archives.mjs";
 import { listDir as pactListDir, readTextFile as pactReadFile, writeTextFile as pactWriteFile, pactRoot as resolvePactRoot, pactRootFor, pactWorktrees, pactWorktreeAction } from "../lib/pactFs.mjs";
-import { gitChangedFiles as pactChangedFiles, gitFileAtHead as pactFileAtHead } from "../lib/pactGit.mjs";
+import { gitChangedFiles as pactChangedFiles, gitFileAtHead as pactFileAtHead, diffstatSince as pactDiffstatSince } from "../lib/pactGit.mjs";
+import { readCoreBookmarks, setCoreBookmarks } from "../lib/coreBookmarks.mjs";
 import { readIdeState as pactReadIdeState, writeIdeState as pactWriteIdeState } from "../lib/pactIdeState.mjs";
 import { pactRunSpec } from "../lib/pactRun.mjs";
 import { readBackupConfig, writeBackupConfig, isBackupDue, browseDir } from "../orchestrator/backupConfig.mjs";
@@ -1094,6 +1095,29 @@ const handler = async (req, res) => {
     const root = pactWtRoot(url.searchParams.get("worktree"));
     if (!root) return sendJSON(res, 404, { ok: false, error: "worktree not found" });
     return sendJSON(res, 200, { ok: true, files: pactChangedFiles(root) });
+  }
+  // ---- Pact IDE: the agent's diffstat (+adds / −dels / N files) for a worktree SINCE a baseline tree the
+  // client pins on Acknowledge — spans commits, so it grows across the agent's own commits until you
+  // acknowledge. Read-only (canRead), repo-confined via pactWtRoot. Returns { additions, deletions, files,
+  // tree } — `tree` is the current snapshot SHA the client stores as the next baseline. ----
+  if (path === "/api/pact/diffstat" && req.method === "GET") {
+    if (!who.canRead) return sendJSON(res, 403, { ok: false, reason: "read-only" });
+    const root = pactWtRoot(url.searchParams.get("worktree"));
+    if (!root) return sendJSON(res, 404, { ok: false, error: "worktree not found" });
+    return sendJSON(res, 200, { ok: true, ...pactDiffstatSince(root, url.searchParams.get("base") || null) });
+  }
+  // ---- Core cockpit bookmarks — synced across devices (localhost + remote share ONE store beside the
+  // conversation history). GET returns the whole { workspaceId: [at,…] } map; PUT sets one workspace's list. ----
+  if (path === "/api/workspace/bookmarks" && req.method === "GET") {
+    if (!who.canRead) return sendJSON(res, 403, { ok: false, reason: "read-only" });
+    return sendJSON(res, 200, { ok: true, bookmarks: readCoreBookmarks(join(MASTER_ROOT, ".claude", "workspace")) });
+  }
+  if (path === "/api/workspace/bookmarks" && req.method === "PUT") {
+    if (!sameOrigin(req)) return sendJSON(res, 403, { ok: false, reason: "cross-origin" });
+    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Execute permission required." });
+    const b = await readBody(req);
+    const r = setCoreBookmarks(join(MASTER_ROOT, ".claude", "workspace"), b.workspaceId || "", Array.isArray(b.bookmarks) ? b.bookmarks : []);
+    return sendJSON(res, r.ok ? 200 : 400, r.ok ? { ok: true } : r);
   }
   // ---- Pact IDE: SAVE a file back to disk (the editor's Save All / autosave). Local-only + canExecute
   // + repo-confined (pactFs refuses any escape). Tunneled through the relay as `pactWrite`. ----

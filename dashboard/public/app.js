@@ -4081,11 +4081,6 @@ function pactEdUpdateSaveBar() {
     PACT_ED.saveBtn.disabled = n === 0;
     PACT_ED.saveBtn.textContent = n ? `💾 Save All (${n})` : "💾 Saved";
   }
-  if (PACT_ED.keepBtn) {
-    const d = pactEdDiffCount();
-    PACT_ED.keepBtn.style.display = d ? "" : "none";
-    PACT_ED.keepBtn.textContent = d ? `✓ Keep All (${d})` : "✓ Keep All";
-  }
 }
 function pactEdSaveStatus(text, isErr) {
   if (!PACT_ED || !PACT_ED.saveStatus) return;
@@ -4505,10 +4500,59 @@ async function pactEdCheckAgentEdits() {
   } finally { PACT_ED_DIFF_CHECKING = false; }
   if (changed) { pactEdLayout(); pactEdUpdateSaveBar(); pactEdSaveStatus("agent edited " + pactEdDiffCount() + " open file(s) — review + Keep All", false); }
 }
-function pactEdKeepAll() {
+// ===== Acknowledge — per-worktree diffstat of the agent's modifications =====
+// The agent writes (and mostly commits) straight to disk, so its work is already saved; what the user wants
+// is to SEE how much changed and dismiss the review. `PACT_ED._ackBase[worktree]` is the git TREE last
+// acknowledged for that worktree (persisted in IDE-state → syncs across devices). The footer shows
+// +adds −dels · N files SINCE that baseline for every worktree that has any — the count GROWS across the
+// agent's own commits (it's a tree-vs-tree diff, commit-agnostic) and resets to 0 when you Acknowledge,
+// which pins the current snapshot as the new baseline. Acknowledge never touches git.
+async function pactEdRefreshDiffstats() {
+  if (!PACT_ED || !PACT_ED.ackFooter) return;
+  const wts = (PACT_ED.worktrees || []).map((w) => (w && w.isMain) ? "main" : (w && w.name)).filter(Boolean);
+  const base = PACT_ED._ackBase || (PACT_ED._ackBase = {});
+  const stats = {};
+  await Promise.all(wts.map(async (wt) => {
+    try {
+      const q = "?worktree=" + encodeURIComponent(wt) + (base[wt] ? "&base=" + encodeURIComponent(base[wt]) : "");
+      const d = await (await fetch("/api/pact/diffstat" + q)).json();
+      if (d && d.ok) stats[wt] = { additions: d.additions || 0, deletions: d.deletions || 0, files: d.files || 0, tree: d.tree || null };
+    } catch { /* offline / git unreachable — leave this worktree out */ }
+  }));
+  PACT_ED._diffstats = stats;
+  pactEdRenderAckFooter();
+}
+function pactEdRenderAckFooter() {
+  const foot = PACT_ED && PACT_ED.ackFooter; if (!foot) return;
+  const stats = PACT_ED._diffstats || {};
+  const rows = [];
+  for (const wt of Object.keys(stats)) {
+    const s = stats[wt];
+    if (!s || (s.additions + s.deletions + s.files) <= 0) continue;
+    const label = wt === "main" ? "⌂ main" : "⌥ " + wt;
+    const nums = el("span", { class: "pact-ack-nums" }, [
+      el("span", { class: "pact-ack-add" }, ["+" + s.additions]),
+      el("span", { class: "pact-ack-del" }, ["−" + s.deletions]),
+      el("span", { class: "pact-ack-files" }, ["· " + s.files + " file" + (s.files === 1 ? "" : "s")]),
+    ]);
+    const btn = el("button", { class: "pact-ack-btn", title: "Acknowledge — clear the review overlay + reset this worktree's counter (the agent's edits are already saved on disk)" }, ["Acknowledge"]);
+    btn.addEventListener("click", (e) => { e.stopPropagation(); pactEdAcknowledge(wt); });
+    rows.push(el("div", { class: "pact-ack-row" }, [el("span", { class: "pact-ack-wt", title: "Worktree" }, [label]), nums, el("span", { class: "ws-spacer" }, []), btn]));
+  }
+  if (!rows.length) { foot.hidden = true; foot.replaceChildren(); return; }
+  foot.hidden = false;
+  foot.replaceChildren(el("div", { class: "pact-ack-hd" }, ["Agent changes — Acknowledge"]), ...rows);
+}
+function pactEdAcknowledge(wt) {
   if (!PACT_ED) return;
-  for (const g of PACT_ED.groups) for (const t of g.tabs) { if (t.agentDiff) { t.agentDiff = null; t.diffBase = undefined; } }
-  pactEdLayout(); pactEdUpdateSaveBar();
+  const s = (PACT_ED._diffstats || {})[wt];
+  const base = PACT_ED._ackBase || (PACT_ED._ackBase = {});
+  if (s && s.tree) base[wt] = s.tree;   // pin the current snapshot → the counter resets to 0 on the re-fetch below
+  // Clear the editor review overlay for any OPEN tabs bound to this worktree (the old "Keep" half — the
+  // edits are already on disk, so this only stops showing the green/red diff).
+  for (const g of PACT_ED.groups) if ((g.worktree || "main") === wt) for (const t of g.tabs) { if (t.agentDiff) { t.agentDiff = null; t.diffBase = undefined; } }
+  pactEdLayout(); pactEdUpdateSaveBar(); pactStateSave();
+  pactEdRefreshDiffstats();
 }
 // How many files in THIS box carry an unaccepted agent edit.
 function pactEdGroupDiffCount(g) { return g && Array.isArray(g.tabs) ? g.tabs.filter((t) => t.agentDiff).length : 0; }
@@ -4876,7 +4920,8 @@ function pactStateSnapshot() {
   };
   const right = document.querySelector(".pact-right");
   const collapse = right ? (right.classList.contains("pr-chat-collapsed") ? "chat" : right.classList.contains("pr-term-collapsed") ? "term" : null) : null;
-  return { v: 1, editor, chat, collapse, chatNames: PACT_CHAT_NAMES || {} };
+  // `ackBase` — the per-worktree acknowledged baseline tree SHAs (Acknowledge diffstat); syncs across devices.
+  return { v: 1, editor, chat, collapse, chatNames: PACT_CHAT_NAMES || {}, ackBase: (PACT_ED && PACT_ED._ackBase) || {} };
 }
 // Fetch the saved state and rebuild the IDE from it — reopen editor boxes (count/sizes/fonts) and
 // their files, restore chat tabs (name/draft/order/active), and the collapse. Every step is guarded
@@ -4885,6 +4930,7 @@ async function pactRestoreState() {
   let saved = {};
   try { const r = await (await fetch("/api/pact/ide-state")).json(); if (r && r.ok && r.state && typeof r.state === "object") saved = r.state; } catch {}
   PACT_CHAT_NAMES = (saved.chatNames && typeof saved.chatNames === "object" && !Array.isArray(saved.chatNames)) ? saved.chatNames : {};
+  if (PACT_ED && saved.ackBase && typeof saved.ackBase === "object" && !Array.isArray(saved.ackBase)) { PACT_ED._ackBase = saved.ackBase; pactEdRefreshDiffstats(); }   // restore acknowledged baselines → footer reflects changes since them
   try { if (saved.editor && Array.isArray(saved.editor.groups) && saved.editor.groups.length) pactRestoreEditor(saved.editor); } catch (e) { console.warn("pact editor restore failed", e); }
   try { if (saved.chat && Array.isArray(saved.chat.tabs) && saved.chat.tabs.length) pactRestoreChat(saved.chat); } catch (e) { console.warn("pact chat restore failed", e); }
   try { if (saved.collapse) pactRestoreCollapse(saved.collapse); } catch {}
@@ -5531,7 +5577,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       wsPost("control", { action: "contextUsage", args: { sessionKey: t.key } });
       wsPost("control", { action: "usageLimits" });   // account-wide plan usage moves each turn — refresh the badge
       t._lastResultAt = Date.now();   // a deepwork/background phase can follow a "result" — see the heartbeat
-      pactChatPaint(t); pactEdCheckAgentEdits(); pactEdCheckChangedFiles(); pactEdLoadWorktrees();   // a turn may have created/merged/removed a worktree — refresh + reconcile bindings
+      pactChatPaint(t); pactEdCheckAgentEdits(); pactEdCheckChangedFiles(); pactEdLoadWorktrees(); pactEdRefreshDiffstats();   // a turn may have created/merged/removed a worktree — refresh + reconcile bindings + the Acknowledge diffstat
       pactChatDrainQueue(t);   // turn done → release anything typed mid-turn, merged into one prompt
       pactOutboxFlush();       // …and any queue recovered from a deploy/reload that was waiting on this turn
       return;
@@ -6593,10 +6639,16 @@ function viewPact() {
   treeHdWt.hidden = true;
   const changedList = el("div", { class: "pact-changed-list" }, [el("div", { class: "hint", style: "padding:8px 10px" }, ["No changes vs HEAD."])]);
   changedList.style.display = "none";
+  // Acknowledge footer — a separator + one row per worktree the agent has modified since you last
+  // acknowledged it (⌂ main / ⌥ name  +adds −dels · N files  [Acknowledge]). Sits pinned at the bottom of
+  // the tree column; empty (hidden) when nothing's pending. See pactEdRenderAckFooter / pactEdRefreshDiffstats.
+  const ackFooter = el("div", { class: "pact-ack-footer" }, []);
+  ackFooter.hidden = true;
   const treeEl = el("aside", { class: "pact-tree" }, [
     el("div", { class: "pact-tree-hd pact-tree-tabs" }, [tabFilesBtn, tabChangedBtn, treeHdWt, el("span", { class: "ws-spacer" }, []), wtBtn, treeRefreshBtn, ...treeFontBtns]),
     treeBody,
     changedList,
+    ackFooter,
   ]);
   treeEl.style.setProperty("--pk-tree-font", PACT_TREE_FONT + "px");
   const chatEl = el("div", { class: "pact-chat" }, []);   // filled by pactChatInit() below
@@ -6613,14 +6665,14 @@ function viewPact() {
   const saveBtn = el("button", { class: "pact-save-all", title: "Save every changed file (Ctrl/⌘-S). Files also autosave 5 min after you stop typing." }, ["💾 Saved"]);
   saveBtn.disabled = true;
   saveBtn.addEventListener("click", () => pactEdSaveAll());
-  const keepBtn = el("button", { class: "pact-keep-all", title: "Accept the agent's edits to open files (they're already on disk) and resume editing" }, ["✓ Keep All"]);
-  keepBtn.style.display = "none";
-  keepBtn.addEventListener("click", () => pactEdKeepAll());
+  // The global "Keep All" was removed (it was ambiguous about which worktree it acted on): accepting the
+  // agent's changes is now the per-box "✓ Keep (N)" button in each box footer PLUS the per-worktree
+  // "Acknowledge" rows in the tree footer (which also show the +/− diffstat). See pactEdRenderAckFooter.
   const saveStatus = el("span", { class: "pact-save-status" }, []);
-  // Toolbar = ONE row: the action controls (Save All / Keep All / status) and the ONE shared StoicSyntax
-  // band legend inline, so the color key reads as a single global key without wasting a second line. The
-  // legend flexes and scrolls horizontally if the row gets tight; the autosave hint stays on the right.
-  const toolbar = el("div", { class: "pact-ed-toolbar" }, [saveBtn, keepBtn, phCollapseBtn("pact-ed-ico"), saveStatus, pactLegend(),
+  // Toolbar = ONE row: the action controls (Save All / status) and the ONE shared StoicSyntax band legend
+  // inline, so the color key reads as a single global key without wasting a second line. The legend flexes
+  // and scrolls horizontally if the row gets tight; the autosave hint stays on the right.
+  const toolbar = el("div", { class: "pact-ed-toolbar" }, [saveBtn, phCollapseBtn("pact-ed-ico"), saveStatus, pactLegend(),
     el("span", { class: "pact-save-hint" }, ["autosaves 5 min after you stop typing"])]);
   // The "files changed by the agent" list no longer lives here — it moved into the left tree column as
   // a "Changed (N)" tab (see treeEl above), so the editor grid keeps its full vertical space.
@@ -6630,9 +6682,11 @@ function viewPact() {
   PACT_STATE_READY = false;   // suppress persistence until the saved layout has been read + rebuilt
   pactEdInstallFindShortcut();   // global Ctrl/⌘-F/H → in-app find (bound once; self-guards to VIEW==="pact")
   pactEdInit(editorEl);
-  PACT_ED.saveBtn = saveBtn; PACT_ED.keepBtn = keepBtn; PACT_ED.saveStatus = saveStatus;
+  PACT_ED.saveBtn = saveBtn; PACT_ED.saveStatus = saveStatus;
   PACT_ED.treeBody = treeBody; PACT_ED.changedList = changedList; PACT_ED.tabFilesBtn = tabFilesBtn; PACT_ED.tabChangedBtn = tabChangedBtn; PACT_ED.treeTab = "files";
   PACT_ED.treeHdWt = treeHdWt;   // wired here — PACT_ED only exists after pactEdInit above (see the shell-build note)
+  PACT_ED.ackFooter = ackFooter;
+  pactEdRefreshDiffstats();   // populate the per-worktree Acknowledge footer on first open
   pactEdUpdateSaveBar();
   pactChatInit(chatEl);
   loadPactDir("", treeBody);
@@ -7577,6 +7631,42 @@ function viewWorkspace() {
   // ---- bookmark a response (★) + jump to it -------------------------------------------------------
   // Each response can be starred (persisted per pane by its `at`). A ★ button in the pane controls opens a
   // list of starred responses; picking one reveals + scrolls to it. Stamped onto messages each render.
+  // ---- Core bookmarks: synced across devices via the work machine (/api/workspace/bookmarks) ----
+  // WS_BM mirrors the server's { workspaceId: [at,…] } map; a pane's `bookmarks` is the view of its
+  // conversation's entry, so a ★ set on the phone shows on the desktop and vice-versa. Falls back to the
+  // local layout copy when offline / for a repo-less pane (which has no conversation identity yet).
+  const WS_BM = Object.create(null);
+  const wsBmWorkspace = (p) => (p && p.repo) ? wsWorkspaceId(p.repo, p.worktree) : null;
+  // Pull the server list into a pane that has a workspace identity. Returns true if p.bookmarks changed.
+  function wsBmAdopt(p) {
+    const id = wsBmWorkspace(p); if (!id) return false;
+    const server = WS_BM[id];
+    if (!Array.isArray(server)) return false;   // nothing known server-side yet — keep the local list
+    const next = server.slice();
+    const changed = JSON.stringify(next) !== JSON.stringify(Array.isArray(p.bookmarks) ? p.bookmarks : []);
+    p.bookmarks = next;
+    return changed;
+  }
+  // Push a pane's list to the server + the shared map + any sibling panes on the same conversation.
+  function wsBmSync(p) {
+    saveLayout();   // always keep the local copy (offline fallback + instant)
+    const id = wsBmWorkspace(p); if (!id) return;   // repo-less pane: local only, nothing to sync
+    const list = Array.isArray(p.bookmarks) ? p.bookmarks.slice() : [];
+    WS_BM[id] = list;
+    for (const other of st.panes) if (other !== p && wsBmWorkspace(other) === id) {   // keep other boxes on this convo in step
+      other.bookmarks = list.slice(); const ui = paneUI.get(other.id); if (ui) ui._txRef = null; wsMarkBookmarks(other); paintPane(other);
+    }
+    fetch("/api/workspace/bookmarks", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ workspaceId: id, bookmarks: list }) }).catch(() => {});
+  }
+  // Load the whole shared map at boot / reconnect and reconcile it into every open pane.
+  async function wsBmLoad() {
+    try {
+      const r = await (await fetch("/api/workspace/bookmarks")).json();
+      if (!r || !r.ok || !r.bookmarks || typeof r.bookmarks !== "object") return;
+      for (const [k, v] of Object.entries(r.bookmarks)) if (Array.isArray(v)) WS_BM[k] = v.filter((x) => typeof x === "number");
+      for (const p of st.panes) if (wsBmAdopt(p)) { const ui = paneUI.get(p.id); if (ui) ui._txRef = null; wsMarkBookmarks(p); paintPane(p); }
+    } catch { /* offline — the layout's local copy still works */ }
+  }
   function wsMarkBookmarks(p) {
     if (!p || !Array.isArray(p.transcript)) return;
     const bm = new Set(Array.isArray(p.bookmarks) ? p.bookmarks : []);
@@ -7593,7 +7683,7 @@ function viewWorkspace() {
     if (i >= 0) p.bookmarks.splice(i, 1); else p.bookmarks.push(m.at);
     m._bookmarked = i < 0; m._node = null;
     const ui = paneUI.get(p.id); if (ui) ui._txRef = null;   // force a full transcript re-render so a star on an OLD (cached) turn updates too
-    saveLayout(); paintPane(p);
+    wsBmSync(p); paintPane(p);   // persist + push to the shared cross-device store (was saveLayout only)
     if (ui && ui._bmPop) wsRenderBookmarkList(p);   // keep an open list in sync
   }
   function wsScrollToResponse(p, at) {
@@ -7613,7 +7703,7 @@ function viewWorkspace() {
     const m = p.transcript.find((x) => x && (x.role === "assistant" || x.kind === "assistant") && x.at === at);
     if (m) { m._bookmarked = false; m._node = null; }
     const ui = paneUI.get(p.id); if (ui) ui._txRef = null;   // full re-render so the star clears on a cached turn
-    saveLayout(); paintPane(p);
+    wsBmSync(p); paintPane(p);   // persist + push to the shared cross-device store
   }
   // Rows for the starred-responses list (R#n + snippet + a × to remove); picking one jumps to it. Shared by
   // the desktop popup and the mobile sheet. `onPick` closes the container; `refresh` rebuilds it after a delete.
@@ -9006,6 +9096,7 @@ function viewWorkspace() {
           p.sessionKey = sessionKey; p.readonly = false; p.resume = data.sessionId || null;
           if (req.mode === "resume") note(alsoOpen ? "Resuming here — this conversation is also open in another box; both drive the same session." : "Resuming — your next message continues this session.");
         } else { p.readonly = true; p.resume = null; note("Reopened read-only. Pick the repo or Resume to continue."); }
+        wsBmAdopt(p); wsMarkBookmarks(p);   // this pane just adopted a conversation identity — pull its shared bookmarks
         paintPane(p); setUsageTotal(); saveLayout();
       }
       return;
@@ -9448,6 +9539,7 @@ function viewWorkspace() {
   if (!WS_PAGEHIDE_HOOKED) { WS_PAGEHIDE_HOOKED = true; window.addEventListener("pagehide", (e) => { if (!e.persisted && typeof WS_PAGEHIDE_FN === "function") { try { WS_PAGEHIDE_FN(); } catch {} } }); }
   defaultModeSel.value = st.defaultMode;   // the picker was built before the saved layout loaded
   renderLayoutPicker(); renderModeToggle(); rebuildGrid(); renderSidebar(); renderHistory(); setUsageTotal();
+  wsBmLoad();      // pull the cross-device bookmark store and reconcile it into every open pane
   openStream();   // primeControls() fires from the hello handler once the stream is subscribed
 
   root.replaceChildren(

@@ -4,6 +4,28 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.10] - 2026-08-28
+
+### Added
+- **Pact "Acknowledge (changes)" — a per-worktree diffstat of what the agent modified.** A new footer pinned
+  to the bottom of the file-tree column shows one row per worktree the agent has touched: `⌂ main` / `⌥ name`
+  with **`+adds −dels · N files`** and an **Acknowledge** button. The count is measured against a baseline you
+  advance only when you click Acknowledge — so it **grows across the agent's own commits** (it's a
+  commit-agnostic tree-vs-tree diff) and resets to 0 when you acknowledge, exactly matching "if I don't clear
+  it, the numbers keep climbing as the agent keeps working." Acknowledge never touches git (the agent's edits
+  are already saved/committed) — it just clears the review overlay for that worktree's open files and resets
+  the counter. The baseline is stored in the Pact IDE-state, so it **syncs across your devices**. The old
+  ambiguous global **"Keep All"** is gone; the per-box **"✓ Keep (N)"** stays for quick in-box review.
+- **Core cockpit bookmarks now sync across devices.** A ★ set on your phone shows on your desktop and vice
+  versa — the store lives on the work machine (beside the conversation history), keyed by conversation, and
+  two boxes on the same conversation stay in step. Offline, the local copy still works and reconciles on
+  reconnect.
+
+> ⚠ **Partial engine change** — both features work fully on the **local** dashboard with just a web restart.
+> The **remote** (tunnelled) website reaches them through `agent/agent.mjs` (the bridge), which the engine
+> loads — so for the diffstat + bookmark sync to work from the remote site, deploy needs a **sessiond restart**
+> (hard-kills in-flight turns). Deploy the engine part when nothing is mid-turn; the web half is safe anytime.
+
 ## [1.5.9] - 2026-08-28
 
 ### Changed

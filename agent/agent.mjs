@@ -26,8 +26,9 @@ import { readBackupConfig } from "../orchestrator/backupConfig.mjs";
 import net from "node:net";
 import { createAggregator, registryProjects, mirrorablePorts } from "../lib/localhost.mjs";
 import { listDir as pactListDir, readTextFile as pactReadFile, writeTextFile as pactWriteFile, pactRoot as resolvePactRoot, pactRootFor, pactWorktrees, pactWorktreeAction } from "../lib/pactFs.mjs";
-import { gitChangedFiles as pactChangedFiles, gitFileAtHead as pactFileAtHead } from "../lib/pactGit.mjs";
+import { gitChangedFiles as pactChangedFiles, gitFileAtHead as pactFileAtHead, diffstatSince as pactDiffstatSince } from "../lib/pactGit.mjs";
 import { readIdeState as pactReadIdeState, writeIdeState as pactWriteIdeState } from "../lib/pactIdeState.mjs";
+import { readCoreBookmarks, setCoreBookmarks } from "../lib/coreBookmarks.mjs";
 import { forwardRequestHeaders, buildUpgradeRequest } from "../lib/mirror.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -282,7 +283,7 @@ export function createBridge(opts = {}) {
       if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
       return;
     }
-    if (frame.cmd.type === "pactTree" || frame.cmd.type === "pactFile" || frame.cmd.type === "pactWrite" || frame.cmd.type === "pactChanged") {
+    if (frame.cmd.type === "pactTree" || frame.cmd.type === "pactFile" || frame.cmd.type === "pactWrite" || frame.cmd.type === "pactChanged" || frame.cmd.type === "pactDiffstat") {
       const a = frame.cmd.args || {};
       // Resolve the box's bound worktree → its checkout on disk (main by default; a named worktree lives
       // under .worktrees). A named worktree that no longer exists resolves to null — refuse, don't fall
@@ -297,7 +298,20 @@ export function createBridge(opts = {}) {
         // The agent-changed review list + the ?ref=head diff-"before", forwarded down the tunnel so
         // REMOTE works exactly like LOCAL (the Ouronet repo lives on THIS machine).
         : frame.cmd.type === "pactChanged" ? { ok: true, files: pactChangedFiles(root) }
+        // The Acknowledge diffstat (+adds/−dels/N files vs an acknowledged baseline tree) — same reason.
+        : frame.cmd.type === "pactDiffstat" ? { ok: true, ...pactDiffstatSince(root, a.base || null) }
         : (a.ref === "head" ? pactFileAtHead(root, a.path || "") : pactReadFile(root, a.path || ""));
+      if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
+      return;
+    }
+    // Core cockpit bookmarks: read/write the ★ store beside the history on THIS machine, so the remote
+    // website shares the same bookmarks the local dashboard sees. Same one-shot COMMAND/RESULT shape.
+    if (frame.cmd.type === "coreBookmarksGet" || frame.cmd.type === "coreBookmarksPut") {
+      const a = frame.cmd.args || {};
+      const bmDir = workspace.transcriptDir;   // == <MASTER_ROOT>/.claude/workspace — same dir the dashboard uses
+      const result = frame.cmd.type === "coreBookmarksGet"
+        ? { ok: true, bookmarks: readCoreBookmarks(bmDir) }
+        : (() => { const r = setCoreBookmarks(bmDir, a.workspaceId || "", Array.isArray(a.bookmarks) ? a.bookmarks : []); return r.ok ? { ok: true } : r; })();
       if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
       return;
     }
