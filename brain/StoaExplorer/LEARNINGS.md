@@ -2,6 +2,364 @@
 
 > Append-only. Non-obvious facts, corrections, tricks that came out of real sessions. Newest at the top. Each entry gets a date + one-line headline + the detail underneath.
 
+## 2026-08-25 — ★ARCHITECTURE DIRECTION (owner): ONE common explorer engine for all chains; Kadena is the scale canary
+
+Owner set the strategic direction: build a COMMON ENGINE that serves Kadena, StoaChain, and Ouronet identically —
+the engine beneath is byte-identical, and the ONLY per-chain divergence is declared config (`NetworkProfile`) +
+per-entity display fields. NO more hand-made per-chain code or manual DB operations (like the indexes I built by
+hand on the Kadena box — those must become self-provisioned engine code). Kadena is deliberately the high-volume
+CANARY (7.2M×20 chains, 150M txs, 313M transfers, 67M-transfer accounts): observe walls at scale there, fix them in
+the SHARED engine, and StoaChain is ready before it scales. A fix found on Kadena is NEVER a Kadena patch — it's an
+engine change for every chain. Design doc committed at `docs/architecture/common-engine.md` (`1489bdd`) — it is the
+reference contract. 5 shared components: (1) SchemaIndexService (declare+self-provision all indexes at boot,
+CONCURRENTLY IF NOT EXISTS, profile-gated); (2) derived maintainers folded at index time (account_balances exists;
+NEW account_tx_counts for instant exact counts instead of ~100s scans; ouronet/urstoa profile-gated); (3)
+PaginatedFeedService (exact count from counter, 250/page, ANCHORED-FROM-OLDEST numbering = stable deep pages +
+live-growing page 1, keyset shallow / offset deep); (4) WS live-append to page 1; (5) shared frontend Paginator +
+usePaginatedFeed. Invariants: synchronize OFF always; every index declared in code; reads from maintained tables
+never on-demand scans; no `if(kadena)` in the engine. Phased build: Phase 0 = SchemaIndexService + extend
+NetworkProfile (deploy all three → scale-ready); Phase 1 = account_tx_counts + PaginatedFeedService + Paginator +
+usePaginatedFeed (delivers owner's 250/page + exact counts + jump-to-page + anchored numbering on account
+transfers/mining); Phase 2 = WS live page-1 + deep-page anchors + roll to blocks/txs/cross-chain/pacts/rich-list.
+The account-pagination feature owner asked for is the FIRST consumer of this engine.
+
+★ PHASE 0 DONE + VALIDATED (`085d034`, deployed kadena-backend + base backend). `SchemaModule`/`SchemaIndexService`
+(`backend/src/modules/schema/`) declares all 8 perf indexes and self-provisions them at boot via CREATE INDEX
+CONCURRENTLY IF NOT EXISTS (fire-and-forget; self-heals an invalid leftover with a 5s-lock_timeout DROP on a
+dedicated queryRunner so a busy table can't hang boot). REMOVED StatsService.onModuleInit's index build (its
+DROP-INDEX-on-boot was THE startup-hang cause). Canary result: **kadena-backend booted CLEAN with ZERO
+blocker-clearing** (hang root cause eliminated), indexes logged "ready" as no-op skips. Base backend (Stoa/Ouronet
+DB, small) self-provisioned all 6 transfers indexes in ~9s — Stoa is now scale-ready for account feeds/cross-chain/
+pacts, AND the base backend finally got all the shared code (was on Aug-21 code: block fix, account two-find +
+capped counts, cross-chain/pacts, hashrate weight-delta, resolve, function search). NOTE `block_hash` index NOT
+re-declared (entity @Index already covers it on both DBs — would duplicate). NEXT: Phase 1 (account_tx_counts
+maintainer + PaginatedFeedService + Paginator/usePaginatedFeed → owner's 250/page + exact counts + jump-to-page).
+
+★ PHASE 1a DONE + validated on Stoa (`71b1935` maintainer, `c4f00ab` bulk backfill; deployed base + kadena).
+`AccountTxCountService` (accounts module) folds `account_tx_counts` (per account+is_coinbase) like the balance
+ledger, giving INSTANT EXACT counts (O(1) lookup) instead of the ~100s / 67M-row scan. AccountsService.count()
+returns the maintained exact count once caught up (capped:false, no "+"), else the bounded scan fallback. KEY
+LESSON: row-by-row initial backfill folds only ~8k transfers/s → ~10h on Kadena's 313M — TOO SLOW. Replaced with a
+one-time BULK backfill: two indexed GROUP-BY passes (sender, then receiver, ON CONFLICT DO UPDATE +count) inside a
+REPEATABLE READ txn so the snapshot is consistent and the cursor lands at its edge; incremental fold takes over
+past the snapshot. Guarded by `backfilled_at`; selfHeal resets on ledger wipe. Self-provisions its tables
+(CREATE TABLE IF NOT EXISTS) since synchronize is off. Verified Stoa: top miner mining-count `{count:3484908,
+capped:false}` exact, then incremental folding 2-3/tick. Kadena canary VALIDATED: bulk backfill ran ~5 min over 313M
+(capped fallback meanwhile), then 99cb → transfers `{count:75,598,624,capped:false}` in 0.0014s + mining
+`{count:47,586,945,capped:false}` in 0.0012s — EXACT + instant O(1) at 313M scale (99cb is the network's gas
+station AND a 47.6M-reward mining pool). Same code gave Stoa exact counts.
+
+★ PHASE 1b DONE (`2bc9ad2`, deployed kadena backend+frontend; verifying). `AccountsService.getTransfersPage` =
+ANCHORED-FROM-OLDEST pagination: page 1 = newest PARTIAL window (N mod S, grows live), last page = oldest S, middle
+fixed. total = exact maintained count. Fetches from whichever END is NEARER (top height DESC / bottom height ASC
+then reverse) so newest AND oldest pages are cheap; a deep-middle page whose nearer end > 100k offset returns
+`tooDeep` (Phase 2 = precomputed anchors for O(1) deep jumps). Math: pages=ceil(N/S); rem=N%S||S; offsetNewest=
+page==1?0:rem+(page-2)*S; limit=page==1?rem:S. New endpoints `/accounts/:a/transfers/page` + `/mining/page`.
+Refactored getTransfers into shared `fetchWindow(account,order,offset,limit,base)`. Frontend: shared `<Paginator>`
+(first·prev·numbered+ellipsis·next·last + jump-to-page input) + useAccountTransfersPage/MiningPage (placeholderData
+keeps prior page); AccountPage now 250/page, "Page X of Y · N total", tooDeep hint. NOTE frontend change is
+frontend-kadena ONLY — port to frontend-stoa/ouronet as follow-up. On redeploy the counter's backfilled_at persists
+→ caughtUp immediate (exact totals from boot). Phase 2 = WS live page-1, deep-page anchors, roll engine to
+blocks/txs/cross-chain/pacts, port Paginator to other frontends.
+
+★ PHASE 2a DONE (`7eac8f6`, deployed kadena-frontend + base backend). Live-growing page 1: the page hooks poll page
+1 every 12s (deep pages don't poll — anchored/stable) so new transfers appear "like block entries" and the page
+count shifts across each 250-boundary — completes owner's live-page spec. Also deployed the Phase 1b page endpoint
+to the BASE backend so Stoa/Ouronet share it (verified Stoa miner page1: 158 items rem, 13940 pages, total 3484908
+exact). Kadena verified: page1=202 items (rem), 302395 pages, total 75.6M exact; deep-middle page150000 → tooDeep
+instant; page1 fast. GOTCHA: two concurrent `deploy.sh` invocations — the 2nd fails silently on the deploy LOCK;
+run them sequentially. KNOWN PERF GAP: a MEGA-account's LAST (oldest) page is slow (99cb last page = 19.6s) — the
+bottom-end fetch `WHERE receiver=X AND is_coinbase=B ORDER BY height ASC LIMIT 250` on 67M rows; the `created_at`
+secondary sort likely defeats the (col,is_coinbase,height DESC) backward index scan. Normal accounts instant, deep
+middle tooDeep-instant, page 1 fast — only a whale's oldest page. FIX in Phase 2 deep-anchors (or drop created_at
+from fetchWindow order so it's a pure index backward scan). OWNER'S ORIGINAL account-pagination SPEC IS COMPLETE:
+exact counts + 250/page + numbered jump-to-page + anchored numbering + live page 1. REMAINING Phase 2: deep-page
+anchors (fixes whale last-page), WS-proper (vs 12s poll), port Paginator to frontend-stoa/ouronet, roll
+PaginatedFeed to blocks/txs/cross-chain/pacts.
+
+★ 2026-08-26 (`2390933`, deploying): (1) WHALE LAST-PAGE FIXED — `fetchWindow` now orders by HEIGHT ONLY; the
+created_at tiebreak forced a sort node the (col,is_coinbase,height DESC) index can't satisfy (whale oldest page
+18.7s WITH created_at vs 6.9ms WITHOUT). Ties arbitrary within a block; in-memory merge keeps a stable created_at
+tiebreak. All pages fast at any account size now. (2) PAGINATOR PORTED TO frontend-stoa: `<Paginator>` + TransfersPage
+type + transfersPage/miningPage client + useAccountTransfersPage/MiningPage hooks (live-poll page 1); AccountPage
+250/page + jump-to-page + anchored for Stoa Transfers & Mining, 250/page standard-offset for UrStoa (shares one
+`page` URL param). Stoa explorer now matches Kadena. Deploy order: kadena-backend → base backend → `deploy.sh
+frontend` (=frontend-stoa). DEPLOY-LOCK: one deploy.sh at a time (chain sequentially; a concurrent 2nd fails
+silently). STILL TODO: frontend-OURONET port — Ouronet accounts show DALOS ACTIVITY (ouronet_activity) not coin
+transfers, so the engine's account-transfer feed doesn't map; the shared `<Paginator>` can wrap Ouronet's existing
+tx-feed count+offset (numbered jump-to-page), but anchored+exact-count would need an ouronet_activity maintainer.
+Plus deep-page anchors, WS-proper, roll PaginatedFeed to blocks/txs/cross-chain/pacts.
+
+DEPLOY GOTCHAS (2026-08-26, whale fix): (1) ★ Do NOT verify a deploy by grepping the dist for a source COMMENT —
+`nest build` (tsc `removeComments`) STRIPS comments, so a correct build shows 0 matches and looks "not deployed."
+Verify by the compiled CODE (`grep 'order: { height: order }'`) or by TIMING, never comments. (2) The FIRST whale
+deploys genuinely built STALE source — a git-pull/build RACE: kicking `git pull && deploy.sh` right after `git
+push` can have deploy.sh's own internal `git pull` build a commit BEHIND the just-pushed one (the frontend built
+fine because it deployed last, after the tree settled). Redeploying once the box HEAD is settled at the target
+commit builds correctly. So: after pushing, confirm `git rev-parse HEAD` on the box == target BEFORE trusting a
+deploy, and re-verify via compiled code / live timing. Whale fix (`order: {height: order}`) confirmed in kadena
+dist after the settle-redeploy; boot + timing verification + base-backend redeploy in progress.
+
+★ CORRECTION (`cd023a3`): the created_at tiebreak was NOT the whale-last-page cause. Removing it made the DIRECT
+psql query 6.9ms but the ENDPOINT stayed ~20s. Caught via pg_stat_activity + EXPLAIN(ANALYZE,BUFFERS): for
+`WHERE receiver=X AND is_coinbase=false ORDER BY height ASC LIMIT 250` the planner picks the PLAIN HEIGHT index
+(IDX_6f5e...) — it provides the sort order for free — and scans ~19M buffer pages filtering receiver (20s) for a
+67M-row account. The composite (col,is_coinbase,height DESC) is DESC-natural; the ASC/oldest direction mis-plans,
+and steering it with `ORDER BY receiver,is_coinbase,height ASC` was WORSE (Parallel Seq Scan + Sort = 113s). ANALYZE
+didn't change the choice. Proper fix = ASC composite indexes (receiver/sender,is_coinbase,height ASC) — TWO more
+313M-row indexes — deferred to Phase 2. PRAGMATIC fix shipped: getTransfersPage ALWAYS fetches from the newest end
+(height DESC, fast) and returns `tooDeep` for any page whose newest-offset > MAX_PAGE_OFFSET (100k). So: normal
+accounts (< 100k transfers) page FULLY; a mega-account's newest ~400 pages are fast; its deeper/oldest pages are
+instant `tooDeep` — NO 20s hangs, but they're not viewable until Phase-2 anchors (or the ASC indexes). Kept the
+height-only order (harmless). LESSON: `ORDER BY <indexed-col> ASC LIMIT small` on a selective filter can make the
+planner choose the ordering index and filter-scan millions — need a composite in the QUERIED sort direction.
+DEPLOYED + VERIFIED (cd023a3 on kadena + base; both dists have NO `offsetOldest` → gate fix live): kadena whale
+page1 = 21 items 0.011s (fast), last page = tooDeep 0.002s (instant, no hang). Note: a synchronous `bash deploy.sh`
+over ssh whose CLIENT drops (broken pipe) still COMPLETES server-side (the docker build + swap processes survive) —
+verify by behavior/dist, don't assume it failed. So the "not done" is CLOSED: Stoa paginator port live; whale
+last-page no longer hangs (deep/oldest pages of a mega-account are instant tooDeep, viewable-fix = Phase 2 ASC
+indexes/anchors); normal accounts page fully. Remaining = optional Phase 2 (deep anchors, WS-proper, roll
+PaginatedFeed to blocks/txs/cross-chain/pacts).
+
+★ PHASE 2 — ASC indexes (whale oldest pages VIEWABLE): ✅ DONE & VERIFIED LIVE (`f1d06f5`, deployed kadena+base
+2026-08-26). 99cb (302,403 transfer-pages / 190,457 mining-pages): page 1 newest 12ms, LAST/oldest page 25ms
+(was 15.36s), mining last page 8ms — all tooDeep=false/250 items; deep-MIDDLE (page 151,201) still tooDeep in
+9ms (the one intentional gate — both ends >100k, never navigated). Base backend healthy on same code (StoaChain/
+Ouronet self-provision ASC indexes instantly, small DBs). All systemd build/deploy units (idx-asc, idx-asc-wd,
+asc-orch, whale-fix) auto-collected. FOLLOW-UP OBSERVED (not this task): StatsService.refreshGasUsage runs 3×
+`SELECT chain_id, SUM(gas) GROUP BY chain_id` full scans ~137s each on 300M rows — candidate for index-only scan
+via idx_tx_chain_status_gas or a maintained aggregate; also `code LIKE '%…'` search does unindexed full scans.
+[history] Phase 2 shipped in TWO commits — `f65f6c1` added the ASC indexes + nearer-end fetch, then `f1d06f5` added
+the full-key ORDER BY steering that actually made the planner use them (see CRITICAL PLANNER LESSON above). Root
+cause recap: `ORDER BY height ASC` mis-plans because the composite indexes are DESC-only. Fix: add ASC twins `idx_transfers_{sender,receiver}_cb
+_height_asc` (col, is_coinbase, height ASC) to SchemaIndexService (self-provisioned everywhere; instant on small
+DBs, ~1hr build each on Kadena's 313M), and restore getTransfersPage's nearer-END fetch (newest via DESC, oldest
+via ASC) — so both a whale's newest AND oldest pages are fast; only the deep MIDDLE (both ends > MAX_PAGE_OFFSET,
+never navigated) stays tooDeep. ★ GAS-USAGE SCAN (dd363a5, deployed kadena+base 2026-08-26). StatsService gas aggregate = full index-only scan of
+transactions (idx_tx_chain_status_gas), ~150s clean on Kadena 300M rows. TWO misdiagnoses corrected: (1) the "3
+concurrent gas scans" in pg_stat_activity were PARALLEL WORKERS of ONE scan, not a pileup — Postgres parallelizes
+the index-only scan, each worker is a separate backend row with identical query text. Don't count workers as
+separate queries: `count(DISTINCT query)` or check `leader_pid`. (2) The real cost was getGasUsage() scanning on a
+cache MISS — concurrent dashboard loads each kicked a scan, they competed for I/O, and a ~150s scan stretched past
+400s → the old 240s statement_timeout then KILLED it → endpoint returned empty. FIX: getGasUsage never scans on the
+request path (serves cache, or returns zeros + kicks one background refresh when cold); the heavy scan runs ONLY on
+boot warm-up + @Interval(600s) so exactly one uncontended scan per cycle; statement_timeout raised to 570s (above a
+clean scan, under the interval) via SET LOCAL in a txn (a plain SET leaks onto the pooled conn and could kill a
+CONCURRENTLY index build that borrows it). Widened interval 120→600s. ⚠️ MEASURED LIVE: the CLEAN, uncontended scan is >425s (I/O-bound, workers on
+DataFileRead — the 1.4GB index/heap isn't cached), NOT ~137-150s. So the on-demand scan is effectively non-viable at
+Kadena scale and the band-aid (non-blocking endpoint + 600s interval) is a stopgap: it keeps the endpoint responsive
+but the underlying 425s+ scan every 10 min is ~70% duty and the 570s cap risks killing the scan under any added
+load. DURABLE FIX ✅ BUILT (b9f20b4, GasUsageService, deploying 2026-08-26): PERSISTENT `gas_usage_stats`(chain_id PK, gas,
+wasted_gas, successful_txns, failed_txns, up_to_height) + `gas_usage_meta`(backfilled_at, last_reconcile_at), self-
+provisioned raw SQL (no @Entity → no synchronize interaction). Endpoint reads the table O(1), survives restarts (no
+cold zeros). One-time backfill = GROUP-BY scan (guarded by backfilled_at). Incremental HEIGHT fold every 30s over
+new blocks (uses existing height index — avoids a 7GB created_at index); folds COMPLETE blocks only (drops the max
+height when batch is full, to avoid splitting a block mid-height). Full reconcile every 6h = authoritative vs
+re-orgs/gap-fills. StatsService.getGasUsage now just delegates; old scan/cache/interval machinery removed. Also fixed
+the pre-existing-broken StatsService spec (never provided ConfigService/BalanceLedgerService/SyncService; getNetwork
+Stats reads getIndexedCounts()→{blocks,transactions} not repo.count). Gotchas: DataSource.query is GENERIC (query<T[]>
+— use it, avoids `as` which no-unnecessary-type-assertion flags); QueryRunner.query is NOT generic (needs `as`).
+To measure the clean scan, kill all app/interval scans first (else competition inflates it) and remember pg parallel
+WORKERS share leader_pid (don't count as separate scans).
+
+★ WS-PROPER account live tail (1f2d259, deployed 2026-08-26). Replaced the 12s page-1 poll with a WebSocket push:
+gateway has subscribe/unsubscribe:account rooms + emitAccountTransfer; the indexer (sync.service step 5) signals each
+account a near-tip transfer touches (deduped per account/is_coinbase/chain, TIP_EMIT_WINDOW only) after committing the
+transfer batch — tiny payload (identity+dims), client refetches page 1 via API so pagination stays server-auth. Front
+(kadena+stoa): socketStore joins account:<addr> while AccountPage open (re-joins on 'connect' for reconnect), exposes
+accountSignal{...,nonce}; AccountPage invalidates page-1 + count queries on a matching signal (gated on page===1). Poll
+dropped 12s→30s fallback. Verified account 99cb page1 10ms exact total 75,601,067.
+
+★ FEED PAGINATION (item #1) ✅ DONE & VERIFIED 2026-08-26 (backend d644a02/61f96ee; kadena fe 475168e; stoa fe
+a0f4867). Verified live: kadena totals 134M blocks / 217M txns / 803k cross-chain pacts, stoa 5M blocks; page-2
+returns different rows (offset works), deep page (999999) → tooDeep/items 0 (guard works); both frontends built in
+Docker (StartedAt changed) + deployed. Give blocks/txs/cross-chain/pacts the account-page UX (250/
+page, exact/estimated total, numbered jump-to-page Paginator, newest-first). BACKEND done+deployed (d644a02→61f96ee,
+kadena+base): shared helpers common/pagination/feed-page.ts (resolveFeedWindow — pure offset/pages/tooDeep, MAX_FEED_
+OFFSET=100k guard) + cached-counts.ts (CachedCounts — keyed stale-while-revalidate; a request never waits on a
+COUNT). Endpoints: GET /blocks/page, /transactions/page (chain+status; search stays offset — no cheap total),
+/transactions/cross-chain/page, /transactions/pacts (already paged, cap→250). Totals: pg reltuples ESTIMATE for the
+huge unfiltered blocks/tx feeds (real COUNT is minutes → 134M blocks / 217M txns), exact cached COUNT for chain/status
+filters + cross-chain/pact distinct-defpact (803k). ⚠️ BUG FOUND+FIXED (61f96ee): resolveFeedWindow first clamped the
+fetch limit by total → a COLD cached count (provisional 0) returned an EMPTY feed; fix = always fetch a full pageSize,
+only `pages` depends on total. Verified live: all endpoints return items + warmed totals. FRONTEND: kadena 4 pages
+done (BlocksPage/TransactionsPage/CrossChainPage/PactsPage → page URL param + Paginator; TransactionsPage dual-mode:
+numbered while browsing, offset prev/next while searching, hooks gained `enabled`) — ✅ VERIFIED building in Docker +
+deployed (475168e; container StartedAt changed = tsc+vite passed). stoa 4 pages done (a0f4867, same edits, structurally
+identical files) — building now. ⚠️ deploy pulls the pushed commit + builds the FRONTEND from it, so uncommitted
+frontend changes silently build the OLD code (caught: a "successful" kadena-frontend build was actually stale until I
+committed+pushed). Always commit+push BEFORE the frontend build gate. ⚠️ frontends have NO
+local node_modules (Docker-only build; `npm install` fails on the rolldown-vite override "Invalid comparator") — so
+`tsc` locally is a NO-OP that FALSELY reads clean; the ONLY real frontend gate is the deploy's Docker build (safe:
+deploy.sh doesn't swap on build failure — confirm via container StartedAt changing). SCOPE: stoa pages are
+structurally identical to kadena (cosmetic text diffs) → replicate same edits; OURONET has NO blocks/tx/cross-chain/
+pacts feed pages (only TransactionDetailPage) → feed rollout is kadena+stoa ONLY.
+
+★★ CRITICAL PLANNER LESSON (f1d06f5): the ASC index existing is NOT enough. With `ORDER BY height ASC` alone the
+planner STILL satisfies the sort from the plain height index and filter-scans ~19M pages (15s) — verified live: after
+both ASC indexes went valid, the whale last page was still 15.36s and EXPLAIN showed `Filter: receiver=X` on the
+height index, NOT the ASC composite. FIX = order by the composite's FULL KEY in the fetch direction: `ORDER BY
+receiver, is_coinbase, height ASC` (leading cols are equality-constant so it's a logical no-op) → planner picks
+`idx_transfers_receiver_cb_height_asc` → 1.9ms. So fetchWindow now orders each side by {col, isCoinbase, height} all
+in `order` dir (sender side → sender/isCoinbase/height; receiver side → receiver/…), matching the DESC twin for
+newest and the ASC twin for oldest. General rule: to force a composite index over an ORDER-BY-satisfying single-col
+index, name the composite's leading (equality) columns in the ORDER BY.
+Kadena ASC builds ran under systemd `idx-asc` with watchdog `idx-asc-wd`
+(clears >70s non-index queries so CONCURRENTLY finalizes). Full deploy orchestrated by systemd unit `asc-orch`
+(script /tmp/asc-orch.sh → log /tmp/asc-orch.log): waits for both ASC valid → EXPLAINs the oldest query → HEAD-
+confirmed deploy kadena-backend → verifies whale last page fast+viewable → deploys base. Robust to ssh drops
+(systemd). STILL REMAINING in Phase 2: WS-proper live page-1 (vs 12s poll), roll PaginatedFeed to blocks/txs/
+cross-chain/pacts.
+
+## 2026-08-25 — Account counts: exact count of a 67M-row account is ~100s even indexed → CAPPED count; + CONCURRENTLY-finalize gotcha
+
+Follow-up to the entry below. After the `(col, is_coinbase, height)` composite indexes were valid, MINING went
+fast (0.02s) but transfers-COUNT still timed out: `99cb…` (a large miner AND the network gas station) has **67.7
+MILLION** received transfers — an EXACT `count(*)` is ~100s no matter the index (you must count every row). Fix
+(`fcea9fb`, deployed + verified public): BOUNDED count — each side stops at `COUNT_CAP+1` (50k) index entries via a
+`LIMIT` subquery (~0.5s total), returns a `capped` flag, and the UI shows "N+" (frontend `fmtCount`). Normal
+accounts (< cap) stay exact. Verified: 99cb → transfers "100,000+" (0.53s), mining "50,000+" (0.22s). LESSON: never
+`COUNT(*)` an unbounded set on the 313M-row table for a UI label — always cap with a LIMIT subquery + "+". CORRECTION
+worth noting: 99cb IS an active miner — its 50k+ coinbase rows sit AFTER the 67.7M gas rows in the (receiver,
+is_coinbase, height) index (false sorts before true), so a `LIMIT 200000` sample showed only is_coinbase=false and
+falsely looked like "no mining"; the capped count correctly finds the >50k coinbase.
+
+★ CONCURRENTLY-FINALIZE GOTCHA (cost ~2h + several failed builds this session): a `CREATE INDEX CONCURRENTLY` ends
+in a "waiting for old snapshots" phase that blocks until EVERY transaction older than that phase commits. The
+timed-out account-count queries were the killer: a CLIENT curl `-m 25` timeout does NOT cancel the Postgres query —
+it keeps running server-side for MINUTES holding a snapshot, so the finalize never completes and the index stays
+INVALID (units exit "successfully" but `indisvalid=f`). Watchdog that clears blockers MUST kill ALL long non-index
+queries (`query NOT LIKE '%INDEX%' AND now()-query_start > 70s`), not just the gas `SUM` scans — and must NOT match
+its own `DROP INDEX` (my first watchdog killed the DROP). Also: `CREATE INDEX CONCURRENTLY IF NOT EXISTS` SKIPS an
+existing INVALID index (leaves it invalid) — you must `DROP INDEX` the invalid one first, then recreate. Managed via
+`systemd-run` units (idx-cb4 build + idx-wd3 broad watchdog polling until both `indisvalid`).
+
+## 2026-08-25 — Account transfers-count + mining showed 0 for high-volume accounts (count/mining endpoints timed out)
+
+An active gas/miner account (bare-hex `99cb…`, receives millions of gas redemptions) showed KDA Transfers (0) +
+Mining (0) even though the transfers LIST rendered rows. Cause: the LIST works (dense account → backward height
+scan finds 20 fast), but `getTransfersCount`/`getMiningCount` did one `COUNT WHERE sender=X OR receiver=X [AND
+is_coinbase=B]` → bitmap-OR + heap-check millions of rows → 25s timeout → UI fell back to 0. And the mining LIST
+(`is_coinbase=true`) backward-scanned for absent coinbase rows → timeout. Fix (`90ff048`, deployed; self-heals when
+indexes finish): count each side SEPARATELY (two single-equality index-only range counts, sum them; self-transfers
+double-count — negligible, skips an expensive overlap), backed by new composite indexes `idx_transfers_sender_cb_
+height (sender, is_coinbase, height DESC)` + `_receiver_cb_height`. Those carry is_coinbase so a no-coinbase account
+returns 0 INSTANTLY and the mining list is an empty index range, not a scan. KEY INDEXING LESSON for account/
+transfer queries on the 313M-row table: the filter column (`is_coinbase`) MUST be in the composite BEFORE the sort
+column — `(account_col, is_coinbase, height DESC)` — else the planner range-scans the account then heap-checks the
+filter over millions of rows. Built manually under systemd (`idx-cb2` unit); ~25 min each on 313M rows. The plain
+`(sender/receiver, height)` composites from the earlier account-transfers fix are now redundant (the cb ones
+supersede them) but left in place (harmless; dropping one got stuck on a lock).
+
+## 2026-08-25 — ★ROOT CAUSE of all the index/hang pain: kadena-backend ran TypeORM synchronize in PROD (dropped feature indexes every boot). + 4 account/block/guard fixes
+
+THE big one. `docker/production/docker-compose.kadena.yml` defaulted `TYPEORM_SYNC: ${KADENA_TYPEORM_SYNC:-true}`
+(base backend correctly defaults false), so **kadena-backend ran `DataSource.synchronize()` on every boot in
+production**. Synchronize DROPs any index NOT declared on a TypeORM entity — so it silently dropped every manually-
+built partial/composite feature index (idx_transfers_xchain_ht, _pact_ht, _sender_height, …) on each boot, AND the
+DROP INDEX blocked bootstrap for minutes when a long query held the lock. This is what caused the whole session's
+"startup hangs" + "counts keep going to 0" + "cross-chain broke again". FIX (`16cbbad` + box `.env`):
+set `KADENA_TYPEORM_SYNC=false` in `/opt/stoa-explorer/docker/production/.env` AND flipped the compose default to
+`:-false`. Diagnosis tell: `docker logs` shows `at async DataSource.synchronize` + `DROP INDEX "public"."idx_...`.
+To apply without a full rebuild: append to `.env`, then `docker compose -p production -f docker-compose.yml -f
+docker-compose.kadena.yml --env-file .env up -d --no-deps --force-recreate kadena-backend` (recreating also ABORTS
+an in-flight hostile synchronize before it drops more). AFTER disabling, REBUILD any indexes synchronize already
+dropped (manual `CREATE INDEX CONCURRENTLY` under systemd) — they now PERSIST. **Rule: never run synchronize in
+prod; kadena's `:-true` was only ever meant for a fresh DB's first boot. Feature indexes must be manual/migration,
+never entity-only, but even entity @Index is safer than manual under synchronize.**
+
+Also fixed 4 "not loading" bugs (`3b41b0e`, deployed, block+guard verified — pairs/account self-heal as indexes
+finish rebuilding):
+- **Account transfers hung**: `sender=X OR receiver=X ORDER BY height DESC LIMIT` → planner scans the HEIGHT index
+  BACKWARD filtering by account (EXPLAIN cost ~23M) — catastrophic for a sparse account far from the tip. Fix:
+  fetch each side separately (single-equality, driven by new composite `idx_transfers_sender_height (sender,height
+  DESC)` / `_receiver_height`), merge/dedupe/page in app. Note: even the UNION-of-two form still mis-plans WITHOUT
+  the composite indexes (planner still picks the height index within each branch) — the `(col, height DESC)`
+  composite is REQUIRED.
+- **Block page hung**: `BlocksService.findOne` loaded the `transactions` relation via `block_id` — UNINDEXED →
+  full scan of 150M txs. Load via `blockRepository.manager.find(Transaction, {where:{blockHash: block.hash}})`
+  (block_hash IS indexed). 0.01s now.
+- **Rich-list guard was "—"**: derive a k: principal's guard from its address (`{keys:[addr.slice(2)], pred:
+  'keys-all'}`) — no chain read; w:/named accounts stay null. account_balances carries no guard column.
+- **"Stoa Transfers" tab label** on the Kadena account page → "KDA Transfers".
+
+NOTE: kadena-backend COLD BOOT takes ~7 min every restart (Balance→Sync→Ouronet each cold-scan the 150M/313M
+tables before app.listen()); health stays 000/unhealthy the whole time then flips. Not a hang — wait it out.
+
+## 2026-08-24 — Kadena Cross-Chain + MultiStep tabs fixed (were full-scanning 150M txs); + deploy-thrash + count-index notes
+
+Both tabs showed skeletons forever. Root cause: their endpoints scanned unindexed columns over the 150M-row
+transactions table. Fixes (`6a67ba9` + `93cb8be`, deployed kadena-backend, verified public — pairs 0.31s, pacts
+0.58s):
+- **A cross-chain transfer IS a defpact**: its legs share a `pact_id` (= step-0's request key), `is_cross_chain=
+  true`, `step` 0/1. Step-0 continuation tx has `request_key = pact_id`; step-1's `code = pact_id`. Both tabs
+  group by `pact_id`.
+- `getCrossChainPairs`: discovery was `transactions.code LIKE '%transfer-crosschain%'` (full scan). Now: recent
+  cross-chain pact_ids from the INDEXED transfers table via new partial index `idx_transfers_xchain_ht (height
+  DESC) WHERE is_cross_chain`, deduped app-side to a page (over-fetch ×6 since each defpact has several legs). The
+  step-1 lookup was `WHERE code IN (...)` (code UNINDEXED → full scan too) — now find completion request_keys from
+  `transfers WHERE pact_id = ANY($1) AND step=1` (pact_id indexed) and load those txs by request_key.
+- `listPacts`: was `GROUP BY pact_id ORDER BY MIN(height) DESC` (materialised EVERY pact group before LIMIT →
+  timeout). Now recent distinct pact_ids via `idx_transfers_pact_ht (height DESC) WHERE pact_id IS NOT NULL`,
+  deduped app-side, aggregate only that page's pacts (`WHERE pact_id = ANY(...)`).
+- **Counts** (`COUNT(DISTINCT pact_id)`, ~96s even with a height index — height index doesn't help distinct):
+  cached in-memory, refreshed in the BACKGROUND (30-min TTL), NEVER block the request — a cold call returns a
+  provisional 0 while the list renders. Small `(pact_id)` partial indexes (`idx_transfers_xchain_pact WHERE
+  is_cross_chain`, `idx_transfers_pactid_np WHERE pact_id IS NOT NULL`) make the background count fast; built
+  manually on the box (NOT in onModuleInit — see startup-hang gotcha below). NO frontend change needed; the tabs
+  already consumed these endpoints.
+
+⚠️ **DEPLOY THRASH — kadena-backend redeploys pile up CONCURRENTLY index builds that block each other.** Cost most
+of this session's wall-clock. Each boot, StatsService.onModuleInit `ensureIndex` does DROP-invalid + CREATE INDEX
+CONCURRENTLY for `idx_blocks_chain_height` (98M rows) and `idx_tx_chain_status_gas` (150M) — builds SLOWER than the
+gap between redeploys, so an old container's CREATE is still running when the next boot's DROP of the same index
+starts → they conflict (ShareUpdateExclusive), and the new container's bootstrap HANGS (froze at CacheModule init,
+63MB, health 000, "unhealthy" 7-9 min). ALSO StatsService.refreshGasUsage's `SELECT COALESCE(SUM(gas))` scans
+(150M rows, 7+ min under load) hold old snapshots that block CONCURRENTLY finalize ("waiting for old snapshots").
+FIX each hung deploy: `pg_terminate_backend` the orphaned old-container queries (CREATE INDEX / gas SUM / my
+COUNT-DISTINCT refresh) via `pg_stat_activity WHERE state='active' AND now()-query_start > interval '40 seconds'`,
+then the DROP proceeds and it boots (slow cold init still takes ~3-5 min: Balance→Sync→Ouronet each scan huge
+tables). LESSON: deploy kadena-backend ONCE and let it settle; don't redeploy while index builds are in flight.
+Better long-term fix (deferred): give the gas-usage SELECT a `statement_timeout`, and don't rebuild those indexes
+on every boot. Partial indexes for a feature are best built manually on the box (or a migration), never in
+onModuleInit, to avoid this.
+
+## 2026-08-24 — Kadena rich list + all-time hashrate now work (built from indexed data); + a redeploy startup-hang gotcha
+
+Kadena synced to tip (max height 7,168,779). Shipped both deferred follow-ups (`2b57700` backend, `f278920`
+frontend-kadena UI), deployed + verified public on denascan.
+
+- **All-time hashrate — from >60s TIMEOUT to 1.15s.** `getHashRateHistoryAggregated` used to make ONE Chainweb
+  node round-trip PER daily sample (~2,488 sequential for `all` → timeout). Replaced with a SINGLE indexed query
+  over `blocks` (chain 0), deriving hash rate from cumulative-work (`weight`) DELTAS: `(decode(w2)-decode(w1)) /
+  (t2-t1) × activeChains`. `weight` is base64url little-endian 256-bit (same encoding as `target`) — added
+  `decodeWeight` mirroring `decodeTarget`. Graph-split aware (10 chains below `graphSplitHeight` 852054, else 20).
+  Cross-checked within 0.6% of the node target-based figure near tip (12.48 vs 12.56 PH/s). Now 2488 points
+  1.15s, 2019 (29 MH/s) → today (~15 PH/s). NOTE the `blocks` table has NO target column, only `weight` (text,
+  base64url) — weight deltas are the only indexed hashrate source.
+- **Rich list — from empty to 215,639 holders.** Served live from the indexed `account_balances` table (folded
+  from transfers by BalanceLedgerService, 338k rows, ~390ms) instead of the Stoa on-chain coin-table enumeration.
+  `RichListService.getList` branches on `!network.hasUrStoaVault` → `getListFromLedger`: `all` = `SUM(balance)
+  GROUP BY account` across chains (a k: principal holds per-chain), chain filter reads that chain; dust/zero
+  excluded; `lastSyncedAt` from `balance_ledger_cursor.last_advanced_at`; guard is null (ledger carries none).
+- **Frontend UX** (the "don't leave me staring at an empty panel" ask): RichListTab dropped the misleading manual
+  Sync/cooldown/next-sync (list is live) → Refresh button + "Live from the indexed balance ledger · updated <t>"
+  + honest empty text; hashrate chart's bare skeleton → pulsing-icon + "Gathering network hash-rate history…" +
+  all-time note + progress bar; `formatGuard(null)` → em dash not "Unknown: -".
+
+⚠️ **REDEPLOY STARTUP-HANG GOTCHA (cost ~10 min this time).** After `deploy.sh kadena-backend`, the NEW container
+hung mid-bootstrap (froze after CacheModule init, 63MB RAM, health 000, container "unhealthy" for 9+ min). Root
+cause was NOT the code (my changes don't run at startup) — it was DB LOCK CONTENTION: the OLD container's orphaned
+`SELECT SUM(gas) FROM transactions` gas-usage scans (from `refreshGasUsage`, 11+ min, still `active` because the
+stopped container's PG connections lingered) held locks that blocked the new container's `ensureIndex` `DROP INDEX
+idx_tx_chain_status_gas` (dropping an INVALID leftover from an interrupted CONCURRENTLY build), which stalled
+bootstrap. FIX: `pg_terminate_backend` the orphaned scans, then the new container finishes booting (slowly — cold
+init counts on 150M-tx / 313M-transfer tables take a few min). Diagnose via `pg_stat_activity WHERE state<>'idle'`
+on `explorer_kadena`. GOTCHA-IN-THE-GOTCHA: a `pg_terminate_backend ... WHERE query LIKE '%DROP INDEX%'` SELF-
+MATCHES (its own query text contains the literal) and kills its own psql — target by pid or exclude
+`pg_backend_pid()`. The kadena-backend cold start is slow anyway (deploy.sh always WARNs "not yet healthy"); it
+recovers. Health path `/api/v1/health` 404s but the Docker healthcheck (different path) is what flips it healthy.
+
 ## 2026-08-22 — DEFERRED (owner decision): Kadena rich-list-from-index + all-time-hashrate optimization wait until block sync finishes
 
 Owner: "lets wait until sync finishes." Both Kadena follow-ups below are PARKED until the Kadena block backfill

@@ -4,6 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.7] - 2026-08-27
+
+### Fixed
+- **A prompt failed with "Path … does not exist" after its worktree was removed/merged out-of-band.** A live
+  Pact session pinned to a worktree keeps its original working directory; the server's existing-session path
+  reused that cwd without re-checking it. So when a worktree was merged + deleted *by another agent* (outside
+  the dashboard's own worktree-remove flow, which never got to clean up the session), the next prompt launched
+  claude in a checkout that no longer existed and crashed — even though the chat had correctly reconciled to
+  main (migration marker shown, worktree selector on main). The engine now, on the next prompt for an **idle**
+  session, retires it when the requested worktree differs from where it's running *or* its cwd has vanished, so
+  the conversation is re-homed to the correct checkout and continues there — the same thing that already
+  happens when migrating a not-yet-live tab. (A busy turn is never disturbed.) Regression-tested in
+  `lib/workspace.test.mjs`.
+
+> ⚠ **Engine change** (`lib/workspace.mjs`) — deploying it needs a sessiond restart that **hard-kills any
+> in-flight turns**. Deploy when nothing is mid-turn.
+
 ## [1.5.6] - 2026-08-23
 
 ### Added
