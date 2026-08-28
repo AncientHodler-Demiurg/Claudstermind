@@ -4,6 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.11] - 2026-08-28
+
+### Fixed
+- **A lost connection showed a blank void instead of saying so.** When the work machine went offline (home
+  internet / dashboard / bridge down), opening Claudstermind on the remote site rendered the header + nav but
+  a completely empty content area — no explanation. Root cause: boot fetched `/api/map` unguarded and read
+  `MAP.meta.model`, but an offline relay answers with a minimal snapshot (`{ repos: [] }`, no `meta`), so that
+  line threw and **aborted boot before any view rendered**. Now: (1) the map load falls back to a safe empty
+  shape and every read is guarded, so boot always completes; (2) the live cockpit views (Core, Pact, Mirror,
+  Localhost, Usage) — which are useless without the tunnel — render a clear **"🔌 Work machine offline"**
+  screen (with a Check-the-connection button) instead of a blank shell; (3) an **error boundary** around view
+  rendering turns any unexpected throw into a clear card, never a void; (4) the initial render is wrapped too.
+  It **recovers automatically** — the 10s connection poll re-renders the real view the moment the work machine
+  is back. The cached Overview / Map / Activity views still work offline (last data + the existing banner).
+  Web-only — no engine restart.
+
 ## [1.5.10] - 2026-08-28
 
 ### Added

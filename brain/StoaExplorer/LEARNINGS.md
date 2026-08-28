@@ -195,6 +195,18 @@ deploy.sh doesn't swap on build failure — confirm via container StartedAt chan
 structurally identical to kadena (cosmetic text diffs) → replicate same edits; OURONET has NO blocks/tx/cross-chain/
 pacts feed pages (only TransactionDetailPage) → feed rollout is kadena+stoa ONLY.
 
+★ CONTRACT CODE API (2936cc3 backend+kadena; bfb7fbb stoa) — public read-only API to fetch the latest on-chain
+source of any Pact module OR interface. Backend (SHARED → kadena+base): GET /api/v1/modules/code?chain&namespace&name
+→ {chain,namespace,name,fullName,isInterface,code}. Reuses PactModulesService.getModuleCode (which runs
+`(describe-module "ns.name")` live on the node → always latest deployed code; interfaces return code starting with
+`(interface`). Declared BEFORE @Get(':name') so /modules/code isn't captured as a module name (needs BadRequestException
+for missing name). The older path form GET /modules/:name/code?chain=N still exists. Frontend (kadena+stoa): ModuleApi
+Page — a Contracts>"Code API" sub-view (SUB_VIEWS.contracts=[Browse,/modules; Code API,/modules/api] + ROUTE_MAP
+'/modules/api' BEFORE '/modules' + App route 'modules/api' BEFORE 'modules/:name') with docs + a live playground
+(chain select from useChainHeights, namespace+name inputs → PactCodeViewer + copyable request URL). Verified live:
+kadena coin 19518 chars / fungible-v2 isInterface / stoa coin 77534 / missing-name→400; both frontends built in Docker.
+Ouronet has no ModulesPage → not applicable.
+
 ★★ CRITICAL PLANNER LESSON (f1d06f5): the ASC index existing is NOT enough. With `ORDER BY height ASC` alone the
 planner STILL satisfies the sort from the plain height index and filter-scans ~19M pages (15s) — verified live: after
 both ASC indexes went valid, the whale last page was still 15.36s and EXPLAIN showed `Filter: receiver=X` on the

@@ -1,5 +1,7 @@
 // Claudstermind Dashboard — renders the master map from /api/map.
 let MAP = null;
+// A safe empty map so a failed/offline /api/map never aborts boot with a blank page (see boot()).
+const MAP_FALLBACK = { repos: [], orgs: {}, meta: { model: "—", generated: "—" } };
 let TOKENS = null;
 let ME = { mode: "local", authenticated: true, canExecute: true, localActionsAvailable: true, localConnected: true, roles: [] };
 
@@ -328,11 +330,18 @@ async function boot() {
   applyPhCollapsed(phHeaderCollapsed());   // restore the collapsed-header preference before first paint
   renderHeader();
 
-  MAP = await (await fetch("/api/map")).json();
+  // NEVER let a failed/empty /api/map abort boot into a blank page (the "internet died and I got a void"
+  // bug): when the work machine is offline the relay answers with a minimal snapshot ({ repos: [] }, no
+  // `meta`), and `MAP.meta.model` used to throw here. Fall back to a safe empty shape + guard the reads, so
+  // the shell, nav, connection banner, and the offline screen (see render()) all still render.
+  try {
+    const m = await (await fetch("/api/map")).json();
+    MAP = (m && m.meta && Array.isArray(m.repos)) ? m : { ...MAP_FALLBACK, ...(m || {}), repos: (m && Array.isArray(m.repos)) ? m.repos : [], meta: (m && m.meta) || MAP_FALLBACK.meta };
+  } catch { MAP = MAP_FALLBACK; }
   try { TOKENS = await (await fetch("/api/tokens")).json(); } catch { TOKENS = { tokens: [] }; }
-  $("#modelPill").textContent = "model: " + MAP.meta.model;
-  $("#genPill").textContent = "generated " + MAP.meta.generated;
-  buildLegend();
+  const modelPill = $("#modelPill"); if (modelPill) modelPill.textContent = "model: " + ((MAP.meta && MAP.meta.model) || "—");
+  const genPill = $("#genPill"); if (genPill) genPill.textContent = "generated " + ((MAP.meta && MAP.meta.generated) || "—");
+  try { buildLegend(); } catch {}
 
   // Navigation is URL-driven (§3.7): header buttons are real <a href="#…"> links, so a click
   // updates the hash; parse the hash on load + on every hashchange and render from it.
@@ -364,9 +373,11 @@ async function boot() {
     b.dataset.theme = b.dataset.theme === "dark" ? "light" : "dark";
     if (VIEW === "graph") render();
   });
-  renderStatbar();
-  // Render the view named in the URL hash (deep link / bookmark), else the default.
-  applyRoute();
+  try { renderStatbar(); } catch {}
+  // Render the view named in the URL hash (deep link / bookmark), else the default. Guarded so an unexpected
+  // throw here (e.g. offline data shape) surfaces a clear card rather than the blank void the user reported.
+  try { applyRoute(); }
+  catch (e) { console.error("initial render failed", e); const v = $("#view"); if (v) v.replaceChildren(renderViewError(VIEW, e)); }
 }
 
 // Strip the dashboard chrome down to just the medallion for the login / denied / public gates.
@@ -537,25 +548,67 @@ function render() {
   if (VIEW !== "pact" && typeof PACT_CHAT !== "undefined" && PACT_CHAT) { pactChatStop(); }
   if (VIEW !== "usage") usageStop();   // close the Usage tab's SSE stream when leaving it
   document.body.classList.toggle("ws-full", VIEW === "workspace" || VIEW === "pact");   // full-height cockpit views
-  if (VIEW === "cascade") v.replaceChildren(viewCascade());
-  else if (VIEW === "activity") v.replaceChildren(viewActivity());
-  else if (VIEW === "git") v.replaceChildren(viewGit());
-  else if (VIEW === "overview") v.replaceChildren(viewOverview());
-  else if (VIEW === "matrix") v.replaceChildren(viewMatrix());
-  else if (VIEW === "graph") v.replaceChildren(viewGraph());
-  else if (VIEW === "movements") v.replaceChildren(viewMovements());
-  else if (VIEW === "packages") v.replaceChildren(viewPackages());
-  else if (VIEW === "tokens") v.replaceChildren(viewTokens());
-  else if (VIEW === "ops") v.replaceChildren(viewOps());
-  else if (VIEW === "relay") v.replaceChildren(viewRelay());
-  else if (VIEW === "workspace") v.replaceChildren(viewWorkspace());
-  else if (VIEW === "pact") v.replaceChildren(viewPact());
-  else if (VIEW === "brain") v.replaceChildren(viewBrain());
-  else if (VIEW === "tree") v.replaceChildren(viewTree());
-  else if (VIEW === "admin") v.replaceChildren(viewAdmin(ADMIN_SECTION));
-  else if (VIEW === "mirror") v.replaceChildren(viewMirror());
-  else if (VIEW === "localhost") v.replaceChildren(viewLocalHost());
-  else if (VIEW === "usage") v.replaceChildren(viewUsage());
+  // The live cockpit views (cockpit / Pact / mirror / localhost / usage) route ALL their data through the
+  // work machine — offline they can only render an empty, useless shell (the "blank void" bug). Show a clear
+  // "work machine offline" screen instead. The snapshot-backed views (Overview / Map / Activity / …) still
+  // render from the relay's last cached snapshot + the connection banner, so they're left alone.
+  if (ME.mode === "live" && !ME.localConnected && WS_NEEDS_LIVE.has(VIEW)) { v.replaceChildren(renderOfflineScreen(VIEW)); return; }
+  // Error boundary: a view that throws (e.g. a data shape missing while offline) must NEVER leave #view blank
+  // — catch it and render a clear card with Retry, so the user always sees *something* explaining the state.
+  try {
+    if (VIEW === "cascade") v.replaceChildren(viewCascade());
+    else if (VIEW === "activity") v.replaceChildren(viewActivity());
+    else if (VIEW === "git") v.replaceChildren(viewGit());
+    else if (VIEW === "overview") v.replaceChildren(viewOverview());
+    else if (VIEW === "matrix") v.replaceChildren(viewMatrix());
+    else if (VIEW === "graph") v.replaceChildren(viewGraph());
+    else if (VIEW === "movements") v.replaceChildren(viewMovements());
+    else if (VIEW === "packages") v.replaceChildren(viewPackages());
+    else if (VIEW === "tokens") v.replaceChildren(viewTokens());
+    else if (VIEW === "ops") v.replaceChildren(viewOps());
+    else if (VIEW === "relay") v.replaceChildren(viewRelay());
+    else if (VIEW === "workspace") v.replaceChildren(viewWorkspace());
+    else if (VIEW === "pact") v.replaceChildren(viewPact());
+    else if (VIEW === "brain") v.replaceChildren(viewBrain());
+    else if (VIEW === "tree") v.replaceChildren(viewTree());
+    else if (VIEW === "admin") v.replaceChildren(viewAdmin(ADMIN_SECTION));
+    else if (VIEW === "mirror") v.replaceChildren(viewMirror());
+    else if (VIEW === "localhost") v.replaceChildren(viewLocalHost());
+    else if (VIEW === "usage") v.replaceChildren(viewUsage());
+  } catch (e) {
+    console.error("view render failed:", VIEW, e);
+    v.replaceChildren(renderViewError(VIEW, e));
+  }
+}
+// Views whose entire content comes live through the work machine — gated to the offline screen when the
+// tunnel is down (see render()).
+const WS_NEEDS_LIVE = new Set(["workspace", "pact", "mirror", "localhost", "usage"]);
+// A clear, centred "work machine offline" screen — the antidote to the blank void when the tunnel drops.
+function renderOfflineScreen(view) {
+  const nice = { workspace: "The Core cockpit", pact: "The Pact workspace", mirror: "The mirror", localhost: "The localhost panel", usage: "The Usage view" }[view] || "This view";
+  const retry = el("button", { class: "conn-lost-retry" }, ["↻ Check the connection"]);
+  retry.addEventListener("click", () => location.reload());
+  return el("div", { class: "conn-lost" }, [
+    el("div", { class: "conn-lost-icon" }, ["🔌"]),
+    el("h2", { class: "conn-lost-title" }, ["Work machine offline"]),
+    el("p", { class: "conn-lost-msg" }, [nice + " needs a live connection to your work machine, and Claudstermind can't reach it right now — its internet, the dashboard, or the bridge is down."]),
+    el("p", { class: "conn-lost-sub" }, ["It reconnects automatically the moment the work machine is back. Meanwhile you can still browse the cached Overview / Map / Activity views."]),
+    retry,
+  ]);
+}
+// The error-boundary card for a view that threw while rendering.
+function renderViewError(view, e) {
+  const offline = ME.mode === "live" && !ME.localConnected;
+  const retry = el("button", { class: "conn-lost-retry" }, ["↻ Retry"]);
+  retry.addEventListener("click", () => location.reload());
+  return el("div", { class: "conn-lost" }, [
+    el("div", { class: "conn-lost-icon" }, [offline ? "🔌" : "⚠"]),
+    el("h2", { class: "conn-lost-title" }, [offline ? "Work machine offline" : "This view couldn't load"]),
+    el("p", { class: "conn-lost-msg" }, [offline
+      ? "The work machine looks offline — reconnect it and this view comes back."
+      : "Something went wrong rendering this view" + (e && e.message ? " (" + e.message + ")" : "") + "."]),
+    retry,
+  ]);
 }
 
 /* ---------- Usage & Keys (Workspace → Usage): multi-key OAuth + plan rate-limit viewer + failover ----- */

@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-08-27 — Issue #003 written (local, draft): "Physiology of a Chainweb Transaction"
+
+**What happened:** Wrote issue-003 from `.docs/.handoffs/2026-08-27-transaction-physiology.md` — a follow-up to CryptoPascal31's *Anatomy of a Kadena Transaction* (credited + linked early). Covers the two costs of a tx, the "invisible half" (`/local` vs `?preflight=true`) + the 777,189-vs-580M story, the **seventh-power** size penalty (shape, not pricing; split = 128×/halving), the **three-limits-at-three-layers** novel finding, cross-chain comparison, signers free→priced + CPU-seconds budget + the **"mempool is a filter, consensus is the law"** distinction, a Pact-lines table, and a close on 3 honest unknowns. `draft: true` (owner publishes Friday). Kept **local, not deployed** per owner ("construct locally first").
+
+**Non-obvious:**
+- **Verified the ⚠️ cross-chain figures** the handoff flagged (measure-over-assert ethos): EIP-2028 = 16 gas/non-zero byte, 4/zero (→ the ~1,600× vs Chainweb's 0.01 gas/byte holds); Bitcoin 4,000,000 weight units; Solana ~1,232 bytes (MTU-derived). Framed as "each chain's published parameters," EIP-2028 linked.
+- Inference (the seventh-power rationale) labeled as inference every time, per handoff.
+- ~2850 words → readingTime 15 (handoff guessed 17; dense/tabular). No severity badges (no SC/C/H/M table in this one). Build green, DoD all met.
+
+**Published 2026-08-27:** owner said go → flipped `draft:false`, deployed via `./scripts/deploy.sh`. Live at read.stoachain.com/issues/issue-003; homepage + RSS now carry all 3. Also shipped **prominent gold issue numbers** (magazine-style `#003`): big `.issue-no` on article header + hero, `.story-num` leading each list row (owner: "so people see this is the 3rd article"). Verified live (HTTP 200, 3 RSS items).
+
+**Correction (§3g gas table):** owner clarified default-vs-max. Kadena: 180,000 protocol max but every node runs 150,000 default → effective 150k. StoaChain: 1,600,000 default but all HUB/pool nodes run 2,000,000 max → effective 2M. Table now 4 rows (Kadena/StoaChain × default/max) with effective ceilings bolded; added the 180,000 row (~190 KiB / ~3,400 lines, **derived** from the article's own calibration — reproduces the 3 known rows exactly). Redeployed. NB: gas ratio 13× ≠ line ratio ~2.4× (non-linear size cost) — worded to avoid conflating them.
+
 ## 2026-08-27 — 🚀 PUBLISHED live at https://read.stoachain.com
 
 **What happened:** Flipped both articles `draft:false`, prod-built, and deployed to **StoaNodePrime** (root@85.215.141.198, SSH `stoanodeprime`). Static Astro build served by **nginx**, fronted by **Cloudflare** (TLS at CF; origin HTTP:80) — matching the `stoachain.com` zone convention. Deploy = rsync `dist/` → `/var/www/read.stoachain.com/releases/<ts>/` + atomic `current` symlink; new vhost `sites-enabled/read.stoachain.com.conf` (`try_files $uri $uri/ =404`, `^~ /_astro/` immutable cache, cloudflare-realip snippet). `nginx -t` + `systemctl reload` clean. Verified: origin + public both serve StoicDigest; home/issues/topics/subscribe/rss all 200; chapter-dots, severity badges, red-team link all present publicly.
