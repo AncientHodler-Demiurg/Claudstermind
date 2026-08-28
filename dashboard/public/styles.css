@@ -1769,6 +1769,17 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pc-tool-call > b { color: var(--ink-soft); }
 .pc-tool-input { margin: 2px 0 0; padding: 6px 8px; background: var(--chip); border-radius: 6px;
   font-size: 10.5px; white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
+/* Tool OUTPUT rows (Bash/REPL stdout etc.) — surfaced so `.repl` test results show in the reply view. */
+.pc-tool.pc-toolres .pc-tool-head { color: #5eb389; }
+.pc-tool.pc-toolres.--err .pc-tool-head { color: #f87171; }
+.pc-tool-output { margin: 2px 0 0; padding: 7px 9px; background: #0b0f14; border: 1px solid var(--line); border-radius: 6px;
+  font: 11px ui-monospace, monospace; color: #cbd5e1; white-space: pre-wrap; word-break: break-word; max-height: 340px; overflow: auto; }
+.pc-tool-output.--err { color: #fca5a5; border-color: color-mix(in srgb, #f87171 40%, var(--line)); }
+/* Core cockpit tool output (inside the collapsed tool group). */
+.ws-toolres-lbl { color: #5eb389; font-size: 11px; }
+.ws-tool-output { margin: 3px 0 0; padding: 6px 8px; background: #0b0f14; border: 1px solid var(--line); border-radius: 6px;
+  font: 10.5px ui-monospace, monospace; color: #cbd5e1; white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow: auto; }
+.ws-tool-output.--err { color: #fca5a5; border-color: color-mix(in srgb, #f87171 40%, var(--line)); }
 /* Response timer: live "M:SS" while thinking/streaming, and a total on the finished reply. */
 .pc-timer { font-variant-numeric: tabular-nums; opacity: .85; }
 .pc-live-meta { margin-top: 3px; font-size: 10.5px; color: var(--ink-mute); font-family: ui-monospace, monospace; }

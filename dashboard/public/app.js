@@ -5181,6 +5181,7 @@ function pactTranscriptToMsgs(transcript) {
     if (m.role === "user") out.push({ role: "user", text: m.text || "", images: m.images || (m.image ? [m.image] : []), workspaceId: m.workspaceId || PACT_WORKSPACE_ID, at: at(m), worktree: (typeof m.worktree === "string" && m.worktree) ? m.worktree : undefined });
     else if (m.role === "assistant") out.push({ role: "assistant", text: m.text || "", elapsedMs: (typeof m.durationMs === "number" ? m.durationMs : (typeof m.elapsedMs === "number" ? m.elapsedMs : undefined)), at: at(m) });
     else if (m.kind === "tool_use") out.push({ kind: "tool_use", tools: m.tools || [], at: at(m) });
+    else if (m.kind === "tool_result" && Array.isArray(m.results)) out.push({ kind: "tool_result", results: m.results, at: at(m) });
   }
   return out;
 }
@@ -5616,6 +5617,10 @@ function pactChatRoute({ kind, sessionKey, data }) {
     case "assistant_delta": if (!t._turnStartedAt) t._turnStartedAt = Date.now(); t.live = (t.live || "") + (d.text || ""); pactChatPaintLive(t); return;
     case "assistant": t.live = ""; t._pendingText = null; t._pendingImages = null; t.msgs.push({ role: "assistant", text: d.text || "", at: (typeof d.at === "number" ? d.at : undefined) }); pactChatPaint(t); return;
     case "tool_use": if (!t._turnStartedAt) t._turnStartedAt = Date.now(); t.live = ""; t.msgs.push({ kind: "tool_use", tools: d.tools || [] }); pactChatPaint(t); return;
+    // A tool's OUTPUT (e.g. a `.repl` test's stdout the agent ran via Bash) — show it as its own collapsed row
+    // so REPL/test results are finally visible in the reply view. Only when there's actual output (skip the
+    // empty confirmations from Edit/Write so they don't clutter). Live-only, like tool_use (never persisted).
+    case "tool_result": { const rs = (Array.isArray(d.results) ? d.results : []).filter((r) => r && typeof r.output === "string" && r.output.trim()); if (rs.length) { t.msgs.push({ kind: "tool_result", results: rs }); pactChatPaint(t); } return; }
     case "result":
       t.live = ""; t.status = "idle"; t._pendingText = null; t._pendingImages = null;
       // Stamp the turn time onto this turn's reply ("Thought for …"). Prefer the SDK's own duration (from
@@ -6393,6 +6398,19 @@ function pactChatMsgNode(m) {
     const bodyEl = el("div", { class: "pc-tool-body" }, inner); bodyEl.hidden = true;
     head.addEventListener("click", () => { const willOpen = bodyEl.hidden; bodyEl.hidden = !willOpen; caret.textContent = willOpen ? "▾" : "▸"; });
     return el("div", { class: "pc-tool" }, [head, bodyEl]);
+  }
+  if (m.kind === "tool_result") {
+    // The agent's tool OUTPUT (Bash/REPL stdout, a Read, etc.) — collapsed by default with a one-line peek,
+    // tap to reveal the full (capped) output. This is what surfaces `.repl` test results in the reply view.
+    const results = Array.isArray(m.results) ? m.results : [];
+    const anyErr = results.some((r) => r && r.isError);
+    const preview = results.map((r) => (r && r.output) || "").join("  ").replace(/\s+/g, " ").trim().slice(0, 64);
+    const caret = el("span", { class: "pc-tool-caret" }, ["▸"]);
+    const head = el("div", { class: "pc-tool-head" }, [caret, (anyErr ? "⚠ " : "▤ ") + "output" + (preview ? " · " + preview + (preview.length >= 64 ? "…" : "") : "")]);
+    const inner = results.map((r) => el("pre", { class: "pc-tool-output" + ((r && r.isError) ? " --err" : "") }, [String((r && r.output) || "").trim() || "(no output)"]));
+    const bodyEl = el("div", { class: "pc-tool-body" }, inner); bodyEl.hidden = true;
+    head.addEventListener("click", () => { const willOpen = bodyEl.hidden; bodyEl.hidden = !willOpen; caret.textContent = willOpen ? "▾" : "▸"; });
+    return el("div", { class: "pc-tool pc-toolres" + (anyErr ? " --err" : "") }, [head, bodyEl]);
   }
   if (m.kind === "error") {
     const kids = ["⚠ " + m.text];
@@ -7838,7 +7856,15 @@ function viewWorkspace() {
       return line("ws-assistant", [wsNumBadge("R", m._rnum), wsShareBtn(m.text), star, ...renderAssistantText(m.text)]);
     }
     if (m.kind === "tool_use") return line("ws-tool", [el("i", { class: "ti ti-tool" }, []), " ", (m.tools || []).map((t) => t.name).join(", ")]);
-    if (m.kind === "tool_result") return line("ws-toolres", ["✓ tool result"]);
+    if (m.kind === "tool_result") {
+      // Show the tool OUTPUT (Bash/REPL stdout etc.) inline within the (collapsed-by-default) tool group, so
+      // expanding a turn's tools reveals what the agent's `.repl` tests actually printed.
+      const withOut = (Array.isArray(m.results) ? m.results : []).filter((r) => r && typeof r.output === "string" && r.output.trim());
+      if (!withOut.length) return line("ws-toolres", ["✓ tool result"]);
+      const kids = [el("div", { class: "ws-toolres-lbl" }, ["✓ output"])];
+      for (const r of withOut) kids.push(el("pre", { class: "ws-tool-output" + (r.isError ? " --err" : "") }, [String(r.output).trim()]));
+      return line("ws-toolres ws-toolres-has", kids);
+    }
     if (m.kind === "result") return line("ws-result", [`— done · ${(m.usage?.output_tokens || 0)} out tok`]);
     if (m.kind === "error") return line("ws-err", ["⚠ " + (m.text || m.message || "Unknown error")]);
     if (m.kind === "created") return line("ws-note", [`created ${m.what}: ${m.path}`]);

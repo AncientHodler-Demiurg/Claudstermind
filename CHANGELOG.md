@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.13] - 2026-08-29
+
+### Added
+- **Tool output now shows in the reply view — REPL/Bash results are finally visible.** When the agent ran a
+  `.repl` test (or any Bash/Read), you saw the collapsed `⚙ Bash` command row but never its *output* — the
+  engine had reduced each tool result to a bare count and threw the text away. Now the engine carries each
+  result's output (capped, head+tail kept so a giant dump can't bloat the stream), and both surfaces render
+  it: the **Pact chat** shows a collapsed **`▤ output · <preview…>`** row you tap to expand the full stdout
+  (red-tinted on error); the **Core cockpit** shows it inside the turn's expandable tool group. Live-only
+  (like the tool-call rows themselves — not persisted, so it's the running turn's output you're watching).
+
+> ⚠ **Engine change** (`lib/claudeSession.mjs`) — needs a sessiond restart to take effect (hard-kills
+> in-flight turns). Deploy when nothing is mid-turn.
+
 ## [1.5.12] - 2026-08-29
 
 ### Changed
