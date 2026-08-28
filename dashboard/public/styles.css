@@ -624,9 +624,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 /* --bar: inline inside the Pact mobile bottom mode-strip (a normal flex child, not floating). */
 .stick-mode--bar { position: static; }
 /* The Pact mobile "drawer" strip that hosts the mode bulb, directly under the control bar. */
-.pactm-modebar { display: flex; justify-content: center; align-items: center; padding: 3px 0 4px; flex: 0 0 auto; }
+.pactm-modebar { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 10px 6px; flex: 0 0 auto; }
+.pactm-modebar-bulb { flex: 1 1 auto; display: flex; justify-content: center; align-items: center; min-width: 0; }
 .pactm-modebar .stick-mode { font-size: 12px; padding: 4px 12px 4px 10px; opacity: 1; }
-.pactm-compose-collapsed .pactm-modebar { padding: 2px 0 3px; }
+.pactm-modebar .pactm-cbtn { flex: 0 0 auto; }   /* Conversations (left) + Bookmarks (right) keep their tap size */
+.pactm-compose-collapsed .pactm-modebar { padding: 2px 10px 4px; }
 /* Relative hosts so a --dock bulb anchors directly above the Send button (desktop Core + Pact). */
 .ws-send-wrap, .pc-send-wrap { position: relative; display: inline-flex; }
 .stick-mode-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--ink-mute); }
@@ -1073,6 +1075,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
      column and the text box owns the rest of the width — maximizing the typing area. */
   .ws-compose { align-items: stretch; gap: 8px; }
   .ws-prompt { flex: 1; min-height: 96px; font-size: 16px; }
+  /* Compose-collapse (the ⌄/⌃ mobile button): cap the textarea to one line so a long draft stops eating the
+     transcript. Overrides wsAutoResizePrompt's inline height, like the Pact mobile compose collapse. */
+  .ws-mcompose-collapsed .ws-prompt { min-height: 42px !important; height: 42px !important; max-height: 42px !important; overflow-y: auto !important; }
+  .ws-mcbtn-collapse { font-size: 15px; }
+  .ws-mcompose-collapsed .ws-mcbtn-collapse { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
   .ws-compose-btns { flex-direction: column; justify-content: flex-end; gap: 8px; }
   .ws-compose-btns .ws-send,
   .ws-compose-btns .ws-stop,
@@ -2041,7 +2048,20 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .pactm-chatwrap .pc-head .ws-spacer { display: none; }
   .pactm-chatwrap .pc-head .pc-tabs { flex: 1 1 0; }
   .pactm-chatwrap .pc-head .pc-usage { margin-left: 6px; max-width: 30vw; }
+  /* The tab strip is redundant on a phone (every conversation is one tap away in the 💬 Conversations sheet
+     below), so show ONLY the active conversation — as a plain TITLE. Its worktree marker (⌥name) rides along
+     so you still see which checkout it's on; the status dot + close × are dropped so it reads as a heading. */
+  .pactm-chatwrap .pc-head .pc-tab:not(.--active) { display: none; }
+  .pactm-chatwrap .pc-head .pc-tab.--active { background: transparent; border: none; padding: 2px 0; pointer-events: none; max-width: 100%; }
+  .pactm-chatwrap .pc-head .pc-tab.--active .pc-tab-dot, .pactm-chatwrap .pc-head .pc-tab.--active .pc-tab-x, .pactm-chatwrap .pc-head .pc-tab.--active .pc-tab-prime { display: none; }
+  .pactm-chatwrap .pc-head .pc-tab.--active .pc-tab-name { font-weight: 800; font-size: 14.5px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
   .pactm-chatwrap .pc-input { width: 100%; }
+  /* The worktree pill used to sit in the compose ROW, stealing a fat column of the textarea's width (it
+     "ate into the type box"). Stack the compose on mobile so the pill sits on its OWN short line ABOVE a
+     full-width textarea, and hide the (empty on mobile) send-wrap so the Live/Held bulb can't dock over the text. */
+  .pactm-chatwrap .pc-compose { flex-direction: column; align-items: stretch; gap: 4px; }
+  .pactm-chatwrap .pc-compose .pc-send-wrap { display: none; }
+  .pactm-chatwrap .pc-compose .pc-wtpill { align-self: flex-start; height: 26px; padding: 0 8px; font-size: 10.5px; }
   /* v1.3.8 — collapse the compose to a single line (overrides pactChatAutosize's inline height) so a long
      draft stops expanding upward into the transcript. The transcript gets the reclaimed height. */
   .pactm-compose-collapsed .pc-input { height: 40px !important; min-height: 40px !important; max-height: 40px !important; overflow-y: auto !important; }

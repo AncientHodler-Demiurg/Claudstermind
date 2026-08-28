@@ -4,6 +4,27 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.12] - 2026-08-29
+
+### Changed
+- **Mobile workspace layout cleanup (Pact + Core).**
+  - **Pact:** the Live/Held indicator no longer floats over the prompt text — it now sits **centered in the
+    row beneath the control bar**, flanked by the **Conversations (💬, left)** and **Bookmarks (★, right)**
+    buttons (each still opens its full sheet). The redundant top **tab strip** is gone: only the **current
+    conversation's name** shows as a title (with its worktree marker). The compose box no longer has the
+    **worktree pill eating a column of the textarea** — on mobile the pill sits on its own short line above a
+    **full-width** prompt box.
+  - **Core:** added the **compose collapse (⌄/⌃) button** the normal workspace was missing — tap to shrink the
+    prompt box to one line (and back), so a long draft stops pushing the transcript up. State persists.
+  - Web-only — no engine restart.
+
+### Notes
+- **Why REPL/tool output never appears in the reply view:** the agent's *tool results* (Bash/REPL stdout) are
+  intentionally **not surfaced** — the engine reduces each tool result to a bare count (`lib/claudeSession.mjs`),
+  and the chat only renders the tool *name/command* (the collapsed ⚙ rows), never the output. You see the
+  agent's text *summary* of a test run, not its raw output. Wiring the actual output through (capture + an
+  expandable row) is a separate feature (an engine change) — noted for a follow-up.
+
 ## [1.5.11] - 2026-08-28
 
 ### Fixed

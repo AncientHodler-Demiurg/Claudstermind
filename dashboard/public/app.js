@@ -2281,6 +2281,9 @@ let WS_ES = null;   // the Workspace EventSource (SSE stream of Claude session o
 let WS_LAST_MSG_AT = 0;    // Date.now() of the last message (real event OR heartbeat) this stream delivered
 let WS_STALE_TIMER = null;   // polls WS_LAST_MSG_AT; force-reconnects a stream that's gone quiet too long
 let WS_HEAL_TIMER = null;    // fast (~4s) local self-heal — surfaces a dropped reply in ~8s, not the 25s heartbeat gap
+// Mobile: collapse the compose textarea to one line so a long draft stops eating the transcript (mirrors the
+// Pact mobile compose collapse). Persisted so it sticks across reloads.
+let WS_COMPOSE_COLLAPSED = (() => { try { return localStorage.getItem("ws.compose.collapsed") === "1"; } catch { return false; } })();
 // Close any open ★-bookmark popup when clicking outside it (registered once, module load).
 document.addEventListener("mousedown", (e) => { if (!e.target.closest || !e.target.closest(".ws-bm-wrap")) document.querySelectorAll(".ws-bm-pop.--show").forEach((x) => x.classList.remove("--show")); });
 let WS_EVER_CONNECTED = false;   // true after the FIRST successful "hello" — so only a later hello logs as a "reconnect"
@@ -6655,7 +6658,10 @@ function pactChatRender() {
   // (see the capture at the top) — so a background rebuild never interrupts typing. `input` IS the new node.
   if (_keepFocus && input) { input.focus(); try { input.setSelectionRange(_selStart == null ? input.value.length : _selStart, _selEnd == null ? input.value.length : _selEnd); } catch { /* detached/unsupported — ignore */ } }
   const pcStick = attachStickController(scroll, { wrapClass: "stick-wrap-pc", nearPx: 4 });   // wrap now so the pill exists from the first paint
-  pcStick.dockMode(sendWrap, "stick-mode--dock");   // Live/Held bulb sits above Send (desktop) — off the transcript text
+  // Desktop docks the Live/Held bulb just above Send. On mobile the compose is full-width and Send is hidden,
+  // so docking it here overlapped the prompt text — leave it undocked on mobile; the mobile chatStage homes
+  // it into the modebar row (centered, between the Conversations + Bookmarks buttons) instead.
+  if (!pactIsMobile()) pcStick.dockMode(sendWrap, "stick-mode--dock");
   requestAnimationFrame(() => pactChatAutosize(input));   // size to any restored draft once the pane has real layout
   pactSyncCollapseBtns();
   pactRenderUsageLimits();   // the head was just rebuilt — restore the plan-usage badge from PACT_CHAT.usageLimits
@@ -7005,14 +7011,15 @@ function viewPactMobile() {
     stopB.hidden = true;
     const sendB = tbtn("➤", "Send", () => pactChatSend(pactChatActive()), "pactm-cbtn-send");
     const spacer = el("span", { class: "ws-spacer" }, []);
-    const bar = el("div", { class: "pactm-cbar" }, [menuB, upB, chatsB, histB, bmB, spacer, syncB, stopB, sendB]);
-    // v1.3.8 — pin the compose to a single line so a long draft stops expanding upward into the
-    // transcript. Toggle sits just before the send cluster; state persists across reloads.
-    // A thin "drawer" strip UNDER the control bar that hosts the Live/Held scroll-mode bulb — always
-    // visible so, on a phone, you can tell whether an incoming reply will scroll the chat or leave your
-    // scrolled-up position put. Docked from the chat's shared stick controller once .pc-scroll exists.
-    const modeBar = el("div", { class: "pactm-modebar" }, []);
-    const dockModeBulb = () => { const sc = chatHost.querySelector(".pc-scroll"); if (sc && sc._stick) sc._stick.dockMode(modeBar, "stick-mode--bar"); };
+    // Top control row: menu · attach · history · (collapse) · sync · stop · send. Conversations (💬) and
+    // Bookmarks (★) move DOWN into the modebar row below, flanking the Live/Held indicator.
+    const bar = el("div", { class: "pactm-cbar" }, [menuB, upB, histB, spacer, syncB, stopB, sendB]);
+    // The modebar (a row UNDER the control bar) is the "drawer controls" row: Conversations on the LEFT
+    // (tap → sheet of all open chats, like Ouronet's corner Controls drawer), Bookmarks on the RIGHT, and the
+    // Live/Held scroll-mode bulb centered BETWEEN them — so the indicator no longer sits over the prompt text.
+    const bulbHost = el("div", { class: "pactm-modebar-bulb" }, []);
+    const modeBar = el("div", { class: "pactm-modebar" }, [chatsB, bulbHost, bmB]);
+    const dockModeBulb = () => { const sc = chatHost.querySelector(".pc-scroll"); if (sc && sc._stick) sc._stick.dockMode(bulbHost, "stick-mode--bar"); };
     const wrap = el("div", { class: "pactm-chatwrap" + (PACT_COMPOSE_COLLAPSED ? " pactm-compose-collapsed" : "") }, [chatHost, bar, modeBar]);
     requestAnimationFrame(dockModeBulb);   // .pc-scroll + its controller are set up by pactChatRender; grab the bulb once laid out
     const collapseB = tbtn(PACT_COMPOSE_COLLAPSED ? "⌃" : "⌄", PACT_COMPOSE_COLLAPSED ? "Expand the compose box" : "Collapse the compose box to one line", () => {
@@ -8609,8 +8616,19 @@ function viewWorkspace() {
     const stopB = mb("■", "Stop the current response (keeps the conversation)", () => { const p = activePane(); if (p && p.sessionKey) wsPost("stop", { sessionKey: p.sessionKey }); }, "ws-mcbtn-stop");
     stopB.hidden = true;
     const sendB = mb("➤", "Send", () => send(activePane()), "ws-mcbtn-send");
+    // Collapse/expand the compose box to one line (parity with the Pact mobile view, which the normal
+    // workspace was missing) — so a long prompt draft stops pushing the transcript up.
+    root.classList.toggle("ws-mcompose-collapsed", WS_COMPOSE_COLLAPSED);
+    const collapseB = mb(WS_COMPOSE_COLLAPSED ? "⌃" : "⌄", WS_COMPOSE_COLLAPSED ? "Expand the compose box" : "Collapse the compose box to one line", () => {
+      WS_COMPOSE_COLLAPSED = !WS_COMPOSE_COLLAPSED;
+      try { localStorage.setItem("ws.compose.collapsed", WS_COMPOSE_COLLAPSED ? "1" : "0"); } catch {}
+      root.classList.toggle("ws-mcompose-collapsed", WS_COMPOSE_COLLAPSED);
+      collapseB.textContent = WS_COMPOSE_COLLAPSED ? "⌃" : "⌄";
+      collapseB.title = WS_COMPOSE_COLLAPSED ? "Expand the compose box" : "Collapse the compose box to one line";
+      const ui = paneUI.get(st.activeId); if (ui && ui.promptEl && !WS_COMPOSE_COLLAPSED) wsAutoResizePrompt(ui.promptEl);
+    }, "ws-mcbtn-collapse");
     wsMBar._sendB = sendB; wsMBar._stopB = stopB; wsMBar._chatsB = chatsB;
-    wsMBar.replaceChildren(menuB, chatsB, setB, attachB, bmB, el("span", { class: "ws-spacer" }, []), syncB, stopB, sendB);
+    wsMBar.replaceChildren(menuB, chatsB, setB, attachB, bmB, collapseB, el("span", { class: "ws-spacer" }, []), syncB, stopB, sendB);
   }
   // Keep the bottom bar's send/stop in step with the active pane, and home that pane's Live/Held bulb in
   // the mode strip (each pane owns its own bulb; only the visible pane's belongs in the shared strip).
