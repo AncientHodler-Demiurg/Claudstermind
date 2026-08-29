@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.16] - 2026-08-29
+
+### Changed
+- **Core workspace mobile: Conversations + Bookmarks are now thin labeled bars too** (matching the Pact view).
+  The icon row had too many square buttons to fit — they overflowed (Send got pushed off-screen). Moved
+  **"💬 Conversations"** (with the open-chat-box count) and **"★ Bookmarks"** out of the icon row and into the
+  strip below, as thin labeled control bars flanking the centered Live/Held bulb. The icon row now holds only
+  ☰ · ⚙ · 📎 · ⌄ · ↻ · ■ · ➤, so everything fits. Web-only — no engine restart.
+
 ## [1.5.15] - 2026-08-29
 
 ### Fixed

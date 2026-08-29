@@ -8659,10 +8659,8 @@ function viewWorkspace() {
       return b;
     };
     const menuB = mb("☰", "Repositories & history", openDrawer);
-    const chatsB = mb("💬", "Conversations — switch, add, or close", () => openSheet("Conversations", convosSheetBody()), "ws-mcbtn-chats");
     const setB = mb("⚙", "Pane settings — repo, worktree, model, effort, mode", openSettingsSheet);
     const attachB = mb("📎", "Attach image", () => { const ui = paneUI.get(st.activeId); if (ui && ui.attachBtn) ui.attachBtn.click(); });
-    const bmB = mb("★", "Bookmarked responses — jump to a starred answer", () => wsOpenBookmarkSheet(activePane()), "ws-mcbtn-bm");
     const syncB = mb("↻", "Sync now — re-fetch the latest state (no page reload)", () => { const p = activePane(); if (p && p.sessionKey) wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey, full: !!p._showAllTurns } }); });
     const stopB = mb("■", "Stop the current response (keeps the conversation)", () => { const p = activePane(); if (p && p.sessionKey) wsPost("stop", { sessionKey: p.sessionKey }); }, "ws-mcbtn-stop");
     stopB.hidden = true;
@@ -8678,8 +8676,20 @@ function viewWorkspace() {
       collapseB.title = WS_COMPOSE_COLLAPSED ? "Expand the compose box" : "Collapse the compose box to one line";
       const ui = paneUI.get(st.activeId); if (ui && ui.promptEl && !WS_COMPOSE_COLLAPSED) wsAutoResizePrompt(ui.promptEl);
     }, "ws-mcbtn-collapse");
-    wsMBar._sendB = sendB; wsMBar._stopB = stopB; wsMBar._chatsB = chatsB;
-    wsMBar.replaceChildren(menuB, chatsB, setB, attachB, bmB, collapseB, el("span", { class: "ws-spacer" }, []), syncB, stopB, sendB);
+    // Too many square icon buttons overflowed the bar. Conversations + Bookmarks become thin LABELED bars
+    // (Ouronet-Controls style) in the mode strip below, flanking the Live/Held bulb — freeing the icon row.
+    const mbar = (label, cls, fn) => {
+      const nSpan = el("span", { class: "ws-mbtn-n" }, []); nSpan.hidden = true;
+      const b = el("button", { class: "ws-mbtn " + cls, type: "button" }, [el("span", { class: "ws-mbtn-lbl" }, [label]), nSpan]);
+      b.addEventListener("click", fn); b.addEventListener("touchend", (e) => { e.preventDefault(); fn(); });
+      b._n = nSpan; return b;
+    };
+    const chatsBar = mbar("💬 Conversations", "ws-mbtn-chats", () => openSheet("Conversations", convosSheetBody()));
+    const bmBar = mbar("★ Bookmarks", "ws-mbtn-bm", () => wsOpenBookmarkSheet(activePane()));
+    const bulbHost = el("div", { class: "ws-mmodebar-bulb" }, []);
+    wsMBar._sendB = sendB; wsMBar._stopB = stopB; wsMBar._chatsBar = chatsBar; wsMBar._bulbHost = bulbHost;
+    wsMBar.replaceChildren(menuB, setB, attachB, collapseB, el("span", { class: "ws-spacer" }, []), syncB, stopB, sendB);
+    wsModeStrip.replaceChildren(chatsBar, bulbHost, bmBar);
   }
   // Keep the bottom bar's send/stop in step with the active pane, and home that pane's Live/Held bulb in
   // the mode strip (each pane owns its own bulb; only the visible pane's belongs in the shared strip).
@@ -8691,10 +8701,13 @@ function viewWorkspace() {
     wsMBar._sendB.textContent = p && p.status === "deepwork" ? "🔴" : busy ? "…" : "➤";
     wsMBar._sendB.classList.toggle("busy", busy);
     wsMBar._stopB.hidden = !busy;
-    if (wsMBar._chatsB) wsMBar._chatsB.dataset.n = String(st.panes.length);
-    if (ui && ui.stick && ui.stick.modeTag && wsModeStrip.firstChild !== ui.stick.modeTag) {
-      wsModeStrip.replaceChildren();                       // drop any prior pane's bulb
-      ui.stick.dockMode(wsModeStrip, "stick-mode--bar");   // and home the active pane's
+    if (wsMBar._chatsBar) { const n = st.panes.length; wsMBar._chatsBar._n.textContent = String(n); wsMBar._chatsBar._n.hidden = n < 1; }
+    // Home the ACTIVE pane's Live/Held bulb into the center host (each pane owns its own bulb) — clear the
+    // host first so a prior pane's bulb (or a stale one) can't linger beside it.
+    const bulbHost = wsMBar._bulbHost;
+    if (ui && ui.stick && ui.stick.modeTag && bulbHost && bulbHost.firstChild !== ui.stick.modeTag) {
+      bulbHost.replaceChildren();
+      ui.stick.dockMode(bulbHost, "stick-mode--bar");
     }
   }
   function addPaneMobile() {

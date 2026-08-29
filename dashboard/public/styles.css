@@ -1111,7 +1111,18 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
      control bar, so the textarea owns the full width — matching the Pact mobile chat. */
   .ws-mobile .ws-compose-btns { display: none; }
   .ws-mobile .ws-compose { gap: 0; }
-  .ws-mobile .ws-mmodebar { display: flex; justify-content: center; align-items: center; padding: 2px 0 0; flex: 0 0 auto; }
+  .ws-mobile .ws-mmodebar { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    padding: 5px max(10px, env(safe-area-inset-left)) 3px max(10px, env(safe-area-inset-right)); flex: 0 0 auto; }
+  .ws-mmodebar-bulb { flex: 1 1 auto; display: flex; justify-content: center; align-items: center; min-width: 0; }
+  /* Thin LABELED control bars (Ouronet-Controls style): "💬 Conversations [n]" left + "★ Bookmarks" right,
+     flanking the centered Live/Held bulb — moved off the crowded icon row so the square buttons all fit. */
+  .ws-mbtn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 13px;
+    border-radius: 999px; background: var(--chip); border: 1px solid var(--line); color: var(--ink-soft);
+    font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
+  .ws-mbtn:active { background: color-mix(in srgb, var(--accent) 14%, var(--chip)); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+  .ws-mbtn-n { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: #12101c;
+    font-size: 10px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; }
+  .ws-mbtn-bm { color: #fbbf24; }
   /* No safe-area-inset-bottom here: body.ws-full already reserves the fixed bottom nav's height, so the
      bar sits directly above .ph-tabbar (which itself covers the home-indicator inset). */
   .ws-mobile .ws-mcbar { display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
@@ -1136,11 +1147,6 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .ws-mobile .ws-toolbar { display: none; }
   /* Per-pane controls live in the ⚙ sheet on mobile — hidden while sitting in the pane. */
   .ws-mobile .ws-pane .ws-pane-controls { display: none; }
-  /* A count badge on the 💬 conversations button (driven by its data-n), like the Pact chats button. */
-  .ws-mcbtn-chats { position: relative; }
-  .ws-mcbtn-chats[data-n]:not([data-n="0"]):not([data-n="1"])::after {
-    content: attr(data-n); position: absolute; top: -4px; right: -4px; min-width: 15px; height: 15px; padding: 0 3px;
-    background: var(--accent); color: #fff; border-radius: 999px; font-size: 10px; line-height: 15px; text-align: center; }
   /* Stage 3: New folder / New repo, relocated into the ☰ drawer on mobile (their toolbar home is hidden). */
   .ws-mobile .ws-drawer-actions { display: flex; gap: 8px; margin-bottom: 10px; }
   .ws-mobile .ws-drawer-actions .ghost { flex: 1; min-height: 42px; border-radius: 10px; }
