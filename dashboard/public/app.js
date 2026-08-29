@@ -9706,8 +9706,9 @@ function viewWorkspace() {
       ]),
       grid,
     ]),
-    wsModeStrip,   // mobile-only: the active pane's Live/Held bulb (hidden on desktop via CSS)
     wsMBar,        // mobile-only: the bottom control bar (hidden on desktop via CSS)
+    wsModeStrip,   // mobile-only: Conversations/Bookmarks riser tabs + Live/Held bulb — LAST, so it sits
+                   //             directly ON the footer nav's top edge (attached, Ouronet-style)
     wsSheet,       // mobile-only: the slide-up sheet (conversations / pane settings)
     permHost,
   );
