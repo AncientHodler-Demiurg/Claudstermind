@@ -623,6 +623,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .stick-mode--dock { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 6; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
 /* --bar: inline inside the Pact mobile bottom mode-strip (a normal flex child, not floating). */
 .stick-mode--bar { position: static; }
+/* --head: inline inside the chat/pane HEADER (mobile) — the Live/Held bulb lives up by the workspace
+   title/medallion, not the bottom controls row. Compact so it fits the header. */
+.stick-mode--head { position: static; font-size: 10px; padding: 2px 9px 2px 7px; }
+/* Header dock hosts — mobile only; empty (and hidden) on desktop, where the bulb docks above Send. */
+.pc-head-bulb, .ws-head-bulb { display: none; align-items: center; flex: 0 0 auto; margin: 0 2px; }
 /* The Pact mobile "drawer" strip that hosts the mode bulb, directly under the control bar. */
 /* The Conversations/Bookmarks controls are RISER TABS glued to the top edge of the footer nav (Ouronet
    "Controls [N]" style): "💬 Conversations [n]" bottom-LEFT, "★ Bookmarks" bottom-RIGHT, flanking the
@@ -839,6 +844,9 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .ws-attach { font-size: 15px; align-self: flex-end; }
 .ws-attach:disabled { opacity: .4; cursor: default; }
 .ws-compose-extras:empty { display: none; }
+/* Empty permission host must NOT sit in the flex flow — otherwise ws-root's gap adds a phantom band below
+   the mode strip, so the Conversations/Bookmarks riser tabs never reach the footer nav (the Core "not flush"). */
+.ws-perm-host:empty { display: none; }
 .ws-img-preview { display: flex; flex-wrap: wrap; gap: 10px; padding: 0 9px; margin-top: 6px; }
 .ws-img-chip { display: flex; align-items: center; gap: 4px; }
 .ws-img-thumb { max-width: 64px; max-height: 64px; border-radius: 6px; border: 1px solid var(--line); object-fit: cover; }
@@ -1125,6 +1133,7 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .ws-mbtn:active { background: color-mix(in srgb, var(--accent) 24%, var(--panel)); }
   .ws-mbtn-n { font-size: 9.5px; font-weight: 800; color: var(--accent); }
   .ws-mmodebar .stick-mode { font-size: 10.5px; padding: 2px 10px 2px 8px; }
+  .ws-mobile .ws-head-bulb { display: inline-flex; }   /* Live/Held bulb lives in the pane header on mobile */
   .ws-mbtn-bm { color: #fbbf24; border-color: color-mix(in srgb, #fbbf24 45%, var(--line)); background: color-mix(in srgb, #fbbf24 11%, var(--panel)); }
   /* No safe-area-inset-bottom here: body.ws-full already reserves the fixed bottom nav's height, so the
      bar sits directly above .ph-tabbar (which itself covers the home-indicator inset). */
@@ -2078,6 +2087,7 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .pactm-chatwrap .pc-head .ws-spacer { display: none; }
   .pactm-chatwrap .pc-head .pc-tabs { flex: 1 1 0; }
   .pactm-chatwrap .pc-head .pc-usage { margin-left: 6px; max-width: 30vw; }
+  .pactm-chatwrap .pc-head .pc-head-bulb { display: inline-flex; }   /* Live/Held bulb lives in the header on mobile */
   /* The tab strip is redundant on a phone (every conversation is one tap away in the 💬 Conversations sheet
      below), so show ONLY the active conversation — as a plain TITLE. Its worktree marker (⌥name) rides along
      so you still see which checkout it's on; the status dot + close × are dropped so it reads as a heading. */

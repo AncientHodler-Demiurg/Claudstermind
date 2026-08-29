@@ -4,7 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.5.19] - 2026-08-29
+## [1.5.20] - 2026-08-29
+
+### Changed
+- **Mobile workspace controls: Core now flush like Pact, Live/Held moved to the header, both identical.**
+  - **Core flush fix:** the empty permission host sat in the flex flow after the mode strip, and `ws-root`'s
+    gap added a phantom band below it — so the Core riser tabs never reached the footer nav. It now collapses
+    when empty (`.ws-perm-host:empty { display:none }`), so the tabs sit flush on the nav, matching Pact.
+  - **Live/Held moved up to the conversation header** (by the title/identity — the "workspace medallion",
+    where there's already space) in BOTH workspaces, instead of the bottom controls row. The bottom row is now
+    just the two corner tabs — **💬 Conversations [n]** bottom-left, **★ Bookmarks** bottom-right — exactly
+    like Ouronet (Controls left, handle right). Both workspaces now use the same structure. Web-only.
 
 ### Fixed
 - **The riser tabs still had a gap to the footer nav, and were bigger than Ouronet's.** The gap was because

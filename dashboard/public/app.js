@@ -6646,7 +6646,10 @@ function pactChatRender() {
   // beyond main exists, and LOCKED once the conversation has started (changing cwd mid-chat is confusing).
   // The worktree control now lives ALWAYS-VISIBLE in the compose bar (lower-left, see `wtPill` below), so
   // you can always see + change which checkout a conversation runs in — even before any worktree exists.
-  const headKids = [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, bmWrap, el("span", { class: "ws-spacer" }, []), usageEl, modeSel, chatCollapse];
+  // Mobile-only dock for the Live/Held bulb — up here by the conversation title (the "workspace medallion"),
+  // where there's already space, instead of the bottom controls row. Empty on desktop (docks above Send).
+  const headBulb = el("div", { class: "pc-head-bulb" }, []);
+  const headKids = [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, bmWrap, el("span", { class: "ws-spacer" }, []), headBulb, usageEl, modeSel, chatCollapse];
   const head = el("div", { class: "pact-zone-hd pc-head" }, headKids);
   const scroll = el("div", { class: "pc-scroll" }, []);
   const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (⌘/Ctrl+Enter to send)" });
@@ -7071,13 +7074,16 @@ function viewPactMobile() {
     // The modebar (a row UNDER the control bar) is the "drawer controls" row: Conversations on the LEFT
     // (tap → sheet of all open chats, like Ouronet's corner Controls drawer), Bookmarks on the RIGHT, and the
     // Live/Held scroll-mode bulb centered BETWEEN them — so the indicator no longer sits over the prompt text.
-    const bulbHost = el("div", { class: "pactm-modebar-bulb" }, []);
-    const modeBar = el("div", { class: "pactm-modebar" }, [chatsBar, bulbHost, bmBar]);
-    // Home the ONE Live/Held bulb into the modebar. pactChatRender rebuilds .pc-scroll (and with it a fresh
-    // controller + a fresh floating bulb) on every render, while a previously-docked bulb still lives in this
-    // modebar (which is OUTSIDE chatHost, so replaceChildren doesn't remove it) — that's the "two bulbs, one
-    // Live one Held" bug. CLEAR the host first, then dock the CURRENT controller's bulb, so exactly one shows.
-    const dockModeBulb = () => { const sc = chatHost.querySelector(".pc-scroll"); if (sc && sc._stick) { bulbHost.replaceChildren(); sc._stick.dockMode(bulbHost, "stick-mode--bar"); } };
+    // Bottom controls row is just the two corner tabs now — Conversations (left) + Bookmarks (right); the
+    // Live/Held bulb moved UP into the chat header (.pc-head-bulb).
+    const modeBar = el("div", { class: "pactm-modebar" }, [chatsBar, bmBar]);
+    // Dock the ONE Live/Held bulb into the HEADER host. pactChatRender rebuilds .pc-scroll (fresh controller +
+    // fresh floating bulb) and .pc-head (fresh host) on every render, so re-home the current controller's bulb
+    // into the current header host every paint — CLEAR it first so a stale bulb can't linger beside it.
+    const dockModeBulb = () => {
+      const sc = chatHost.querySelector(".pc-scroll"); const host = chatHost.querySelector(".pc-head-bulb");
+      if (sc && sc._stick && host) { host.replaceChildren(); sc._stick.dockMode(host, "stick-mode--head"); }
+    };
     const wrap = el("div", { class: "pactm-chatwrap" + (PACT_COMPOSE_COLLAPSED ? " pactm-compose-collapsed" : "") }, [chatHost, bar, modeBar]);
     requestAnimationFrame(dockModeBulb);   // .pc-scroll + its controller are set up by pactChatRender; grab the bulb once laid out
     const collapseB = tbtn(PACT_COMPOSE_COLLAPSED ? "⌃" : "⌄", PACT_COMPOSE_COLLAPSED ? "Expand the compose box" : "Collapse the compose box to one line", () => {
@@ -7494,7 +7500,7 @@ function viewWorkspace() {
   const usageLimitsEl = el("span", { class: "ws-usage-limits", title: "Plan usage limits (experimental)" }, []);
   usageLimitsEl.hidden = true;
   const defaultModeSel = el("select", { class: "wsel wsel-sm ws-defmode" }, []);
-  const permHost = el("div", {});
+  const permHost = el("div", { class: "ws-perm-host" });   // :empty collapses it so it can't add a flex-gap below the mode strip (the Core "not flush" gap)
 
   const shortRepo = (p) => (p || "").split(/[\\/]/).filter(Boolean).pop() || "repo";
   function note(msg) { bridgeNote.hidden = false; bridgeNote.textContent = msg; }
@@ -8270,7 +8276,10 @@ function viewWorkspace() {
     // Send button's blinking border. Hover lists what's running.
     const bgBadge = el("span", { class: "ws-bgwork" }, []);
     bgBadge.hidden = true;
-    const topBar = el("div", { class: "ws-pane-hd" }, [dot, identityLabel, el("span", { class: "ws-spacer" }), bgBadge, savedBadge, closeBtn]);
+    // Mobile-only dock for this pane's Live/Held bulb — up here by the pane identity (the "workspace
+    // medallion"), where there's space, instead of the bottom controls row. Empty on desktop (docks above Send).
+    const headBulb = el("div", { class: "ws-head-bulb" }, []);
+    const topBar = el("div", { class: "ws-pane-hd" }, [dot, identityLabel, el("span", { class: "ws-spacer" }), headBulb, bgBadge, savedBadge, closeBtn]);
     const controlsBar = el("div", { class: "ws-pane-controls" }, [repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, histBtn, el("span", { class: "ws-spacer" }), badge]);
     // The live "what's happening right now" feed — a single always-visible line (tap to expand
     // the full scrolling log) narrating every state transition: sending, thinking, streaming,
@@ -8366,7 +8375,9 @@ function viewWorkspace() {
     // (pill + blink + near-bottom follow). transcriptEl is already a child of paneRoot here, so the
     // controller can insert its relative wrapper in place around it.
     const stick = attachStickController(transcriptEl, { wrapClass: "stick-wrap-ws" });
-    stick.dockMode(sendWrap, "stick-mode--dock");   // move the Live/Held bulb from the transcript to just above Send (doesn't obstruct text)
+    // Desktop: dock the Live/Held bulb just above Send. Mobile: syncMobileBar homes it in the pane HEADER
+    // instead (by the identity), so don't dock to the compose here — it would flash there before moving.
+    if (!st.isMobile) stick.dockMode(sendWrap, "stick-mode--dock");
     paneUI.set(p.id, { root: paneRoot, transcriptEl, stick, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, stopBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _bmPop: bmPop, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
     if (p.draft) { promptEl.value = p.draft; wsAutoResizePrompt(promptEl); }   // restore the saved compose draft after a view switch / reload
     return paneRoot;
@@ -8702,10 +8713,10 @@ function viewWorkspace() {
     };
     const chatsBar = mbar("💬 Conversations", "ws-mbtn-chats", () => openSheet("Conversations", convosSheetBody()));
     const bmBar = mbar("★ Bookmarks", "ws-mbtn-bm", () => wsOpenBookmarkSheet(activePane()));
-    const bulbHost = el("div", { class: "ws-mmodebar-bulb" }, []);
-    wsMBar._sendB = sendB; wsMBar._stopB = stopB; wsMBar._chatsBar = chatsBar; wsMBar._bulbHost = bulbHost;
+    wsMBar._sendB = sendB; wsMBar._stopB = stopB; wsMBar._chatsBar = chatsBar;
     wsMBar.replaceChildren(menuB, setB, attachB, collapseB, el("span", { class: "ws-spacer" }, []), syncB, stopB, sendB);
-    wsModeStrip.replaceChildren(chatsBar, bulbHost, bmBar);
+    // Bottom controls row is just the two corner tabs; the Live/Held bulb moved UP into the pane header.
+    wsModeStrip.replaceChildren(chatsBar, bmBar);
   }
   // Keep the bottom bar's send/stop in step with the active pane, and home that pane's Live/Held bulb in
   // the mode strip (each pane owns its own bulb; only the visible pane's belongs in the shared strip).
@@ -8718,12 +8729,12 @@ function viewWorkspace() {
     wsMBar._sendB.classList.toggle("busy", busy);
     wsMBar._stopB.hidden = !busy;
     if (wsMBar._chatsBar) { const n = st.panes.length; wsMBar._chatsBar._n.textContent = "[" + n + "]"; wsMBar._chatsBar._n.hidden = n < 1; }
-    // Home the ACTIVE pane's Live/Held bulb into the center host (each pane owns its own bulb) — clear the
-    // host first so a prior pane's bulb (or a stale one) can't linger beside it.
-    const bulbHost = wsMBar._bulbHost;
-    if (ui && ui.stick && ui.stick.modeTag && bulbHost && bulbHost.firstChild !== ui.stick.modeTag) {
-      bulbHost.replaceChildren();
-      ui.stick.dockMode(bulbHost, "stick-mode--bar");
+    // Home the ACTIVE pane's Live/Held bulb into ITS OWN header (by the pane identity), clearing that host
+    // first so no stale bulb lingers. Each pane owns its bulb, so switching panes just re-homes the visible one.
+    const headBulb = ui && ui.root && ui.root.querySelector(".ws-head-bulb");
+    if (ui && ui.stick && ui.stick.modeTag && headBulb && headBulb.firstChild !== ui.stick.modeTag) {
+      headBulb.replaceChildren();
+      ui.stick.dockMode(headBulb, "stick-mode--head");
     }
   }
   function addPaneMobile() {
