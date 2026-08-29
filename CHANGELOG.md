@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.14] - 2026-08-29
+
+### Fixed
+- **The Admin page was unreachable on mobile** — the only way in was typing `#admin` into the URL. Admin lives
+  in a separate space (not a content SECTION), so it never appeared in the mobile bottom tab bar, and the
+  desktop identity-area "Admin" link isn't shown in the phone layout. Added an **Admin tab** at the end of the
+  mobile bottom bar (a hairline sets it apart), gated exactly like the desktop link — the local dashboard, or
+  the `ancient` role on the live site — so admins never see it missing and non-admins don't see it at all.
+  Web-only — no engine restart.
+
 ## [1.5.13] - 2026-08-29
 
 ### Added

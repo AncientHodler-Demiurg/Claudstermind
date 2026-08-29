@@ -1209,6 +1209,8 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
     padding: 7px 2px 6px; background: transparent; border: none; color: var(--ink-dim); cursor: pointer;
     position: relative; -webkit-tap-highlight-color: transparent; }
   .ph-tab.--active, .ph-tab.--open { color: var(--accent); }
+  /* Admin is a separate space, not a content section — a hairline sets it apart at the end of the bar. */
+  .ph-tab-admin { border-left: 1px solid var(--line); }
   .ph-tab.--active::before { content: ""; position: absolute; top: 0; left: 24%; right: 24%; height: 2px;
     border-radius: 999px; background: var(--accent); }
   .ph-tab-ic { font-size: 19px; line-height: 1; }

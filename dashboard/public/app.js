@@ -274,7 +274,7 @@ function renderMobileNav() {
   if (_mnavOpen && !secs.some((s) => s.id === _mnavOpen)) _mnavOpen = null;
 
   // Tier-1 tab bar
-  bar.replaceChildren(...secs.map((s) => {
+  const cells = secs.map((s) => {
     const active = !ROUTE.admin && ROUTE.section === s.id;
     const hasSubs = !!(s.subs && s.subs.length);
     const isOpen = _mnavOpen === s.id;
@@ -289,7 +289,20 @@ function renderMobileNav() {
       else { _mnavOpen = null; location.hash = "#" + s.id; }
     });
     return cell;
-  }));
+  });
+  // Admin lives in a separate `#admin` space (not a SECTION), so it was absent from the mobile tab bar —
+  // the ONLY way to reach it on a phone was typing the URL. Expose it as a trailing tab, gated the same as
+  // the desktop identity-area link (local dashboard, or the `ancient` role on the live site).
+  const canAdmin = ME.mode === "local" || (ME.roles || []).includes("ancient");
+  if (canAdmin) {
+    const adminCell = el("button", { class: "ph-tab ph-tab-admin" + (ROUTE.admin ? " --active" : ""), title: "Admin", type: "button" }, [
+      el("span", { class: "ph-tab-ic" }, ["⚙"]),
+      el("span", { class: "ph-tab-lbl" }, ["Admin"]),
+    ]);
+    adminCell.addEventListener("click", () => { _mnavOpen = null; location.hash = "#admin"; });
+    cells.push(adminCell);
+  }
+  bar.replaceChildren(...cells);
 
   // Tier-2 drawer for the open section
   const openSec = _mnavOpen ? secs.find((s) => s.id === _mnavOpen) : null;
