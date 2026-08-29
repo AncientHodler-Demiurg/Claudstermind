@@ -624,19 +624,20 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 /* --bar: inline inside the Pact mobile bottom mode-strip (a normal flex child, not floating). */
 .stick-mode--bar { position: static; }
 /* The Pact mobile "drawer" strip that hosts the mode bulb, directly under the control bar. */
-.pactm-modebar { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 5px 10px 7px; flex: 0 0 auto; }
-.pactm-modebar-bulb { flex: 1 1 auto; display: flex; justify-content: center; align-items: center; min-width: 0; }
+/* The Conversations/Bookmarks controls are RISER TABS glued to the top edge of the footer nav (Ouronet
+   "Controls [N]" style): "💬 Conversations [n]" bottom-LEFT, "★ Bookmarks" bottom-RIGHT, flanking the
+   centered Live/Held bulb. align-items:flex-end + zero bottom padding drops the tabs onto the footer bar. */
+.pactm-modebar { display: flex; justify-content: space-between; align-items: flex-end; gap: 8px; padding: 4px 6px 0; flex: 0 0 auto; }
+.pactm-modebar-bulb { flex: 1 1 auto; display: flex; justify-content: center; align-items: center; min-width: 0; margin-bottom: 5px; }
 .pactm-modebar .stick-mode { font-size: 12px; padding: 4px 12px 4px 10px; opacity: 1; }
-/* Thin LABELED control bars (Ouronet-Controls style): "💬 Conversations [n]" left, "★ Bookmarks" right,
-   flanking the single centered Live/Held bulb — a compact row that reads as controls, not lone icons. */
-.pactm-mbtn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 13px;
-  border-radius: 999px; background: var(--chip); border: 1px solid var(--line); color: var(--ink-soft);
-  font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
-.pactm-mbtn:active { background: color-mix(in srgb, var(--accent) 14%, var(--chip)); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
-.pactm-mbtn-n { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: #12101c;
-  font-size: 10px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; }
-.pactm-mbtn-bm { color: #fbbf24; }
-.pactm-compose-collapsed .pactm-modebar { padding: 3px 10px 5px; }
+.pactm-mbtn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 11px;
+  border-radius: 9px 9px 0 0; border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--line)); border-bottom: none;
+  background: color-mix(in srgb, var(--accent) 13%, var(--panel)); color: var(--accent);
+  font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
+.pactm-mbtn:active { background: color-mix(in srgb, var(--accent) 24%, var(--panel)); }
+.pactm-mbtn-n { font-size: 11px; font-weight: 800; color: var(--accent); }
+.pactm-mbtn-bm { color: #fbbf24; border-color: color-mix(in srgb, #fbbf24 45%, var(--line)); background: color-mix(in srgb, #fbbf24 11%, var(--panel)); }
+.pactm-compose-collapsed .pactm-modebar { padding: 3px 6px 0; }
 /* Relative hosts so a --dock bulb anchors directly above the Send button (desktop Core + Pact). */
 .ws-send-wrap, .pc-send-wrap { position: relative; display: inline-flex; }
 .stick-mode-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--ink-mute); }
@@ -1111,18 +1112,19 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
      control bar, so the textarea owns the full width — matching the Pact mobile chat. */
   .ws-mobile .ws-compose-btns { display: none; }
   .ws-mobile .ws-compose { gap: 0; }
-  .ws-mobile .ws-mmodebar { display: flex; justify-content: space-between; align-items: center; gap: 8px;
-    padding: 5px max(10px, env(safe-area-inset-left)) 3px max(10px, env(safe-area-inset-right)); flex: 0 0 auto; }
-  .ws-mmodebar-bulb { flex: 1 1 auto; display: flex; justify-content: center; align-items: center; min-width: 0; }
-  /* Thin LABELED control bars (Ouronet-Controls style): "💬 Conversations [n]" left + "★ Bookmarks" right,
-     flanking the centered Live/Held bulb — moved off the crowded icon row so the square buttons all fit. */
-  .ws-mbtn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 13px;
-    border-radius: 999px; background: var(--chip); border: 1px solid var(--line); color: var(--ink-soft);
-    font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
-  .ws-mbtn:active { background: color-mix(in srgb, var(--accent) 14%, var(--chip)); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
-  .ws-mbtn-n { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: #12101c;
-    font-size: 10px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; }
-  .ws-mbtn-bm { color: #fbbf24; }
+  /* Conversations/Bookmarks as RISER TABS glued to the footer nav's top edge (Ouronet "Controls [N]" style):
+     "💬 Conversations [n]" bottom-LEFT, "★ Bookmarks" bottom-RIGHT, flanking the centered Live/Held bulb.
+     align-items:flex-end + zero bottom padding drops the tabs onto the fixed footer bar below. */
+  .ws-mobile .ws-mmodebar { display: flex; justify-content: space-between; align-items: flex-end; gap: 8px;
+    padding: 4px max(8px, env(safe-area-inset-left)) 0 max(8px, env(safe-area-inset-right)); flex: 0 0 auto; }
+  .ws-mmodebar-bulb { flex: 1 1 auto; display: flex; justify-content: center; align-items: center; min-width: 0; margin-bottom: 5px; }
+  .ws-mbtn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 11px;
+    border-radius: 9px 9px 0 0; border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--line)); border-bottom: none;
+    background: color-mix(in srgb, var(--accent) 13%, var(--panel)); color: var(--accent);
+    font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
+  .ws-mbtn:active { background: color-mix(in srgb, var(--accent) 24%, var(--panel)); }
+  .ws-mbtn-n { font-size: 11px; font-weight: 800; color: var(--accent); }
+  .ws-mbtn-bm { color: #fbbf24; border-color: color-mix(in srgb, #fbbf24 45%, var(--line)); background: color-mix(in srgb, #fbbf24 11%, var(--panel)); }
   /* No safe-area-inset-bottom here: body.ws-full already reserves the fixed bottom nav's height, so the
      bar sits directly above .ph-tabbar (which itself covers the home-indicator inset). */
   .ws-mobile .ws-mcbar { display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
@@ -1211,6 +1213,9 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
      the compose row + Send button. Pinning both height and min-height makes the workspace end exactly
      above the bar. */
   body.ws-full { height: calc(100vh - var(--cm-tabbar-h)); height: calc(100dvh - var(--cm-tabbar-h)); min-height: 0; }
+  /* Kill #main's bottom padding on the cockpit views so the workspace column reaches the footer nav's top
+     edge — that's what lets the Conversations/Bookmarks riser tabs sit DIRECTLY ON the footer bar. */
+  body.ws-full #main { padding-bottom: 0; }
 
   .ph-tabbar {
     display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 80;

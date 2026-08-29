@@ -4,7 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.5.16] - 2026-08-29
+## [1.5.17] - 2026-08-29
+
+### Changed
+- **Conversations/Bookmarks controls now render as riser tabs glued to the footer nav bar** (both Pact and
+  Core mobile), matching the Ouronet "Controls [N]" pattern the design was modelled on. Instead of floating
+  pills, they're thin tabs with rounded *tops* and no bottom border — **"💬 Conversations [n]"** docked to the
+  bottom-left, **"★ Bookmarks"** to the bottom-right — sitting directly on the top edge of the fixed footer
+  nav, with the Live/Held bulb centered between them. (Closed `#main`'s bottom padding on the cockpit views so
+  the workspace column reaches the nav's edge, which is what lets the tabs attach.) Web-only — no engine
+  restart.
 
 ### Changed
 - **Core workspace mobile: Conversations + Bookmarks are now thin labeled bars too** (matching the Pact view).

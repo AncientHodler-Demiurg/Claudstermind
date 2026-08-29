@@ -7080,7 +7080,7 @@ function viewPactMobile() {
       sendB.classList.toggle("busy", busy);
       stopB.hidden = !busy;
       const nchat = (PACT_CHAT && PACT_CHAT.tabs.length) || 0;
-      chatsBar._n.textContent = String(nchat); chatsBar._n.hidden = nchat < 1;
+      chatsBar._n.textContent = "[" + nchat + "]"; chatsBar._n.hidden = nchat < 1;
       dockModeBulb();   // ALWAYS re-home the single current bulb here — a fresh pactChatRender leaves a stale one otherwise
     };
     PACT_MOBILE_PAINT_CB();
@@ -8701,7 +8701,7 @@ function viewWorkspace() {
     wsMBar._sendB.textContent = p && p.status === "deepwork" ? "🔴" : busy ? "…" : "➤";
     wsMBar._sendB.classList.toggle("busy", busy);
     wsMBar._stopB.hidden = !busy;
-    if (wsMBar._chatsBar) { const n = st.panes.length; wsMBar._chatsBar._n.textContent = String(n); wsMBar._chatsBar._n.hidden = n < 1; }
+    if (wsMBar._chatsBar) { const n = st.panes.length; wsMBar._chatsBar._n.textContent = "[" + n + "]"; wsMBar._chatsBar._n.hidden = n < 1; }
     // Home the ACTIVE pane's Live/Held bulb into the center host (each pane owns its own bulb) — clear the
     // host first so a prior pane's bulb (or a stale one) can't linger beside it.
     const bulbHost = wsMBar._bulbHost;
