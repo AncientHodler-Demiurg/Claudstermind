@@ -323,7 +323,23 @@ function renderMobileNav() {
   }
   drawer.classList.toggle("--shown", shown);
   backdrop.classList.toggle("--shown", shown);
+  measureTabbar();
 }
+// --cm-tabbar-h was hardcoded to 56px, but the real footer nav renders shorter (~46px) — so the workspace
+// column ended ABOVE the nav, leaving a gap the riser tabs couldn't close. MEASURE the actual bar (like
+// Ouronet's --mobile-tabbar-h) and pin the var to it, so body.ws-full ends exactly at the nav's top edge and
+// the tabs sit flush on it. Re-measured after each nav render + on resize/orientation change.
+let _tabbarRO = null;
+function measureTabbar() {
+  const bar = _mnav && _mnav.bar;
+  if (!bar) return;
+  requestAnimationFrame(() => {
+    const h = bar.offsetHeight;
+    if (h > 0) document.body.style.setProperty("--cm-tabbar-h", h + "px");
+  });
+  if (!_tabbarRO && "ResizeObserver" in window) { _tabbarRO = new ResizeObserver(() => { const h = bar.offsetHeight; if (h > 0) document.body.style.setProperty("--cm-tabbar-h", h + "px"); }); _tabbarRO.observe(bar); }
+}
+if (typeof window !== "undefined") window.addEventListener("resize", () => measureTabbar());
 
 async function boot() {
   // Who am I, and therefore what may this page even offer? In local mode the answer

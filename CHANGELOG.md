@@ -4,7 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.5.18] - 2026-08-29
+## [1.5.19] - 2026-08-29
+
+### Fixed
+- **The riser tabs still had a gap to the footer nav, and were bigger than Ouronet's.** The gap was because
+  `--cm-tabbar-h` was hardcoded to 56px while the real footer nav renders ~46px, so the workspace column
+  ended ~10px above the bar. Now the actual bar height is **measured** (like Ouronet's `--mobile-tabbar-h`)
+  via a ResizeObserver and pinned into `--cm-tabbar-h`, so the workspace column ends exactly at the nav's top
+  edge and the tabs sit **flush** on it. Also shrank the tabs (19px tall, 9.5px text) and the Live/Held bulb
+  to match Ouronet's compact size. Web-only — no engine restart.
 
 ### Fixed
 - **The Core workspace's Conversations/Bookmarks riser tabs sat ABOVE the icon control bar instead of on the

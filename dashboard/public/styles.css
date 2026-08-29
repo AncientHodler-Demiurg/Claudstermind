@@ -627,15 +627,15 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 /* The Conversations/Bookmarks controls are RISER TABS glued to the top edge of the footer nav (Ouronet
    "Controls [N]" style): "💬 Conversations [n]" bottom-LEFT, "★ Bookmarks" bottom-RIGHT, flanking the
    centered Live/Held bulb. align-items:flex-end + zero bottom padding drops the tabs onto the footer bar. */
-.pactm-modebar { display: flex; justify-content: space-between; align-items: flex-end; gap: 8px; padding: 4px 6px 0; flex: 0 0 auto; }
-.pactm-modebar-bulb { flex: 1 1 auto; display: flex; justify-content: center; align-items: center; min-width: 0; margin-bottom: 5px; }
-.pactm-modebar .stick-mode { font-size: 12px; padding: 4px 12px 4px 10px; opacity: 1; }
-.pactm-mbtn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 11px;
-  border-radius: 9px 9px 0 0; border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--line)); border-bottom: none;
+.pactm-modebar { display: flex; justify-content: space-between; align-items: flex-end; gap: 8px; padding: 3px 4px 0; flex: 0 0 auto; }
+.pactm-modebar-bulb { flex: 1 1 auto; display: flex; justify-content: center; align-items: center; min-width: 0; margin-bottom: 3px; }
+.pactm-modebar .stick-mode { font-size: 10.5px; padding: 2px 10px 2px 8px; opacity: 1; }
+.pactm-mbtn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; height: 19px; padding: 0 8px;
+  border-radius: 7px 7px 0 0; border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--line)); border-bottom: none;
   background: color-mix(in srgb, var(--accent) 13%, var(--panel)); color: var(--accent);
-  font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
+  font-size: 9.5px; font-weight: 700; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
 .pactm-mbtn:active { background: color-mix(in srgb, var(--accent) 24%, var(--panel)); }
-.pactm-mbtn-n { font-size: 11px; font-weight: 800; color: var(--accent); }
+.pactm-mbtn-n { font-size: 9.5px; font-weight: 800; color: var(--accent); }
 .pactm-mbtn-bm { color: #fbbf24; border-color: color-mix(in srgb, #fbbf24 45%, var(--line)); background: color-mix(in srgb, #fbbf24 11%, var(--panel)); }
 .pactm-compose-collapsed .pactm-modebar { padding: 3px 6px 0; }
 /* Relative hosts so a --dock bulb anchors directly above the Send button (desktop Core + Pact). */
@@ -1116,14 +1116,15 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
      "💬 Conversations [n]" bottom-LEFT, "★ Bookmarks" bottom-RIGHT, flanking the centered Live/Held bulb.
      align-items:flex-end + zero bottom padding drops the tabs onto the fixed footer bar below. */
   .ws-mobile .ws-mmodebar { display: flex; justify-content: space-between; align-items: flex-end; gap: 8px;
-    padding: 4px max(8px, env(safe-area-inset-left)) 0 max(8px, env(safe-area-inset-right)); flex: 0 0 auto; }
-  .ws-mmodebar-bulb { flex: 1 1 auto; display: flex; justify-content: center; align-items: center; min-width: 0; margin-bottom: 5px; }
-  .ws-mbtn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 11px;
-    border-radius: 9px 9px 0 0; border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--line)); border-bottom: none;
+    padding: 3px max(6px, env(safe-area-inset-left)) 0 max(6px, env(safe-area-inset-right)); flex: 0 0 auto; }
+  .ws-mmodebar-bulb { flex: 1 1 auto; display: flex; justify-content: center; align-items: center; min-width: 0; margin-bottom: 3px; }
+  .ws-mbtn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; height: 19px; padding: 0 8px;
+    border-radius: 7px 7px 0 0; border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--line)); border-bottom: none;
     background: color-mix(in srgb, var(--accent) 13%, var(--panel)); color: var(--accent);
-    font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
+    font-size: 9.5px; font-weight: 700; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
   .ws-mbtn:active { background: color-mix(in srgb, var(--accent) 24%, var(--panel)); }
-  .ws-mbtn-n { font-size: 11px; font-weight: 800; color: var(--accent); }
+  .ws-mbtn-n { font-size: 9.5px; font-weight: 800; color: var(--accent); }
+  .ws-mmodebar .stick-mode { font-size: 10.5px; padding: 2px 10px 2px 8px; }
   .ws-mbtn-bm { color: #fbbf24; border-color: color-mix(in srgb, #fbbf24 45%, var(--line)); background: color-mix(in srgb, #fbbf24 11%, var(--panel)); }
   /* No safe-area-inset-bottom here: body.ws-full already reserves the fixed bottom nav's height, so the
      bar sits directly above .ph-tabbar (which itself covers the home-indicator inset). */
@@ -1204,7 +1205,7 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
     border: 1px solid var(--line); color: var(--ink); border-radius: 9px; font-size: 13px; cursor: pointer; }
 
   /* ===== Mobile bottom navigation (tier-1 tab bar + tier-2 drawer) ===== */
-  body { --cm-tabbar-h: calc(56px + env(safe-area-inset-bottom)); }
+  body { --cm-tabbar-h: calc(47px + env(safe-area-inset-bottom)); }   /* fallback; JS measures the real bar and overrides (measureTabbar) */
   /* Reserve room so scrolling pages (and the footer) clear the fixed bar. The full-height Workspace
      instead shrinks by the bar height so its compose row sits just above it, never under it. */
   body:not(.ws-full) { padding-bottom: var(--cm-tabbar-h); }
