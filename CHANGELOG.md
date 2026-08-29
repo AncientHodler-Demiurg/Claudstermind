@@ -4,7 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.5.21] - 2026-08-29
+## [1.5.22] - 2026-08-29
+
+### Fixed
+- **Your last prompt could scroll out of view in the Pact chat when a turn produced a lot of output.** The
+  render window kept the last ~50 *readable* messages, so a single turn that emitted more than that (many
+  assistant lines + tool rows) pushed your own most-recent question off the top — you had to hit "Show earlier"
+  just to see what you'd asked. The window now **always reaches back to your last prompt** (and everything
+  after it), regardless of how many responses the turn produced — bounded only by the hard node ceiling for a
+  pathologically huge single turn. (The Core cockpit already caps by whole *turns*, so it was never affected.)
+  Web-only — no engine restart.
 
 ### Fixed
 - **The mobile compose ⌃/⌄ size button looked broken** — it toggled between "autosize" and "collapse to one

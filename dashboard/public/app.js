@@ -2907,16 +2907,24 @@ const PACT_MSG_HARD_CAP = 400;
 // so it's unit-tested. "Readable" = a user/assistant turn carrying non-empty text; tool_use / note / other
 // rows don't count toward the readable budget (but are still shown when they fall inside the window).
 function pactVisibleStart(msgs, textCap = PACT_TEXT_RENDER_CAP, hardCap = PACT_MSG_HARD_CAP) {
-  if (!Array.isArray(msgs)) return 0;
-  let textSeen = 0;
+  if (!Array.isArray(msgs) || !msgs.length) return 0;
+  // The window must ALWAYS reach back to your most recent PROMPT. A single turn can emit far more than
+  // `textCap` responses (assistant lines + tool rows), which would push your own last question out of the
+  // window — so you'd have to hit "Show earlier" just to see what you asked. Find that prompt first.
+  let lastPrompt = -1;
+  for (let i = msgs.length - 1; i >= 0; i--) { const m = msgs[i]; if (m && m.role === "user") { lastPrompt = i; break; } }
+  // Normal cap: walk back until `textCap` readable (user/assistant text) messages, or the hard node ceiling.
+  let textSeen = 0, normalStart = 0;
   for (let i = msgs.length - 1; i >= 0; i--) {
     const m = msgs[i];
-    if (m && (m.role === "user" || m.role === "assistant") && m.text != null && m.text !== "") {
-      if (++textSeen >= textCap) return i;
-    }
-    if (msgs.length - i >= hardCap) return i;   // absolute node ceiling hit before the readable budget
+    if (m && (m.role === "user" || m.role === "assistant") && m.text != null && m.text !== "") { if (++textSeen >= textCap) { normalStart = i; break; } }
+    if (msgs.length - i >= hardCap) { normalStart = i; break; }   // absolute node ceiling hit first
   }
-  return 0;
+  // Extend back to the last prompt when the turn's flood pushed it past the normal cap — but never past the
+  // hard node ceiling (a single pathological >hardCap turn keeps the prompt behind "Show earlier", protecting the DOM).
+  let start = (lastPrompt >= 0) ? Math.min(normalStart, lastPrompt) : normalStart;
+  if (msgs.length - start > hardCap) start = msgs.length - hardCap;
+  return Math.max(0, start);
 }
 // ===== end PACT VISIBLE-WINDOW pure helper =====
 const WS_STORE_KEY = "cm.workspace.v1";
