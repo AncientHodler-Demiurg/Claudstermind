@@ -2312,7 +2312,7 @@ let WS_STALE_TIMER = null;   // polls WS_LAST_MSG_AT; force-reconnects a stream 
 let WS_HEAL_TIMER = null;    // fast (~4s) local self-heal — surfaces a dropped reply in ~8s, not the 25s heartbeat gap
 // Mobile: collapse the compose textarea to one line so a long draft stops eating the transcript (mirrors the
 // Pact mobile compose collapse). Persisted so it sticks across reloads.
-let WS_COMPOSE_COLLAPSED = (() => { try { return localStorage.getItem("ws.compose.collapsed") === "1"; } catch { return false; } })();
+let WS_COMPOSE_BIG = (() => { try { return localStorage.getItem("ws.compose.big") === "1"; } catch { return false; } })();
 // Close any open ★-bookmark popup when clicking outside it (registered once, module load).
 document.addEventListener("mousedown", (e) => { if (!e.target.closest || !e.target.closest(".ws-bm-wrap")) document.querySelectorAll(".ws-bm-pop.--show").forEach((x) => x.classList.remove("--show")); });
 let WS_EVER_CONNECTED = false;   // true after the FIRST successful "hello" — so only a later hello logs as a "reconnect"
@@ -3183,7 +3183,10 @@ let PACT_MOBILE_SESSIONS_CB = null;   // ()=>… set by viewPactMobile while its
 let PACT_MOBILE_PAINT_CB = null;      // ()=>… set by viewPactMobile's chatStage; syncs the mobile control bar's send/stop + chat count to the active tab (called at the end of pactChatPaint)
 // Whether the mobile compose box is pinned to a single line (so a long draft stops eating into the
 // transcript). Persisted so the choice survives reloads. Toggled from the control bar (v1.3.8).
-let PACT_COMPOSE_COLLAPSED = (() => { try { return localStorage.getItem("pact.compose.collapsed") === "1"; } catch { return false; } })();
+// Mobile compose size toggle: NORMAL (autosize, grows with what you type) ⇄ BIG (a tall fixed box for
+// composing a long prompt). The old "collapse to one line" was imperceptible on an empty box (autosize
+// already made it one line), so the ⌃/⌄ button looked broken — now it flips to a clearly BIGGER box.
+let PACT_COMPOSE_BIG = (() => { try { return localStorage.getItem("pact.compose.big") === "1"; } catch { return false; } })();
 // ---- Pact .repl terminal runner: stream `pact <file>.repl` over SSE into the right-column terminal.
 let PACT_RUN_ES = null;
 function pactTermEl() { return document.querySelector(".pact-terminal"); }
@@ -7084,15 +7087,15 @@ function viewPactMobile() {
       const sc = chatHost.querySelector(".pc-scroll"); const host = chatHost.querySelector(".pc-head-bulb");
       if (sc && sc._stick && host) { host.replaceChildren(); sc._stick.dockMode(host, "stick-mode--head"); }
     };
-    const wrap = el("div", { class: "pactm-chatwrap" + (PACT_COMPOSE_COLLAPSED ? " pactm-compose-collapsed" : "") }, [chatHost, bar, modeBar]);
+    const wrap = el("div", { class: "pactm-chatwrap" + (PACT_COMPOSE_BIG ? " pactm-compose-big" : "") }, [chatHost, bar, modeBar]);
     requestAnimationFrame(dockModeBulb);   // .pc-scroll + its controller are set up by pactChatRender; grab the bulb once laid out
-    const collapseB = tbtn(PACT_COMPOSE_COLLAPSED ? "⌃" : "⌄", PACT_COMPOSE_COLLAPSED ? "Expand the compose box" : "Collapse the compose box to one line", () => {
-      PACT_COMPOSE_COLLAPSED = !PACT_COMPOSE_COLLAPSED;
-      try { localStorage.setItem("pact.compose.collapsed", PACT_COMPOSE_COLLAPSED ? "1" : "0"); } catch {}
-      wrap.classList.toggle("pactm-compose-collapsed", PACT_COMPOSE_COLLAPSED);
-      collapseB.textContent = PACT_COMPOSE_COLLAPSED ? "⌃" : "⌄";
-      collapseB.title = PACT_COMPOSE_COLLAPSED ? "Expand the compose box" : "Collapse the compose box to one line";
-      const ta = chatHost.querySelector(".pc-input"); if (ta) pactChatAutosize(ta);
+    const collapseB = tbtn(PACT_COMPOSE_BIG ? "⌄" : "⌃", PACT_COMPOSE_BIG ? "Shrink the typing box" : "Enlarge the typing box", () => {
+      PACT_COMPOSE_BIG = !PACT_COMPOSE_BIG;
+      try { localStorage.setItem("pact.compose.big", PACT_COMPOSE_BIG ? "1" : "0"); } catch {}
+      wrap.classList.toggle("pactm-compose-big", PACT_COMPOSE_BIG);
+      collapseB.textContent = PACT_COMPOSE_BIG ? "⌄" : "⌃";
+      collapseB.title = PACT_COMPOSE_BIG ? "Shrink the typing box" : "Enlarge the typing box";
+      const ta = chatHost.querySelector(".pc-input"); if (ta) pactChatAutosize(ta, true);   // now:true → resize immediately (not next frame) so the box visibly jumps
     }, "pactm-cbtn-collapse");
     bar.insertBefore(collapseB, spacer);
     // Keep send/stop + the chat count in step with the active tab's live state — pactChatPaint fires this.
@@ -8694,14 +8697,14 @@ function viewWorkspace() {
     const sendB = mb("➤", "Send", () => send(activePane()), "ws-mcbtn-send");
     // Collapse/expand the compose box to one line (parity with the Pact mobile view, which the normal
     // workspace was missing) — so a long prompt draft stops pushing the transcript up.
-    root.classList.toggle("ws-mcompose-collapsed", WS_COMPOSE_COLLAPSED);
-    const collapseB = mb(WS_COMPOSE_COLLAPSED ? "⌃" : "⌄", WS_COMPOSE_COLLAPSED ? "Expand the compose box" : "Collapse the compose box to one line", () => {
-      WS_COMPOSE_COLLAPSED = !WS_COMPOSE_COLLAPSED;
-      try { localStorage.setItem("ws.compose.collapsed", WS_COMPOSE_COLLAPSED ? "1" : "0"); } catch {}
-      root.classList.toggle("ws-mcompose-collapsed", WS_COMPOSE_COLLAPSED);
-      collapseB.textContent = WS_COMPOSE_COLLAPSED ? "⌃" : "⌄";
-      collapseB.title = WS_COMPOSE_COLLAPSED ? "Expand the compose box" : "Collapse the compose box to one line";
-      const ui = paneUI.get(st.activeId); if (ui && ui.promptEl && !WS_COMPOSE_COLLAPSED) wsAutoResizePrompt(ui.promptEl);
+    root.classList.toggle("ws-mcompose-big", WS_COMPOSE_BIG);
+    const collapseB = mb(WS_COMPOSE_BIG ? "⌄" : "⌃", WS_COMPOSE_BIG ? "Shrink the typing box" : "Enlarge the typing box", () => {
+      WS_COMPOSE_BIG = !WS_COMPOSE_BIG;
+      try { localStorage.setItem("ws.compose.big", WS_COMPOSE_BIG ? "1" : "0"); } catch {}
+      root.classList.toggle("ws-mcompose-big", WS_COMPOSE_BIG);
+      collapseB.textContent = WS_COMPOSE_BIG ? "⌄" : "⌃";
+      collapseB.title = WS_COMPOSE_BIG ? "Shrink the typing box" : "Enlarge the typing box";
+      const ui = paneUI.get(st.activeId); if (ui && ui.promptEl && !WS_COMPOSE_BIG) wsAutoResizePrompt(ui.promptEl);
     }, "ws-mcbtn-collapse");
     // Too many square icon buttons overflowed the bar. Conversations + Bookmarks become thin LABELED bars
     // (Ouronet-Controls style) in the mode strip below, flanking the Live/Held bulb — freeing the icon row.

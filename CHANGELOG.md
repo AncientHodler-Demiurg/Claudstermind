@@ -4,7 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.5.20] - 2026-08-29
+## [1.5.21] - 2026-08-29
+
+### Fixed
+- **The mobile compose ⌃/⌄ size button looked broken** — it toggled between "autosize" and "collapse to one
+  line", but on an empty box autosize *is* one line, so nothing visibly changed. It's now a clear
+  **NORMAL ⇄ BIG** toggle in both workspaces: **⌃ enlarges** the typing box to a tall fixed height (42vh — a
+  roomy area for composing a long prompt), **⌄ shrinks** it back to the normal auto-sizing box. The box now
+  visibly jumps every time. Web-only — no engine restart.
 
 ### Changed
 - **Mobile workspace controls: Core now flush like Pact, Live/Held moved to the header, both identical.**
