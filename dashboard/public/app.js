@@ -7027,16 +7027,23 @@ function viewPactMobile() {
     };
     const menuB = tbtn("☰", "Menu", toggleMenu);
     const upB = tbtn("📎", "Attach image", () => { const inp = chatHost.querySelector(".pc-img-input"); if (inp) inp.click(); });
-    const chatsB = tbtn("💬", "Conversations", openChatConvos, "pactm-cbtn-chats");
-    chatsB.dataset.n = String((PACT_CHAT && PACT_CHAT.tabs.length) || 0);
     const histB = tbtn("🕐", "History", openChatHistory);
-    const bmB = tbtn("★", "Bookmarked responses — jump to a starred answer", () => {
+    // A thin LABELED bar (Ouronet-Controls style) instead of a lone icon: "💬 Conversations" + the open-chat
+    // count; tapping opens the full conversations sheet. Its count is kept in step by PACT_MOBILE_PAINT_CB.
+    const mbtn = (label, cls, fn) => {
+      const nSpan = el("span", { class: "pactm-mbtn-n" }, []); nSpan.hidden = true;
+      const b = el("button", { class: "pactm-mbtn " + cls, type: "button" }, [el("span", { class: "pactm-mbtn-lbl" }, [label]), nSpan]);
+      b.addEventListener("click", fn); b.addEventListener("touchend", (e) => { e.preventDefault(); fn(); });
+      b._n = nSpan; return b;
+    };
+    const chatsBar = mbtn("💬 Conversations", "pactm-mbtn-chats", openChatConvos);
+    const bmBar = mbtn("★ Bookmarks", "pactm-mbtn-bm", () => {
       const a = pactChatActive(); if (!a) return;
       const body = el("div", { class: "ws-bm-sheet" }, []);
       const refresh = () => body.replaceChildren(...pactBookmarkRows(a, closeSheet, refresh));
       refresh();
       openSheet("★ Bookmarked responses", body);
-    }, "pactm-cbtn-bm");
+    });
     const syncB = tbtn("↻", "Sync now — re-fetch the latest state (no page reload)", () => pactChatForceResync(syncB));
     const stopB = tbtn("■", "Stop", () => { const a = pactChatActive(); if (a && a.key) wsPost("stop", { sessionKey: a.key }); }, "pactm-cbtn-stop");
     stopB.hidden = true;
@@ -7049,8 +7056,12 @@ function viewPactMobile() {
     // (tap → sheet of all open chats, like Ouronet's corner Controls drawer), Bookmarks on the RIGHT, and the
     // Live/Held scroll-mode bulb centered BETWEEN them — so the indicator no longer sits over the prompt text.
     const bulbHost = el("div", { class: "pactm-modebar-bulb" }, []);
-    const modeBar = el("div", { class: "pactm-modebar" }, [chatsB, bulbHost, bmB]);
-    const dockModeBulb = () => { const sc = chatHost.querySelector(".pc-scroll"); if (sc && sc._stick) sc._stick.dockMode(bulbHost, "stick-mode--bar"); };
+    const modeBar = el("div", { class: "pactm-modebar" }, [chatsBar, bulbHost, bmBar]);
+    // Home the ONE Live/Held bulb into the modebar. pactChatRender rebuilds .pc-scroll (and with it a fresh
+    // controller + a fresh floating bulb) on every render, while a previously-docked bulb still lives in this
+    // modebar (which is OUTSIDE chatHost, so replaceChildren doesn't remove it) — that's the "two bulbs, one
+    // Live one Held" bug. CLEAR the host first, then dock the CURRENT controller's bulb, so exactly one shows.
+    const dockModeBulb = () => { const sc = chatHost.querySelector(".pc-scroll"); if (sc && sc._stick) { bulbHost.replaceChildren(); sc._stick.dockMode(bulbHost, "stick-mode--bar"); } };
     const wrap = el("div", { class: "pactm-chatwrap" + (PACT_COMPOSE_COLLAPSED ? " pactm-compose-collapsed" : "") }, [chatHost, bar, modeBar]);
     requestAnimationFrame(dockModeBulb);   // .pc-scroll + its controller are set up by pactChatRender; grab the bulb once laid out
     const collapseB = tbtn(PACT_COMPOSE_COLLAPSED ? "⌃" : "⌄", PACT_COMPOSE_COLLAPSED ? "Expand the compose box" : "Collapse the compose box to one line", () => {
@@ -7068,8 +7079,9 @@ function viewPactMobile() {
       sendB.textContent = deep ? "🔴" : busy ? "…" : "➤";
       sendB.classList.toggle("busy", busy);
       stopB.hidden = !busy;
-      chatsB.dataset.n = String((PACT_CHAT && PACT_CHAT.tabs.length) || 0);
-      if (!modeBar.querySelector(".stick-mode")) dockModeBulb();   // ensure the bulb is homed here even if the first rAF raced .pc-scroll
+      const nchat = (PACT_CHAT && PACT_CHAT.tabs.length) || 0;
+      chatsBar._n.textContent = String(nchat); chatsBar._n.hidden = nchat < 1;
+      dockModeBulb();   // ALWAYS re-home the single current bulb here — a fresh pactChatRender leaves a stale one otherwise
     };
     PACT_MOBILE_PAINT_CB();
     return wrap;

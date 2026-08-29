@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.15] - 2026-08-29
+
+### Fixed
+- **Two Live/Held indicators showed at once on the Pact mobile view** (one floating over the transcript text,
+  one in the bottom bar — often disagreeing, e.g. "Held" over the text while the bar said "Live"). Cause: a
+  chat re-render builds a fresh scroll area with its own fresh bulb, while the previously-docked bulb keeps
+  living in the modebar (which sits *outside* the re-rendered area), so they piled up. The bulb is now cleared
+  and re-homed on every paint, so **exactly one** shows — the one in the bottom bar.
+
+### Changed
+- **Pact mobile: Conversations + Bookmarks are now thin *labeled* bars, not lone icons** — "💬 Conversations"
+  with the open-chat count, and "★ Bookmarks" — flanking the centered Live/Held bulb (Ouronet-Controls style).
+  Tapping Conversations still opens the full conversations sheet. Reads as a compact controls row and makes it
+  obvious what each does. Web-only — no engine restart.
+
 ## [1.5.14] - 2026-08-29
 
 ### Fixed
