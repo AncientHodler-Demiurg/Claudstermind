@@ -15,6 +15,11 @@ WorkingDirectory=/home/ancientbox/ClaudeWS/Claudstermind
 RuntimeDirectory=claudstermind
 RuntimeDirectoryMode=0750
 Environment=SESSIOND_SOCK=/run/claudstermind/sessiond.sock
+# Default model for every session when the client sends no explicit pick ("Default" in the selector). The
+# engine reads this (WorkspaceManager `model: … ?? process.env.CLAUDE_WORKSPACE_MODEL`); the SessiondClient
+# forwards no model, so THIS is the only place a default reaches sessiond — setting it on the web service
+# does nothing for the sessiond engine. Comment out to fall back to the Claude CLI's own default.
+Environment=CLAUDE_WORKSPACE_MODEL=opus
 ExecStart=/usr/bin/node sessiond/sessiond.mjs
 Restart=on-failure
 RestartSec=5

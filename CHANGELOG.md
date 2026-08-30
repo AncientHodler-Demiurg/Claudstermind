@@ -4,6 +4,25 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.31] - 2026-08-30
+
+### Fixed
+- **You can finally SEE which model a conversation is running — and "Default" is now Opus.** Three real bugs
+  compounded: (1) the client **dropped the model entirely** — the running `claude` subprocess reports its
+  actual model in the SDK `init` event (and again on any live switch), the engine forwarded it, but neither
+  the Core nor the Pact event router had a handler, so it fell into a catch-all that pushed it as a blank
+  transcript row and was never shown; (2) **Pact had no model control or readout at all**; (3) the intended
+  Opus default was set as `CLAUDE_WORKSPACE_MODEL=opus` on the **web** service, but sessions run in
+  **sessiond**, which never sees that var and whose client forwards no model — so every "Default" session
+  silently used the Claude CLI's default (Sonnet-tier), never Opus.
+  - **Web (safe to deploy anytime):** both routers now capture `init`/`model` and store the active model.
+    Core's selector shows it on the Default option (e.g. **"Default · opus-4-1"**) and the Pact header shows a
+    live **"· opus-4-1"** readout. Also fixed a latent `fillModelSelect` bug where an off-catalog picked model
+    was never appended to the DOM (so it silently reverted to Default).
+  - **Engine (needs a sessiond restart — interrupts in-flight turns, do it when idle):** the versioned
+    `deploy/claudstermind-sessiond.service` now sets `Environment=CLAUDE_WORKSPACE_MODEL=opus`, the only place
+    a default actually reaches the engine. After the restart, every "Default" session runs Opus.
+
 ## [1.5.30] - 2026-08-30
 
 ### Fixed

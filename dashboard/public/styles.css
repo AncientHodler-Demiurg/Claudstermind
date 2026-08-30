@@ -1743,6 +1743,9 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pc-mode { flex: 0 0 auto; max-width: 96px; }
 .pc-usage { flex: 0 0 auto; font-size: 10.5px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
 .pc-usage[hidden] { display: none; }
+/* The "· <model>" readout in the Pact head — the model THIS conversation actually runs (see prettyModel). */
+.pc-model-now { flex: 0 0 auto; font-size: 10.5px; color: var(--accent, #c77dff); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; font-weight: 600; }
+.pc-model-now:empty { display: none; }
 /* Plan usage-limits badge (5h/7d rolling rate-limit utilization) — mirrors the Core cockpit's
    .ws-usage-limits, tinted amber as it nears a limit and red when nearly capped. Full breakdown in title. */
 .pc-usage-limits { flex: 0 0 auto; font-size: 10.5px; color: var(--ink-dim); white-space: nowrap;

@@ -5643,6 +5643,10 @@ function pactChatRoute({ kind, sessionKey, data }) {
   // re-arm its own window and never stop. Excluding them lets the window close after true silence.
   if (d.kind !== "resync") t._lastActiveAt = t._lastEventAt;
   switch (d.kind) {
+    // The agent's own report of the model it's actually running (`init` at subprocess start; `model` on a
+    // live switch). Capture it so the header can SHOW it — never a chat bubble.
+    case "init":
+    case "model": if (d.model) { t.activeModel = d.model; pactUpdateModelNow(t); } return;
     // Reconnect catch-up reply (see pactChatResyncAll + `_resync` server-side): the server's
     // AUTHORITATIVE current state. REPLACE the tab's messages with the persisted transcript (never
     // the fresh-open concat — that assumes an empty tab and would DUPLICATE here), guarding on length
@@ -6618,6 +6622,22 @@ function pactChatPaintLive(t) {
   live.textContent = t.live;
   stick.apply(wasNearBottom);
 }
+// Turn an SDK model id ("claude-opus-4-1-20250805") into a short human label ("opus-4-1"). Empty in → "".
+// The active model is the one the running `claude` subprocess reports in its `init` event (see the capture
+// in the Core/Pact event routers); "Default" in a selector means "no override", NOT a known model — this is
+// how we finally SHOW which model that resolved to.
+function prettyModel(m) {
+  if (!m) return "";
+  return String(m).replace(/^claude-/, "").replace(/-\d{6,}$/, "");
+}
+// Update the Pact header's "· <model>" readout in place (no full re-render, which would rebuild .pc-scroll
+// and re-home the Live/Held bulb). Only reflects the currently-visible tab.
+function pactUpdateModelNow(t) {
+  if (!PACT_CHAT || !PACT_CHAT.host) return;
+  if (t && t.id !== PACT_CHAT.activeId) return;
+  const span = PACT_CHAT.host.querySelector(".pc-model-now");
+  if (span) span.textContent = (t && t.activeModel) ? ("· " + prettyModel(t.activeModel)) : "";
+}
 function pactChatRender() {
   if (!PACT_CHAT) return;
   const host = PACT_CHAT.host;
@@ -6682,7 +6702,11 @@ function pactChatRender() {
   // Mobile-only dock for the Live/Held bulb — up here by the conversation title (the "workspace medallion"),
   // where there's already space, instead of the bottom controls row. Empty on desktop (docks above Send).
   const headBulb = el("div", { class: "pc-head-bulb" }, []);
-  const headKids = [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, bmWrap, el("span", { class: "ws-spacer" }, []), headBulb, usageEl, modeSel, chatCollapse];
+  // Live readout of the model THIS conversation actually runs (captured from the agent's `init`/`model`
+  // events — see the `case "init"` in pactChatRoute). "Default" no longer hides which model that is.
+  const modelNow = el("span", { class: "pc-model-now", title: "The model this conversation is actually running" }, []);
+  { const _a = PACT_CHAT.tabs.find((x) => x.id === PACT_CHAT.activeId); if (_a && _a.activeModel) modelNow.textContent = "· " + prettyModel(_a.activeModel); }
+  const headKids = [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, bmWrap, el("span", { class: "ws-spacer" }, []), headBulb, modelNow, usageEl, modeSel, chatCollapse];
   const head = el("div", { class: "pact-zone-hd pc-head" }, headKids);
   const scroll = el("div", { class: "pc-scroll" }, []);
   const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (⌘/Ctrl+Enter to send)" });
@@ -7600,12 +7624,16 @@ function viewWorkspace() {
   // lib/workspace.mjs _models): a property of the CLI build/account, not per-pane, so every
   // pane's selector reads from the same list once any session anywhere has answered it.
   function modelInfoFor(value) { return st.models.find((m) => m.value === value) || null; }
-  function fillModelSelect(sel, value) {
-    const opts = [el("option", { value: "" }, ["Default"]), ...st.models.map((m) => el("option", { value: m.value }, [m.displayName]))];
-    sel.replaceChildren(...opts);
-    // A pane's already-chosen model may not (yet) be in a freshly-(re)fetched catalog — inject an
-    // option so the dropdown still shows it rather than silently reverting to "Default".
+  function fillModelSelect(sel, value, activeModel) {
+    // On "Default" (no explicit pick) show what it ACTUALLY resolved to, e.g. "Default · opus-4-1", so the
+    // selector finally answers "what model is this?" instead of a bare, uninformative "Default".
+    const defLabel = !value && activeModel ? "Default · " + prettyModel(activeModel) : "Default";
+    const opts = [el("option", { value: "" }, [defLabel]), ...st.models.map((m) => el("option", { value: m.value }, [m.displayName]))];
+    // A pane's already-chosen model may not (yet) be in a freshly-(re)fetched catalog — inject an option so
+    // the dropdown still shows it rather than silently reverting to "Default". (Previously this pushed to the
+    // array AFTER replaceChildren, so it never reached the DOM and the value silently reverted — fixed.)
     if (value && !st.models.some((m) => m.value === value)) opts.push(el("option", { value }, [value]));
+    sel.replaceChildren(...opts);
     sel.value = value || "";
   }
   // Effort options depend on the CURRENTLY selected model — rebuilt every paint, not just on
@@ -8515,7 +8543,7 @@ function viewWorkspace() {
     ui.modeSel.classList.toggle("plan", p.mode === "plan");
     // Model/effort/fast-mode: rebuilt every paint (cheap — a handful of <option>s), since
     // st.models can arrive/refresh asynchronously well after the pane and its selects exist.
-    fillModelSelect(ui.modelSel, p.model);
+    fillModelSelect(ui.modelSel, p.model, p.activeModel);
     fillEffortSelect(ui.effortSel, p);
     const modelInfo = modelInfoFor(p.model);
     ui.fastModeLabel.hidden = !modelInfo?.supportsFastMode;
@@ -9413,6 +9441,14 @@ function viewWorkspace() {
           continue;
         }
         p._liveText = "";
+        // The running `claude` subprocess reports its ACTUAL model in the `init` event (and again on any
+        // live `setModel`). The client used to ignore both, so a pane on "Default" could never say what it
+        // truly runs. Capture it and repaint the selector's Default label. NEVER a transcript row (the old
+        // catch-all `p.transcript.push(data)` below would have made it a blank bubble).
+        if (data.kind === "init" || data.kind === "model") {
+          if (data.model) { p.activeModel = data.model; schedulePaint(p); }
+          continue;
+        }
         if (data.kind === "status") {
           p.status = data.status;
           noteSessionStatus(sessionKey, data.status);   // keep the global live-conversation stats fresh for our own sessions immediately
