@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.39] - 2026-08-31
+
+### Added
+- **Admin → Model routing panel (the two-path control, wired end to end).** The Admin space gains a "Model
+  routing" section: **Direct Claude Code** shown as *Built-in · always on* (no toggle — you can never disable
+  your way out of Claude), **OmniRoute** an enable/disable switch, a **default-path** picker (Direct Claude /
+  OmniRoute) and a **default OmniRoute model** selector (e.g. auto/best-reasoning). Saved via `/api/routing`.
+  Applied client-side: when OmniRoute is disabled its models are hidden from the selector; a NEW chat starts on
+  the chosen default path (Core panes AND Pact tabs — Pact now carries a per-chat model and sends it, so the
+  default path works there too). Default is **Direct Claude**, so it's dormant/no-change until you flip it,
+  and existing chats keep their model. Web-layer — dashboard restart to serve `/api/routing`, no engine restart
+  to flip the setting. (Requires the OMNIROUTE_KEY engine env from 1.5.35 for omni models to actually exist.)
+
 ## [1.5.38] - 2026-08-31
 
 ### Added

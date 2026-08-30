@@ -134,6 +134,7 @@ const ADMIN_SECTIONS = [
   { id: "deploy", icon: "🚀", label: "Deploy & Version", enabled: true },
   { id: "ops", icon: "⚙", label: "Ops", enabled: true },
   { id: "relay", icon: "🔌", label: "Relay", enabled: true },
+  { id: "routing", icon: "🛣", label: "Model routing", enabled: true },
   { id: "tokens", icon: "🔑", label: "Tokens", enabled: true },
 ];
 const sectionById = (id) => SECTIONS.find((s) => s.id === id);
@@ -141,6 +142,14 @@ const subViewOf = (sec, subId) => { const sub = (sec.subs || []).find((x) => x.i
 let ROUTE = { admin: false, section: "overview", sub: null };
 let ADMIN_SECTION = null;    // when VIEW==="admin": the selected section id, or null (unselected prompt)
 let LAST_MAIN = "#overview"; // where the admin "back" returns to
+// ---- Model routing (see lib/routing.mjs + /api/routing). Direct Claude is built-in/always-on; OmniRoute is
+// an optional path you enable, and you pick which enabled path a NEW chat defaults to. Fetched on boot; applied
+// client-side (filter the selector, choose a new chat's default model), so flipping it needs no engine restart.
+let ROUTING = { omniEnabled: false, defaultPath: "claude", omniDefaultModel: "omni/auto" };
+let OMNI_CATALOG = [];   // the omni/* entries from the live model catalog — for the routing panel's default-model picker
+const routingOmniVisible = () => !!(ROUTING && ROUTING.omniEnabled);
+// The model id a NEW chat starts on: null (⇒ Claude "Default") unless the default path is an enabled OmniRoute.
+const routingDefaultModel = () => (ROUTING && ROUTING.defaultPath === "omni" && ROUTING.omniEnabled) ? (ROUTING.omniDefaultModel || "omni/auto") : null;
 
 function parseHash(h) {
   const parts = (h || "").replace(/^#/, "").split("/");
@@ -355,6 +364,7 @@ async function boot() {
 
   // Version chip in the medallion (§10) — public, so it shows on every surface.
   try { const v = await (await fetch("/api/version", { cache: "no-store" })).json(); const vc = $("#phVer"); if (vc) { vc.textContent = "v" + v.version; vc.title = `v${v.version}${v.gitSha ? " · " + v.gitSha : ""}${v.builtAt ? " · " + v.builtAt : ""}${v.engine ? " · engine: " + v.engine : ""}`; } showEngineBadge(v.engine); } catch {}
+  try { const r = await (await fetch("/api/routing", { cache: "no-store" })).json(); if (r && typeof r === "object" && typeof r.defaultPath === "string") ROUTING = r; } catch {}
 
   applyPhCollapsed(phHeaderCollapsed());   // restore the collapsed-header preference before first paint
   renderHeader();
@@ -902,10 +912,79 @@ function viewAdmin(sectionId) {
   else if (!s || !s.enabled) pane.replaceChildren(el("div", { class: "admin-empty" }, ["That section is planned — coming later."]));
   else if (sectionId === "ops") pane.replaceChildren(viewOps());
   else if (sectionId === "relay") pane.replaceChildren(viewRelay());
+  else if (sectionId === "routing") pane.replaceChildren(viewRouting());
   else if (sectionId === "tokens") pane.replaceChildren(viewTokens());
   else if (sectionId === "deploy") pane.replaceChildren(viewDeploy());
   else pane.replaceChildren(el("div", { class: "admin-empty" }, ["Unknown section."]));
   return el("div", { class: "admin-layout" }, [side, pane]);
+}
+/* ---------- Admin → Model routing (two paths: Direct Claude built-in + optional OmniRoute) ---------- */
+async function saveRouting(patch) {
+  try {
+    const res = await fetch("/api/routing", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) });
+    const j = await res.json();
+    if (j && j.config) ROUTING = j.config;
+    return j;
+  } catch { return null; }
+}
+function viewRouting() {
+  const cur = ROUTING || { omniEnabled: false, defaultPath: "claude", omniDefaultModel: "omni/auto" };
+  const omniCount = OMNI_CATALOG.length;
+  const status = el("span", { class: "admin-note" }, []);
+
+  // Path 1 — Direct Claude (built-in, cannot be disabled).
+  const p1 = el("div", { class: "route-path" }, [
+    el("div", { class: "route-head" }, [el("b", {}, ["Direct Claude Code"]), el("span", { class: "route-badge on" }, ["Built-in · always on"])]),
+    el("div", { class: "route-sub" }, ["Anthropic OAuth (your abo), direct — the reliable base. Cannot be disabled."]),
+  ]);
+
+  // Path 2 — OmniRoute (optional toggle).
+  const omniCb = el("input", { type: "checkbox" }); omniCb.checked = !!cur.omniEnabled;
+  const omniBadge = el("span", { class: "route-badge" }, [cur.omniEnabled ? "enabled" : "disabled"]);
+  const p2 = el("div", { class: "route-path" }, [
+    el("label", { class: "route-head" }, [omniCb, el("b", {}, ["OmniRoute"]), omniBadge]),
+    el("div", { class: "route-sub" }, [omniCount ? `${omniCount} models exposed by your gateway key (cc/claude-*, auto/*, groq, free…).` : "No OmniRoute models detected — set OMNIROUTE_KEY on the sessiond service (see control/README) and restart it."]),
+  ]);
+
+  // Default path radios.
+  const rClaude = el("input", { type: "radio", name: "route-default" }); rClaude.checked = cur.defaultPath !== "omni";
+  const rOmni = el("input", { type: "radio", name: "route-default" }); rOmni.checked = cur.defaultPath === "omni"; rOmni.disabled = !cur.omniEnabled;
+  const defWrap = el("div", { class: "route-default" }, [
+    el("div", { class: "route-label" }, ["Default path for a NEW chat"]),
+    el("label", {}, [rClaude, " Direct Claude"]),
+    el("label", {}, [rOmni, " OmniRoute"]),
+  ]);
+
+  // Default omni model picker (used when OmniRoute is the default path).
+  const modelSel = el("select", { class: "wsel wsel-sm" }, OMNI_CATALOG.map((m) => el("option", { value: m.value }, [m.displayName || m.value])));
+  if (!OMNI_CATALOG.some((m) => m.value === cur.omniDefaultModel)) modelSel.appendChild(el("option", { value: cur.omniDefaultModel }, [cur.omniDefaultModel]));
+  modelSel.value = cur.omniDefaultModel; modelSel.disabled = !cur.omniEnabled;
+  const modelWrap = el("div", { class: "route-default" }, [el("div", { class: "route-label" }, ["Default OmniRoute model (when OmniRoute is the default path)"]), modelSel]);
+
+  // Toggling OmniRoute off must also disable its dependent controls + un-pick the omni default.
+  omniCb.addEventListener("change", () => {
+    rOmni.disabled = !omniCb.checked; modelSel.disabled = !omniCb.checked;
+    omniBadge.textContent = omniCb.checked ? "enabled" : "disabled";
+    if (!omniCb.checked && rOmni.checked) rClaude.checked = true;
+  });
+
+  const save = el("button", { class: "loginbtn" }, ["Save routing"]);
+  save.addEventListener("click", async () => {
+    save.disabled = true; status.textContent = "Saving…";
+    const patch = { omniEnabled: omniCb.checked, defaultPath: rOmni.checked ? "omni" : "claude", omniDefaultModel: modelSel.value };
+    const j = await saveRouting(patch);
+    save.disabled = false;
+    status.textContent = (j && j.ok)
+      ? "✓ Saved. New chats start on " + (ROUTING.defaultPath === "omni" ? ("OmniRoute (" + ROUTING.omniDefaultModel + ")") : "Direct Claude") + "."
+      : "⚠ Could not save.";
+  });
+
+  return el("div", { class: "admin-card route-card" }, [
+    el("h2", {}, ["Model routing"]),
+    el("p", { class: "admin-sub" }, ["Two paths. Direct Claude is built-in and always on; OmniRoute is optional. Pick which enabled path a NEW chat starts on — existing chats keep their model, and any chat's model is still switchable from its own selector."]),
+    p1, p2, defWrap, modelWrap,
+    el("div", { class: "route-actions" }, [save, status]),
+  ]);
 }
 /* ---------- Admin → Deploy & Version (§10 + the §3 deploy button) ---------- */
 let DEPLOY_ES = null;
@@ -5518,7 +5597,7 @@ function pactChatNewTab() {
   // `_queue`/`_pendingText` start empty and are only ever tied to THIS fresh session key — every tab
   // is a new object with its own key, so a message queued mid-turn can never fire into another
   // session (the Core cockpit resets p._queue on repo/worktree switch for the same reason).
-  PACT_CHAT.tabs.push({ id, name: pactNextChatName(PACT_CHAT.tabs), key: wsUuid(), msgs: [], live: "", status: "idle", started: false, perm: null, draft: "", attachedImages: [], _queue: null, _pendingText: null, _pendingImages: null });
+  PACT_CHAT.tabs.push({ id, name: pactNextChatName(PACT_CHAT.tabs), key: wsUuid(), msgs: [], live: "", status: "idle", started: false, perm: null, draft: "", attachedImages: [], model: routingDefaultModel(), _queue: null, _pendingText: null, _pendingImages: null });
   PACT_CHAT.activeId = id;
   pactChatRender();
   pactStateSave();
@@ -5974,7 +6053,7 @@ async function pactChatDispatch(t, text, images) {
   // Stage-2 worktree binding: the agent runs with cwd = this tab's worktree, so its Edit/Bash act on
   // that isolated checkout (and an editor box bound to the same worktree shows those edits). Fixed per
   // conversation — the head selector only lets you set it before the first message.
-  const body = { sessionKey: t.key, repo: PACT_REPO, worktree: t.worktree || "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id, resume: t.resume || undefined, fresh: firstMsg, scoped: true };
+  const body = { sessionKey: t.key, repo: PACT_REPO, worktree: t.worktree || "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id, resume: t.resume || undefined, fresh: firstMsg, scoped: true, model: t.model || undefined };
   if (images.length) body.images = images.map((a) => ({ mediaType: a.mediaType, base64Data: a.base64Data }));
   const r = await wsPost("prompt", body);
   if (!r || r.ok === false) {
@@ -7427,7 +7506,7 @@ function viewWorkspace() {
   // deliberately abandoned (cleared, or repointed to a different repo/worktree) — a
   // pendingOpens entry captures the pane's gen at request time, so a reply that arrives
   // after the pane moved on can tell it no longer applies (see beginPendingOpen).
-  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", worktree: "main", mode: st.defaultMode, model: null, effort: null, fastMode: false, transcript: [], usage: {}, status: "idle", readonly: false, resume: null, draft: "", _gen: 0, _expandedGroups: new Set(), attachedImages: [], contextUsage: null });
+  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", worktree: "main", mode: st.defaultMode, model: routingDefaultModel(), effort: null, fastMode: false, transcript: [], usage: {}, status: "idle", readonly: false, resume: null, draft: "", _gen: 0, _expandedGroups: new Set(), attachedImages: [], contextUsage: null });
   let _draftTimer = 0;
   const saveDraftsSoon = () => { clearTimeout(_draftTimer); _draftTimer = setTimeout(saveLayout, 400); };   // persist typed-but-unsent compose text so a view switch doesn't lose it
   // Every pane with a repo runs under a shared, deterministic key (repo@worktree). Panes still
@@ -7668,11 +7747,13 @@ function viewWorkspace() {
     // selector finally answers "what model is this?" instead of a bare, uninformative "Default".
     const resolved = value ? "" : chatModelLabel(null, activeModel);
     const defLabel = resolved ? "Default · " + resolved : "Default";
-    const opts = [el("option", { value: "" }, [defLabel]), ...st.models.map((m) => el("option", { value: m.value }, [m.displayName]))];
+    // Hide the OmniRoute models when that path is disabled in the routing panel — Direct Claude is untouched.
+    const list = st.models.filter((m) => routingOmniVisible() || !(m && typeof m.value === "string" && m.value.startsWith("omni/")));
+    const opts = [el("option", { value: "" }, [defLabel]), ...list.map((m) => el("option", { value: m.value }, [m.displayName]))];
     // A pane's already-chosen model may not (yet) be in a freshly-(re)fetched catalog — inject an option so
     // the dropdown still shows it rather than silently reverting to "Default". (Previously this pushed to the
     // array AFTER replaceChildren, so it never reached the DOM and the value silently reverted — fixed.)
-    if (value && !st.models.some((m) => m.value === value)) opts.push(el("option", { value }, [value]));
+    if (value && !list.some((m) => m.value === value)) opts.push(el("option", { value }, [value]));
     sel.replaceChildren(...opts);
     sel.value = value || "";
   }
@@ -9301,7 +9382,7 @@ function viewWorkspace() {
       // The model catalog — ONE global list (see st.models above); a fresh answer replaces it and
       // every pane's selector is repainted so a newly-available model shows up everywhere at once,
       // not just in whichever pane happened to ask.
-      if (Array.isArray(data.models) && data.models.length) { st.models = data.models; for (const p of st.panes) paintPane(p); }
+      if (Array.isArray(data.models) && data.models.length) { st.models = data.models; OMNI_CATALOG = data.models.filter((m) => m && typeof m.value === "string" && m.value.startsWith("omni/")); for (const p of st.panes) paintPane(p); }
       if (Array.isArray(data.sessions)) { setLiveSessions(data.sessions); for (const s of data.sessions) for (const p of panesOf(s.sessionKey)) { p.status = s.status || p.status; if (s.mode) p.mode = s.mode; if (s.usage) p.usage = s.usage; if (s.background) p._background = s.background; paintPane(p); } }
       if (data.session) { upsertLiveSession(data.session); for (const p of panesOf(data.session.sessionKey)) { Object.assign(p, { status: data.session.status ?? p.status, mode: data.session.mode ?? p.mode, usage: data.session.usage ?? p.usage }); if (data.session.background) p._background = data.session.background; paintPane(p); } }
       // NOTE: the server's own defaultMode is deliberately NOT mirrored here. Every pane sends
