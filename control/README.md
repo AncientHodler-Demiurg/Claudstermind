@@ -30,6 +30,12 @@ Read-only status without opening the window:
 npm run status                  # or: node control/cli.mjs status
 ```
 
+The app launches with `--no-sandbox` on purpose. Ubuntu 24.04+/26.04 restrict unprivileged user namespaces
+via AppArmor (`kernel.apparmor_restrict_unprivileged_userns=1`), so a run-from-source Electron — which ships
+no AppArmor profile — would otherwise abort at startup with a SUID-sandbox error. It's safe here: the window
+only ever loads our own local HTML with `contextIsolation` on (no remote or untrusted content). The switch is
+baked into `main.cjs` and both launchers, so nothing extra is needed.
+
 ## A double-clickable desktop shortcut (Linux)
 
 `control/claudstermind.desktop` is the launcher (Linux's version of a Windows shortcut). Install it to your

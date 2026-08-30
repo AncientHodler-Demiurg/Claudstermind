@@ -3,6 +3,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("cm", {
-  status: () => ipcRenderer.invoke("cm:status"),               // → { units, probes, overall }
+  status: () => ipcRenderer.invoke("cm:status"),               // → { units, probes, overall } (manual/first paint)
   control: (action, id) => ipcRenderer.invoke("cm:control", action, id),   // action: start|stop|restart, id: engine|web|null
+  onStatus: (cb) => ipcRenderer.on("cm:status", (_e, s) => cb(s)),         // main pushes a fresh snapshot every few seconds
 });

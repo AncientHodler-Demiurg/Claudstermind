@@ -5,8 +5,9 @@ GenericName=Work-machine control panel
 Comment=Start/stop and monitor the Claudstermind stack (dashboard + tunnel + agent engine)
 # Runs the app from source via the electron installed by `npm install`. Adjust the two absolute paths if the
 # repo lives elsewhere.
-Exec=/home/ancientbox/ClaudeWS/Claudstermind/node_modules/.bin/electron /home/ancientbox/ClaudeWS/Claudstermind/control/electron/main.cjs
+Exec=/home/ancientbox/ClaudeWS/Claudstermind/node_modules/.bin/electron --no-sandbox /home/ancientbox/ClaudeWS/Claudstermind/control/electron/main.cjs
 Path=/home/ancientbox/ClaudeWS/Claudstermind
+Icon=/home/ancientbox/ClaudeWS/Claudstermind/control/electron/icon.png
 Terminal=false
 Categories=Development;Utility;
 StartupWMClass=Claudstermind

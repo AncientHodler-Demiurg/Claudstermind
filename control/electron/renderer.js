@@ -3,7 +3,6 @@
 // buttons through a styled confirm (no native popup, per house style).
 "use strict";
 const $ = (id) => document.getElementById(id);
-const POLL_MS = 3000;
 let busy = false;   // a control action is in flight — pause the button set + poll churn
 
 function paint(s) {
@@ -88,5 +87,7 @@ async function act(action, id, label) {
 
 for (const b of document.querySelectorAll(".actions button")) b.addEventListener("click", () => act(b.dataset.act, null));
 $("refresh").addEventListener("click", refresh);
+// Main pushes a fresh snapshot every few seconds; paint those (unless a control action is mid-flight). Also
+// do one immediate invoke so the window has content the instant it opens, before the next push lands.
+if (window.cm.onStatus) window.cm.onStatus((s) => { if (!busy) paint(s); });
 refresh();
-setInterval(() => { if (!busy) refresh(); }, POLL_MS);
