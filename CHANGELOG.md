@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.38] - 2026-08-31
+
+### Added
+- **Model-routing preferences (backbone) — the two-path admin control.** New `lib/routing.mjs` (pure, unit-
+  tested) + a `/api/routing` GET/POST on the dashboard persist a per-installation choice: **Direct Claude Code
+  is built-in and can never be disabled** (the reliable base), while **OmniRoute is an optional path you enable/
+  disable**, and you pick which enabled path a NEW chat defaults to (`defaultPath`: claude | omni, with an
+  `omniDefaultModel`). `normalizeRoutingConfig` enforces the invariants (can't default to a disabled path);
+  `routingDefaultModel`/`routingFilterModels` are the pure helpers the client will apply (hide omni models when
+  disabled; start new chats on the chosen path). This is the persistence + API layer; the Admin UI + selector
+  wiring (Core & Pact) land next. Stored in dashboard/data (gitignored); applied client-side, so flipping it
+  needs no engine restart.
+
 ## [1.5.37] - 2026-08-31
 
 ### Added

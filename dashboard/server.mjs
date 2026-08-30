@@ -52,6 +52,7 @@ import { deployPlan, deployBannerText, anyBusy } from "../lib/deployPlan.mjs";
 import { sessiondProcess, webProcess, localhostProcesses, changedFilesFromGit } from "../lib/deployProcesses.mjs";
 import { writeFileSync } from "node:fs";
 import { readRelayConfig, writeRelayConfig, readDeviceSecret, saveDeviceSecret } from "../lib/relayConfig.mjs";
+import { readRoutingConfig, writeRoutingConfig } from "../lib/routing.mjs";
 import { createAggregator, registryProjects, mirrorablePorts } from "../lib/localhost.mjs";
 import { parseMirrorPath, mirrorFromReferer, mirrorFromCookie, forwardRequestHeaders, buildMirrorResponse, buildUpgradeRequest, mirrorForwardedHeaders } from "../lib/mirror.mjs";
 import net from "node:net";
@@ -1239,6 +1240,23 @@ const handler = async (req, res) => {
     const cfg = writeRelayConfig(DATA_DIR, patch);
     startBridgeFromConfig();                                     // apply the change immediately
     return sendJSON(res, 200, { ok: true, config: cfg, status: relayStatus() });
+  }
+
+  // ---- model routing: which paths (Direct Claude built-in + optional OmniRoute) and the default path ----
+  if (path === "/api/routing") {
+    res.setHeader("cache-control", "no-store");
+    return sendJSON(res, 200, readRoutingConfig(DATA_DIR));
+  }
+  if (req.method === "POST" && path === "/api/routing") {
+    if (!sameOrigin(req)) return sendJSON(res, 403, { ok: false, reason: "cross-origin" });
+    if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only" });
+    const b = await readBody(req);
+    const patch = {};
+    if (typeof b.omniEnabled === "boolean") patch.omniEnabled = b.omniEnabled;
+    if (b.defaultPath === "claude" || b.defaultPath === "omni") patch.defaultPath = b.defaultPath;
+    if (typeof b.omniDefaultModel === "string") patch.omniDefaultModel = b.omniDefaultModel;
+    const cfg = writeRoutingConfig(DATA_DIR, patch);   // normalizeRoutingConfig enforces the invariants
+    return sendJSON(res, 200, { ok: true, config: cfg });
   }
 
   // ---- restore: the one irreversible action. Needs the id typed back. ----
