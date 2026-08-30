@@ -5258,6 +5258,19 @@ function pactResyncDecision(currentLen, incomingLen, status, live) {
   const busy = status === "thinking" || status === "deepwork" || status === "awaiting-permission";
   return { replace: incomingLen >= currentLen, keepLive: busy || !!live };
 }
+// Count only the PERSISTED-equivalent messages (user prompts + assistant replies). The local `t.msgs` ALSO
+// holds live-only rows the server never persists — tool_use / tool_result / note / migration markers — so its
+// raw length is always LARGER than the incoming (persisted) transcript. Feeding raw lengths to the decision
+// above made `incoming >= local` reject EVERY resync after a tool-heavy turn (many ⚙ rows), so the Sync
+// button couldn't surface a stream-missed reply (a reload could — it starts from an empty list). Comparing
+// persisted counts lines the two up, while still protecting an un-persisted OPTIMISTIC prompt (a user row,
+// which counts, so local > incoming until the server catches up).
+function pactPersistedCount(msgs) {
+  if (!Array.isArray(msgs)) return 0;
+  let n = 0;
+  for (const m of msgs) if (m && (m.role === "user" || m.role === "assistant")) n++;
+  return n;
+}
 // ===== end PACT RESYNC DECISION pure helper =====
 function pactAgo(ms) {
   if (!ms) return "";
@@ -5418,7 +5431,7 @@ function pactChatSelfHeal() {
     // incoming ≥ local and the reply surfaces. Busy branch only fires when stuck, so full is fine there; the
     // idle branch fires every ~8s, so it asks for full ONLY when actually stuck (a trailing unanswered prompt)
     // to avoid re-pulling a big history needlessly.
-    const bigLocal = !!(t.msgs && t.msgs.length > PACT_RESYNC_CAP);
+    const bigLocal = pactPersistedCount(t.msgs) > PACT_RESYNC_CAP;
     if (pactChatBusy(t) && (now - (t._lastEventAt || 0)) > WS_HEAL_QUIET_MS && (now - (t._healAt || 0)) > WS_HEAL_QUIET_MS) {
       t._healAt = now;
       wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true, full: bigLocal } });
@@ -5551,12 +5564,11 @@ function pactChatOpenStream() {
 function pactChatResyncAll() {
   if (!PACT_CHAT) return;
   for (const t of PACT_CHAT.tabs) if (t.key) {
-    // For a conversation LARGER than the resync cap, a capped resync ships FEWER messages than are already on
-    // screen — so pactResyncDecision's `incoming >= local` guard REJECTS the replace, and a newly-spawned
-    // reply the stream missed never lands (the "Sync button didn't bring back the last answer, but a page
-    // reload did" bug — reload starts from empty, so the capped tail is accepted). Ask for `full` then, so
-    // incoming ≥ local and the missing reply surfaces.
-    const bigLocal = !!(t.msgs && t.msgs.length > PACT_RESYNC_CAP);
+    // For a conversation whose PERSISTED history exceeds the resync cap, a capped resync ships fewer persisted
+    // messages than are on screen, so the replace guard rejects it and a stream-missed reply never lands. Ask
+    // for `full` then. (Counted on persisted messages — the server caps its persisted transcript, not the
+    // live-only tool rows.)
+    const bigLocal = pactPersistedCount(t.msgs) > PACT_RESYNC_CAP;
     wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true, full: bigLocal } });
   }
 }
@@ -5640,7 +5652,9 @@ function pactChatRoute({ kind, sessionKey, data }) {
     // late sessionOpen reply can't re-concat what we just replaced.
     case "resync": {
       const incoming = pactTranscriptToMsgs(d.transcript);
-      const dec = pactResyncDecision(t.msgs.length, incoming.length, d.status, d.live);
+      // Compare PERSISTED counts, not raw lengths — local carries live-only tool/note/migration rows the
+      // server transcript lacks, so raw length always looked "longer" and rejected the replace (see helper).
+      const dec = pactResyncDecision(pactPersistedCount(t.msgs), pactPersistedCount(incoming), d.status, d.live);
       if (dec.replace) { t.msgs = pactPreserveElapsed(t.msgs, incoming); pactChatReinjectMigrations(t); pactChatHealWorktree(t); t._transcriptTruncated = !!d.transcriptTruncated; pactSetNumOffsets(t, d); }   // keep a live-stamped "Thought for …" the daemon hasn't persisted yet; re-add migration markers; recover a lost worktree binding; refresh P#/R# offsets
       pactChatSetLoading(t, false);   // a resync also satisfies an in-flight load — drop the loader
       if (d.usage) t.usage = d.usage;
@@ -5853,7 +5867,7 @@ function pactChatCatchUp(t) {
   // `full` when the tab already holds its complete history, OR when its local transcript exceeds the server
   // cap (so a capped resync would be rejected by the length-guard and a dropped reply would never land).
   // Switching to a tab is on-demand, so a one-off full fetch to guarantee it's current is worth it.
-  if (t && t.key) wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true, full: t._transcriptTruncated === false || !!(t.msgs && t.msgs.length > PACT_RESYNC_CAP) } });
+  if (t && t.key) wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true, full: t._transcriptTruncated === false || pactPersistedCount(t.msgs) > PACT_RESYNC_CAP } });
 }
 function pactChatConvoStateCls(t) { return t && t.status === "deepwork" ? " --deep" : (pactChatBusy(t) ? " --busy" : ""); }
 function pactChatConvoStateLabel(t) {

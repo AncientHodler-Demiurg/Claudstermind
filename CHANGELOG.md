@@ -4,7 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.5.23] - 2026-08-30
+## [1.5.24] - 2026-08-30
+
+### Fixed
+- **The real reason Sync didn't bring back the last reply: the resync guard compared RAW message counts.**
+  The local transcript also holds **live-only rows the server never persists** — `tool_use` / `tool_result`
+  (⚙ command + output rows), notes, and migration markers — so its raw length is *always* larger than the
+  incoming (persisted-only) transcript. So `pactResyncDecision`'s `incoming ≥ local` guard **rejected the
+  replace after any tool-heavy turn**, regardless of conversation size — which is why 1.5.23's "request full"
+  didn't help (full was still shorter than the tool-inflated local). The comparison now counts only
+  **persisted messages (user prompts + assistant replies)** on both sides, so a genuinely-newer server state
+  replaces — while an un-persisted optimistic prompt (a user row, still counted) is still protected. Applies
+  to the Sync button, the stale-stream watchdog, and reconnect catch-up. Core was never affected.
 
 ### Fixed
 - **The Pact chat's Sync (↻) button didn't bring back a just-spawned reply on a big conversation** (a page
