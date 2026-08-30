@@ -20,6 +20,11 @@ Environment=SESSIOND_SOCK=/run/claudstermind/sessiond.sock
 # forwards no model, so THIS is the only place a default reaches sessiond — setting it on the web service
 # does nothing for the sessiond engine. Comment out to fall back to the Claude CLI's own default.
 Environment=CLAUDE_WORKSPACE_MODEL=opus
+# OmniRoute integration (optional): OMNIROUTE_KEY + OMNIROUTE_URL. When set, the model selector offers
+# "omni/…" models that route THIS session through the local OmniRoute gateway (free/other models) instead of
+# Anthropic. Kept in .secrets (not inline) so the key isn't baked into the unit. The leading `-` makes it
+# optional — the service still starts if the file is absent. Remove the line to disable the feature entirely.
+EnvironmentFile=-/home/ancientbox/ClaudeWS/.secrets/omniroute.env
 ExecStart=/usr/bin/node sessiond/sessiond.mjs
 Restart=on-failure
 RestartSec=5

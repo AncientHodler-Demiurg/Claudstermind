@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.35] - 2026-08-31
+
+### Added
+- **OmniRoute model routing — run a session on a non-Claude (free/other) model, picked from the model
+  selector.** Proven end-to-end: the real `claude` binary completes turns through the local OmniRoute gateway
+  (OpenRouter free tiers etc.) via Claude Code's `ANTHROPIC_BASE_URL` override + the OmniRoute gateway key.
+  New `lib/omniRoute.mjs` (pure, unit-tested): a model id `omni/<omniroute-id>` (e.g. `omni/auto`,
+  `omni/z-ai/glm-5.2:free`) makes `claudeSession` spawn THAT session pointed at OmniRoute instead of Anthropic;
+  the selector catalog (`workspace._models`) gains a short curated set of omni picks — but ONLY when
+  `OMNIROUTE_KEY` is set, so Claude-only setups are untouched. Config via `OMNIROUTE_KEY`/`OMNIROUTE_URL` on
+  the sessiond service (an optional `EnvironmentFile` in `.secrets`). Applied at spawn, so pick an omni model
+  on a FRESH chat (a live Claude session can't change its base URL mid-flight). Honest scope: good for cheap
+  drafts/chat, weak/flaky for agentic coding — a side lane, not a Claude replacement.
+
 ## [1.5.34] - 2026-08-30
 
 ### Fixed
