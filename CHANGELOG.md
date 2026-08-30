@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.37] - 2026-08-31
+
+### Added
+- **The model selector now offers OmniRoute's LIVE catalog** — pick any useful model your gateway key exposes,
+  per chat, with the readout showing exactly what served. `fetchOmniModels` (in `lib/omniRoute.mjs`, unit-tested
+  with an injected fetch) pulls `/v1/models` from the gateway, keeps the models from YOUR connected providers —
+  `cc/claude-*` (your Claude abo through OmniRoute, incl. effort variants), `auto/*` (incl. `auto/best-coding`),
+  `groq/*`, and OpenRouter `:free` — and drops the 300+ unconnected/web-scraper noise. Cached (5 min TTL) with a
+  static fallback, so `workspace._models` stays fast and never breaks. **Only active when `OMNIROUTE_KEY` is set;
+  a Claude-only setup takes the original synchronous path unchanged.** Confirmed live: real Claude answers through
+  `omni/cc/claude-*` (served-as `claude-opus-4-8` → "Anthropic"). Claude-direct stays the default/primary.
+
 ## [1.5.36] - 2026-08-31
 
 ### Fixed
