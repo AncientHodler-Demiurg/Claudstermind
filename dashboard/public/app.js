@@ -5550,7 +5550,15 @@ function pactChatOpenStream() {
 // fresh-open `sessionOpen` concat, which assumes an empty tab and would duplicate on a filled one).
 function pactChatResyncAll() {
   if (!PACT_CHAT) return;
-  for (const t of PACT_CHAT.tabs) if (t.key) wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true } });
+  for (const t of PACT_CHAT.tabs) if (t.key) {
+    // For a conversation LARGER than the resync cap, a capped resync ships FEWER messages than are already on
+    // screen — so pactResyncDecision's `incoming >= local` guard REJECTS the replace, and a newly-spawned
+    // reply the stream missed never lands (the "Sync button didn't bring back the last answer, but a page
+    // reload did" bug — reload starts from empty, so the capped tail is accepted). Ask for `full` then, so
+    // incoming ≥ local and the missing reply surfaces.
+    const bigLocal = !!(t.msgs && t.msgs.length > PACT_RESYNC_CAP);
+    wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true, full: bigLocal } });
+  }
 }
 // ===== PACT RESUME-LOST — pure helper (sliced for lib/pactResumeLost.test.mjs) =====
 // Detects the SDK's "the session I tried to resume is gone" error — a Claude Code session that ended

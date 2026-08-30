@@ -4,7 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.5.22] - 2026-08-29
+## [1.5.23] - 2026-08-30
+
+### Fixed
+- **The Pact chat's Sync (↻) button didn't bring back a just-spawned reply on a big conversation** (a page
+  reload did). The manual sync re-opens the stream, which resyncs each tab with a *capped* transcript (last
+  250 msgs). On a conversation longer than the cap, that capped transcript is *shorter* than what's already on
+  screen, so the `incoming ≥ local` guard rejected the replace and the missed reply never landed — whereas a
+  reload starts from an empty transcript, so the same capped tail is accepted. `pactChatResyncAll` now requests
+  the **`full`** transcript when the local conversation exceeds the cap, so incoming ≥ local and the missing
+  reply surfaces. (This also improves automatic reconnects on big conversations.) The Core cockpit was never
+  affected — its resync replaces the transcript unconditionally. Web-only — no engine restart.
 
 ### Fixed
 - **Your last prompt could scroll out of view in the Pact chat when a turn produced a lot of output.** The
