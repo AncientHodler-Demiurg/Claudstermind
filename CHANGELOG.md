@@ -4,6 +4,13 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.30] - 2026-08-30
+
+### Fixed
+- **The server app is now single-instance.** A second launch (double-click again, or a launcher plus
+  `npm run app`) no longer stacks a second tray/window — it hands focus to the already-running copy and exits,
+  via Electron's `requestSingleInstanceLock()` + a `second-instance` handler that re-shows the existing window.
+
 ## [1.5.29] - 2026-08-30
 
 ### Fixed

@@ -115,13 +115,21 @@ ipcMain.handle("cm:control", async (_e, action, id) => {
   return results;
 });
 
-app.whenReady().then(() => {
-  createWindow();
-  createTray();
-  poll();
-  pollTimer = setInterval(poll, POLL_MS);
-  app.on("activate", () => showWindow());
-});
+// Single instance only: if another copy already holds the lock, this one hands focus to it and exits — so a
+// double-click (or a launcher + `npm run app`) never stacks two trays/windows. The primary is woken via
+// "second-instance" and just re-shows its window.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", () => showWindow());
+  app.whenReady().then(() => {
+    createWindow();
+    createTray();
+    poll();
+    pollTimer = setInterval(poll, POLL_MS);
+    app.on("activate", () => showWindow());
+  });
+}
 // Do NOT quit when the window is hidden/closed — we live in the tray. Real exit is the tray "Quit".
 app.on("window-all-closed", () => { /* stay resident in the tray */ });
 app.on("before-quit", () => { app.isQuitting = true; if (pollTimer) clearInterval(pollTimer); });
