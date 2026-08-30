@@ -6630,17 +6630,28 @@ function pactChatPaintLive(t) {
 // The active model is the one the running `claude` subprocess reports in its `init` event (see the capture
 // in the Core/Pact event routers); "Default" in a selector means "no override", NOT a known model — this is
 // how we finally SHOW which model that resolved to.
+// ===== CHAT MODEL LABEL — pure resolved-model helpers (sliced for lib/chatModelLabel.test.mjs) =====
+// prettyModel: "claude-opus-4-1-20250805" → "opus-4-1". chatModelLabel: the model a chat is ACTUALLY running,
+// for a model control's readout — an explicit pick wins, else what "Default" resolved to (the agent's reported
+// active model); "" when nothing is known yet. ONE source shared by the Core selector's Default label and the
+// Pact header readout, so the two can't drift.
 function prettyModel(m) {
   if (!m) return "";
   return String(m).replace(/^claude-/, "").replace(/-\d{6,}$/, "");
 }
+function chatModelLabel(model, activeModel) {
+  const m = model || activeModel;
+  return m ? prettyModel(m) : "";
+}
+// ===== end CHAT MODEL LABEL pure helper =====
 // Update the Pact header's "· <model>" readout in place (no full re-render, which would rebuild .pc-scroll
 // and re-home the Live/Held bulb). Only reflects the currently-visible tab.
 function pactUpdateModelNow(t) {
   if (!PACT_CHAT || !PACT_CHAT.host) return;
   if (t && t.id !== PACT_CHAT.activeId) return;
   const span = PACT_CHAT.host.querySelector(".pc-model-now");
-  if (span) span.textContent = (t && t.activeModel) ? ("· " + prettyModel(t.activeModel)) : "";
+  const lbl = t ? chatModelLabel(null, t.activeModel) : "";
+  if (span) span.textContent = lbl ? "· " + lbl : "";
 }
 // Compact the ACTIVE Pact conversation: send `/compact` as the next turn (the CLI summarises + shrinks the
 // context window). Gated so it only runs on a conversation that has actually started — sending it as a tab's
@@ -6721,7 +6732,7 @@ function pactChatRender() {
   // Live readout of the model THIS conversation actually runs (captured from the agent's `init`/`model`
   // events — see the `case "init"` in pactChatRoute). "Default" no longer hides which model that is.
   const modelNow = el("span", { class: "pc-model-now", title: "The model this conversation is actually running" }, []);
-  { const _a = PACT_CHAT.tabs.find((x) => x.id === PACT_CHAT.activeId); if (_a && _a.activeModel) modelNow.textContent = "· " + prettyModel(_a.activeModel); }
+  { const _a = PACT_CHAT.tabs.find((x) => x.id === PACT_CHAT.activeId); const _lbl = _a ? chatModelLabel(null, _a.activeModel) : ""; if (_lbl) modelNow.textContent = "· " + _lbl; }
   const headKids = [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, compactBtn, bmWrap, el("span", { class: "ws-spacer" }, []), headBulb, modelNow, usageEl, modeSel, chatCollapse];
   const head = el("div", { class: "pact-zone-hd pc-head" }, headKids);
   const scroll = el("div", { class: "pc-scroll" }, []);
@@ -7643,7 +7654,8 @@ function viewWorkspace() {
   function fillModelSelect(sel, value, activeModel) {
     // On "Default" (no explicit pick) show what it ACTUALLY resolved to, e.g. "Default · opus-4-1", so the
     // selector finally answers "what model is this?" instead of a bare, uninformative "Default".
-    const defLabel = !value && activeModel ? "Default · " + prettyModel(activeModel) : "Default";
+    const resolved = value ? "" : chatModelLabel(null, activeModel);
+    const defLabel = resolved ? "Default · " + resolved : "Default";
     const opts = [el("option", { value: "" }, [defLabel]), ...st.models.map((m) => el("option", { value: m.value }, [m.displayName]))];
     // A pane's already-chosen model may not (yet) be in a freshly-(re)fetched catalog — inject an option so
     // the dropdown still shows it rather than silently reverting to "Default". (Previously this pushed to the

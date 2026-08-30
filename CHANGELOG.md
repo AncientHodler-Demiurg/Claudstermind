@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.33] - 2026-08-30
+
+### Changed
+- **Chatbox unification, step 0 (groundwork, no visible change):** extracted the model-name logic into ONE
+  pure, unit-tested helper (`chatModelLabel`/`prettyModel`, sentinel-sliced like `wsUsageLabel`) shared by the
+  Core selector and the Pact readout, so the "what model is this" label can never drift between the two
+  surfaces again. First step toward a single shared chat-controls component (model / context / compact / mode)
+  used by both the normal workspace and Pact — today they are separate implementations that diverge.
+
 ## [1.5.32] - 2026-08-30
 
 ### Added
