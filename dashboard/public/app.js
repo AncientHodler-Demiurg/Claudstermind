@@ -2712,8 +2712,12 @@ function wsUsageLabel(usage, contextUsage) {
   const u = usage || {};
   const ctx = contextUsage;
   const ctxPct = ctx && typeof ctx.percentage === "number" ? Math.round(ctx.percentage <= 1 ? ctx.percentage * 100 : ctx.percentage) : null;
+  // Show the context-window SIZE alongside the fill %, so "how full / of how big" is readable at a glance
+  // (e.g. "34% of 200k ctx"), not just a bare percentage. maxTokens 0/absent → omit the size.
+  const maxK = ctx && ctx.maxTokens ? Math.round(ctx.maxTokens / 1000) + "k" : null;
+  const ctxSuffix = ctxPct !== null ? ` · ${ctxPct}%${maxK ? " of " + maxK : ""} ctx` : "";
   const text = (u.inputTokens || u.outputTokens)
-    ? `${((u.inputTokens || 0) + (u.outputTokens || 0)).toLocaleString()} tok` + (ctxPct !== null ? ` · ${ctxPct}% ctx` : "")
+    ? `${((u.inputTokens || 0) + (u.outputTokens || 0)).toLocaleString()} tok` + ctxSuffix
     : "";
   const title = ctx ? `Context window: ${(ctx.totalTokens || 0).toLocaleString()} / ${(ctx.maxTokens || 0).toLocaleString()} tokens (${ctxPct ?? "—"}%)` : "";
   return { text, ctxPct, title };
@@ -6638,6 +6642,16 @@ function pactUpdateModelNow(t) {
   const span = PACT_CHAT.host.querySelector(".pc-model-now");
   if (span) span.textContent = (t && t.activeModel) ? ("· " + prettyModel(t.activeModel)) : "";
 }
+// Compact the ACTIVE Pact conversation: send `/compact` as the next turn (the CLI summarises + shrinks the
+// context window). Gated so it only runs on a conversation that has actually started — sending it as a tab's
+// very first message would ride the skill preamble and wouldn't be recognised as a slash command.
+function pactCompact() {
+  const t = PACT_CHAT && PACT_CHAT.tabs.find((x) => x.id === PACT_CHAT.activeId);
+  if (!t) return;
+  if (!t.started && !t.resume) { pactChatFlashNote("Nothing to compact yet — send a message first."); return; }
+  pactChatFlashNote("🗜 Compacting — summarising to shrink context…");
+  pactChatDispatch(t, "/compact", []);
+}
 function pactChatRender() {
   if (!PACT_CHAT) return;
   const host = PACT_CHAT.host;
@@ -6670,6 +6684,8 @@ function pactChatRender() {
   const hist = el("button", { class: "pact-ed-ico", title: "Pact chat history — resume a past conversation" }, ["🕐"]);
   hist.addEventListener("click", () => pactChatToggleHistory());
   const sync = el("button", { class: "pact-ed-ico", title: "Sync now — re-fetch this conversation's authoritative state (fixes a desync between two open clients)" }, ["↻"]);
+  const compactBtn = el("button", { class: "pact-ed-ico pact-compact", title: "Compact — summarise this conversation to shrink its context window. Sends /compact as the next turn." }, ["🗜"]);
+  compactBtn.addEventListener("click", () => pactCompact());
   sync.addEventListener("click", () => pactChatForceResync(sync));
   const bm = el("button", { class: "pact-ed-ico pc-bm-ico", title: "Bookmarked responses — jump to a starred answer" }, ["★"]);
   const bmPop = el("div", { class: "ws-bm-pop --down" }, []);   // opens downward (the head is at the top)
@@ -6706,7 +6722,7 @@ function pactChatRender() {
   // events — see the `case "init"` in pactChatRoute). "Default" no longer hides which model that is.
   const modelNow = el("span", { class: "pc-model-now", title: "The model this conversation is actually running" }, []);
   { const _a = PACT_CHAT.tabs.find((x) => x.id === PACT_CHAT.activeId); if (_a && _a.activeModel) modelNow.textContent = "· " + prettyModel(_a.activeModel); }
-  const headKids = [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, bmWrap, el("span", { class: "ws-spacer" }, []), headBulb, modelNow, usageEl, modeSel, chatCollapse];
+  const headKids = [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, compactBtn, bmWrap, el("span", { class: "ws-spacer" }, []), headBulb, modelNow, usageEl, modeSel, chatCollapse];
   const head = el("div", { class: "pact-zone-hd pc-head" }, headKids);
   const scroll = el("div", { class: "pc-scroll" }, []);
   const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (⌘/Ctrl+Enter to send)" });
@@ -8271,6 +8287,8 @@ function viewWorkspace() {
     const badge = el("span", { class: "ws-usage" }, ["—"]);
     const closeBtn = el("button", { class: "ws-x", title: "Clear this pane (ends its session)" }, ["×"]);
     const histBtn = el("button", { class: "ws-ico", title: "History for this repo" }, ["⏱"]);
+    const compactBtn = el("button", { class: "ws-ico ws-compact", title: "Compact — summarise this conversation to shrink its context window. Sends /compact as the next turn." }, ["🗜"]);
+    compactBtn.addEventListener("click", () => wsCompact(p));
     const transcriptEl = el("div", { class: "ws-transcript" }, []);
     const promptEl = el("textarea", { class: "ws-prompt", rows: String(WS_PROMPT_MIN_ROWS), placeholder: "Message Claude… (Ctrl+Enter)" });
     // Auto-resize on a rAF, not synchronously on every keystroke: wsAutoResizePrompt reads
@@ -8341,7 +8359,7 @@ function viewWorkspace() {
     // medallion"), where there's space, instead of the bottom controls row. Empty on desktop (docks above Send).
     const headBulb = el("div", { class: "ws-head-bulb" }, []);
     const topBar = el("div", { class: "ws-pane-hd" }, [dot, identityLabel, el("span", { class: "ws-spacer" }), headBulb, bgBadge, savedBadge, closeBtn]);
-    const controlsBar = el("div", { class: "ws-pane-controls" }, [repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, histBtn, el("span", { class: "ws-spacer" }), badge]);
+    const controlsBar = el("div", { class: "ws-pane-controls" }, [repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, histBtn, compactBtn, el("span", { class: "ws-spacer" }), badge]);
     // The live "what's happening right now" feed — a single always-visible line (tap to expand
     // the full scrolling log) narrating every state transition: sending, thinking, streaming,
     // running a tool, waiting for permission, done, a connection hiccup — everything the orange
@@ -9698,6 +9716,16 @@ function viewWorkspace() {
       return;
     }
     dispatchPrompt(p, text, attachedImages);
+  }
+  // Compact: send `/compact` as the next turn so the CLI summarises the conversation and shrinks its context
+  // window (the SDK has no programmatic compact() — it's driven by the slash command; see the Query interface).
+  // Gated like send(): read-only/no-repo panes can't, and while busy it QUEUES so it runs right after the turn.
+  function wsCompact(p) {
+    if (p.readonly) { note("This pane is read-only — Resume the conversation first, then Compact."); return; }
+    if (!p.repo) { note("Pick a repository for this pane first."); return; }
+    if (paneBusy(p)) { p._queue = p._queue || []; p._queue.push({ text: "/compact", images: [] }); paintPane(p); note("⏳ Compact queued — runs when the current turn finishes."); return; }
+    logActivity(p, "🗜 Compacting — summarising the conversation to shrink context…");
+    dispatchPrompt(p, "/compact", []);
   }
 
   // ---- toolbar controls ----------------------------------------------------------

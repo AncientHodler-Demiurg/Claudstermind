@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.32] - 2026-08-30
+
+### Added
+- **A Compact button in both Core panes and the Pact header.** Clicking it sends `/compact` as the next turn,
+  so the CLI summarises the conversation and shrinks its context window (the Agent SDK has no programmatic
+  `compact()` — compaction is driven by the slash command). Core queues it while a turn is running (runs right
+  after) and refuses on a read-only/no-repo pane; Pact only offers it once a conversation has actually started
+  (so `/compact` isn't buried under the skill preamble on a fresh tab).
+
+### Changed
+- **The context readout now shows the window SIZE, not just the fill %** — e.g. **"34% of 200k ctx"** instead
+  of a bare "34% ctx" — in both the Core pane badge and the Pact header (shared `wsUsageLabel`), with the exact
+  `used / max tokens` still in the hover tooltip. So "how full, of how big" is legible at a glance in both
+  workspaces. (Model readout landed in 1.5.31; this completes the "what am I on / how full is it" trio.)
+
 ## [1.5.31] - 2026-08-30
 
 ### Fixed
