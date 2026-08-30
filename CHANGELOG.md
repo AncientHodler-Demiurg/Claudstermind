@@ -4,7 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.5.24] - 2026-08-30
+## [1.5.25] - 2026-08-30
+
+### Added
+- **Control-plane core for the forthcoming "server app"** (`lib/controlPlane.mjs` + `control/cli.mjs`) — the
+  single on/off + status face for the work machine. The local stack is two **systemd** services (the
+  dashboard+bridge/tunnel, and the agent engine), so this is a control panel *over* systemd, not a new
+  supervisor: it READS their status + runs health probes, and (with privilege) can start/stop/restart them.
+  Because it controls the *same* running services rather than respawning them, adopting a live stack is
+  **zero-downtime** — no cutover, no process juggling. Phase 1 is the headless CLI (`node control/cli.mjs
+  status` — read-only, safe) and the tested systemctl parser; the Electron window will be a thin shell over
+  this same core. **Purely additive** — a standalone tool that touches neither the running dashboard nor the
+  engine, so it needs no deploy of the live app.
 
 ### Fixed
 - **The real reason Sync didn't bring back the last reply: the resync guard compared RAW message counts.**
