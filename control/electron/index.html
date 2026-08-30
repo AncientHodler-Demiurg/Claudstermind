@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self';" />
+<title>Claudstermind</title>
+<style>
+  :root { --bg:#0e1420; --panel:#151d2c; --line:#26304a; --ink:#e8eefc; --mute:#9fb0d0; --dim:#6b7a99;
+    --accent:#c77dff; --green:#34d399; --red:#f87171; --amber:#fbbf24; }
+  * { box-sizing:border-box; -webkit-user-select:none; }
+  body { margin:0; font:13.5px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+  header { display:flex; align-items:center; gap:12px; padding:16px 18px 12px; }
+  .logo { font-size:17px; font-weight:800; letter-spacing:.2px; }
+  .badge { margin-left:auto; display:inline-flex; align-items:center; gap:7px; padding:5px 12px; border-radius:999px;
+    font-weight:700; font-size:12px; border:1px solid var(--line); background:var(--panel); }
+  .badge .d { width:9px; height:9px; border-radius:999px; background:var(--dim); }
+  .badge.up .d { background:var(--green); box-shadow:0 0 0 0 #34d39988; animation:pulse 2s infinite; }
+  .badge.up { color:var(--green); } .badge.degraded { color:var(--amber); } .badge.degraded .d{background:var(--amber);}
+  .badge.failed { color:var(--red); } .badge.failed .d{background:var(--red);}
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 #34d39988;} 70%{box-shadow:0 0 0 7px #34d39900;} 100%{box-shadow:0 0 0 0 #34d39900;} }
+  .actions { display:flex; gap:8px; padding:4px 18px 12px; }
+  .actions button { flex:1; padding:10px; border-radius:10px; border:1px solid var(--line); background:var(--panel);
+    color:var(--ink); font-weight:700; font-size:13px; cursor:pointer; }
+  .actions .start { border-color:var(--green); color:var(--green); }
+  .actions .restart { border-color:var(--amber); color:var(--amber); }
+  .actions .stop { border-color:var(--red); color:var(--red); }
+  .actions button:hover { filter:brightness(1.15); } .actions button:disabled { opacity:.5; cursor:default; }
+  .units { padding:0 12px; display:flex; flex-direction:column; gap:8px; }
+  .unit { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:11px 13px; }
+  .unit .row1 { display:flex; align-items:center; gap:9px; }
+  .unit .dot { width:11px; height:11px; border-radius:999px; background:var(--dim); flex:0 0 auto; }
+  .unit .dot.up { background:var(--green); } .unit .dot.failed { background:var(--red); } .unit .dot.starting { background:var(--amber); }
+  .unit .name { font-weight:700; } .unit .pid { margin-left:auto; font:11px ui-monospace,monospace; color:var(--dim); }
+  .unit .blurb { color:var(--mute); font-size:11.5px; margin:4px 0 8px; }
+  .unit .uctl { display:flex; gap:6px; }
+  .unit .uctl button { padding:4px 10px; border-radius:7px; border:1px solid var(--line); background:transparent; color:var(--mute);
+    font-size:11px; font-weight:600; cursor:pointer; }
+  .unit .uctl button:hover { color:var(--ink); border-color:var(--accent); }
+  .probes { display:flex; gap:14px; padding:14px 20px; color:var(--mute); font-size:12px; }
+  .probes b { color:var(--dim); font-weight:600; }
+  .probes .p { display:inline-flex; align-items:center; gap:5px; }
+  .probes .p .d { width:8px; height:8px; border-radius:999px; background:var(--dim); }
+  .probes .p.ok .d { background:var(--green); } .probes .p.bad .d { background:var(--red); }
+  .foot { padding:2px 20px 16px; color:var(--dim); font-size:11px; display:flex; align-items:center; gap:10px; }
+  .foot .refresh { margin-left:auto; background:transparent; border:1px solid var(--line); color:var(--mute);
+    border-radius:7px; padding:4px 10px; cursor:pointer; font-size:11px; }
+  .note { padding:0 20px 14px; color:var(--dim); font-size:11px; }
+  /* styled confirm (no native popup) */
+  .scrim { position:fixed; inset:0; background:#0a0d14cc; display:none; align-items:center; justify-content:center; padding:24px; }
+  .scrim.show { display:flex; }
+  .confirm { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; max-width:360px; }
+  .confirm h3 { margin:0 0 6px; font-size:15px; } .confirm p { margin:0 0 14px; color:var(--mute); font-size:12.5px; }
+  .confirm .btns { display:flex; gap:8px; justify-content:flex-end; }
+  .confirm button { padding:8px 16px; border-radius:9px; border:1px solid var(--line); background:transparent; color:var(--ink); font-weight:700; cursor:pointer; }
+  .confirm button.go { border-color:var(--red); color:var(--red); }
+  .toast { position:fixed; left:50%; bottom:16px; transform:translateX(-50%); background:var(--panel); border:1px solid var(--line);
+    border-radius:9px; padding:9px 16px; font-size:12.5px; opacity:0; transition:opacity .2s; pointer-events:none; }
+  .toast.show { opacity:1; }
+</style>
+</head>
+<body>
+  <header>
+    <span class="logo">Claudstermind</span>
+    <span id="badge" class="badge"><span class="d"></span><span id="badgeTxt">…</span></span>
+  </header>
+  <div class="actions">
+    <button class="start" data-act="start">▶ Start all</button>
+    <button class="restart" data-act="restart">↻ Restart all</button>
+    <button class="stop" data-act="stop">■ Stop all</button>
+  </div>
+  <div id="units" class="units"></div>
+  <div id="probes" class="probes"></div>
+  <div class="foot"><span id="stamp">—</span><button id="refresh" class="refresh">↻ Refresh</button></div>
+  <div class="note">Closing this window does <b>not</b> stop the stack — the services keep running. Reopen anytime.</div>
+
+  <div id="scrim" class="scrim"><div class="confirm">
+    <h3 id="cTitle">Confirm</h3><p id="cMsg"></p>
+    <div class="btns"><button id="cCancel">Cancel</button><button id="cGo" class="go">Confirm</button></div>
+  </div></div>
+  <div id="toast" class="toast"></div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

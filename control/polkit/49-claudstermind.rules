@@ -1,0 +1,17 @@
+// polkit rule: let the `ancientbox` user start/stop/restart ONLY the two Claudstermind units without a
+// password — so the control app's buttons work with no prompt, while every other systemd unit still needs
+// full auth. Install:
+//
+//     sudo cp control/polkit/49-claudstermind.rules /etc/polkit-1/rules.d/49-claudstermind.rules
+//     sudo systemctl restart polkit
+//
+// (If your user isn't `ancientbox`, change it below. If you skip this, the app falls back to sudo only when
+// CM_USE_SUDO=1, which prompts.)
+polkit.addRule(function (action, subject) {
+  if (action.id === "org.freedesktop.systemd1.manage-units" && subject.user === "ancientbox") {
+    var unit = action.lookup("unit");
+    if (unit === "claudstermind.service" || unit === "claudstermind-sessiond.service") {
+      return polkit.Result.YES;
+    }
+  }
+});

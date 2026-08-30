@@ -4,7 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [1.5.25] - 2026-08-30
+## [1.5.26] - 2026-08-30
+
+### Added
+- **The "server app" Electron window (Phase 2)** — a single desktop window on the work machine that shows the
+  whole stack at a glance and starts/stops it. It's a thin shell over the same `lib/controlPlane.mjs` core the
+  CLI uses (so they can't disagree): green/amber/red status dots per unit (engine + dashboard/tunnel) with
+  live PIDs, dashboard/internet/tunnel health probes, and **Start / Restart / Stop** (all, or per unit) behind
+  a styled confirm — no native popups. It's a **control panel over systemd**, so opening it adopts the running
+  services with **zero downtime** (nothing respawns), and closing the window quits only the app, never the
+  stack. Ships with a `.desktop` launcher (a Linux "shortcut"), a polkit rule for password-free start/stop,
+  and `control/README.md`. Run-from-source (`npm install` once → `npm run app`); no Windows-style installer.
+  Purely additive — doesn't touch the running dashboard or engine.
 
 ### Added
 - **Control-plane core for the forthcoming "server app"** (`lib/controlPlane.mjs` + `control/cli.mjs`) — the
