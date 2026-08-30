@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.36] - 2026-08-31
+
+### Fixed
+- **Held no longer jumps your scroll** — a regression from 1.5.34. That change made every resync (including the
+  ~20s idle self-heal) fetch context usage, and the answer ran a full `pactChatPaint`/`paintPane` — whose
+  `replaceChildren` nudges a scrolled-up (Held) reader's position. A contextUsage answer changes NO messages,
+  so it now updates only the header token/context badge + model readout IN PLACE (new `pactUpdateUsageNow`;
+  Core updates `usageEl`/selector directly), never repainting the transcript. Held stays held.
+
 ## [1.5.35] - 2026-08-31
 
 ### Added

@@ -5717,7 +5717,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       pactOutboxFlush();       // …and any queue recovered from a deploy/reload that was waiting on this turn
       return;
     // Context-window usage answer for this tab's session — store + repaint the header indicator.
-    case "contextUsage": t.contextUsage = d.usage; if (d.usage && d.usage.model) { t.activeModel = d.usage.model; pactUpdateModelNow(t); } pactChatPaint(t); return;
+    case "contextUsage": t.contextUsage = d.usage; if (d.usage && d.usage.model) { t.activeModel = d.usage.model; pactUpdateModelNow(t); } pactUpdateUsageNow(t); return;
     // A prompt sent while this session was still finishing its current turn is refused with `busy`
     // (see lib/workspace.mjs's single-writer turn lock). Normally pactChatSend already queues a
     // mid-turn message rather than POSTing it, so this only fires on a genuine race — a turn started
@@ -6656,6 +6656,14 @@ function pactUpdateModelNow(t) {
   const span = PACT_CHAT.host.querySelector(".pc-model-now");
   const lbl = t ? chatModelLabel(null, t.activeModel) : "";
   if (span) span.textContent = lbl ? "· " + lbl : "";
+}
+// Update ONLY the header token/context badge in place — NEVER repaint the transcript. A contextUsage answer
+// changes no messages, so calling pactChatPaint for it would replaceChildren the scroll and (on the ~20s
+// self-heal resync) nudge a Held reader's position. This keeps Held actually held.
+function pactUpdateUsageNow(t) {
+  if (!PACT_CHAT || !PACT_CHAT.host || !t || t.id !== PACT_CHAT.activeId) return;
+  const usageEl = PACT_CHAT.host.querySelector(".pc-usage");
+  if (usageEl) { const usg = wsUsageLabel(t.usage, t.contextUsage); usageEl.textContent = usg.text; usageEl.title = usg.title; usageEl.hidden = !usg.text; }
 }
 // Compact the ACTIVE Pact conversation: send `/compact` as the next turn (the CLI summarises + shrinks the
 // context window). Gated so it only runs on a conversation that has actually started — sending it as a tab's
@@ -9448,7 +9456,21 @@ function viewWorkspace() {
         return;
       }
       // Context-window usage is per-conversation — stored on the requesting pane(s) only.
-      if (data.kind === "contextUsage") { for (const p of targets) { p.contextUsage = data.usage; if (data.usage && data.usage.model) p.activeModel = data.usage.model; paintPane(p); } return; }
+      if (data.kind === "contextUsage") {
+        // Update the badge + model readout IN PLACE — never full paintPane (its replaceChildren yanks the
+        // scroll, breaking Held; see the paintPane comment). A contextUsage answer changes no transcript.
+        for (const p of targets) {
+          p.contextUsage = data.usage;
+          const prevModel = p.activeModel;
+          if (data.usage && data.usage.model) p.activeModel = data.usage.model;
+          const ui = paneUI.get(p.id);
+          if (ui) {
+            if (ui.usageEl) { const usg = wsUsageLabel(p.usage, p.contextUsage); ui.usageEl.textContent = usg.text || "—"; ui.usageEl.title = usg.title; }
+            if (ui.modelSel && p.activeModel !== prevModel) fillModelSelect(ui.modelSel, p.model, p.activeModel);
+          }
+        }
+        return;
+      }
       // Plan usage limits are account-wide, not per-conversation (see lib/workspace.mjs
       // _usageLimits) — stored globally so ANY pane's usage display reflects the latest answer,
       // not just whichever pane happened to ask.
