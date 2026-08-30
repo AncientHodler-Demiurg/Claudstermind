@@ -16,7 +16,10 @@ const DASH_URL = process.env.CM_DASHBOARD_URL || "http://localhost:3001";
 
 const C = { reset: "\x1b[0m", dim: "\x1b[2m", bold: "\x1b[1m", green: "\x1b[32m", red: "\x1b[31m", yellow: "\x1b[33m", grey: "\x1b[90m" };
 const dot = (state) => ({ up: C.green + "●" + C.reset, failed: C.red + "●" + C.reset, starting: C.yellow + "◐" + C.reset, down: C.grey + "○" + C.reset }[state] || C.grey + "○" + C.reset);
-const yn = (p) => p == null ? C.grey + "—" + C.reset : p.ok ? C.green + "ok" + C.reset : C.red + (p.error || p.status || "down") + C.reset;
+const yn = (p) => p == null ? C.grey + "—" + C.reset
+  : p.disabled ? C.grey + "off" + C.reset
+  : p.ok ? C.green + "ok" + C.reset
+  : C.red + (p.error || p.status || "down") + C.reset;
 
 async function cmdStatus() {
   const s = await gatherStatus({ dashboardUrl: DASH_URL, relayUrl: RELAY_URL });
@@ -26,7 +29,7 @@ async function cmdStatus() {
     console.log("  " + dot(u.state) + " " + C.bold + u.label.padEnd(20) + C.reset + C.dim + u.unit + C.reset + (u.pid ? C.grey + "  pid " + u.pid : "") + C.reset);
     console.log("     " + C.grey + u.blurb + C.reset);
   }
-  console.log("\n  " + C.dim + "probes" + C.reset + "  dashboard: " + yn(s.probes.dashboard) + "   internet: " + yn(s.probes.internet) + "   tunnel: " + yn(s.probes.tunnel) + (RELAY_URL ? "" : C.grey + " (set CM_RELAY_URL)" + C.reset));
+  console.log("\n  " + C.dim + "probes" + C.reset + "  dashboard: " + yn(s.probes.dashboard) + "   internet: " + yn(s.probes.internet) + "   tunnel: " + yn(s.probes.tunnel) + (s.probes.tunnel && s.probes.tunnel.disabled ? C.grey + " (bridge off in config)" + C.reset : ""));
   console.log("");
   process.exit(s.overall === "up" ? 0 : 1);
 }

@@ -35,12 +35,18 @@ function paint(s) {
   // Probes
   const p = s.probes || {};
   const probe = (label, pr) => {
-    const cls = pr == null ? "" : pr.ok ? "ok" : "bad";
-    const txt = pr == null ? "n/a" : pr.ok ? "ok" : (pr.error || (pr.status ? "http " + pr.status : "down"));
+    const disabled = pr && pr.disabled === true;               // bridge off in config → grey, not an error
+    const cls = pr == null || disabled ? "" : pr.ok ? "ok" : "bad";
+    const txt = pr == null ? "n/a"
+      : disabled ? "off"
+      : pr.ok ? (pr.state && pr.state !== "connected" ? pr.state : "ok")
+      : (pr.error || (pr.status ? "http " + pr.status : "down"));
     return '<span class="p ' + cls + '"><b>' + label + '</b><span class="d"></span>' + txt + '</span>';
   };
+  const tunnelHint = p.tunnel && p.tunnel.disabled === true
+    ? '<span class="p" style="color:var(--dim)">(enable the bridge in the dashboard → Relay)</span>' : "";
   $("probes").innerHTML = probe("dashboard", p.dashboard) + probe("internet", p.internet) +
-    probe("tunnel", p.tunnel) + (p.tunnel == null ? '<span class="p" style="color:var(--dim)">(set CM_RELAY_URL)</span>' : "");
+    probe("tunnel", p.tunnel) + tunnelHint;
 
   $("stamp").textContent = "updated " + new Date().toLocaleTimeString();
   for (const b of document.querySelectorAll(".actions button")) b.disabled = busy;

@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.29] - 2026-08-30
+
+### Fixed
+- **Tunnel probe now works with zero config — the grey "n/a" is gone.** It previously stayed grey unless you
+  set `CM_RELAY_URL`; now it reads the **local dashboard's `/api/relay`**, which reports whether the bridge is
+  *actually connected* (a better signal than pinging the VPS — that only says the gateway is up, not that the
+  tunnel is live). Connected → green, enabled-but-disconnected → amber/red with the state, bridge disabled in
+  config → grey **"off"** (not an error). An explicit `CM_RELAY_URL` still overrides with a raw gateway ping.
+  New pure `interpretRelay()` (unit-tested) + `probeTunnel()` in `lib/controlPlane.mjs`; CLI hint updated.
+
+### Changed
+- **The tray icon is now the circuit-brain mark with a small health-coloured badge** in its corner — so it's
+  recognisably Claudstermind while its colour still shows stack health at a glance. Composited in the main
+  process from the mark's bitmap; falls back to a plain coloured dot if the mark can't load.
+
 ## [1.5.28] - 2026-08-30
 
 ### Changed

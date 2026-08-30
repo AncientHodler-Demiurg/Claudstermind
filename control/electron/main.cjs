@@ -5,7 +5,7 @@
 // exits the app — and even that leaves the stack running.
 const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain } = require("electron");
 const path = require("path");
-const { stateDot } = require("./icon.cjs");
+const { stateDot, COLORS } = require("./icon.cjs");
 
 // Ubuntu 24.04+/26.04 restrict unprivileged user namespaces via AppArmor
 // (kernel.apparmor_restrict_unprivileged_userns=1), so a run-from-source Electron — which ships no AppArmor
@@ -24,6 +24,38 @@ let _core = null;
 function core() { return _core || (_core = import("../../lib/controlPlane.mjs")); }
 
 let win = null, tray = null, pollTimer = null;
+
+// The tray image = the brand mark (so it's recognisably Claudstermind) with a small health-coloured badge in
+// the bottom-right corner, so colour still conveys stack state at a glance. Composited from the mark's raw
+// BGRA bitmap; falls back to a plain coloured dot if the mark can't be loaded.
+let _markBmp = null, _markSide = 0;
+function trayIcon(overall) {
+  try {
+    if (!_markBmp) {
+      const img = nativeImage.createFromPath(path.join(__dirname, "brand-mark.png")).resize({ width: 22, height: 22, quality: "best" });
+      _markBmp = img.toBitmap();                         // BGRA, row-major
+      _markSide = Math.round(Math.sqrt(_markBmp.length / 4));
+      if (!_markSide || _markSide * _markSide * 4 !== _markBmp.length) throw new Error("bad bitmap");
+    }
+    const buf = Buffer.from(_markBmp);                    // copy — never mutate the cached bitmap
+    stampBadge(buf, _markSide, COLORS[overall] || COLORS.unknown);
+    return nativeImage.createFromBitmap(buf, { width: _markSide, height: _markSide });
+  } catch {
+    return nativeImage.createFromBuffer(stateDot(overall, 22));   // fallback: plain coloured dot
+  }
+}
+// Draw a filled health dot (dark 1px rim so it reads on any background) into the bottom-right of a BGRA bitmap.
+function stampBadge(buf, side, hex) {
+  const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+  const rad = Math.max(4, Math.round(side * 0.30));
+  const cx = side - rad - 1, cy = side - rad - 1;
+  for (let y = 0; y < side; y++) for (let x = 0; x < side; x++) {
+    const d = Math.hypot(x - cx, y - cy);
+    if (d > rad + 0.5) continue;
+    const o = (y * side + x) * 4, edge = d > rad - 0.9;
+    buf[o] = edge ? 18 : b; buf[o + 1] = edge ? 22 : g; buf[o + 2] = edge ? 26 : r; buf[o + 3] = 255;   // BGRA
+  }
+}
 
 function createWindow() {
   win = new BrowserWindow({
@@ -49,7 +81,7 @@ function showWindow() {
 }
 
 function createTray() {
-  tray = new Tray(nativeImage.createFromBuffer(stateDot("unknown", 22)));
+  tray = new Tray(trayIcon("unknown"));
   tray.setToolTip("Claudstermind — starting…");
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: "Open control panel", click: showWindow },
@@ -65,7 +97,7 @@ async function poll() {
   let s = null;
   try { const c = await core(); s = await c.gatherStatus({ dashboardUrl: DASH_URL, relayUrl: RELAY_URL }); } catch { /* keep last */ }
   if (!s) { if (tray) tray.setToolTip("Claudstermind — control app error"); return; }
-  if (tray) { tray.setImage(nativeImage.createFromBuffer(stateDot(s.overall, 22))); tray.setToolTip("Claudstermind — " + String(s.overall || "?").toUpperCase()); }
+  if (tray) { tray.setImage(trayIcon(s.overall)); tray.setToolTip("Claudstermind — " + String(s.overall || "?").toUpperCase()); }
   if (win && !win.isDestroyed()) win.webContents.send("cm:status", s);
 }
 
