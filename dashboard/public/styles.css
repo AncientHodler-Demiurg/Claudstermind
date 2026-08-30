@@ -1746,6 +1746,8 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 /* The "· <model>" readout in the Pact head — the model THIS conversation actually runs (see prettyModel). */
 .pc-model-now { flex: 0 0 auto; font-size: 10.5px; color: var(--accent, #c77dff); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; font-weight: 600; }
 .pc-model-now:empty { display: none; }
+/* Compact buttons carry a text label, so let them size to content instead of the fixed icon-square. */
+.ws-compact, .pact-compact { width: auto; min-width: 0; padding: 0 8px; gap: 4px; font-size: 11px; white-space: nowrap; }
 /* Plan usage-limits badge (5h/7d rolling rate-limit utilization) — mirrors the Core cockpit's
    .ws-usage-limits, tinted amber as it nears a limit and red when nearly capped. Full breakdown in title. */
 .pc-usage-limits { flex: 0 0 auto; font-size: 10.5px; color: var(--ink-dim); white-space: nowrap;

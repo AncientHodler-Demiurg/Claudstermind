@@ -5676,6 +5676,10 @@ function pactChatRoute({ kind, sessionKey, data }) {
       // scrolled up back down on every one. Let the stick controller decide: if they were at the bottom,
       // it follows the tail; if they'd scrolled up, it stays put and lights the "↓ New output" pill.
       pactChatPaint(t);
+      // Pull context usage NOW on load/reconnect (not only after the next turn), so a reopened conversation
+      // shows its "% ctx" size AND its model immediately — the getContextUsage() response carries `.model`,
+      // which is how a session whose `init` we missed reveals what it's running. Mirrors the Core resync.
+      if (t.key) wsPost("control", { action: "contextUsage", args: { sessionKey: t.key } });
       pactChatDrainQueue(t);   // a turn that finished during downtime just landed — release any queued follow-up
       // A bookmark jump to a response not in the loaded window triggered a full resync — now complete the jump.
       if (t._pendingBookmarkScroll != null) { const at = t._pendingBookmarkScroll; t._pendingBookmarkScroll = null; requestAnimationFrame(() => pactChatScrollToResponse(t, at)); }
@@ -5713,7 +5717,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       pactOutboxFlush();       // …and any queue recovered from a deploy/reload that was waiting on this turn
       return;
     // Context-window usage answer for this tab's session — store + repaint the header indicator.
-    case "contextUsage": t.contextUsage = d.usage; pactChatPaint(t); return;
+    case "contextUsage": t.contextUsage = d.usage; if (d.usage && d.usage.model) { t.activeModel = d.usage.model; pactUpdateModelNow(t); } pactChatPaint(t); return;
     // A prompt sent while this session was still finishing its current turn is refused with `busy`
     // (see lib/workspace.mjs's single-writer turn lock). Normally pactChatSend already queues a
     // mid-turn message rather than POSTing it, so this only fires on a genuine race — a turn started
@@ -6695,7 +6699,7 @@ function pactChatRender() {
   const hist = el("button", { class: "pact-ed-ico", title: "Pact chat history — resume a past conversation" }, ["🕐"]);
   hist.addEventListener("click", () => pactChatToggleHistory());
   const sync = el("button", { class: "pact-ed-ico", title: "Sync now — re-fetch this conversation's authoritative state (fixes a desync between two open clients)" }, ["↻"]);
-  const compactBtn = el("button", { class: "pact-ed-ico pact-compact", title: "Compact — summarise this conversation to shrink its context window. Sends /compact as the next turn." }, ["🗜"]);
+  const compactBtn = el("button", { class: "pact-ed-ico pact-compact", title: "Compact — summarise this conversation to shrink its context window. Sends /compact as the next turn." }, ["🗜 Compact"]);
   compactBtn.addEventListener("click", () => pactCompact());
   sync.addEventListener("click", () => pactChatForceResync(sync));
   const bm = el("button", { class: "pact-ed-ico pc-bm-ico", title: "Bookmarked responses — jump to a starred answer" }, ["★"]);
@@ -8299,7 +8303,7 @@ function viewWorkspace() {
     const badge = el("span", { class: "ws-usage" }, ["—"]);
     const closeBtn = el("button", { class: "ws-x", title: "Clear this pane (ends its session)" }, ["×"]);
     const histBtn = el("button", { class: "ws-ico", title: "History for this repo" }, ["⏱"]);
-    const compactBtn = el("button", { class: "ws-ico ws-compact", title: "Compact — summarise this conversation to shrink its context window. Sends /compact as the next turn." }, ["🗜"]);
+    const compactBtn = el("button", { class: "ws-ico ws-compact", title: "Compact — summarise this conversation to shrink its context window. Sends /compact as the next turn." }, ["🗜 Compact"]);
     compactBtn.addEventListener("click", () => wsCompact(p));
     const transcriptEl = el("div", { class: "ws-transcript" }, []);
     const promptEl = el("textarea", { class: "ws-prompt", rows: String(WS_PROMPT_MIN_ROWS), placeholder: "Message Claude… (Ctrl+Enter)" });
@@ -9423,6 +9427,11 @@ function viewWorkspace() {
           if (data.mode) p.mode = data.mode;
           p._liveText = "";   // stale relative to whatever actually streamed before the reconnect
           paintPane(p);
+          // Pull the context-window usage NOW (on load/reconnect), not only after the next turn's result —
+          // otherwise a reopened conversation shows no "% ctx" and no model until you send something. The
+          // getContextUsage() response also carries `.model`, which is how an already-running session (whose
+          // `init` event we missed) finally reveals which model it's on.
+          if (p.sessionKey && !p.readonly) wsPost("control", { action: "contextUsage", args: { sessionKey: p.sessionKey } });
           // Only announce a catch-up when the resync ACTUALLY changed something — the periodic idle-active
           // verification (below, in the heartbeat self-heal) resyncs a quiet pane every ~20s, and logging
           // "Reconnected — caught up" on each of those no-op confirmations would spam the activity rail.
@@ -9439,7 +9448,7 @@ function viewWorkspace() {
         return;
       }
       // Context-window usage is per-conversation — stored on the requesting pane(s) only.
-      if (data.kind === "contextUsage") { for (const p of targets) { p.contextUsage = data.usage; paintPane(p); } return; }
+      if (data.kind === "contextUsage") { for (const p of targets) { p.contextUsage = data.usage; if (data.usage && data.usage.model) p.activeModel = data.usage.model; paintPane(p); } return; }
       // Plan usage limits are account-wide, not per-conversation (see lib/workspace.mjs
       // _usageLimits) — stored globally so ANY pane's usage display reflects the latest answer,
       // not just whichever pane happened to ask.

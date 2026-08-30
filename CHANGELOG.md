@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.34] - 2026-08-30
+
+### Fixed
+- **Context size, fill %, and the model now actually SHOW — the 1.5.31/1.5.32 readouts were invisible in
+  practice.** Root cause: `contextUsage` was only requested AFTER a turn's result, so a reopened/idle
+  conversation had `contextUsage: null` → no "% ctx", no size, and (since the `init` event had already passed
+  before the browser connected) no model either. Now BOTH Core and Pact request context usage on
+  load/resync, and read the model straight out of the `getContextUsage()` response (which carries
+  `{ totalTokens, maxTokens, percentage, model }`). So on reload an existing conversation immediately shows
+  e.g. "1,816,006 tok · 41% of 200k ctx" and "· opus-4-1" — no new turn or engine restart needed.
+- **Compact button was easy to miss** (bare 🗜 glyph). Both Core and Pact now label it "🗜 Compact".
+
 ## [1.5.33] - 2026-08-30
 
 ### Changed
