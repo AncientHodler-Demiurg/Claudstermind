@@ -4,6 +4,14 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.28] - 2026-08-30
+
+### Changed
+- **The server app now wears the circuit-brain brand mark.** The window/taskbar icon and the desktop-shortcut
+  icon use `claudstermind-mark.png` (copied into `control/electron/brand-mark.png` so the control app is
+  self-contained) instead of a plain dot. The **tray** icon deliberately stays the coloured health dot
+  (green/amber/red) — its whole job is showing stack health at a glance. Icon-only change; no behaviour moves.
+
 ## [1.5.27] - 2026-08-30
 
 ### Added

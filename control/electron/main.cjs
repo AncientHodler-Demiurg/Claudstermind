@@ -31,7 +31,7 @@ function createWindow() {
     title: "Claudstermind",
     backgroundColor: "#0e1420",
     autoHideMenuBar: true,
-    icon: nativeImage.createFromBuffer(stateDot("up", 64)),
+    icon: nativeImage.createFromPath(path.join(__dirname, "brand-mark.png")),   // the circuit-brain brand mark
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true, nodeIntegration: false, sandbox: false,
