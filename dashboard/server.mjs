@@ -1243,10 +1243,9 @@ const handler = async (req, res) => {
   }
 
   // ---- model routing: which paths (Direct Claude built-in + optional OmniRoute) and the default path ----
-  if (path === "/api/routing") {
-    res.setHeader("cache-control", "no-store");
-    return sendJSON(res, 200, readRoutingConfig(DATA_DIR));
-  }
+  // NOTE: the POST branch MUST come first — a bare `if (path === "/api/routing")` with no method guard would
+  // otherwise catch the POST too (returning the unchanged config with no `ok`), which is exactly the "could not
+  // save" bug: the write never ran.
   if (req.method === "POST" && path === "/api/routing") {
     if (!sameOrigin(req)) return sendJSON(res, 403, { ok: false, reason: "cross-origin" });
     if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only" });
@@ -1257,6 +1256,10 @@ const handler = async (req, res) => {
     if (typeof b.omniDefaultModel === "string") patch.omniDefaultModel = b.omniDefaultModel;
     const cfg = writeRoutingConfig(DATA_DIR, patch);   // normalizeRoutingConfig enforces the invariants
     return sendJSON(res, 200, { ok: true, config: cfg });
+  }
+  if (path === "/api/routing") {
+    res.setHeader("cache-control", "no-store");
+    return sendJSON(res, 200, readRoutingConfig(DATA_DIR));
   }
 
   // ---- restore: the one irreversible action. Needs the id typed back. ----

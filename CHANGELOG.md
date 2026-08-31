@@ -4,6 +4,15 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.40] - 2026-08-31
+
+### Fixed
+- **"Could not save" in the Model-routing panel.** The `GET /api/routing` handler had no method guard, so it
+  also caught the `POST` — the save hit the read path, returned the UNCHANGED config with no `ok` field, and
+  the write never ran (the client read that as "could not save"). Reordered so the POST branch is matched
+  first. Also surfaced the server's failure `reason` in the panel's status line (e.g. read-only/cross-origin)
+  instead of a bare "could not save".
+
 ## [1.5.39] - 2026-08-31
 
 ### Added

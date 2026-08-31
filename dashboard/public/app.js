@@ -976,7 +976,7 @@ function viewRouting() {
     save.disabled = false;
     status.textContent = (j && j.ok)
       ? "✓ Saved. New chats start on " + (ROUTING.defaultPath === "omni" ? ("OmniRoute (" + ROUTING.omniDefaultModel + ")") : "Direct Claude") + "."
-      : "⚠ Could not save.";
+      : ("⚠ Could not save" + (j && j.reason ? " — " + j.reason : "") + ".");
   });
 
   return el("div", { class: "admin-card route-card" }, [
