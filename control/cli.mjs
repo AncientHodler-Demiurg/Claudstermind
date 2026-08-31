@@ -29,7 +29,7 @@ async function cmdStatus() {
     console.log("  " + dot(u.state) + " " + C.bold + u.label.padEnd(20) + C.reset + C.dim + u.unit + C.reset + (u.pid ? C.grey + "  pid " + u.pid : "") + C.reset);
     console.log("     " + C.grey + u.blurb + C.reset);
   }
-  console.log("\n  " + C.dim + "probes" + C.reset + "  dashboard: " + yn(s.probes.dashboard) + "   internet: " + yn(s.probes.internet) + "   tunnel: " + yn(s.probes.tunnel) + (s.probes.tunnel && s.probes.tunnel.disabled ? C.grey + " (bridge off in config)" + C.reset : ""));
+  console.log("\n  " + C.dim + "probes" + C.reset + "  dashboard: " + yn(s.probes.dashboard) + "   internet: " + yn(s.probes.internet) + "   tunnel: " + yn(s.probes.tunnel) + (s.probes.tunnel && s.probes.tunnel.disabled ? C.grey + " (bridge off in config)" + C.reset : "") + "   omniroute: " + yn(s.probes.omniroute));
   console.log("");
   process.exit(s.overall === "up" ? 0 : 1);
 }

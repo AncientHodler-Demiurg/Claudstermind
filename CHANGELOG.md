@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.45] - 2026-08-31
+
+### Added
+- **OmniRoute in the control app + a system service, so it stops dying.** Installed OmniRoute as a systemd
+  service (`omniroute.service`, auto-start on boot, `Restart=on-failure`), so it survives reboots on its own —
+  it had no auto-start and kept going down. Wired it into the Claudstermind control app / CLI (`controlPlane`):
+  a non-critical `omniroute` unit with **Start/Stop/Restart** buttons and a **health-probe dot**
+  (`:20128/api/health` — green = online AND serving, not merely "systemd active"). Its being down never makes
+  the overall status "failed" (only critical units do). The polkit rule now covers `omniroute.service` so the
+  buttons work with no password.
+- **Handoff doc** (`control/OMNIROUTE-LOCALHOST-HANDOFF.md`) for wiring the same Start/Stop into the separate
+  LocalHost aggregator repo — status via the health probe, actions via `systemctl` (polkit-allowed), with
+  `lib/controlPlane.mjs` as the working reference. So OmniRoute is operable from both faces.
+
 ## [1.5.44] - 2026-08-31
 
 ### Changed

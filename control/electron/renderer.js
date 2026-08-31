@@ -46,7 +46,7 @@ function paint(s) {
   const tunnelHint = p.tunnel && p.tunnel.disabled === true
     ? '<span class="p" style="color:var(--dim)">(enable the bridge in the dashboard → Relay)</span>' : "";
   $("probes").innerHTML = probe("dashboard", p.dashboard) + probe("internet", p.internet) +
-    probe("tunnel", p.tunnel) + tunnelHint;
+    probe("tunnel", p.tunnel) + probe("omniroute", p.omniroute) + tunnelHint;
 
   $("stamp").textContent = "updated " + new Date().toLocaleTimeString();
   for (const b of document.querySelectorAll(".actions button")) b.disabled = busy;
