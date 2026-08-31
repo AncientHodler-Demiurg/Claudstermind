@@ -373,13 +373,9 @@ async function boot() {
 
   // Version chip in the medallion (§10) — public, so it shows on every surface.
   try { const v = await (await fetch("/api/version", { cache: "no-store" })).json(); const vc = $("#phVer"); if (vc) { vc.textContent = "v" + v.version; vc.title = `v${v.version}${v.gitSha ? " · " + v.gitSha : ""}${v.builtAt ? " · " + v.builtAt : ""}${v.engine ? " · engine: " + v.engine : ""}`; } showEngineBadge(v.engine); } catch {}
-  // Routing preference: localStorage is the source of truth (works on the relay where /api/routing isn't
-  // proxied). Fall back to the server config only when there's nothing stored locally yet.
-  try {
-    const ls = localStorage.getItem("cm_routing");
-    if (ls) { const c = JSON.parse(ls); if (c && typeof c === "object") ROUTING = normalizeRoutingClient(c); }
-    else { const r = await (await fetch("/api/routing", { cache: "no-store" })).json(); if (r && typeof r.defaultPath === "string") ROUTING = normalizeRoutingClient(r); }
-  } catch {}
+  // Routing preference is a GLOBAL server setting (dashboard/data/routing.json). Read it from the server —
+  // works on both surfaces now (local direct; relay forwards over the tunnel). No per-browser divergence.
+  try { const r = await (await fetch("/api/routing", { cache: "no-store" })).json(); if (r && typeof r.defaultPath === "string") ROUTING = normalizeRoutingClient(r); } catch {}
 
   applyPhCollapsed(phHeaderCollapsed());   // restore the collapsed-header preference before first paint
   renderHeader();
@@ -935,12 +931,15 @@ function viewAdmin(sectionId) {
 }
 /* ---------- Admin → Model routing (two paths: Direct Claude built-in + optional OmniRoute) ---------- */
 async function saveRouting(patch) {
-  // Client-side is authoritative (so it saves on the relay too); persist to localStorage, then best-effort
-  // sync to the server for the local dashboard. Never fails on a missing/blocked server endpoint.
-  ROUTING = normalizeRoutingClient({ ...ROUTING, ...patch });
-  try { localStorage.setItem("cm_routing", JSON.stringify(ROUTING)); } catch {}
-  try { await fetch("/api/routing", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(ROUTING) }); } catch {}
-  return { ok: true, config: ROUTING };
+  // Server is authoritative — it's a global setting. POST works on both surfaces (local direct; relay forwards
+  // to the work machine over the tunnel). Use the server's normalized config as the new truth.
+  const want = normalizeRoutingClient({ ...ROUTING, ...patch });
+  try {
+    const res = await fetch("/api/routing", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(want) });
+    const j = await res.json();
+    if (j && j.config) { ROUTING = normalizeRoutingClient(j.config); return { ok: true, config: ROUTING }; }
+    return { ok: false, reason: (j && j.reason) || ("http " + res.status) };
+  } catch { return { ok: false, reason: "network" }; }
 }
 function viewRouting() {
   const cur = ROUTING || { omniEnabled: false, defaultPath: "claude", omniDefaultModel: "omni/auto" };

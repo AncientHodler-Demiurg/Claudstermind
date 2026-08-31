@@ -445,6 +445,22 @@ export function createRelay(opts = {}) {
       return sendJSON(res, 200, r || { ok: false, error: "no reply from the work machine" });
     }
 
+    // ---- model-routing preference (GLOBAL): read/write the same routing.json the local dashboard uses, over
+    // the tunnel, so a change made in the remote browser applies for everyone. Mirrors the bookmarks forward. ----
+    if (path === "/api/routing" && (req.method === "GET" || req.method === "POST")) {
+      const FALLBACK = { omniEnabled: false, defaultPath: "claude", omniDefaultModel: "omni/auto" };
+      if (req.method === "GET") {
+        if (!link.connected) return sendJSON(res, 200, FALLBACK);   // read is best-effort; default when offline
+        const r = await link.relay("routingGet", {}, 8000);
+        return sendJSON(res, 200, r?.config || FALLBACK);
+      }
+      if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Routing is ancient-only." });
+      if (!link.connected) return sendJSON(res, 503, { ok: false, reason: "local-not-connected", message: "The work machine isn't connected." });
+      const body = await readBody(req);
+      const r = await link.relay("routingSet", { patch: body }, 8000);
+      return sendJSON(res, 200, r?.config ? { ok: true, config: r.config } : { ok: false, reason: "no reply from the work machine" });
+    }
+
     // ---- remote workspace: serve an attached prompt image (ancient-only) ----
     // Same shape as the local dashboard's own /api/workspace/image, forwarded down the tunnel as
     // a one-shot COMMAND/RESULT (agent/agent.mjs's "workspaceImage") — a single image fetch has

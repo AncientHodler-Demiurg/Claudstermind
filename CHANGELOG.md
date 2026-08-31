@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.42] - 2026-08-31
+
+### Changed
+- **Model routing is now a GLOBAL server setting, writable from the remote browser too — not per-device.**
+  Reverting 1.5.41's localStorage stopgap: the config lives once on the work machine (`dashboard/data/routing.json`)
+  and every client (localhost and every relay browser) reads/writes the SAME value over the tunnel. Implemented
+  with the proven `coreBookmarks` pattern — a `routingGet`/`routingSet` bridge handler (agent.mjs) + a
+  `/api/routing` GET/POST forward on the relay (`link.relay`, ancient-only for writes). The client is
+  server-authoritative again. So enabling OmniRoute or switching the default path on your phone shows up on the
+  desktop, and vice-versa.
+
+### Deploy
+- Web (dashboard restart) + relay redeploy. agent.mjs is engine-classified, so restart sessiond when idle to be
+  safe — though the routing handler runs in the web/bridge, so a web+relay deploy is what actually activates it.
+
 ## [1.5.41] - 2026-08-31
 
 ### Fixed

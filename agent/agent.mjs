@@ -29,6 +29,7 @@ import { listDir as pactListDir, readTextFile as pactReadFile, writeTextFile as 
 import { gitChangedFiles as pactChangedFiles, gitFileAtHead as pactFileAtHead, diffstatSince as pactDiffstatSince } from "../lib/pactGit.mjs";
 import { readIdeState as pactReadIdeState, writeIdeState as pactWriteIdeState } from "../lib/pactIdeState.mjs";
 import { readCoreBookmarks, setCoreBookmarks } from "../lib/coreBookmarks.mjs";
+import { readRoutingConfig, writeRoutingConfig } from "../lib/routing.mjs";
 import { forwardRequestHeaders, buildUpgradeRequest } from "../lib/mirror.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -323,6 +324,17 @@ export function createBridge(opts = {}) {
       const result = frame.cmd.type === "pactIdeStateGet"
         ? { ok: true, state: pactReadIdeState(dir) }
         : pactWriteIdeState(dir, a.state || {});
+      if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
+      return;
+    }
+    // Model-routing preference: a GLOBAL setting stored on THIS machine (dashboard/data/routing.json), so the
+    // remote website reads/writes the SAME value the local dashboard does — no per-browser divergence. Same
+    // one-shot COMMAND/RESULT shape as the bookmarks/IDE-state stores above.
+    if (frame.cmd.type === "routingGet" || frame.cmd.type === "routingSet") {
+      const a = frame.cmd.args || {};
+      const result = frame.cmd.type === "routingGet"
+        ? { ok: true, config: readRoutingConfig(paths.dataDir) }
+        : { ok: true, config: writeRoutingConfig(paths.dataDir, a.patch || {}) };
       if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
       return;
     }
