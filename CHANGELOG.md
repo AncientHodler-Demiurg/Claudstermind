@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.43] - 2026-08-31
+
+### Fixed
+- **Model dropdown showing only "Default" after a deploy.** The model catalog is answered by the engine only
+  while a session is live (`getSupportedModels` needs a running `claude`), and a sessiond restart clears its
+  in-memory cache — so right after every deploy the selector was empty until the next turn. The client now
+  **caches the catalog in the browser** (`cm_models`) and seeds the dropdown from it on load, so the models
+  persist across restarts; the engine's fresh answer replaces the cache whenever one arrives. (Separately: the
+  OmniRoute `omni/…` models only appear once `OMNIROUTE_KEY` is set on the sessiond service — that engine env
+  step is still required, and the per-turn model readout still needs a live session to report what served.)
+
 ## [1.5.42] - 2026-08-31
 
 ### Changed

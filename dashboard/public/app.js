@@ -146,7 +146,12 @@ let LAST_MAIN = "#overview"; // where the admin "back" returns to
 // an optional path you enable, and you pick which enabled path a NEW chat defaults to. Fetched on boot; applied
 // client-side (filter the selector, choose a new chat's default model), so flipping it needs no engine restart.
 let ROUTING = { omniEnabled: false, defaultPath: "claude", omniDefaultModel: "omni/auto" };
-let OMNI_CATALOG = [];   // the omni/* entries from the live model catalog — for the routing panel's default-model picker
+// The model catalog is answered by the ENGINE only while a session is live (getSupportedModels needs a running
+// `claude`), and a sessiond restart clears its in-memory cache — so right after a deploy the dropdown is empty
+// until the next turn. Cache the last catalog in the browser so the selector is always populated; the engine's
+// fresh answer replaces it whenever one arrives.
+function readCachedModels() { try { const m = JSON.parse(localStorage.getItem("cm_models") || "null"); return Array.isArray(m) ? m : []; } catch { return []; } }
+let OMNI_CATALOG = readCachedModels().filter((m) => m && typeof m.value === "string" && m.value.startsWith("omni/"));   // omni/* entries — for the routing panel's default-model picker
 const routingOmniVisible = () => !!(ROUTING && ROUTING.omniEnabled);
 // The model id a NEW chat starts on: null (⇒ Claude "Default") unless the default path is an enabled OmniRoute.
 const routingDefaultModel = () => (ROUTING && ROUTING.defaultPath === "omni" && ROUTING.omniEnabled) ? (ROUTING.omniDefaultModel || "omni/auto") : null;
@@ -7463,8 +7468,9 @@ function viewWorkspace() {
     _pendingHistoryResume: null,   // { repo, worktree, sessionKey, timer } — a "resume a missing worktree" in flight
     // The model catalog (display name, description, effort/fast-mode support) — a property of the
     // CLI build/account, not per-pane, so it's ONE global list every pane's selector reads from
-    // (mirrors the server's own cross-session _modelsCache — see lib/workspace.mjs).
-    models: [],
+    // (mirrors the server's own cross-session _modelsCache — see lib/workspace.mjs). Seeded from the browser
+    // cache so the dropdown is populated immediately, even before/without a live session answering.
+    models: readCachedModels(),
     // claude.ai plan rate-limit utilization (5h/7d/per-model) — also account-wide, not per-pane.
     // EXPERIMENTAL per the SDK's own naming (see claudeSession.mjs getUsageLimits) — null until the
     // first live session answers, and may simply never populate on a non-claude.ai-subscriber build.
@@ -9396,7 +9402,7 @@ function viewWorkspace() {
       // The model catalog — ONE global list (see st.models above); a fresh answer replaces it and
       // every pane's selector is repainted so a newly-available model shows up everywhere at once,
       // not just in whichever pane happened to ask.
-      if (Array.isArray(data.models) && data.models.length) { st.models = data.models; OMNI_CATALOG = data.models.filter((m) => m && typeof m.value === "string" && m.value.startsWith("omni/")); for (const p of st.panes) paintPane(p); }
+      if (Array.isArray(data.models) && data.models.length) { st.models = data.models; OMNI_CATALOG = data.models.filter((m) => m && typeof m.value === "string" && m.value.startsWith("omni/")); try { localStorage.setItem("cm_models", JSON.stringify(data.models)); } catch {} for (const p of st.panes) paintPane(p); }
       if (Array.isArray(data.sessions)) { setLiveSessions(data.sessions); for (const s of data.sessions) for (const p of panesOf(s.sessionKey)) { p.status = s.status || p.status; if (s.mode) p.mode = s.mode; if (s.usage) p.usage = s.usage; if (s.background) p._background = s.background; paintPane(p); } }
       if (data.session) { upsertLiveSession(data.session); for (const p of panesOf(data.session.sessionKey)) { Object.assign(p, { status: data.session.status ?? p.status, mode: data.session.mode ?? p.mode, usage: data.session.usage ?? p.usage }); if (data.session.background) p._background = data.session.background; paintPane(p); } }
       // NOTE: the server's own defaultMode is deliberately NOT mirrored here. Every pane sends
