@@ -53,6 +53,12 @@ export function defaultSocketPath(env = process.env) {
  *  sink via addSink so the same event reaches every subscribed IPC client. */
 export function buildWorkspace(opts = {}) {
   const paths = opts.paths ?? defaultPaths();
+  // OmniRoute key: prefer the env, else read the secret file the user drops in (<secretsDir>/omniroute.txt).
+  // This means enabling OmniRoute needs NO systemd/env-file editing — a normal deploy (which restarts sessiond)
+  // is enough. Sets process.env so workspace._models (catalog) and claudeSession (routing) pick it up unchanged.
+  if (!process.env.OMNIROUTE_KEY) {
+    try { const k = readFileSync(join(paths.secretsDir, "omniroute.txt"), "utf8").trim(); if (k) process.env.OMNIROUTE_KEY = k; } catch {}
+  }
   const listRepos = opts.listRepos ?? (() => {
     try {
       const map = JSON.parse(readFileSync(join(paths.dataDir, "map.json"), "utf8"));

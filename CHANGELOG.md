@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.44] - 2026-08-31
+
+### Changed
+- **Enabling OmniRoute now needs only a deploy — no systemd/env-file editing.** sessiond reads `OMNIROUTE_KEY`
+  from the secret file the user already has (`<secretsDir>/omniroute.txt`) when the env var isn't set, and puts
+  it on `process.env` so `workspace._models` (catalog) and `claudeSession` (routing) pick it up unchanged. So a
+  normal deploy (which restarts sessiond) makes the `omni/…` models appear — no `EnvironmentFile`, no
+  `systemctl edit`. (The `.secrets/omniroute.env` + unit `EnvironmentFile` route still works and takes
+  precedence if set.)
+
 ## [1.5.43] - 2026-08-31
 
 ### Fixed
