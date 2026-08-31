@@ -150,6 +150,15 @@ let OMNI_CATALOG = [];   // the omni/* entries from the live model catalog — f
 const routingOmniVisible = () => !!(ROUTING && ROUTING.omniEnabled);
 // The model id a NEW chat starts on: null (⇒ Claude "Default") unless the default path is an enabled OmniRoute.
 const routingDefaultModel = () => (ROUTING && ROUTING.defaultPath === "omni" && ROUTING.omniEnabled) ? (ROUTING.omniDefaultModel || "omni/auto") : null;
+// Client-side source of truth (works on the relay too, where /api/routing isn't proxied). Mirrors
+// lib/routing.mjs's normalize so the two agree. Server POST is a best-effort sync for the local dashboard.
+function normalizeRoutingClient(c = {}) {
+  const omniEnabled = !!c.omniEnabled;
+  let defaultPath = c.defaultPath === "omni" ? "omni" : "claude";
+  if (defaultPath === "omni" && !omniEnabled) defaultPath = "claude";
+  const omniDefaultModel = (typeof c.omniDefaultModel === "string" && c.omniDefaultModel.startsWith("omni/")) ? c.omniDefaultModel : "omni/auto";
+  return { omniEnabled, defaultPath, omniDefaultModel };
+}
 
 function parseHash(h) {
   const parts = (h || "").replace(/^#/, "").split("/");
@@ -364,7 +373,13 @@ async function boot() {
 
   // Version chip in the medallion (§10) — public, so it shows on every surface.
   try { const v = await (await fetch("/api/version", { cache: "no-store" })).json(); const vc = $("#phVer"); if (vc) { vc.textContent = "v" + v.version; vc.title = `v${v.version}${v.gitSha ? " · " + v.gitSha : ""}${v.builtAt ? " · " + v.builtAt : ""}${v.engine ? " · engine: " + v.engine : ""}`; } showEngineBadge(v.engine); } catch {}
-  try { const r = await (await fetch("/api/routing", { cache: "no-store" })).json(); if (r && typeof r === "object" && typeof r.defaultPath === "string") ROUTING = r; } catch {}
+  // Routing preference: localStorage is the source of truth (works on the relay where /api/routing isn't
+  // proxied). Fall back to the server config only when there's nothing stored locally yet.
+  try {
+    const ls = localStorage.getItem("cm_routing");
+    if (ls) { const c = JSON.parse(ls); if (c && typeof c === "object") ROUTING = normalizeRoutingClient(c); }
+    else { const r = await (await fetch("/api/routing", { cache: "no-store" })).json(); if (r && typeof r.defaultPath === "string") ROUTING = normalizeRoutingClient(r); }
+  } catch {}
 
   applyPhCollapsed(phHeaderCollapsed());   // restore the collapsed-header preference before first paint
   renderHeader();
@@ -920,12 +935,12 @@ function viewAdmin(sectionId) {
 }
 /* ---------- Admin → Model routing (two paths: Direct Claude built-in + optional OmniRoute) ---------- */
 async function saveRouting(patch) {
-  try {
-    const res = await fetch("/api/routing", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) });
-    const j = await res.json();
-    if (j && j.config) ROUTING = j.config;
-    return j;
-  } catch { return null; }
+  // Client-side is authoritative (so it saves on the relay too); persist to localStorage, then best-effort
+  // sync to the server for the local dashboard. Never fails on a missing/blocked server endpoint.
+  ROUTING = normalizeRoutingClient({ ...ROUTING, ...patch });
+  try { localStorage.setItem("cm_routing", JSON.stringify(ROUTING)); } catch {}
+  try { await fetch("/api/routing", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(ROUTING) }); } catch {}
+  return { ok: true, config: ROUTING };
 }
 function viewRouting() {
   const cur = ROUTING || { omniEnabled: false, defaultPath: "claude", omniDefaultModel: "omni/auto" };

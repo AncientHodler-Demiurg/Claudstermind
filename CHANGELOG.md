@@ -4,6 +4,16 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.41] - 2026-08-31
+
+### Fixed
+- **Model-routing save now works from the relay (remote site), not just localhost.** The relay only proxies a
+  fixed set of API paths and has no `/api/routing` handler, so the POST failed there ("Could not save"). Since
+  the routing choice is a CLIENT-applied preference, the client now treats **localStorage as the source of
+  truth** (works everywhere), with a best-effort POST to sync the local dashboard. Save can no longer fail on a
+  missing/blocked endpoint. Trade-off: the preference is now **per-device** (per browser); cross-device sync
+  would need the relay→bridge tunnel plumbing, a later option.
+
 ## [1.5.40] - 2026-08-31
 
 ### Fixed
