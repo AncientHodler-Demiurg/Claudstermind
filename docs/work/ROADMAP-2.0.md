@@ -99,26 +99,86 @@ before hitting a wall, jump to any turn, and recall archived content — without
 
 ---
 
-## Phase 3 — DMP reconciliation  *(decision required before work starts)*
+## Phase 3 — DMP reconciliation  *(ANSWERED 2026-09-05 — see below)*
 
-Goal: resolve a real, documented architecture split. **Not blocking Phases 1–2** — can run fully parallel.
+The DMP agent replied to `HANDOFF-DMP-EXOCORTEX-PHASE3.md` in full, with grepped/live-run evidence
+rather than recollection. **The architecture split we feared does not exist.** Recording the answers
+here so 3.1/3.2/3.3/3.5 stop being re-litigated.
 
-Current state: our side built the reverse tunnel (`lib/reverseTunnel.mjs` + tests,
-`agent/dmp-tunnel.mjs`, `deploy/dmp-tunnel.service`). But `HANDOFF-DMP-CONTROL-INTEGRATION.md` records
-that the DMP side shipped a plain `DMP_MAIN_URL` proxy instead of wiring into the tunnel, and calls the
-routing "not built by either side yet". **Nobody ever confirmed reconciliation.** So "DMP tunnel is done"
-is not a safe assumption today.
+- [x] **3.1** ⇉ **Nothing is deployed anywhere — verified live, and this is CORRECT, not a failure.**
+      No `dmp-main`/`dmp-remote` systemd units installed; nothing listening on the frozen port; the git
+      remote has never been pushed to; only `deploy/systemd/*.service` unit *files* exist (drafted, not
+      installed). In-repo version marker `1.0.0`. DMP has been **local-only the whole time by the boss's
+      own standing instruction** — so "is the DMP tunnel done?" was the wrong question: nothing is live
+      to be done. Our previous inability to assert this was correct caution.
+- [x] **3.2** ⇉ **The TUNNEL won, cleanly. The proxy is gone.** `grep DMP_MAIN_URL` across every `.mjs`
+      on the DMP side: **zero hits**. It survives only as prose in one early planning draft; the shipped
+      `deploy/README.md` and `dmp-remote.service` state outright "There is NO DMP_MAIN_URL / http proxy /
+      open port anymore." Our `lib/reverseTunnel.mjs` is vendored there **byte-exact (sha256 confirmed)**
+      and attaches at boot on the remote role; `/healthz.mode` derives from `isBridgeConnected()`.
+      **Our records were stale, not their implementation.** No reconciliation work needed.
+      ⚠ **Name collision that helped cause this scare, now fixed on our side:** our
+      `dmpControlPlane.DMP_MAIN_URL` was a *local loopback probe URL* (`http://127.0.0.1:4002`), nothing
+      to do with the rejected proxy env var of the same name. Renamed `DMP_MAIN_LOCAL_URL` (v1.5.99).
+- [x] **3.3** ⇉ **Level-7 gate verified by a LIVE RUN**, not a code reading: real `http.createServer`
+      on a real socket, 690 assertions, exit 0. Observed refusals: read-only tier-6 → `POST /ai/send`
+      403, `POST /movies/new` 403, `POST /script/save` 403; `ai.view-only` tier-4 → `/ai/send` 403;
+      missing `versions.promote` → promote 403; unassigned tier-3 → real deny page with slate/movie
+      titles confirmed absent from the body.
+      **Honest caveat they volunteered:** sessions are built by the test harness, not driven through a
+      real AncientHub OIDC browser login (no live Hub reachable from their sandbox). The permission gate
+      is proven; the **OIDC login leg is proven separately but never chained end-to-end**. Residual risk
+      is the join between the two, and it is small but real. Do not upgrade this to "fully verified".
+- [ ] **3.4** ⇉ Liveness surfacing in the Linux control app. **STILL OURS, and now known to be worse than
+      "not built" — see the two-layer finding below.** Their D5 confirms the interface
+      (`/healthz` → `{role, ok, version, readOnly, aiEnabled, dbOk, mode, snapshotAt, mainReachable}`;
+      units `dmp-main.service`, `dmp-tunnel.service`, `dmp-snapshot.service`/`.timer`).
+      ⚠ **Their most valuable answer, which changes what we must build:** `ok`/`dbOk` only reflect
+      **whether SQLite opened** — not whether AI is reachable or configured. `aiEnabled` is a
+      *config-presence* check (a key file exists), **not a live probe**: it can read `true` while every
+      real AI call fails. So **`/healthz: 200` can coexist with a completely broken chat feature.**
+      Their own recommendation: treat green `/healthz` as *"process + DB alive"* only, **never** as
+      *"the product works."* The tab must render those as two separate signals or it becomes exactly the
+      meaningless green light we said we did not want.
+- [x] **3.5** ⇉ **Itemized answer delivered.** Classified as asked:
+      *not built, no blocker* — turn numbering/jump-to-#N, recall+`reason`, elapsed/stuck timer;
+      *not built, different architecture* — background subagents (DMP's AI turn is synchronous
+      request/response per movie thread; no persistent agent runtime);
+      *not applicable to their stack* — SDK context-usage API (they never run an Agent SDK session at
+      all; `ai/anthropic.mjs` is a raw HTTPS SSE client against `api.anthropic.com`);
+      *blocked on us / a real deploy* — a genuine bridge-UP `/healthz` (`mode:"relay"`) capture;
+      *blocked on infra* — real AncientHub OIDC end-to-end login;
+      *blocked on the boss* — git push / VPS install (standing local-only instruction);
+      *self-imposed rule* — they do not commit unless told to.
 
-- [ ] **3.0** ⚠ **DECISION:** chase reconciliation now, or park DMP until after 2.0? *(user's call)*
-- [ ] **3.1** Get a definitive status from the DMP-side agent/repo — what is actually deployed and running
-- [ ] **3.2** Reconcile the split: WS reverse tunnel (our design, chosen because SSH proved unreliable)
-      vs. the `DMP_MAIN_URL` proxy DMP actually shipped. One wins; the other is removed.
-- [ ] **3.3** Verify the **clearance level 7** gate end-to-end. Enforced only inside DMP's own app
-      (`dmp-main`), i.e. outside this repo → cannot be verified from here. Needs a live test.
-- [ ] **3.4** Liveness surfacing in the Linux control app — tunnel up/down + required processes, per the
-      original ask that this be visible, not something to go hunting for
-- [ ] **3.5** Get the itemized "what DMP can't do for me and why" answer that was asked for and never
-      delivered. (Known fragments only: no background subagents, no SDK context-usage API.)
+### Also settled by their reply
+- **Parts A1–A6 are "not applicable", and for a good reason, not a dodge:** DMP never built jump-to-#N,
+  windowing, turn pairing, or recall/archive at all. `ai_messages` is one flat row-per-message table and
+  the only DELETE against it is a full-movie cascade (grep-confirmed) — so **A6's retention guarantee is
+  true by construction**: nothing can make an old turn unaddressable. They agreed to adopt our contract
+  rules (server-side resolve, exclusive window end, typed `reason`, `null` elapsed) *if and when* they
+  build those features. **We did not hand them our bugs.**
+- **Part C does not apply either, verified by grep:** no `.interrupt()`/`.abort()`/live query-session
+  object exists in DMP; `@anthropic-ai/claude-agent-sdk` is a `package.json` dependency **imported
+  nowhere in production code**. Every bare `try{}catch{}` around a control call wraps *synchronous*
+  `net.Socket`/`ws` methods, so it is structurally not our async-rejection trap. Their one
+  message-content walker already guards with `Array.isArray(m.content)` rather than `|| []` — i.e. they
+  never had our 1.5.97 bug either.
+
+### 🔴 Live finding from their Part B5 — the DMP Start/Stop buttons, root-caused HERE
+They flagged a boss complaint that a Start/Stop control for the DMP process "was not working", and
+correctly bounced it to our side. It is real, and it fails at **two independent layers**:
+1. **`lib/dmpControlPlane.mjs` is dead code.** It is complete, documented and unit-tested — and imported
+   by **nothing but its own test**. No server route, no UI, no `control/cli.mjs` verb. The buttons could
+   not have worked because nothing was ever wired to them.
+2. **Even once wired, systemd would have refused.** `control/polkit/49-claudstermind.rules` allowlisted
+   only `claudstermind.service`, `claudstermind-sessiond.service` and `omniroute.service` — **no DMP
+   units at all**. Fixed in v1.5.99 (dmp-main / dmp-tunnel / dmp-snapshot.service / .timer added;
+   `dmp-remote.service` deliberately excluded — it is on the VPS and cannot be systemctl'd from here).
+   ⚠ **Requires a re-install to take effect** — the rule is a repo file, not a live one:
+   `sudo cp control/polkit/49-claudstermind.rules /etc/polkit-1/rules.d/ && sudo systemctl restart polkit`
+This is the "tested module that was never mounted" failure class — the suite was green the whole time,
+because tests prove a module works, never that anything *calls* it. Wiring it is item **3.4**.
 
 ---
 

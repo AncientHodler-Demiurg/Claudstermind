@@ -1,4 +1,4 @@
-// polkit rule: let the `ancientbox` user start/stop/restart ONLY the two Claudstermind units without a
+// polkit rule: let the `ancientbox` user start/stop/restart ONLY the Claudstermind + DMP units without a
 // password — so the control app's buttons work with no prompt, while every other systemd unit still needs
 // full auth. Install:
 //
@@ -10,7 +10,15 @@
 polkit.addRule(function (action, subject) {
   if (action.id === "org.freedesktop.systemd1.manage-units" && subject.user === "ancientbox") {
     var unit = action.lookup("unit");
+    // Claudstermind's own stack.
     if (unit === "claudstermind.service" || unit === "claudstermind-sessiond.service" || unit === "omniroute.service") {
+      return polkit.Result.YES;
+    }
+    // The DMP satellite stack (lib/dmpControlPlane.mjs DMP_UNITS). These were MISSING, which is half of why
+    // the control app's DMP Start/Stop buttons did nothing: even once wired, systemctl would be refused here.
+    // dmp-remote.service is deliberately absent — it lives on the VPS and cannot be systemctl'd from this box.
+    if (unit === "dmp-main.service" || unit === "dmp-tunnel.service"
+        || unit === "dmp-snapshot.service" || unit === "dmp-snapshot.timer") {
       return polkit.Result.YES;
     }
   }
