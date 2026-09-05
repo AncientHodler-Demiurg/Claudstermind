@@ -4,6 +4,29 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.108] - 2026-09-06
+### Changed
+- **The rollup bar was showing ceilings that can never fire.** Measured against a real context window,
+  the 25 MB byte ceiling is **6.2x further away on a 1M window and 31x on a 200k one** — it cannot bind
+  first, so it was pure clutter. Ceilings are now filtered by *relevance*: shown only when nearest or
+  close enough to overtake. `turns` therefore appears only where it genuinely can bind (a large window
+  with short turns); `bytes` effectively never does. All three are still **computed**, so they stay
+  checkable — hidden because irrelevant, not because we pretend they do not exist.
+- **The context figure no longer appears twice.** The footer already carries it; the bar now shows the
+  fill meter plus **what a wrap would actually take** — `would wrap R#1–R#179 [179] · P#1–P#98 [98]` —
+  which is the question you are asking when you look at that bar.
+- **The chat box offers Claude subscription models only.** OmniRoute is deliberately not selectable
+  until it is verified end to end (`slotsFor().footer.omniRoute === false` in both workspaces, tested).
+  A selectable route that might not work is worse than no route — you would find out mid-conversation.
+### Fixed
+- **Jump now works.** `R#35`, `r35`, `P#12` or a bare `35` (read as a response) scrolls that turn into
+  view and flashes it so you can see where you landed. A turn that is not in the loaded window says so
+  and points at Recall, instead of silently doing nothing.
+- **Medallion parity.** Conversation medallions and header chips were different constructions
+  (3px/14px vs 2px/11px), so the two workspaces' header rows sat at different heights. They are now one
+  rule — same height, padding, radius, border and font — differing only in length. Core's identity
+  medallion is built the same way and carries the ★, since it *is* the master conversation.
+
 ## [1.5.107] - 2026-09-06
 ### Fixed
 - **The wrap bar implied a cause that does not exist.** It drove everything off context %. Read from

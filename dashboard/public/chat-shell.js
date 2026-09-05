@@ -187,6 +187,9 @@
       },
       core: { transcript: true },
       footer: {
+        // OmniRoute is NOT offered in the chat box until it is verified end to end. A selectable route
+        // that might not work is worse than no route at all — you would discover it mid-conversation.
+        omniRoute: false,
         imageStrip: true,
         contLine: pact,                // suggest + bookmark: Pact only
         autoContinue: true,
@@ -237,13 +240,21 @@
       { id: "bytes",   label: "size",    now: bytes,  max: num(o.maxBytes, ROLL_MAX_BYTES), unit: "B" },
       { id: "context", label: "context", now: tokens, max: ceiling, unit: "tok" }
     ];
-    var nearest = null;
-    for (var i = 0; i < list.length; i++) {
+    var nearest = null, i;
+    for (i = 0; i < list.length; i++) {
       list[i].frac = list[i].now / list[i].max;
       list[i].pct = Math.round(list[i].frac * 1000) / 10;
       if (!nearest || list[i].frac > nearest.frac) nearest = list[i];
     }
-    return { list: list, nearest: nearest, willRollOn: nearest.id, frac: nearest.frac };
+    // RELEVANCE. Showing all three ceilings all the time is noise: measured against a real context
+    // window, the 25MB byte ceiling is 6x (1M window) to 31x (200k window) further away than context,
+    // so it can never fire first and is pure clutter. `turns` CAN bind, but only on a large window with
+    // short turns. So a ceiling is worth showing only when it is the nearest, or close enough to it to
+    // plausibly overtake. Everything else stays computed (and therefore checkable) but unrendered —
+    // hidden because it is irrelevant, not because we are pretending it does not exist.
+    for (i = 0; i < list.length; i++) list[i].relevant = list[i] === nearest || list[i].frac >= nearest.frac * 0.75;
+    return { list: list, visible: list.filter(function (c) { return c.relevant; }),
+             nearest: nearest, willRollOn: nearest.id, frac: nearest.frac };
   }
 
   /** What a wrap would actually take: the R#/P# ranges, their counts, and the character split. */
