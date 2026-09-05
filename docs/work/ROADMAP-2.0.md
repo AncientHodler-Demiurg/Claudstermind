@@ -3,6 +3,7 @@
 The single source of truth for what's left. Everything currently in flight or planned is here — if it
 isn't on this list, it isn't committed work. Tick boxes as things land.
 
+**Current:** v1.5.95 (`a09158b`) — suite fully green, 1316/1316. Phases 0–2 done.
 **Checkpoint:** `86c45a2` (v1.5.84) — 39 versions of work committed + pushed to
 `origin/feat-pact-changed-review`. Everything below builds on top of that restore point.
 
@@ -75,7 +76,8 @@ against a moving target.
 ## Phase 2 — Exocortex: the client  ✅ DONE (v1.5.95)
 
 Goal: the user's repeated ask — *see how full the context is, get warned before it's a problem, and
-navigate a long conversation without deleting it*. Currently **0% built**.
+navigate a long conversation without deleting it*. **Shipped in v1.5.95** — but see 4.10: not yet
+verified in a real browser, mobile especially.
 
 Each of T3.1–T3.5 edits `dashboard/public/app.js` → **serial with each other**. But each one's *pure
 helper* is a separate new `lib/*.mjs` file → those CAN be built in parallel, then mounted serially.
@@ -184,7 +186,7 @@ Audited with evidence; these are closed:
 
 | Item | Where |
 |---|---|
-| Pact PDF export + the "generating preview" hang | 1.5.56 / 1.5.58 — cause was a 1px hidden iframe forcing infinite line-wrap, not a permission prompt |
+| Pact PDF export | **Took THREE passes — do not assume "done" again without printing a long file.** 1.5.56 added it; 1.5.58 fixed the "generating preview" hang (a hidden 1px-wide iframe forcing infinite line-wrap, not a permission prompt); **1.5.95 fixed it emitting only the FIRST PAGE** (`body.ws-full{height:100vh;overflow:hidden}` + `html{overflow-x:hidden}` made the body a one-page clipping box at print time — the content past page 1 was never laid out). Verified in real headless Chromium: 400-line file 1 → 8 pages. |
 | Admin panel tabs clipped on mobile | 1.5.66 — nav pills wrap |
 | Mobile chat boxes capped at 2 | 1.5.60 — reload re-clamped panes to the desktop cap and dropped box 3+ |
 | Reload → engine-restart prompt | 1.5.78 (opt-in tick) + 1.5.64 (detect uncommitted engine changes) |
