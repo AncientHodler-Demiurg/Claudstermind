@@ -4,6 +4,32 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.98] - 2026-09-05
+### Added
+- **The model selector now names the EXACT model you are running.** The SDK's `ModelInfo` has always
+  carried `resolvedModel` ("canonical wire model id this row's `value` resolves to") and we were
+  **dropping it on the floor** in `modelOptionGroups`. So the picker showed "Default", "Opus",
+  sometimes "(recommended)" — none of which tell you which build you are reasoning with and being
+  billed for. New sentinel-marked MODEL IDENTITY helpers (`lib/modelIdentity.test.mjs`, 7 tests):
+  - No option can render a bare alias any more: **"Opus — opus-4-5-20250929"**, **"Default
+    (recommended) — sonnet-4-5-20250929"**. Hovering any option shows the full wire id, how it was
+    selected, and the SDK's own description.
+  - An alias the engine could **not** resolve renders **"— exact model unknown"** rather than
+    silently implying the family name is the answer.
+  - The date suffix is deliberately **kept** (unlike `prettyModel`): it is the only thing that
+    distinguishes two builds of the same version, and it was exactly what was being hidden.
+- **Core panes now have a resolved-model readout at all.** Core had a selector saying "Opus" and
+  *nothing* saying which Opus; Pact had a readout but it stripped the date. Both now show the exact
+  build next to the picker, with an honest muted-italic "model unreported" state that cannot be
+  misread as a model name.
+- **Switching model mid-conversation now warns about the prompt-cache cost.** The provider's cache is
+  keyed to the model, so a switch means the whole conversation is re-read at the new model's input
+  rate on the next turn. Claude's own CLI says this; we said nothing, so a switch looked free. The
+  warning names both builds and the token volume, and states plainly that **the switch still applies**.
+### Changed
+- `modelOptionGroups` options now carry `title` and `exact` alongside `value`/`label`; the four
+  grouping tests were updated to compare grouping fields and let `modelIdentity` own label wording.
+
 ## [1.5.97] - 2026-09-05
 ### Fixed
 - **"parts.filter is not a function" — a red error that KILLED THE WHOLE TURN.** A message's

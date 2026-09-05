@@ -8895,6 +8895,92 @@ function chatModelLabel(model, activeModel, selModel) {
   return base;
 }
 // ===== end CHAT MODEL LABEL pure helper =====
+// ===== MODEL IDENTITY — pure helpers (sliced for lib/modelIdentity.test.mjs) =====
+// "Which Opus am I actually running?" — the selector used to answer that with the catalogue's marketing
+// label ("Default", "Opus", sometimes "(recommended)"), which tells you NOTHING about the wire model you
+// are being billed for and reasoning with. The SDK has always exposed the answer and we were dropping it:
+// ModelInfo carries `resolvedModel` — "canonical wire model id this row's `value` resolves to (e.g.
+// 'sonnet' → 'claude-sonnet-5')". These helpers make the exact id impossible to lose.
+//
+// RULE: a model control must never show a name that does not resolve to a visible wire id. An alias row
+// ("Default", "Opus", "recommended") is only acceptable when the exact id it resolves to is shown NEXT TO IT.
+
+// The exact wire id for a catalogue row: what it resolves to, else its own value. "" when unknowable.
+function modelExactId(row) {
+  if (!row || typeof row !== "object") return "";
+  const r = typeof row.resolvedModel === "string" ? row.resolvedModel.trim() : "";
+  if (r) return r;
+  const v = typeof row.value === "string" ? row.value.trim() : "";
+  // An ALIAS with no resolvedModel is not an exact id — saying "opus" when asked "which opus?" is the
+  // exact non-answer this exists to kill. Report "" so callers can say "unknown" honestly.
+  return MODEL_ALIASES.has(v.toLowerCase()) ? "" : v;
+}
+// Aliases the CLI/SDK accept that name a FAMILY, not a build. `default` is the worst offender.
+const MODEL_ALIASES = new Set(["default", "opus", "sonnet", "haiku", "opusplan", "auto", "recommended", ""]);
+// "claude-opus-4-5-20250929" → "opus-4-5-20250929". Strips ONLY the redundant vendor prefix. The date is
+// KEPT on purpose: it is the difference between two builds of "Opus 4.5" and is precisely what was being
+// hidden. (Contrast prettyModel(), which strips it for the compact badge.)
+function modelShortId(id) {
+  if (!id) return "";
+  return String(id).replace(/^claude-/, "").replace(/^omni\//, "");
+}
+// The selector option label: the human name, plus the exact id whenever the name does not already contain
+// it. Never returns a bare "Default".
+function modelRowLabel(row) {
+  if (!row || typeof row !== "object") return "";
+  const name = (typeof row.displayName === "string" && row.displayName.trim()) || String(row.value || "");
+  const exact = modelShortId(modelExactId(row));
+  if (!exact) return name + " — exact model unknown";
+  // Already unambiguous (the name IS the id, or contains it) → don't stutter.
+  if (name === exact || name.includes(exact)) return name;
+  return name + " — " + exact;
+}
+// Tooltip: the FULL wire id, unshortened, plus whatever the SDK says the model is for.
+function modelRowTitle(row) {
+  if (!row || typeof row !== "object") return "";
+  const exact = modelExactId(row);
+  const bits = [exact ? "Wire model id: " + exact : "This row is an ALIAS and the engine did not report what it resolves to — the exact model is unknown."];
+  if (typeof row.value === "string" && row.value && row.value !== exact) bits.push("Selected as: " + row.value);
+  if (typeof row.description === "string" && row.description.trim()) bits.push(row.description.trim());
+  return bits.join("\n");
+}
+// The exact model a conversation is REALLY on. `activeModel` (what the running subprocess reported in its
+// own init event) is authoritative and beats the catalogue, because it is observed rather than looked up.
+// Falls back to resolving the picked value against the catalogue, then to "".
+function resolveModelExact(list, picked, activeModel) {
+  const live = typeof activeModel === "string" ? activeModel.trim() : "";
+  if (live && !MODEL_ALIASES.has(live.toLowerCase())) return live;
+  const v = typeof picked === "string" ? picked.trim() : "";
+  const rows = Array.isArray(list) ? list : [];
+  const hit = rows.find((m) => m && m.value === v);
+  if (hit) return modelExactId(hit);
+  return MODEL_ALIASES.has(v.toLowerCase()) ? "" : v;
+}
+// Switching model MID-conversation is not free: the provider's prompt cache is keyed to the model, so the
+// whole conversation is re-read at the new model's input rate. Claude itself warns about this in the CLI and
+// we were silently swallowing it. Returns null when there is nothing worth saying.
+function modelSwitchWarning(fromId, toId, tokens) {
+  const a = modelShortId(fromId || ""), b = modelShortId(toId || "");
+  if (!a || !b || a === b) return null;
+  const tok = Number(tokens);
+  const size = Number.isFinite(tok) && tok > 0 ? " ~" + tok.toLocaleString() + " tokens of" : "";
+  return "Switching " + a + " → " + b + " invalidates this conversation's prompt cache:" + size
+    + " context gets re-read at " + b + "'s input rate on the next turn. The switch still applies.";
+}
+// The "· <model>" readout next to a model control. Shows the EXACT build (date suffix and all) because
+// "opus-5" does not distinguish two Opus 5 builds, and knowing which one you are on is the entire point.
+// Returns { text, title } — never a bare "" title, so hovering always explains something.
+function chatModelReadout(list, picked, activeModel) {
+  const exact = resolveModelExact(list, picked, activeModel);
+  const short = modelShortId(exact);
+  const tag = omniProviderTag(picked);
+  const text = short ? (tag ? short + " · via " + tag : short) : (tag ? "via " + tag : "");
+  const title = exact
+    ? "Running exactly: " + exact + (tag ? "\nRouted " + tag : "\nDirect Anthropic")
+    : "The engine has not reported which model this conversation is running yet — send a prompt and it will.";
+  return { text, title };
+}
+// ===== end MODEL IDENTITY pure helpers =====
 // ===== MODEL OPTION GROUPS — pure helper (sliced for lib/modelOptionGroups.test.mjs) =====
 // Shapes a flat model-catalog list into the selector's option groups, shared by the Core desktop selector
 // (fillModelSelect) and the mobile/Pact-desktop selector (buildMobileModelSelect) so the two can't drift.
@@ -8913,15 +8999,18 @@ const OMNI_LESS_VALUE = "__omni_less__";
 function modelOptionGroups(list) {
   const items = Array.isArray(list) ? list.filter((m) => m && typeof m.value === "string") : [];
   const isOmni = (m) => m.value.startsWith("omni/");
-  const anthropic = items.filter((m) => !isOmni(m)).map((m) => ({ value: m.value, label: m.displayName || m.value }));
+  // label/title come from the MODEL IDENTITY helpers so no option can render a bare "Default"/"Opus"
+  // without the exact wire id it resolves to sitting right next to it.
+  const opt = (m) => ({ value: m.value, label: modelRowLabel(m), title: modelRowTitle(m), exact: modelExactId(m) });
+  const anthropic = items.filter((m) => !isOmni(m)).map(opt);
   const omni = items.filter(isOmni);
-  const combos = omni.filter((m) => m.combo).map((m) => ({ value: m.value, label: m.displayName || m.value }));
+  const combos = omni.filter((m) => m.combo).map(opt);
   const individual = omni.filter((m) => !m.combo);
   const byProvider = new Map();
   for (const m of individual) {
     const k = m.providerLabel || "Other";
     if (!byProvider.has(k)) byProvider.set(k, []);
-    byProvider.get(k).push({ value: m.value, label: m.displayName || m.value });
+    byProvider.get(k).push(opt(m));
   }
   const individualGroups = [...byProvider.entries()].map(([label, opts]) => ({ label: "OmniRoute · " + label, options: opts }));
   return {
@@ -8949,7 +9038,7 @@ function buildMobileModelSelect(hooks) {
     // show/select the REAL model actually running, grouped Anthropic vs OmniRoute (combos only by default).
     const list = readCachedModels().filter((m) => m && typeof m.value === "string" && (routingOmniVisible() || !m.value.startsWith("omni/")));
     const g = modelOptionGroups(list);
-    const mkOpt = (o) => el("option", { value: o.value }, [o.label]);
+    const mkOpt = (o) => el("option", { value: o.value, title: o.title || "" }, [o.label]);
     const groups = [];
     if (g.anthropic.length) groups.push(el("optgroup", { label: "Anthropic" }, g.anthropic.map(mkOpt)));
     if (g.combos.length) groups.push(el("optgroup", { label: "OmniRoute" }, g.combos.map(mkOpt)));
@@ -8960,7 +9049,7 @@ function buildMobileModelSelect(hooks) {
       groups.push(el("optgroup", { label: "OmniRoute" }, [mkOpt(g.moreOption)]));
     }
     const shown = value || active || "";
-    if (shown && !list.some((m) => m.value === shown)) groups.push(el("option", { value: shown }, [shown]));   // keep an already-picked (or uncataloged active) model visible
+    if (shown && !list.some((m) => m.value === shown)) groups.push(el("option", { value: shown, title: "Not in the current catalogue — shown so the pick is never silently lost." }, [modelShortId(shown)]));
     sel.replaceChildren(...groups);
     sel.value = shown;
   };
@@ -8978,8 +9067,12 @@ function pactUpdateModelNow(t) {
   if (!PACT_CHAT || !PACT_CHAT.host) return;
   if (t && t.id !== PACT_CHAT.activeId) return;
   const span = PACT_CHAT.host.querySelector(".pc-model-now");
-  const lbl = t ? chatModelLabel(null, t.activeModel, t.model) : "";
-  if (span) span.textContent = lbl ? "· " + lbl : "";
+  if (!span) return;
+  // EXACT build, not the date-stripped short label — "which Opus am I on?" is only answerable with the date.
+  const r = t ? chatModelReadout(readCachedModels(), t.model, t.activeModel) : { text: "", title: "" };
+  span.textContent = r.text ? "· " + r.text : "· model unreported";
+  span.title = r.title;
+  span.classList.toggle("--unknown", !r.text);
 }
 /** Model-bar swarm indicator: one small figure per LIVE subagent, lit while it works. In-place like
  *  pactUpdateModelNow — never repaints the transcript. Renders nothing at all when no subagents are
@@ -10198,7 +10291,7 @@ function viewWorkspace() {
     // Grouped Anthropic-key vs OmniRoute (combos only, by default) — see modelOptionGroups.
     const list = st.models.filter((m) => routingOmniVisible() || !(m && typeof m.value === "string" && m.value.startsWith("omni/")));
     const g = modelOptionGroups(list);
-    const mkOpt = (o) => el("option", { value: o.value }, [o.label]);
+    const mkOpt = (o) => el("option", { value: o.value, title: o.title || "" }, [o.label]);
     const groups = [];
     if (g.anthropic.length) groups.push(el("optgroup", { label: "Anthropic" }, g.anthropic.map(mkOpt)));
     if (g.combos.length) groups.push(el("optgroup", { label: "OmniRoute" }, g.combos.map(mkOpt)));
@@ -10211,7 +10304,7 @@ function viewWorkspace() {
     const shown = value || activeModel || "";
     // A pane's already-chosen (or currently-active-but-uncataloged) model may not be in a freshly-(re)fetched
     // catalog — inject a plain option so the dropdown still shows it rather than silently showing nothing.
-    if (shown && !list.some((m) => m.value === shown)) groups.push(el("option", { value: shown }, [shown]));
+    if (shown && !list.some((m) => m.value === shown)) groups.push(el("option", { value: shown, title: "Not in the current catalogue — shown so the pick is never silently lost." }, [modelShortId(shown)]));
     sel.replaceChildren(...groups);
     sel.value = shown;
   }
@@ -10899,6 +10992,9 @@ function viewWorkspace() {
     // fillModelSelect) — until then this just shows "Default", same as never having picked one.
     const modelSel = el("select", { class: "wsel wsel-sm wsel-model", title: "Model for this pane" });
     fillModelSelect(modelSel, p.model);
+    // Core had NO resolved-model readout at all — the selector said "Opus" and nothing said WHICH Opus.
+    // Mirrors Pact's `.pc-model-now`, but shows the exact build including the date suffix.
+    const modelNow = el("span", { class: "ws-model-now", title: "The exact model this pane is running" }, []);
     const effortSel = el("select", { class: "wsel wsel-sm wsel-effort", title: "Reasoning effort" });
     fillEffortSelect(effortSel, p);
     const fastModeLabel = el("label", { class: "ws-fastmode", title: "Fast mode — quicker, lighter-weight responses" }, [
@@ -10991,7 +11087,7 @@ function viewWorkspace() {
     // Compact + the status badge right. (It kept its .ws-pane-controls class: the mobile sheet in
     // wsOpenControlsSheet() re-homes this exact node by that selector, and renaming it would break that.)
     const swarmEl = el("div", { class: "pc-swarm", title: "Subagents working right now" }, []);
-    const controlsBar = el("div", { class: "ws-pane-controls --modelbar" }, [repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, swarmEl, histBtn, el("span", { class: "ws-spacer" }), compactBtn, badge]);
+    const controlsBar = el("div", { class: "ws-pane-controls --modelbar" }, [repoSel, wtSel, modeSel, modelSel, modelNow, effortSel, fastModeLabel, swarmEl, histBtn, el("span", { class: "ws-spacer" }), compactBtn, badge]);
     // The live "what's happening right now" feed — a single always-visible line (tap to expand
     // the full scrolling log) narrating every state transition: sending, thinking, streaming,
     // running a tool, waiting for permission, done, a connection hiccup — everything the orange
@@ -11044,7 +11140,16 @@ function viewWorkspace() {
         fillModelSelect(modelSel, p.model, p.activeModel);
         return;
       }
+      // Switching model mid-conversation invalidates the provider's prompt cache — the whole conversation
+      // is re-read at the new model's input rate. Claude's own CLI warns about this; we were saying nothing,
+      // so a switch looked free. Only warn when a conversation actually EXISTS to be re-read.
+      const prevExact = resolveModelExact(st.models, p.model, p.activeModel);
       p.model = modelSel.value || null;
+      const nextExact = resolveModelExact(st.models, p.model, "");
+      if (p.sessionKey && (p.transcript || []).length) {
+        const warn = modelSwitchWarning(prevExact, nextExact, p.usage && p.usage.contextTokens);
+        if (warn) logActivity(p, "⚠ " + warn, "ws-act-err");
+      }
       wsPost("control", { action: "setModel", args: { sessionKey: p.sessionKey, model: p.model } });
       paintPane(p); saveLayout();   // repaint: the effort/fast-mode controls depend on the new model
     });
@@ -11117,7 +11222,7 @@ function viewWorkspace() {
     // Desktop: dock the Live/Held bulb just above Send. Mobile: syncMobileBar homes it in the pane HEADER
     // instead (by the identity), so don't dock to the compose here — it would flash there before moving.
     if (!st.isMobile) stick.dockMode(sendWrap, "stick-mode--dock");
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, stick, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, stopBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, exo, _bmPop: bmPop, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, stick, promptEl, repoSel, wtSel, modeSel, modelSel, modelNow, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, stopBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, exo, _bmPop: bmPop, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
     if (p.draft) { promptEl.value = p.draft; wsAutoResizePrompt(promptEl); }   // restore the saved compose draft after a view switch / reload
     return paneRoot;
   }
@@ -11222,6 +11327,12 @@ function viewWorkspace() {
     // Model/effort/fast-mode: rebuilt every paint (cheap — a handful of <option>s), since
     // st.models can arrive/refresh asynchronously well after the pane and its selects exist.
     fillModelSelect(ui.modelSel, p.model, p.activeModel);
+    if (ui.modelNow) {
+      const mr = chatModelReadout(st.models, p.model, p.activeModel);
+      ui.modelNow.textContent = mr.text ? "· " + mr.text : "· model unreported";
+      ui.modelNow.title = mr.title;
+      ui.modelNow.classList.toggle("--unknown", !mr.text);
+    }
     fillEffortSelect(ui.effortSel, p);
     const modelInfo = modelInfoFor(p.model);
     ui.fastModeLabel.hidden = !modelInfo?.supportsFastMode;

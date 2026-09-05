@@ -2519,3 +2519,16 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .exo-recall-body { max-height: 26vh; }
   .exo-tier-advice { flex-basis: 100%; }
 }
+
+/* ---- EXACT MODEL READOUT (Core `.ws-model-now`, Pact `.pc-model-now`) ------------------------
+   "Opus" in a selector does not say WHICH Opus. These show the exact wire build (date suffix and
+   all) next to the picker. Widened from the old 160px cap because an exact id like
+   `opus-4-5-20250929` was being ellipsised away — which defeated the entire point. `--unknown`
+   is the honest state: the engine has not reported a model yet, rendered muted + italic so it
+   never reads as a model NAME. */
+.ws-model-now { flex: 0 0 auto; font-size: 10.5px; color: var(--accent, #c77dff); font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 210px; letter-spacing: .1px; }
+.ws-model-now:empty { display: none; }
+.ws-model-now.--unknown, .pc-model-now.--unknown { color: var(--ink-dim, #7c8aa5); font-weight: 500; font-style: italic; }
+.pc-model-now { max-width: 210px; }
+@media (max-width: 820px) { .ws-model-now, .pc-model-now { max-width: 130px; } }
