@@ -4,6 +4,28 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.101] - 2026-09-05
+### Added
+- **Chat Shell Lab — `/chat-shell-lab.html`.** A mockup page for agreeing the unified
+  Header/Core/Footer chat shape **before any production box is edited**. Controls for workspace
+  (Core vs Pact), the 40%→100% toggle, shell height, prompt length, mock conversations/turns, running
+  agents, reconnect chip, cue strip, image strip and the per-repository history popup, plus a live
+  geometry readout. It runs the **real** `dashboard/public/chat-shell.js`, so the shape approved in the
+  lab is literally the code that will ship — not a lookalike that drifts.
+- **`dashboard/public/chat-shell.js`** — the pure layout maths (no DOM), with `lib/chatShell.test.mjs`
+  (12 tests). Percentages are of **CORE's height**, fixing the two divergent rules production has today
+  (Core capped the type box at 40% of the *viewport*; Pact at 80% of the *container*).
+  - Collapse order is data, not luck: model bar → continuation line → metadata → attach.
+    **Stop and Send are not collapsible slots at all** — the invariant is asserted across every state.
+  - Hysteresis so typing on a boundary cannot flicker the footer. Writing the test caught a real
+    inversion: the release threshold was computed from the *post*-collapse cap, which put it **above**
+    the engage threshold — worse than no hysteresis.
+### Fixed
+- **Auto-continue was rendered twice.** Every desktop branch drew a lead span reading "🔁 Auto-continue"
+  / "🔁 Auto-continue on" and *then* a checkbox whose own label said "Auto-continue" again — so the bar
+  read "🔁 Auto-continue on … ☐ Auto-continue (4/10)". The checkbox now shows only the round counter
+  when a lead span is present, and keeps its full wording when it stands alone (mobile).
+
 ## [1.5.100] - 2026-09-05
 ### Changed
 - **Models are now named the way a human names them — "Opus 4.5", not `opus-4-5-20250929`.** 1.5.98

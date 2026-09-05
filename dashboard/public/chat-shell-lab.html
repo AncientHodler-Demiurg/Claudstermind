@@ -1,0 +1,303 @@
+<!doctype html><meta charset="utf-8">
+<title>Chat Shell Lab — Header / Core / Footer</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#0b1020;--panel:#101827;--panel2:#0d1226;--line:#22304a;--ink:#e7ecff;--dim:#9aa6c7;--acc:#c77dff;--ok:#3ddc97;--warn:#ffb454;--err:#ff6b81;--hdr:#121a2e;--ftr:#101a2c}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;display:flex;height:100vh;overflow:hidden}
+/* ---------- control rail ---------- */
+#rail{width:300px;flex:0 0 300px;border-right:1px solid var(--line);background:var(--panel2);overflow-y:auto;padding:12px}
+#rail h1{font-size:14px;margin:0 0 2px}
+#rail .sub{color:var(--dim);font-size:11px;margin:0 0 12px}
+.grp{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:9px;background:#0b1120}
+.grp>b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);margin-bottom:6px}
+.row{display:flex;gap:6px;align-items:center;margin:4px 0;flex-wrap:wrap}
+button{background:#16203a;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 9px;font:inherit;font-size:11.5px;cursor:pointer}
+button:hover{border-color:var(--acc)}
+button.on{background:var(--acc);color:#1a0b2e;border-color:var(--acc);font-weight:700}
+input[type=range]{width:100%}
+label{font-size:11.5px;color:var(--dim);display:flex;gap:5px;align-items:center;cursor:pointer}
+#metrics{font:11px ui-monospace,Consolas,monospace;color:var(--dim);white-space:pre-wrap;background:#080d1a;border:1px solid var(--line);border-radius:6px;padding:7px;line-height:1.55}
+#metrics b{color:var(--ok)}
+/* ---------- stage ---------- */
+#stage{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;padding:18px;overflow:auto}
+#shell{width:100%;max-width:900px;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 10px 40px #0006}
+/* ===== THE THREE REGIONS. The boundaries are the point — 1px rule + a background TONE STEP so you can
+   always see where a region ends, even mid-scroll. This is spec invariant I3. ===== */
+.rg-header{flex:0 0 auto;background:var(--hdr);border-bottom:2px solid var(--line);box-shadow:0 2px 0 #0003}
+.rg-core{flex:1 1 auto;min-height:0;overflow-y:auto;background:var(--panel);padding:10px 12px;display:flex;flex-direction:column;gap:8px;scrollbar-width:thin}
+.rg-footer{flex:0 0 auto;background:var(--ftr);border-top:2px solid var(--line);box-shadow:0 -2px 0 #0003}
+body.showbounds .rg-header{border-bottom-color:var(--warn)}
+body.showbounds .rg-footer{border-top-color:var(--warn)}
+body.showbounds .rg-core{outline:1px dashed #3ddc9755;outline-offset:-2px}
+.rg-core.--gone{display:none}
+/* header innards — MAX 3 rows, transient status is a CHIP not a row */
+.hrow{display:flex;align-items:center;gap:6px;padding:6px 9px;min-height:32px;flex-wrap:nowrap;overflow:hidden}
+.hrow+.hrow{border-top:1px solid #ffffff0d}
+.tab{padding:3px 9px;border-radius:14px;background:#1a2440;border:1px solid var(--line);font-size:11.5px;white-space:nowrap}
+.tab.--act{border-color:var(--acc);color:#fff}
+.chip{padding:2px 8px;border-radius:11px;background:#16203a;border:1px solid var(--line);font-size:11px;color:var(--dim);white-space:nowrap}
+.chip.--ok{color:var(--ok);border-color:#3ddc9744}
+.chip.--acc{color:var(--acc);border-color:#c77dff44}
+.spacer{flex:1}
+.cue{margin:0 9px 6px;padding:6px 9px;border-radius:7px;background:#1b1330;border:1px solid #c77dff44;font-size:11.5px;color:#e3d3ff}
+/* core innards */
+.msg{padding:7px 10px;border-radius:8px;font-size:12.5px;max-width:88%}
+.msg.--u{background:#1a2340;border:1px solid var(--line);align-self:flex-end}
+.msg.--a{background:#141c30;border:1px solid #ffffff0f;align-self:flex-start}
+.tno{font-size:10px;color:var(--acc);font-weight:700;margin-bottom:2px}
+/* footer innards */
+.frow{display:flex;align-items:center;gap:6px;padding:5px 9px;min-height:30px}
+.frow+.frow{border-top:1px solid #ffffff0d}
+.frow.--gone{display:none}
+#typebox{width:100%;resize:none;background:#0a1020;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit;font-size:12.5px;line-height:18px;outline:none;display:block}
+#typebox:focus{border-color:var(--acc)}
+.btn-send{background:var(--acc);color:#1a0b2e;font-weight:700;border-color:var(--acc)}
+.btn-stop{background:#3a1720;color:#ffb3c0;border-color:#7a2b3c}
+.sel{background:#0f1730;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:3px 6px;font:inherit;font-size:11.5px}
+/* history popup */
+#hist{position:fixed;inset:0;background:#000a;display:none;align-items:center;justify-content:center;z-index:50}
+#hist.--open{display:flex}
+.histbox{width:520px;max-height:70vh;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
+.histhd{padding:9px 12px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;font-weight:600}
+.histtabs{display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid var(--line)}
+.histlist{overflow-y:auto;padding:8px 12px;display:flex;flex-direction:column;gap:6px}
+.hitem{padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:#0f1730;font-size:12px;display:flex;gap:8px;align-items:center}
+.hitem .spacer{flex:1}
+.warnbar{background:#2a1c0b;border-bottom:1px solid var(--warn);color:var(--warn);font-size:11.5px;padding:5px 10px;text-align:center}
+@media (max-width:820px){body{flex-direction:column}#rail{width:auto;flex:0 0 auto;max-height:42vh;border-right:none;border-bottom:1px solid var(--line)}}
+</style>
+
+<div id="rail">
+  <h1>Chat Shell Lab</h1>
+  <p class="sub">Mockup only — production untouched. Runs the real <code>chat-shell.js</code> maths.</p>
+
+  <div class="grp"><b>Workspace</b>
+    <div class="row"><button id="wCore" class="on">Core</button><button id="wPact">Pact</button></div>
+    <div class="sub" id="wNote" style="margin:4px 0 0"></div>
+  </div>
+
+  <div class="grp"><b>Footer growth</b>
+    <div class="row"><button id="expandBtn">⇕ Expand (40% → full)</button></div>
+    <label><input type="checkbox" id="bounds" checked> Highlight region boundaries</label>
+    <div class="row" style="margin-top:6px"><span class="sub">Shell height</span></div>
+    <input type="range" id="shellH" min="320" max="900" value="620">
+  </div>
+
+  <div class="grp"><b>Type box content</b>
+    <div class="row">
+      <button data-fill="0">empty</button><button data-fill="3">3 lines</button>
+      <button data-fill="12">12</button><button data-fill="40">40</button><button data-fill="200">200</button>
+    </div>
+  </div>
+
+  <div class="grp"><b>Simulate</b>
+    <div class="row"><button id="addConv">+ conversation</button><button id="addTurns">+ 6 turns</button><button id="clearTurns">clear</button></div>
+    <div class="row"><button id="agents">▸ agents running</button><button id="recon">↻ reconnected</button><button id="cue">cue strip</button></div>
+    <div class="row"><button id="imgs">+ image strip</button><button id="histBtn">🕐 history popup</button></div>
+  </div>
+
+  <div class="grp"><b>Live geometry</b><div id="metrics"></div></div>
+</div>
+
+<div id="stage"><div id="shell"></div></div>
+
+<div id="hist"><div class="histbox">
+  <div class="histhd"><span>🕐 Conversation history</span><span class="spacer"></span><span class="chip" id="histRepo"></span><button id="histX">×</button></div>
+  <div class="histtabs"><button id="hOpen" class="on">Open (2)</button><button id="hRet">Retired (5)</button></div>
+  <div class="histlist" id="histList"></div>
+</div></div>
+
+<script src="/chat-shell.js"></script>
+<script>
+var CS = window.ChatShell;
+var S = {
+  kind: "core", expanded: false, prevLevel: 0,
+  turns: 8, convs: [{ n: "Master", act: true }], agents: 0, recon: false, cue: true, imgs: 0,
+  repo: "Claudstermind"
+};
+var $ = function (s, r) { return (r || document).querySelector(s); };
+function el(t, a, k) { var e = document.createElement(t); for (var x in (a || {})) { if (x === "class") e.className = a[x]; else if (x === "html") e.innerHTML = a[x]; else e.setAttribute(x, a[x]); } (k || []).forEach(function (c) { e.appendChild(typeof c === "string" ? document.createTextNode(c) : c); }); return e; }
+
+function build() {
+  var slots = CS.slotsFor(S.kind);
+  var shell = $("#shell");
+  shell.style.height = $("#shellH").value + "px";
+  shell.replaceChildren();
+
+  /* ================= HEADER — fixed height, max 3 rows, transient status is a CHIP ============== */
+  var hdr = el("div", { class: "rg-header" });
+  var r1 = el("div", { class: "hrow" });
+  if (slots.header.tabs) {
+    S.convs.forEach(function (c) { r1.appendChild(el("span", { class: "tab" + (c.act ? " --act" : "") }, [c.n])); });
+    r1.appendChild(el("button", { title: "new conversation" }, ["+"]));
+  } else {
+    r1.appendChild(el("span", { class: "chip --acc" }, ["◍ " + S.repo]));
+    r1.appendChild(el("span", { class: "chip" }, ["1 active conversation"]));
+  }
+  r1.appendChild(el("span", { class: "spacer" }));
+  // THE FIX for the wasted line: transient status is a chip here, never its own full-width row.
+  if (S.recon) r1.appendChild(el("span", { class: "chip --ok" }, ["↻ caught up"]));
+  if (S.agents) r1.appendChild(el("span", { class: "chip --ok" }, ["🟢".repeat(Math.min(S.agents, 5)) + " " + S.agents]));
+  r1.appendChild(el("span", { class: "chip --ok" }, ["✓ Saved"]));
+  hdr.appendChild(r1);
+
+  var r2 = el("div", { class: "hrow" });
+  r2.appendChild(el("span", { class: "chip --acc" }, ["◐ 66% ctx"]));
+  r2.appendChild(el("span", { class: "chip" }, ["⚙ " + S.agents + " agents"]));
+  r2.appendChild(el("input", { class: "sel", style: "flex:1", placeholder: "P#/R# or search archive" }));
+  r2.appendChild(el("button", {}, ["Go"]));
+  r2.appendChild(el("button", {}, ["⌕ Recall"]));
+  hdr.appendChild(r2);
+  if (S.cue) hdr.appendChild(el("div", { class: "cue" }, ["Getting full · 66% — finish this thread, then roll to a fresh window at a natural break."]));
+  shell.appendChild(hdr);
+
+  /* ================= CORE — the only flexing region ============================================ */
+  var core = el("div", { class: "rg-core" });
+  for (var i = 0; i < S.turns; i++) {
+    core.appendChild(el("div", { class: "msg --u" }, ["Prompt #" + (i + 1) + " — a user turn."]));
+    var a = el("div", { class: "msg --a" });
+    a.appendChild(el("div", { class: "tno" }, ["R#" + (i + 1)]));
+    a.appendChild(el("div", {}, ["An assistant answer. ".repeat(3 + (i % 4) * 4)]));
+    core.appendChild(a);
+  }
+  if (!S.turns) core.appendChild(el("div", { class: "chip" }, ["no turns — use “+ 6 turns”"]));
+  shell.appendChild(core);
+
+  /* ================= FOOTER — grows, collapses in order, Send/Stop never ======================= */
+  var ftr = el("div", { class: "rg-footer" });
+  if (S.imgs) {
+    var ir = el("div", { class: "frow", id: "f-img" });
+    for (var j = 0; j < S.imgs; j++) ir.appendChild(el("span", { class: "chip" }, ["🖼 shot-" + (j + 1) + ".png ×"]));
+    ftr.appendChild(ir);
+  }
+  if (slots.footer.contLine) {
+    ftr.appendChild(el("div", { class: "frow", id: "f-cont" }, [el("span", { class: "chip" }, ["💡 suggested next"]), el("span", { class: "spacer" }), el("button", {}, ["★"])]));
+  }
+  ftr.appendChild(el("div", { class: "frow", id: "f-auto" }, [el("label", {}, ["Auto-continue (4/10)"]), el("span", { class: "spacer" })]));
+
+  var taRow = el("div", { class: "frow" });
+  var ta = el("textarea", { id: "typebox", placeholder: "Message the agent… (⌘/Ctrl+Enter to send)" });
+  taRow.appendChild(ta); ftr.appendChild(taRow);
+
+  var act = el("div", { class: "frow", id: "f-act" });
+  act.appendChild(el("button", { id: "f-attach" }, ["📎"]));
+  var meta = el("span", { class: "row", id: "f-meta", style: "gap:6px" });
+  if (slots.footer.repoPicker) { var sel = el("select", { class: "sel" }); ["Claudstermind", "OuronetPact", "AncientHub"].forEach(function (r) { sel.appendChild(el("option", {}, [r])); }); sel.value = S.repo; sel.onchange = function () { S.repo = sel.value; render(); }; meta.appendChild(sel); }
+  else meta.appendChild(el("span", { class: "chip" }, ["🔒 OuronetPact"]));
+  meta.appendChild(el("span", { class: "chip" }, ["⑂ main"]));
+  act.appendChild(meta);
+  act.appendChild(el("button", { id: "f-hist", title: "Conversations in THIS repository" }, ["🕐"]));
+  act.appendChild(el("span", { class: "spacer" }));
+  act.appendChild(el("button", { class: "btn-stop" }, ["■ Stop"]));
+  act.appendChild(el("button", { class: "btn-send" }, ["Send"]));
+  ftr.appendChild(act);
+
+  var mb = el("div", { class: "frow", id: "f-model" });
+  mb.appendChild(el("span", { class: "chip --acc", id: "f-modelchip" }, ["Opus 4.5"]));
+  var mExtra = el("span", { class: "row", id: "f-modelextra", style: "gap:6px" });
+  mExtra.appendChild(el("span", { class: "chip" }, ["Default effort"]));
+  mExtra.appendChild(el("span", { class: "chip" }, ["Fast"]));
+  mExtra.appendChild(el("span", { class: "chip" }, ["93,016 tok · 16%"]));
+  mb.appendChild(mExtra);
+  mb.appendChild(el("span", { class: "spacer" }));
+  mb.appendChild(el("button", { id: "f-expand" }, [S.expanded ? "⇕ Collapse (full → 40%)" : "⇕ Expand (40% → full)"]));
+  ftr.appendChild(mb);
+  shell.appendChild(ftr);
+
+  $("#f-hist").onclick = openHist;
+  $("#f-expand").onclick = toggleExpand;
+  ta.addEventListener("input", function () { S.prevLevel = 0; layout(); });
+  ta.value = S._text || "";
+  layout();
+}
+
+/* The ONLY place geometry is decided — and it is decided by the shared pure module, not by CSS luck. */
+function layout() {
+  var shell = $("#shell"), ta = $("#typebox");
+  var hdr = shell.querySelector(".rg-header"), ftr = shell.querySelector(".rg-footer"), core = shell.querySelector(".rg-core");
+  var lineH = 18, minTypeH = lineH + 16;
+
+  // reset before measuring, so the natural content height is honest
+  ta.style.height = "auto"; ta.style.overflowY = "hidden";
+  var contentH = Math.max(minTypeH, ta.scrollHeight);
+  var footerBaseH = ftr.offsetHeight - ta.offsetHeight + minTypeH;
+
+  var r = CS.computeShell({
+    shellH: shell.clientHeight, headerH: hdr.offsetHeight, footerBaseH: footerBaseH,
+    contentH: contentH, minTypeH: minTypeH, lineH: lineH,
+    expanded: S.expanded, prevLevel: S.prevLevel
+  });
+  S.prevLevel = r.collapseLevel;
+
+  ta.style.height = r.typeH + "px";
+  ta.style.overflowY = r.typeScrolls ? "auto" : "hidden";
+  core.classList.toggle("--gone", r.coreHidden);
+  core.style.flex = r.coreHidden ? "0 0 0" : "1 1 auto";
+
+  var map = { modelBar: "#f-modelextra", contLine: "#f-cont", meta: "#f-meta", attach: "#f-attach" };
+  Object.keys(map).forEach(function (k) { var n = $(map[k]); if (n) n.classList.toggle("--gone", !!r.collapsed[k]); });
+  $("#f-modelchip").style.display = "";                     // the model chip always survives
+  ["#f-act .btn-send", "#f-act .btn-stop"].forEach(function (s) { var n = $(s); if (n) n.classList.remove("--gone"); });
+
+  $("#metrics").innerHTML =
+    "shell      " + shell.clientHeight + "\nheader     " + hdr.offsetHeight +
+    "\ncore@rest  <b>" + Math.round(r.coreAtRest) + "</b>\ncore now   <b>" + Math.round(r.coreH) + "</b>" +
+    (r.coreHidden ? "  (VANISHED)" : "") +
+    "\ntype box   <b>" + Math.round(r.typeH) + "</b> / cap " + Math.round(r.cap) +
+    "\n  base cap " + Math.round(r.baseCap) + (r.capIsFloored ? "  (row-floored)" : "") +
+    "\n  freed    " + r.freed + " px from collapsed rows" +
+    "\nscrolling  " + (r.typeScrolls ? "YES — text scrolls" : "no") +
+    "\ncollapse   level " + r.collapseLevel + "/4" +
+    "\nSend/Stop  <b>visible</b> (invariant I5)";
+}
+
+function toggleExpand() { S.expanded = !S.expanded; S.prevLevel = 0; render(); }
+function openHist() {
+  var slots = CS.slotsFor(S.kind);
+  $("#histRepo").textContent = S.kind === "pact" ? "🔒 OuronetPact" : S.repo;
+  $("#hOpen").textContent = "Open (" + (slots.history.multi ? 2 : 1) + ")";
+  var list = $("#histList"); list.replaceChildren();
+  var n = $("#hOpen").classList.contains("on") ? (slots.history.multi ? 2 : 1) : 5;
+  for (var i = 0; i < n; i++) {
+    var it = el("div", { class: "hitem" }, [el("span", {}, [(i === 0 ? "★ " : "") + "Conversation " + (i + 1) + " — " + $("#histRepo").textContent])]);
+    it.appendChild(el("span", { class: "spacer" }));
+    it.appendChild(el("button", {}, ["open"]));
+    list.appendChild(it);
+  }
+  if (!slots.history.multi && $("#hOpen").classList.contains("on")) list.appendChild(el("div", { class: "chip" }, ["Core has exactly ONE active conversation — the rest are Retired."]));
+  $("#hist").classList.add("--open");
+}
+
+function render() { build(); }
+
+/* ---- controls ---- */
+$("#wCore").onclick = function () { S.kind = "core"; this.classList.add("on"); $("#wPact").classList.remove("on"); note(); render(); };
+$("#wPact").onclick = function () { S.kind = "pact"; this.classList.add("on"); $("#wCore").classList.remove("on"); note(); render(); };
+function note() { $("#wNote").textContent = S.kind === "pact" ? "Pact: repo LOCKED, many tabs, continuation line on." : "Core: repo CHOSEN, one active conversation, no continuation line."; }
+$("#expandBtn").onclick = toggleExpand;
+$("#bounds").onchange = function () { document.body.classList.toggle("showbounds", this.checked); };
+$("#shellH").oninput = function () { $("#shell").style.height = this.value + "px"; layout(); };
+document.querySelectorAll("[data-fill]").forEach(function (b) {
+  b.onclick = function () {
+    var n = +b.dataset.fill;
+    S._text = n ? Array.from({ length: n }, function (_, i) { return "Line " + (i + 1) + " of a long prompt that keeps going and going."; }).join("\n") : "";
+    $("#typebox").value = S._text; S.prevLevel = 0; layout();
+  };
+});
+$("#addConv").onclick = function () { S.convs.forEach(function (c) { c.act = false; }); S.convs.push({ n: "Chat " + (S.convs.length + 1), act: true }); render(); };
+$("#addTurns").onclick = function () { S.turns += 6; render(); };
+$("#clearTurns").onclick = function () { S.turns = 0; render(); };
+$("#agents").onclick = function () { S.agents = S.agents ? 0 : 3; this.classList.toggle("on", !!S.agents); render(); };
+$("#recon").onclick = function () { S.recon = !S.recon; this.classList.toggle("on", S.recon); render(); };
+$("#cue").onclick = function () { S.cue = !S.cue; this.classList.toggle("on", S.cue); render(); };
+$("#imgs").onclick = function () { S.imgs = S.imgs ? 0 : 3; this.classList.toggle("on", !!S.imgs); render(); };
+$("#histBtn").onclick = openHist;
+$("#histX").onclick = function () { $("#hist").classList.remove("--open"); };
+$("#hOpen").onclick = function () { this.classList.add("on"); $("#hRet").classList.remove("on"); openHist(); };
+$("#hRet").onclick = function () { this.classList.add("on"); $("#hOpen").classList.remove("on"); openHist(); };
+window.addEventListener("resize", layout);
+document.body.classList.add("showbounds");
+$("#cue").classList.add("on");
+note(); render();
+</script>

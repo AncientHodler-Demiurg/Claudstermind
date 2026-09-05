@@ -8348,15 +8348,23 @@ function pactChatUpdateSuggest(t) {
     t._autoDeadline = 0;   // a deliberate toggle always starts a fresh countdown
     pactChatUpdateSuggest(t); pactStateSave();
   });
-  const autoLbl = el("label", { class: "pc-suggest-auto" + (d.on ? " --on" : ""),
-    title: "Auto-continue: automatically send the next prompt when idle (up to " + PACT_AUTO_CAP + " rounds per batch). Toggle any time — including WHILE a round is running." },
-    [autoCb, document.createTextNode(" " + (mob ? "Auto" : "Auto-continue") + (d.autoCount ? " (" + d.autoCount + "/" + autoCap + ")" : ""))]);
+  // DUPLICATE-LABEL BUG (fixed 1.5.101): every desktop branch below renders a descriptive lead span that
+  // already says "Auto-continue" (or "Auto-continue on"), and then rendered this checkbox label which said
+  // "Auto-continue" AGAIN — so the bar read "🔁 Auto-continue on … ☐ Auto-continue (4/10)". The checkbox is
+  // adjacent to the words, so repeating them carries zero information. When a lead span is present the
+  // checkbox shows ONLY the round counter; it keeps the full wording when it stands alone (mobile, where
+  // there is no lead span). The title always carries the full explanation either way.
+  const AUTO_TITLE = "Auto-continue: automatically send the next prompt when idle (up to " + PACT_AUTO_CAP + " rounds per batch). Toggle any time — including WHILE a round is running.";
+  const autoCountTxt = d.autoCount ? " (" + d.autoCount + "/" + autoCap + ")" : "";
+  const mkAutoLbl = (hasLead) => el("label", { class: "pc-suggest-auto" + (d.on ? " --on" : ""), title: AUTO_TITLE },
+    [autoCb, document.createTextNode(hasLead ? (autoCountTxt || " on") : (" " + (mob ? "Auto" : "Auto-continue") + autoCountTxt))]);
+  const autoLbl = mkAutoLbl(false);
   const cd = el("span", { class: "pc-suggest-count" }, [d.arm ? " · sending in " + Math.max(1, Math.ceil(d.msLeft / 1000)) + "s" : ""]);
   const why = pactAutoWhy(d);
   const whyEl = why ? el("span", { class: "pc-suggest-sub" }, [" — " + why]) : "";   // "" (never null) — el() appends kids verbatim
   if (d.busy) {
     // Mid-round: state + the toggle. On → offer Stop; off → the toggle lets you turn it on right now.
-    const parts = mob ? [autoLbl] : [el("span", { class: "pc-suggest-lbl" }, d.on ? ["🔁 ", el("b", {}, ["Auto-continue on"]), whyEl] : ["🔁 Auto-continue"]), autoLbl];
+    const parts = mob ? [autoLbl] : [el("span", { class: "pc-suggest-lbl" }, d.on ? ["🔁 ", el("b", {}, ["Auto-continue on"]), whyEl] : ["🔁 Auto-continue"]), mkAutoLbl(true)];
     if (d.on) { const stop = el("button", { class: "pc-suggest-btn pc-suggest-stopauto", type: "button", title: "Turn auto-continue off now (the running round still finishes)" }, [mob ? "■" : "■ Stop auto"]); stop.addEventListener("click", () => { t._autoContinue = false; pactAutoStop(t); pactChatUpdateSuggest(t); pactStateSave(); }); parts.push(stop); }
     box.replaceChildren(...parts);
     return;
@@ -8377,7 +8385,7 @@ function pactChatUpdateSuggest(t) {
       parts.push(el("span", { class: "pc-suggest-lbl" }, [capReached ? "Auto limit reached — " : "Suggested next: ", el("b", {}, [sug.text])]), useBtn, sendBtn, autoLbl, cd, dismiss);
     }
   } else {
-    parts.push(...(mob ? [autoLbl, cd] : [el("span", { class: "pc-suggest-lbl" }, ["🔁 Auto-continue"]), autoLbl, cd]));
+    parts.push(...(mob ? [autoLbl, cd] : [el("span", { class: "pc-suggest-lbl" }, ["🔁 Auto-continue"]), mkAutoLbl(true), cd]));
   }
   if (whyEl) parts.push(whyEl);   // idle + paused (cap / composing): say so, never fail silently
   box.replaceChildren(...parts);

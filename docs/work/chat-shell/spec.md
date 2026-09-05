@@ -1,6 +1,7 @@
 # Chat Shell — unified Header / Core / Footer
 
-**Status:** SPEC, awaiting sign-off. No code written yet.
+**Status:** DECISIONS TAKEN. Pure logic + LAB built. **Production untouched by instruction.**
+**Lab:** `/chat-shell-lab.html` — approve the shape there before a single production box is edited.
 **Scope of this document:** DESKTOP shape only. Mobile is deliberately deferred until the desktop
 shape is agreed (explicit instruction).
 **Goal:** ONE implementation, used by both workspaces, where a change made once appears in both.
@@ -153,7 +154,38 @@ today.
 
 ---
 
-## 6. Open questions — need answers before build
+## 6. DECISIONS (taken 2026-09-05) — questions closed
+
+- **Q1 — 40% toggle: HARDCODED and GLOBAL.** Not per-conversation, not configurable. `SWALLOW_PCT = 0.40`.
+- **Q2 — At 100%, CORE VANISHES.** No peek strip. Percentages are of **CORE's height**, never the viewport.
+- **Q3 — "Must not read as broken."** Resolved with a **row floor**: the cap is
+  `max(FLOOR_ROWS × lineHeight, pct × Core)`, then clamped so it can never exceed Core. On a tall window
+  the fraction wins and behaves exactly as specified; only on a cramped window does the floor take over,
+  and the layout **reports** that it did (`capIsFloored`) rather than hiding it.
+- **Q4 — Auto-continue duplicate: CONFIRMED REAL, fixed in v1.5.101.** Not a layout bug. Every desktop
+  branch rendered a lead span reading "Auto-continue"/"Auto-continue on" *and then* a checkbox label that
+  said "Auto-continue" again. The checkbox now shows only the round counter when a lead span is present.
+- **Q5 — MOCKUP FIRST. Production is not touched until the shape is signed off.** The lab page runs the
+  **real** `chat-shell.js`, so what is approved is literally the code that ships — not a lookalike that
+  drifts. Migration order after sign-off: **Pact first** (already proper flex, lower risk), then Core.
+- **Q6 — Before 2.0, and its MOBILE variant also before 2.0.**
+
+## 6b. Also decided: per-repository conversation history (both workspaces)
+
+The worked example of why this is one component and not two. Same UI, adapted by capability:
+
+| | Core | Pact |
+|---|---|---|
+| Repository | **chosen** (picker in the footer) | **locked** to OuronetPact |
+| Active conversations | exactly **one** | **many** (tabs) |
+| History button | ✅ footer | ✅ footer |
+| History scope | **this repository only** | **this repository only** |
+| Tabs in popup | Open / **Retired** | Open / **Retired** |
+
+**The all-repos history list is removed from the Core tree view** — that is what was burying it.
+`slotsFor()` encodes exactly this; `history.scope` is `"repo"` for both and there is no other value.
+
+## 7. Still open
 
 - **Q1 — Does the 40 % toggle persist per conversation, or globally?** Assumed per-conversation,
   saved with the draft.
@@ -174,7 +206,7 @@ today.
 
 ---
 
-## 7. Explicitly NOT in this pass
+## 8. Explicitly NOT in this pass
 
 - Mobile layout (deferred by instruction until desktop is signed off)
 - The REPL terminal (Pact-only, lives outside the shell)
