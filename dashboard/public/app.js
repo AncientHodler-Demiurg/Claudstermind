@@ -8924,23 +8924,76 @@ function modelShortId(id) {
   if (!id) return "";
   return String(id).replace(/^claude-/, "").replace(/^omni\//, "");
 }
-// The selector option label: the human name, plus the exact id whenever the name does not already contain
-// it. Never returns a bare "Default".
+// PARSE a wire id into the name a human uses. "claude-opus-4-5-20250929" is not a name, it is a
+// coordinate: <vendor>-<family>-<major>-<minor>-<build date>. Claude Code's own picker shows "Opus 4.5",
+// so we show "Opus 4.5". The 8-digit tail is the model's BUILD/snapshot date (2025-09-29) — it identifies
+// which build of that version, and belongs in the tooltip, not in a label you have to decode at a glance.
+//
+// Handles both id orders Anthropic has shipped: modern `claude-opus-4-5-...` (family first) and legacy
+// `claude-3-5-sonnet-...` (version first). Returns { name, family, version, build, raw }.
+const MODEL_FAMILIES = ["opus", "sonnet", "haiku", "fable", "instant"];
+function parseModelId(id) {
+  const raw = String(id || "").trim();
+  const out = { name: "", family: "", version: "", build: "", raw };
+  if (!raw) return out;
+  // Routed ids ("omni/groq/llama-3.3-70b") are third-party names, not Anthropic coordinates — the last
+  // path segment IS the name; don't pretend to parse a version out of it.
+  const routed = raw.startsWith("omni/");
+  let body = raw.replace(/^omni\/[^/]*\//, "").replace(/^omni\//, "").replace(/^claude-/, "");
+  // Trailing build stamp: an 8-digit YYYYMMDD (or any 6+ digit run) at the very end.
+  const mBuild = body.match(/-(\d{6,})$/);
+  if (mBuild) { out.build = mBuild[1]; body = body.slice(0, -(mBuild[1].length + 1)); }
+  body = body.replace(/-latest$/, "");
+  const parts = body.split("-").filter(Boolean);
+  const fi = parts.findIndex((t) => MODEL_FAMILIES.includes(t.toLowerCase()));
+  if (fi < 0 || routed) {
+    // Not an Anthropic coordinate we recognise — present it as-is rather than inventing a name.
+    out.name = body || raw;
+    return out;
+  }
+  out.family = parts[fi].toLowerCase();
+  // Version digits are whatever numeric tokens sit around the family token, in id order.
+  const nums = parts.filter((t, i) => i !== fi && /^\d+$/.test(t));
+  out.version = nums.join(".");
+  out.name = out.family.charAt(0).toUpperCase() + out.family.slice(1) + (out.version ? " " + out.version : "");
+  return out;
+}
+// "20250929" → "2025-09-29". Anything that isn't a date-shaped stamp is returned unchanged.
+function formatModelBuild(build) {
+  const b = String(build || "");
+  return /^\d{8}$/.test(b) ? b.slice(0, 4) + "-" + b.slice(4, 6) + "-" + b.slice(6, 8) : b;
+}
+// The human name for a wire id — "claude-opus-4-5-20250929" → "Opus 4.5". "" for nothing.
+function humanModelName(id) { return parseModelId(id).name; }
+
+// The selector option label. Shows the HUMAN name (what Claude Code shows), never a raw wire id and never
+// a bare marketing alias. When you picked an alias, the alias is named in parentheses so the row answers
+// both questions at once: what did I choose, and what IS that → "Opus 4.5 (default)".
 function modelRowLabel(row) {
   if (!row || typeof row !== "object") return "";
-  const name = (typeof row.displayName === "string" && row.displayName.trim()) || String(row.value || "");
-  const exact = modelShortId(modelExactId(row));
-  if (!exact) return name + " — exact model unknown";
-  // Already unambiguous (the name IS the id, or contains it) → don't stutter.
-  if (name === exact || name.includes(exact)) return name;
-  return name + " — " + exact;
+  const declared = (typeof row.displayName === "string" && row.displayName.trim()) || "";
+  const exact = modelExactId(row);
+  const human = humanModelName(exact);
+  const isAlias = MODEL_ALIASES.has(String(row.value || "").toLowerCase());
+  if (!human) return (declared || String(row.value || "")) + " — exact model unknown";
+  // NOT an Anthropic coordinate (an OmniRoute combo, a third-party model) and the catalogue gave it a
+  // curated name — that name is better than anything we can derive from the id ("Auto · best coding"
+  // beats "best-coding"). Only Anthropic's own family-version ids are ours to parse.
+  if (!parseModelId(exact).family && declared) return declared;
+  // An alias row: say what it actually is, and which alias got you there.
+  if (isAlias) return human + " (" + String(row.value) + ")";
+  return human;
 }
 // Tooltip: the FULL wire id, unshortened, plus whatever the SDK says the model is for.
 function modelRowTitle(row) {
   if (!row || typeof row !== "object") return "";
   const exact = modelExactId(row);
-  const bits = [exact ? "Wire model id: " + exact : "This row is an ALIAS and the engine did not report what it resolves to — the exact model is unknown."];
-  if (typeof row.value === "string" && row.value && row.value !== exact) bits.push("Selected as: " + row.value);
+  if (!exact) return "This row is an ALIAS and the engine did not report what it resolves to — the exact model is unknown.";
+  const p = parseModelId(exact);
+  const bits = [p.name];
+  if (p.build) bits.push("Build " + formatModelBuild(p.build) + " — which build of " + p.name + " this is.");
+  if (typeof row.value === "string" && row.value && row.value !== exact) bits.push('Selected as "' + row.value + '"');
+  bits.push("Wire id: " + exact);
   if (typeof row.description === "string" && row.description.trim()) bits.push(row.description.trim());
   return bits.join("\n");
 }
@@ -8960,7 +9013,8 @@ function resolveModelExact(list, picked, activeModel) {
 // whole conversation is re-read at the new model's input rate. Claude itself warns about this in the CLI and
 // we were silently swallowing it. Returns null when there is nothing worth saying.
 function modelSwitchWarning(fromId, toId, tokens) {
-  const a = modelShortId(fromId || ""), b = modelShortId(toId || "");
+  const a = humanModelName(fromId || "") || modelShortId(fromId || "");
+  const b = humanModelName(toId || "") || modelShortId(toId || "");
   if (!a || !b || a === b) return null;
   const tok = Number(tokens);
   const size = Number.isFinite(tok) && tok > 0 ? " ~" + tok.toLocaleString() + " tokens of" : "";
@@ -8972,11 +9026,12 @@ function modelSwitchWarning(fromId, toId, tokens) {
 // Returns { text, title } — never a bare "" title, so hovering always explains something.
 function chatModelReadout(list, picked, activeModel) {
   const exact = resolveModelExact(list, picked, activeModel);
-  const short = modelShortId(exact);
+  const p = parseModelId(exact);
   const tag = omniProviderTag(picked);
-  const text = short ? (tag ? short + " · via " + tag : short) : (tag ? "via " + tag : "");
+  const text = p.name ? (tag ? p.name + " · via " + tag : p.name) : (tag ? "via " + tag : "");
   const title = exact
-    ? "Running exactly: " + exact + (tag ? "\nRouted " + tag : "\nDirect Anthropic")
+    ? p.name + (p.build ? "\nBuild " + formatModelBuild(p.build) : "")
+      + "\nWire id: " + exact + (tag ? "\nRouted " + tag : "\nDirect Anthropic")
     : "The engine has not reported which model this conversation is running yet — send a prompt and it will.";
   return { text, title };
 }
@@ -9049,7 +9104,7 @@ function buildMobileModelSelect(hooks) {
       groups.push(el("optgroup", { label: "OmniRoute" }, [mkOpt(g.moreOption)]));
     }
     const shown = value || active || "";
-    if (shown && !list.some((m) => m.value === shown)) groups.push(el("option", { value: shown, title: "Not in the current catalogue — shown so the pick is never silently lost." }, [modelShortId(shown)]));
+    if (shown && !list.some((m) => m.value === shown)) groups.push(el("option", { value: shown, title: "Not in the current catalogue — shown so the pick is never silently lost." }, [humanModelName(shown) || shown]));
     sel.replaceChildren(...groups);
     sel.value = shown;
   };
@@ -10304,7 +10359,7 @@ function viewWorkspace() {
     const shown = value || activeModel || "";
     // A pane's already-chosen (or currently-active-but-uncataloged) model may not be in a freshly-(re)fetched
     // catalog — inject a plain option so the dropdown still shows it rather than silently showing nothing.
-    if (shown && !list.some((m) => m.value === shown)) groups.push(el("option", { value: shown, title: "Not in the current catalogue — shown so the pick is never silently lost." }, [modelShortId(shown)]));
+    if (shown && !list.some((m) => m.value === shown)) groups.push(el("option", { value: shown, title: "Not in the current catalogue — shown so the pick is never silently lost." }, [humanModelName(shown) || shown]));
     sel.replaceChildren(...groups);
     sel.value = shown;
   }

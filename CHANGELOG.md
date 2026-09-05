@@ -4,6 +4,24 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.100] - 2026-09-05
+### Changed
+- **Models are now named the way a human names them — "Opus 4.5", not `opus-4-5-20250929`.** 1.5.98
+  fixed the selector hiding the model behind "Default"/"Opus", but replaced it with the raw wire id,
+  which is a coordinate, not a name. New `parseModelId()` decodes it properly:
+  `claude-opus-4-5-20250929` → family `opus`, version `4.5`, **build `20250929`** → **"Opus 4.5"**,
+  matching what Claude Code's own model picker shows.
+  - The 8-digit tail is the model's **build/snapshot date**. It says *which build* of that version you
+    are on, so it belongs in the tooltip ("Build 2025-09-29 — which build of Opus 4.5 this is."),
+    not in a label you have to decode at a glance.
+  - Both id orders Anthropic has shipped are handled: modern `claude-opus-4-5-…` (family first) and
+    legacy `claude-3-5-sonnet-…` (version first) both yield "Opus 4.5" / "Sonnet 3.5".
+  - **Alias rows name themselves AND what they are**: "Opus 4.5 (opus)", "Sonnet 4.5 (default)".
+  - **Non-Anthropic rows keep the catalogue's curated name** — "Auto · best coding" beats a derived
+    "best-coding". Only Anthropic's own family-version ids are ours to parse; inventing a version for
+    a third-party id would be a fabrication.
+  - The model-switch prompt-cache warning now reads "Opus 4.5 → Opus 5" instead of two wire ids.
+
 ## [1.5.99] - 2026-09-05
 ### Fixed
 - **The control app's DMP Start/Stop buttons could never have worked — root-caused at two layers.**
