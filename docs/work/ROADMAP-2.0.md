@@ -155,6 +155,12 @@ is not a safe assumption today.
       not tested on a phone. Needs a real pass.
 - [ ] **4.6** ⇉ **OmniRoute bench is local-only** — `/api/omni/*` returns 404 `local-only` in OIDC/relay
       mode. Wiring a long-running SSE sweep through the tunnel needs new `agent/agent.mjs` command handlers.
+- [ ] **4.11** ⇉ **Error rows are never persisted.** `workspace.mjs` pushes `kind:"assistant"` into the
+      transcript and flushes to disk, but `kind:"error"` rows are live-only — a red error exists in the
+      browser tab and nowhere else, so a reload destroys it forever. Found while trying to diagnose the
+      1.5.97 `parts.filter` error and being unable to recover the text. The one class of message you most
+      want to inspect afterwards is the only one we throw away. Decide: persist error rows (changes what
+      appears in transcripts) or keep a separate error journal.
 - [ ] **4.4** ⇉ Commit cadence: stop accumulating 39-version piles. Checkpoint commit per phase.
 
 ---
