@@ -129,11 +129,12 @@ async function readSseLines(resp, predicate, ms = 3000) {
 }
 
 test("restart trigger crosses the tunnel exactly like deploy: gated ancient-only + connection-required, forwards a WS_IN kind:restart frame that reaches the bridge's injected pipeline, and streams its log back over SSE", async (t) => {
+  const ws = tempWorkspace();
   const relay = createRelay({ oidc: OIDC, deviceSecret: DEVICE });
   await new Promise((r) => relay.server.listen(0, "127.0.0.1", r));
   // Registered up-front (not at the end) so a failing assertion mid-test still tears the
   // server/bridge down instead of hanging the run on a dangling socket/listener.
-  t.after(async () => { try { bridgeRef?.stop(); } catch {} await new Promise((r) => relay.server.close(r)); });
+  t.after(async () => { try { bridgeRef?.stop(); } catch {} await new Promise((r) => relay.server.close(r)); rmSync(ws.root, { recursive: true, force: true }); });
   const port = relay.server.address().port;
   const base = `http://127.0.0.1:${port}`;
   let bridgeRef = null;
@@ -163,9 +164,15 @@ test("restart trigger crosses the tunnel exactly like deploy: gated ancient-only
     },
     subscribe: (fn) => { restartSubs.add(fn); return () => restartSubs.delete(fn); },
   };
+  // The bridge MUST be pointed at a scratch workspace, exactly like the first test does. Left to its
+  // defaults it snapshots this real repo, and because the bridge runs in THIS process here (in
+  // production it is a separate machine), that first cold snapshot blocks the event loop for seconds
+  // — measured ~3.7s on a cold page cache. `waitFor`'s wall-clock deadline then expires while the
+  // loop is blocked, so `localConnected` was reported false even though the bridge had connected.
   bridgeRef = createBridge({
     url: `ws://127.0.0.1:${port}/agent`, deviceSecret: DEVICE, allowInsecure: true,
     snapshotIntervalMs: 500, restart, log: () => {},
+    paths: { root: ws.root, dataDir: ws.dataDir, brainDir: ws.brainDir, secretsDir: ws.secretsDir, orchDir: ORCH },
   }).start();
   const connected = await waitFor(async () => (await (await fetch(`${base}/api/me`, { headers: { cookie: ancient } })).json()).localConnected);
   assert.equal(connected, true, "the relay should report the bridge connected");
@@ -198,10 +205,11 @@ test("restart trigger crosses the tunnel exactly like deploy: gated ancient-only
 });
 
 test("restart trigger: the pre-flight-before-restart guarantee holds through the relay-forwarded path — a pre-flight refusal streams back as a failure, never silently reported as success", async (t) => {
+  const ws = tempWorkspace();
   const relay = createRelay({ oidc: OIDC, deviceSecret: DEVICE });
   await new Promise((r) => relay.server.listen(0, "127.0.0.1", r));
   let bridgeRef = null;
-  t.after(async () => { try { bridgeRef?.stop(); } catch {} await new Promise((r) => relay.server.close(r)); });
+  t.after(async () => { try { bridgeRef?.stop(); } catch {} await new Promise((r) => relay.server.close(r)); rmSync(ws.root, { recursive: true, force: true }); });
   const port = relay.server.address().port;
   const base = `http://127.0.0.1:${port}`;
   const ancient = `${SESSION_COOKIE}=${await signSession({ sub: "a", roles: ["ancient"], name: "Anc" }, OIDC.sessionSecret)}`;
@@ -219,11 +227,14 @@ test("restart trigger: the pre-flight-before-restart guarantee holds through the
     },
     subscribe: (fn) => { restartSubs.add(fn); return () => restartSubs.delete(fn); },
   };
+  // Scratch workspace for the same reason as the sibling test above: never snapshot the real repo.
   bridgeRef = createBridge({
     url: `ws://127.0.0.1:${port}/agent`, deviceSecret: DEVICE, allowInsecure: true,
     snapshotIntervalMs: 500, restart, log: () => {},
+    paths: { root: ws.root, dataDir: ws.dataDir, brainDir: ws.brainDir, secretsDir: ws.secretsDir, orchDir: ORCH },
   }).start();
-  await waitFor(async () => (await (await fetch(`${base}/api/me`, { headers: { cookie: ancient } })).json()).localConnected);
+  const connected = await waitFor(async () => (await (await fetch(`${base}/api/me`, { headers: { cookie: ancient } })).json()).localConnected);
+  assert.equal(connected, true, "the relay should report the bridge connected");
 
   // Kicked off without awaiting before the trigger fires — see the sibling test above for why.
   const streamP = fetch(`${base}/api/dashboard/restart/stream`, { headers: { cookie: ancient } });

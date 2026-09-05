@@ -16,10 +16,22 @@ const out = `// GENERATED — DO NOT EDIT. Browser build of the "stoicsyntax-pac
 // window.pactHighlight(code)->html and window.pactBandLegend for the file viewer + band legend.
 (function (root) {
 ${body}
-  root.pactHighlight = (code) => toHtml(code);
   // Legacy shape the CodeMirror editor mode (pact-cm-mode.js) + tests expect: a per-word classifier that
   // returns a "pk-<band>" class (or "" for plain text). The package's classifyWord returns the bare band name.
   root.pactClassifyWord = (w) => { const t = classifyWord(w); return t === "text" ? null : "pk-" + t; };
+  // pact-cm-mode.js WRAPS root.pactClassifyWord with the StoicSyntax colour FAMILIES
+  // (OuronetInformational/StoicSyntax-Prefixes.md §4 — URH_/URCx_/CT_/UEV_IMC, A_/C_ → RECIPE, …),
+  // which the package's own band table doesn't know. The static <pre> highlighter renders the DELETED
+  // lines of a diff, so it must color identically to the editable CodeMirror view: render each
+  // word token through the (possibly wrapped) GLOBAL classifier instead of toHtml()'s internal one.
+  // Non-word tokens (comments, strings, ':type', brackets) keep the tokenizer's own type, and with no
+  // wrapper installed this is exactly toHtml() — same output, one source of truth. Do not replace this
+  // with a plain toHtml(code): that regression (a straight regenerate over the 1.4.55 fix) is what
+  // lib/pactAuxColors.test.mjs guards.
+  root.pactHighlight = (code) => tokenize(code).map((t) => {
+    const cls = WORD.test(t.value[0]) ? root.pactClassifyWord(t.value) : (t.type === "text" ? null : "pk-" + t.type);
+    return cls ? \`<span class="\${cls}">\${ESC(t.value)}</span>\` : ESC(t.value);
+  }).join("");
   root.pactBandLegend = BAND_LEGEND;
 })(typeof window !== "undefined" ? window : globalThis);
 `;
