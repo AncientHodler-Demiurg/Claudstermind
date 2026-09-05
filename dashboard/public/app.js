@@ -3356,6 +3356,941 @@ async function wsCompressImage(file) {
   return null;
 }
 // ===== end WS IMAGE pure helper =====
+
+// ===== EXOCORTEX — the Phase-2 client surface (ROADMAP-2.0 §2 / T3.1–T3.5) ======================
+// ONE implementation, mounted in BOTH workspaces (Core cockpit panes and the Pact chat tabs), so the
+// two can never drift the way the model/usage readouts once did.
+//
+// All the decision logic lives in the pure modules under lib/ (contextPopover, thresholdIndicator,
+// transcriptWindow, scrollCache, agentsPanel, recallCue). app.js is a CLASSIC script and cannot
+// import ESM, so those modules reach the browser through dashboard/public/exocortex.js — a GENERATED
+// mirror published as `window.EXO.<ns>` (see dashboard/public/exocortex.gen.mjs, guarded against drift
+// by lib/exocortexBundle.test.mjs). Same shape as md-mini.js / deploy-helpers.js: a classic helper
+// script loaded before app.js. NOTHING below re-implements a rule those modules already own — this
+// file is DOM, CSS classes and event wiring.
+//
+// ROUTING — the single easiest thing to get wrong here (CONTRACT.md §0): `contextUsage`, `rolling`,
+// `lookingUp`, `recall` and `loadingHistory*` do NOT carry an inline `sessionKey`; only events born
+// inside ClaudeSession (`compacted`, `background`, …) do. So every piece of state below hangs off the
+// CONVERSATION OBJECT the frame's sessionKey ARGUMENT resolved to (a Core pane or a Pact tab), never
+// off a global — otherwise two conversations' cues and fleets merge into each other.
+//
+// DEGRADES QUIETLY. Every entry point starts with exoLib(): if exocortex.js failed to load, or the
+// server is older than the Phase-1 contract and never sends `contextBreakdown` / `panel` / band
+// fields, the surface simply does not appear. It never renders a number it does not have.
+
+// ===== EXOCORTEX UI — pure helpers (sliced + eval'd by lib/exocortexUi.test.mjs; keep the markers) =====
+// DOM-free, clock-free, dependency-free. Everything here is about WORDING and AFFORDANCE POLICY, i.e.
+// the honesty rules: what we may claim, what we must hedge, and which buttons are real.
+
+/** 1349 → "1,349". Local copy so this block slices out standalone (wsNumFmt is elsewhere in app.js). */
+function exoNum(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+
+/**
+ * Parse what a human typed into the jump box into an absolute turn reference.
+ * Accepts "1237", "#1237", "P1237", "p#1,237", "R 1237" (case/space/comma tolerant).
+ * A bare number means a PROMPT — "take me to turn 1237" means the thing the user WROTE.
+ * Returns null for anything else (including 0 and negatives: P#/R# are 1-based, CONTRACT §5),
+ * which is what lets one input double as "jump to a turn" OR "search the archive".
+ */
+function exoParseTurnRef(text, fallbackKind) {
+  const s = String(text == null ? "" : text).trim().toLowerCase().replace(/[\s,]/g, "");
+  const m = /^([pr])?#?(\d+)$/.exec(s);
+  if (!m) return null;
+  const n = Number(m[2]);
+  if (!Number.isFinite(n) || n < 1) return null;
+  return { kind: m[1] === "r" ? "response" : m[1] === "p" ? "prompt" : (fallbackKind === "response" ? "response" : "prompt"), number: n };
+}
+
+/** "P#1,237" / "R#42" — the same coordinate system the transcript badges already use. */
+function exoTurnRefLabel(kind, number) { return (kind === "response" ? "R#" : "P#") + exoNum(Number(number) || 0); }
+
+/**
+ * The two edge affordances, from `EXO.win.viewAffordances()`.
+ *
+ * ABOVE is EXACT — `turnsAbove` is literally promptOffset + responseOffset, counted by the server.
+ * BELOW carries NO COUNT, deliberately: transcriptWindow returns `turnsBelow: null` because
+ * `transcriptTotal` counts ROWS (tool output included), so any turn count there would be invented.
+ * Do not "improve" this by dividing rows by two.
+ */
+function exoAffordanceText(aff) {
+  const a = aff || {};
+  const n = Number(a.turnsAbove) || 0;
+  const above = a.hasAbove ? (n > 0 ? "▲ " + exoNum(n) + " earlier turn" + (n === 1 ? "" : "s") : "▲ earlier history") : "";
+  // turnsBelow is null whenever anything is below; 0 only when the view already reaches the end.
+  const below = a.hasBelow ? "▼ more below" : "";
+  return { above, below, atStart: a.atStart === true, atEnd: a.atEnd === true, hasAbove: !!a.hasAbove, hasBelow: !!a.hasBelow };
+}
+
+/**
+ * Turn a context tier (EXO.ind.contextTier*) into affordances this surface can ACTUALLY perform.
+ *
+ * `caps` = { compact, newChat } — what the caller can really do. A tier's `actions` array is advice,
+ * not a promise that a button exists: `roll` is NOT a client action (there is no `roll` member of
+ * WS_CONTROL_ACTIONS in lib/protocol.mjs — the engine rolls on its own schedule), so it is rendered
+ * as a NOTE explaining that, never as a button that would do nothing when pressed.
+ */
+function exoTierAffordances(tier, caps) {
+  const t = tier || {};
+  const c = caps || {};
+  const out = {
+    key: t.key || "unknown",
+    label: t.label || "Unknown",
+    tone: t.tone || "muted",
+    severity: typeof t.severity === "number" ? t.severity : -1,
+    available: t.available === true,
+    pct: typeof t.pct === "number" ? t.pct : null,
+    advice: t.advice || "",
+    buttons: [],
+    notes: [],
+  };
+  for (const a of Array.isArray(t.actions) ? t.actions : []) {
+    if (a === "compact") {
+      if (c.compact) out.buttons.push({ action: "compact", label: "🗜 Compact now", title: "Summarise this conversation so it takes less of the context window." });
+      else out.notes.push("Compacting is not available on this conversation yet.");
+    } else if (a === "newChat") {
+      if (c.newChat) out.buttons.push({ action: "newChat", label: "＋ New chat", title: "Start a fresh conversation. This one is kept and stays searchable." });
+      else out.notes.push("Starting a new chat is not available from here.");
+    } else if (a === "roll") {
+      out.notes.push("Rolling to a fresh window is done by the engine itself when the window fills — there is no button for it, and nothing is deleted: retired turns are archived and stay searchable.");
+    }
+  }
+  return out;
+}
+
+/**
+ * Wording for one indicator cue from `EXO.ind.shapeIndicators()`.
+ *
+ * Anything the CLIENT inferred (`confidence: "heuristic"` / `inferred: true` — today only the
+ * "auto-compaction likely soon" cue, because CONTRACT §3c says the SDK exposes no pre-compaction
+ * event) is phrased as a POSSIBILITY and tagged, never asserted as something the engine reported.
+ */
+function exoCueLine(cue) {
+  const c = cue || {};
+  const hedged = c.inferred === true || c.confidence === "heuristic";
+  const body = String(c.text || "");
+  return {
+    kind: c.kind || "",
+    hedged,
+    tone: c.tone || "notice",
+    icon: c.icon || "",
+    text: hedged ? "Possibly: " + body : body,
+    title: hedged
+      ? "A CLIENT-SIDE GUESS, not a report from the engine: inferred from the context percentage crossing a local threshold. The engine gives no advance warning of compaction."
+      : "Reported by the engine.",
+  };
+}
+
+/**
+ * What to show while a jump is in flight, and after.
+ *
+ * A jump to a turn that is not loaded is a SEARCH, not a lookup: the only random-access primitive is
+ * `around`, which takes a ROW index, while the user gave a TURN number (CONTRACT §4). Each probe
+ * narrows the bracket. So this never returns "" for an in-flight jump — the UI must never look frozen.
+ */
+function exoJumpStatusText(jump) {
+  const j = jump || {};
+  if (!j.status) return "";
+  const ref = exoTurnRefLabel(j.kind, j.number);
+  const max = Number(j.maxAttempts) || 12;
+  switch (j.status) {
+    case "searching":
+      return "🔍 Finding " + ref + "… probe " + (Number(j.attempt) || 1) + " of " + max + " — the engine indexes by row, not by turn, so this can take a few tries.";
+    case "cached": return "⌗ " + ref + " — served from the local window cache.";
+    case "landed": return "⌗ Showing " + ref + ".";
+    case "exhausted": return "⌗ Could not land exactly on " + ref + " after " + max + " tries — showing the closest window reached. Try “Recall” if that turn has been archived.";
+    case "missing": {
+      const of = j.count ? " (this conversation has " + exoNum(j.count) + " " + (j.kind === "response" ? "responses" : "prompts") + ")" : "";
+      if (j.reason === "no-turns" || j.reason === "empty") return "⌗ There is no " + (j.kind === "response" ? "response" : "prompt") + " " + ref + " in this conversation" + of + ".";
+      return "⌗ " + ref + " is not in the live conversation" + of + " — it may have been archived. Try “Recall”.";
+    }
+    case "error": return "⚠ Jump to " + ref + " failed: " + (j.error || "the engine did not answer.");
+    default: return "";
+  }
+}
+
+/** Is a jump still waiting on the network? Drives the spinner/disabled state (never a stuck one:
+ *  every terminal status above returns false). */
+function exoJumpBusy(jump) { return !!(jump && jump.status === "searching"); }
+// ===== end EXOCORTEX UI pure helpers =====
+
+// ---------------------------------------------------------------------------------------------
+// Per-conversation state + event ingestion (impure: clocks, timers, the control channel).
+// ---------------------------------------------------------------------------------------------
+
+/** The generated browser mirror of the lib/ modules, or null if it failed to load (→ no surface). */
+function exoLib() { return (typeof window !== "undefined" && window.EXO) || null; }
+
+/** A Core pane keys on `sessionKey`; a Pact tab keys on `key`. Same conversation identity. */
+function exoKeyOf(conv) { return (conv && (conv.sessionKey || conv.key)) || null; }
+
+/** Cache identity: what makes every cached band's absolute row indices mean something ELSE.
+ *  Deliberately excludes the row TOTAL — appending a turn does not renumber history (scrollCache
+ *  docs); growth is handled by `noteTotal`. */
+function exoSignature(conv, sourceRef) {
+  const L = exoLib(); if (!L) return "";
+  return L.cache.windowSignature({
+    sessionKey: exoKeyOf(conv),
+    sessionId: (conv && (conv.resume || conv.sessionId)) || "",
+    workspaceId: (conv && conv.workspaceId) || "",
+    sourceRef: sourceRef || "",
+  });
+}
+
+/** Lazily create (and, on an identity change, RESET) this conversation's exocortex state.
+ *  Resetting on a sessionKey change is what stops a repointed pane inheriting the previous
+ *  conversation's cues, fleet and cached bands. */
+function exoState(conv) {
+  const L = exoLib(); if (!conv || !L) return null;
+  const key = exoKeyOf(conv);
+  if (!conv._exo || conv._exo.key !== key) {
+    if (conv._exo && conv._exo.timer) { try { clearTimeout(conv._exo.timer); } catch {} }
+    conv._exo = {
+      key,
+      ind: L.ind.emptyIndicatorState(),                 // T3.3 reducer state
+      recall: { active: false, request: null, result: null },  // T3.5
+      agentTrack: { seen: {} },                         // T3.2 "when did I last see this agent change"
+      agentPayload: null,
+      popover: null,                                    // T3.1 last shaped breakdown
+      breakdownSeen: false,
+      view: L.win.emptyView(),                          // T3.4 windowed transcript
+      cache: L.cache.createScrollCache(),               // T3.4 bounded LRU of bands
+      jump: null,
+      pending: null,                                    // the window request in flight
+      pinnedAround: null,                               // non-null ⇒ showing a historical band
+      openPanel: "",                                    // "" | "ctx" | "agents"
+      timer: 0,
+      onTick: null,
+    };
+  }
+  return conv._exo;
+}
+
+/** True when this conversation is parked on a historical band rather than following the tail. */
+function exoIsPinned(conv) { const s = conv && conv._exo; return !!(s && s.pinnedAround !== null && s.pinnedAround !== undefined); }
+
+/** Add `around` to a resync/open request while pinned, so the ~8–20s self-heal resyncs (which
+ *  otherwise ask for the TAIL) cannot yank a reader off the band they jumped to. */
+function exoResyncArgs(conv, args) {
+  const out = args || {};
+  if (exoIsPinned(conv)) { out.around = conv._exo.pinnedAround; delete out.full; delete out.limit; }
+  return out;
+}
+
+/** Feed one streamed event into the indicator / recall / agents state. Returns true if anything
+ *  changed (so the caller can repaint). Safe to call for every event kind. */
+function exoIngestEvent(conv, d) {
+  const L = exoLib(); const s = exoState(conv);
+  if (!L || !s || !d || typeof d.kind !== "string") return false;
+  const now = Date.now();
+  let changed = false;
+
+  if (d.kind === "rolling" || d.kind === "lookingUp" || d.kind === "recall" || d.kind === "compacted"
+    || d.kind === "loadingHistory" || d.kind === "loadingHistoryDone") {
+    const next = L.ind.reduceIndicator(s.ind, d, now);
+    if (next !== s.ind) { s.ind = next; changed = true; }
+  }
+  if (d.kind === "lookingUp" || d.kind === "recall") { s.recall = L.recall.reduceRecallCue(s.recall, d, { now }); changed = true; }
+  if (d.kind === "rolling") {
+    // A roll retires rows off the HEAD, so every cached band's absolute indices now describe a
+    // different array. Re-keying the cache on the retired segmentRef drops them all at once.
+    L.cache.setSignature(s.cache, exoSignature(conv, d.sourceRef));
+    s.view = L.win.emptyView(); s.pinnedAround = null;
+    changed = true;
+  }
+  // CONTRACT §2b: `panel` rides ONLY these three kinds, so `if (ev.panel)` is a safe discriminator —
+  // but the raw `tasks` array is the documented fallback for an engine that predates the panel.
+  if (d.kind === "background" || d.kind === "taskStarted" || d.kind === "taskDone") { exoNoteAgents(conv, d, now); changed = true; }
+  if (changed) exoScheduleExpiry(conv);
+  return changed;
+}
+
+/** Track agent liveness. MUST be called on every background event AND every state frame, per
+ *  conversation — `trackAgentActivity` measures staleness from what THIS client last saw change,
+ *  and skipping frames degrades that badly (a healthy fleet starts reading as stalled). */
+function exoNoteAgents(conv, payload, now) {
+  const L = exoLib(); const s = exoState(conv); if (!L || !s || !payload) return;
+  s.agentPayload = payload;
+  s.agentTrack = L.agents.trackAgentActivity(s.agentTrack, payload, typeof now === "number" ? now : Date.now());
+}
+
+/** Store a `contextUsage` answer. CONTRACT §1: `contextBreakdown` is ALWAYS an object and `ok:false`
+ *  means UNAVAILABLE, not "0% used" — shapeContextPopover keeps those apart, so pass it straight in.
+ *  Falls back to the raw SDK `usage` only for an engine that predates the breakdown field. */
+function exoNoteContext(conv, data) {
+  const L = exoLib(); const s = exoState(conv); if (!L || !s) return false;
+  const src = (data && data.contextBreakdown !== undefined) ? data.contextBreakdown : (data ? data.usage : null);
+  s.breakdownSeen = !!(data && data.contextBreakdown !== undefined);
+  s.popover = L.popover.shapeContextPopover(src);
+  exoScheduleExpiry(conv);   // the tier can flip the inferred "compaction likely" cue on/off
+  return true;
+}
+
+/** ONE timeout per conversation, at the soonest cue expiry — never a poll (nextIndicatorDeadline
+ *  exists precisely so the shell can do this). */
+function exoScheduleExpiry(conv) {
+  const L = exoLib(); const s = exoState(conv); if (!L || !s) return;
+  if (s.timer) { clearTimeout(s.timer); s.timer = 0; }
+  const now = Date.now();
+  const at = L.ind.nextIndicatorDeadline(s.ind, now);
+  if (at === null || at === undefined) return;
+  const wait = Math.max(50, Math.min(Number(at) - now, 300000));
+  s.timer = setTimeout(() => {
+    s.timer = 0;
+    s.ind = L.ind.pruneIndicators(s.ind, Date.now());
+    if (typeof s.onTick === "function") { try { s.onTick(); } catch {} }
+    exoScheduleExpiry(conv);
+  }, wait);
+}
+
+// A single shared 1s clock for the things that must TICK rather than wait for an event: the agents
+// panel's elapsed times and its staleness heuristic (nothing about them moves on its own — the
+// shaper has to be re-called with a fresh `now`). Auto-stops when the last ticker unregisters.
+const EXO_TICKERS = new Set();
+let EXO_TICK_TIMER = 0;
+function exoRegisterTicker(fn) {
+  EXO_TICKERS.add(fn);
+  if (!EXO_TICK_TIMER) {
+    EXO_TICK_TIMER = setInterval(() => {
+      if (!EXO_TICKERS.size) { clearInterval(EXO_TICK_TIMER); EXO_TICK_TIMER = 0; return; }
+      const now = Date.now();
+      for (const f of Array.from(EXO_TICKERS)) { try { f(now); } catch {} }
+    }, 1000);
+  }
+  return () => EXO_TICKERS.delete(fn);
+}
+
+// ---------------------------------------------------------------------------------------------
+// T3.4 — windowed transcript, jump-to-#N, LRU band cache
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Feed a `transcript` / `resync` payload through normalizeBand → applyBand and the band cache.
+ *
+ * Returns a descriptor, or null when the payload carries no transcript:
+ *   { isBand, rows, promptOffset, responseOffset, truncated, total, action }
+ *
+ * `isBand` is true only for an `around` answer (CONTRACT §4: windowStart/windowEnd are present ONLY
+ * then). The caller takes over the transcript ONLY in that case — a plain tail/full reply keeps the
+ * long-standing code path, so nothing about the normal load changes.
+ */
+function exoAbsorbWindow(conv, data) {
+  const L = exoLib(); const s = exoState(conv);
+  if (!L || !s || !data || !Array.isArray(data.transcript)) return null;
+  const band = L.win.normalizeBand(data);
+  if (!band) return null;
+
+  const sig = exoSignature(conv, null);
+  L.cache.setSignature(s.cache, sig);
+  const pend = s.pending; s.pending = null;
+  s.extending = null;   // whatever this payload is, the pending edge fetch is over
+  const center = pend && typeof pend.around === "number" ? pend.around : s.pinnedAround;
+  // Only true BANDS are worth caching: a tail is refetched constantly and would just churn the LRU.
+  if (band.isBand) L.cache.put(s.cache, band, { signature: sig });
+  else L.cache.noteTotal(s.cache, band.total);
+
+  const mode = pend && pend.mode === "extend" ? "extend" : "replace";
+  const res = L.win.applyBand(s.view, band, { mode, center: (typeof center === "number" ? center : undefined) });
+  s.view = res.view;
+  s.pinnedAround = band.isBand ? (typeof center === "number" ? center : Math.floor((band.start + band.end) / 2)) : null;
+
+  // CONTRACT §4 (amended): `promptTotal`/`responseTotal` are the TURN counts for the whole
+  // conversation — `transcriptTotal` is a ROW count and cannot say "turn 137 of 600". Optional:
+  // an engine predating the amendment simply never sets them and the UI omits the "of N".
+  if (typeof data.promptTotal === "number") s.promptTotal = data.promptTotal;
+  if (typeof data.responseTotal === "number") s.responseTotal = data.responseTotal;
+  if (typeof data.windowMode === "string") s.windowMode = data.windowMode;
+
+  return {
+    isBand: !!band.isBand,
+    // A COPY: both workspaces append live rows into their own transcript array, and mutating the
+    // window model's band through that alias would quietly desync start/end from rows.length.
+    rows: s.view.rows.slice(),
+    promptOffset: s.view.promptOffset,
+    responseOffset: s.view.responseOffset,
+    truncated: !!s.view.truncated,
+    total: s.view.total,
+    action: res.action,
+    // The server-resolved jump answer, when this engine supports `aroundTurn` (one round-trip).
+    // Absent on an older engine → the client-side probe loop in exoResolveJump takes over.
+    turn: (data.turn && typeof data.turn === "object") ? data.turn : null,
+    clamped: data.clamped === true,
+  };
+}
+
+/** Issue a window request. `mode` is "jump" | "extend" | "latest". Uses `resync` (an event reply)
+ *  rather than `open`, because `open` re-adopts a session identity — this is pure navigation. */
+function exoRequestWindow(conv, args, mode, ctx) {
+  const s = exoState(conv); const key = exoKeyOf(conv);
+  if (!s || !key) return false;
+  s.pending = { around: typeof args.around === "number" ? args.around : null, mode: mode === "extend" ? "extend" : "replace" };
+  // CONTRACT §4 "scoped": it chooses WHICH transcript is the source — the merged workspace history
+  // (Core cockpit) or one saved session file (a Pact tab). Getting it wrong windows the wrong
+  // conversation, so it comes from the mounting surface and is never assumed.
+  const out = Object.assign({ sessionKey: key }, args);
+  if (ctx && ctx.scoped) out.scoped = true;
+  wsPost("control", { action: "resync", args: out });
+  return true;
+}
+
+/** Find the loaded message carrying an absolute P#/R#. Both workspaces stamp `_pnum`/`_rnum` onto
+ *  their rendered rows (wsStampNumbers / pactStampNumbers) and cache the DOM node as `_node`. */
+function exoFindTurnMsg(list, kind, number) {
+  const field = kind === "response" ? "_rnum" : "_pnum";
+  const n = Number(number);
+  return (Array.isArray(list) ? list : []).find((m) => m && m[field] === n) || null;
+}
+
+/** Scroll a found row into view with the same flash the bookmark jump uses (house style). */
+function exoFlashTo(msg) {
+  if (!msg || !msg._node || !msg._node.scrollIntoView) return false;
+  const node = msg._node;
+  requestAnimationFrame(() => {
+    node.scrollIntoView({ behavior: "smooth", block: "center" });
+    node.classList.add("ws-bm-flash");
+    setTimeout(() => { try { node.classList.remove("ws-bm-flash"); } catch {} }, 1600);
+  });
+  return true;
+}
+
+/**
+ * Start (or continue) a jump to an absolute P#/R#.
+ *
+ * `ctx` supplies the two things only the mounting workspace knows:
+ *   rows()   → the currently-rendered message array (for the "already loaded" fast path)
+ *   repaint()→ repaint that workspace
+ * Everything else — which row index to probe, when to give up — comes from planJump.
+ */
+function exoJumpTo(conv, kind, number, ctx) {
+  const L = exoLib(); const s = exoState(conv);
+  if (!L || !s) return;
+  const max = L.win.MAX_JUMP_ATTEMPTS || 12;
+  const attempt = (s.jump && s.jump.kind === kind && s.jump.number === number && s.jump.status === "searching")
+    ? (s.jump.attempt || 1) + 1 : 1;
+
+  // Fast path 1: it is already on screen.
+  const loaded = exoFindTurnMsg(ctx.rows(), kind, number);
+  if (loaded && loaded._node) {
+    s.jump = { kind, number, attempt, maxAttempts: max, status: "landed" };
+    ctx.repaint();
+    exoFlashTo(loaded);
+    return;
+  }
+
+  const plan = L.win.planJump(s.view, kind, number, { attempt, sessionKey: exoKeyOf(conv), scoped: true });
+
+  // Fast path 2: a band we already fetched covers it — no round-trip at all (this is what the LRU
+  // is for; scrolling back and forth over the same stretch must not re-hit the network).
+  const cached = L.cache.findContaining(s.cache, plan.around);
+  if (cached && L.win.containsTurn(cached, kind, number)) {
+    const res = L.win.applyBand(s.view, cached, { mode: "replace" });
+    s.view = res.view;
+    s.pinnedAround = plan.around;
+    s.jump = { kind, number, attempt, maxAttempts: max, status: "cached" };
+    ctx.adopt({ rows: s.view.rows.slice(), promptOffset: s.view.promptOffset, responseOffset: s.view.responseOffset, truncated: !!s.view.truncated });
+    ctx.repaint();
+    exoFlashTo(exoFindTurnMsg(ctx.rows(), kind, number));
+    return;
+  }
+
+  if (plan.exhausted) {
+    s.jump = { kind, number, attempt, maxAttempts: max, status: "exhausted" };
+    ctx.repaint();
+    return;
+  }
+  s.jump = { kind, number, attempt, maxAttempts: max, status: "searching", startedAt: Date.now() };
+  ctx.repaint();
+  // Send BOTH coordinates on purpose (CONTRACT §4 amendment: supplying both is explicitly not
+  // ambiguous — `aroundTurn` wins). A current engine resolves the TURN NUMBER server-side in one
+  // exact hop; an engine that predates the amendment ignores `aroundTurn` and honours the ROW
+  // INDEX `around`, so the interpolate-then-bisect probe loop still converges. One request works
+  // against both, and nothing has to sniff a version.
+  exoRequestWindow(conv, { around: plan.around, aroundTurn: { kind, number } }, "jump", ctx);
+}
+
+/** Resolve an in-flight jump against the band that just landed: hit → flash it; miss → probe again
+ *  (planJump bisects from the second attempt, so this converges) until MAX_JUMP_ATTEMPTS. */
+function exoResolveJump(conv, ctx, info) {
+  const L = exoLib(); const s = exoState(conv);
+  if (!L || !s || !s.jump || s.jump.status !== "searching") return;
+  const { kind, number } = s.jump;
+  const found = exoFindTurnMsg(ctx.rows(), kind, number);
+  if (found) {
+    s.jump = Object.assign({}, s.jump, { status: "landed" });
+    ctx.repaint();
+    exoFlashTo(found);
+    return;
+  }
+  // A current engine resolved the turn itself and SAYS whether it found it (CONTRACT §4:
+  // `turn.found` false / `clamped` true is the documented signal to offer `recall`). Believe it —
+  // probing again would only re-ask a question already answered exactly.
+  const turn = info && info.turn;
+  if (turn && typeof turn === "object") {
+    s.jump = Object.assign({}, s.jump, {
+      status: turn.found === true ? "landed" : "missing",
+      reason: typeof turn.reason === "string" ? turn.reason : "",
+      resolved: typeof turn.resolved === "number" ? turn.resolved : null,
+      count: typeof turn.count === "number" ? turn.count : null,
+    });
+    ctx.repaint();
+    return;
+  }
+  const max = L.win.MAX_JUMP_ATTEMPTS || 12;
+  if ((s.jump.attempt || 1) >= max) { s.jump = Object.assign({}, s.jump, { status: "exhausted" }); ctx.repaint(); return; }
+  exoJumpTo(conv, kind, number, ctx);
+}
+
+/** Grow the window one band in `direction` ("up" older / "down" newer). Returns false at the edge. */
+function exoExtend(conv, direction, ctx) {
+  const L = exoLib(); const s = exoState(conv); if (!L || !s) return false;
+  const plan = L.win.planExtend(s.view, direction, { sessionKey: exoKeyOf(conv), scoped: true });
+  if (!plan) return false;
+  const cached = L.cache.findContaining(s.cache, plan.around);
+  if (cached) {
+    const res = L.win.applyBand(s.view, cached, { mode: "extend" });
+    if (res.action === "extended") {
+      s.view = res.view;
+      ctx.adopt({ rows: s.view.rows.slice(), promptOffset: s.view.promptOffset, responseOffset: s.view.responseOffset, truncated: !!s.view.truncated });
+      ctx.repaint();
+      return true;
+    }
+  }
+  s.extending = direction;
+  ctx.repaint();
+  exoRequestWindow(conv, { around: plan.around }, "extend", ctx);
+  return true;
+}
+
+/** Leave the historical band and follow the live tail again. `ctx.onLatest` lets each workspace
+ *  undo the render concessions a band required (rendering ALL of it, not snapping to the bottom) —
+ *  without it, a huge conversation would keep rendering every loaded row after the jump ended. */
+function exoBackToLatest(conv, ctx) {
+  const s = exoState(conv); if (!s) return;
+  s.pinnedAround = null; s.jump = null; s.extending = null;
+  if (ctx && typeof ctx.onLatest === "function") ctx.onLatest();
+  s.pending = { around: null, mode: "replace" };
+  const key = exoKeyOf(conv);
+  if (key) { const args = { sessionKey: key }; if (ctx && ctx.scoped) args.scoped = true; wsPost("control", { action: "resync", args }); }
+  ctx.repaint();
+}
+
+// ---------------------------------------------------------------------------------------------
+// T3.5 — recall
+// ---------------------------------------------------------------------------------------------
+
+/** Ask the archive for a turn by absolute number, or for a substring across archived segments.
+ *  The server answers with a strictly balanced lookingUp → recall pair (CONTRACT §3b), including on
+ *  the not-found path — so the cue can never stick on. A refusal skips `lookingUp` entirely, which is
+ *  why `reduceRecallCue` also turns the cue OFF on a bare `recall`. */
+function exoRecall(conv, req) {
+  const key = exoKeyOf(conv); const s = exoState(conv);
+  if (!key || !s) return false;
+  const args = { sessionKey: key };
+  if (req && req.number) { args.kind = req.kind === "response" ? "response" : "prompt"; args.number = req.number; }
+  else if (req && req.query) { args.query = String(req.query); args.limit = 10; }
+  else return false;
+  // Optimistic ON: the server's `lookingUp` confirms it a moment later. Without this the button
+  // press has no visible effect until the round-trip lands.
+  s.recall = { active: true, request: { active: true, mode: args.number ? "number" : "query", kindOf: args.kind || "prompt", number: args.number || null, query: args.query || "", label: args.number ? "Looking up " + exoTurnRefLabel(args.kind, args.number) + "…" : "Searching archived turns for “" + args.query + "”…", at: Date.now() }, result: null };
+  wsPost("control", { action: "recall", args });
+  return true;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Rendering. In-flow disclosure panels, NOT absolutely-positioned popups — the same pattern as the
+// Core cockpit's activity line / activity log (`.ws-activity` + `.ws-activity-log`). That is house
+// style AND it is the mobile-safe choice: an expanding block inside the pane can be scrolled to and
+// can never be clipped by a pane's overflow the way an anchored popup can.
+// ---------------------------------------------------------------------------------------------
+
+/** A percentage bar segment list from a shaped popover. Colours come from the SDK verbatim
+ *  (CONTRACT §1: do not re-map them — Claude-GUI parity is the point). */
+function exoSegmentBar(popover) {
+  const segs = (popover && Array.isArray(popover.segments) ? popover.segments : []).filter((s) => s.pctTenths > 0);
+  const bar = el("div", { class: "exo-bar-track", role: "img", "aria-label": "context window composition" }, []);
+  for (const s of segs) {
+    const cell = el("span", { class: "exo-seg" + (s.isFree ? " --free" : "") + (s.isDeferred ? " --deferred" : ""), title: s.label + " — " + s.tokensLabel + " (" + s.pctLabel + ")" }, []);
+    cell.style.width = (s.pctTenths / 10) + "%";
+    if (s.color) cell.style.background = s.color;
+    bar.appendChild(cell);
+  }
+  return bar;
+}
+
+/** T3.1 — the context breakdown panel. "unavailable" is rendered as WORDS, never as 0%. */
+function exoRenderContextPanel(conv) {
+  const L = exoLib(); const s = exoState(conv);
+  const box = el("div", { class: "exo-panel-in exo-ctxpanel" }, []);
+  if (!L || !s) return box;
+  const pv = s.popover;
+
+  if (!pv || pv.available !== true) {
+    // CONTRACT §1 + the payload trap it flags: `ok:false` arrives with percentage/total/max all 0,
+    // so anything that reads the numbers without checking `ok` prints a confident "0% used" for a
+    // conversation we know NOTHING about. shapeContextPopover already separates the two states —
+    // this branch is the one that must say so out loud.
+    const why = pv && pv.reason === "unsupported"
+      ? "This conversation has no live session that can answer (or the engine is older than the context API)."
+      : pv && pv.reason === "missing"
+        ? "Nothing has been asked yet — the breakdown is poll-only (CONTRACT §1: the engine never pushes it)."
+        : "The engine sent no usable breakdown.";
+    box.appendChild(el("div", { class: "exo-unavail" }, [
+      el("b", {}, [L ? L.popover.contextPopoverLabel(pv) : "Context usage unavailable"]),
+      el("div", { class: "exo-sub" }, [why]),
+      el("div", { class: "exo-sub" }, ["This is NOT “0% used” — we do not know how full the window is."]),
+    ]));
+    const again = el("button", { class: "exo-btn" }, ["↻ Ask again"]);
+    again.addEventListener("click", () => { const k = exoKeyOf(conv); if (k) wsPost("control", { action: "contextUsage", args: { sessionKey: k } }); });
+    box.appendChild(again);
+    return box;
+  }
+
+  box.appendChild(el("div", { class: "exo-ctxhead" }, [
+    el("b", {}, [pv.headline.text]),
+    pv.model ? el("span", { class: "exo-sub" }, [" · " + prettyModel(pv.model)]) : "",
+  ]));
+  box.appendChild(exoSegmentBar(pv));
+
+  const rows = [];
+  for (const seg of pv.segments) {
+    const sw = el("span", { class: "exo-swatch" + (seg.isFree ? " --free" : "") }, []);
+    if (seg.color) sw.style.background = seg.color;
+    rows.push(el("div", { class: "exo-legend-row" + (seg.isFree ? " --free" : "") }, [
+      sw,
+      el("span", { class: "exo-legend-lbl" }, [seg.label + (seg.isDeferred ? " (deferred)" : "")]),
+      el("span", { class: "exo-legend-tok" }, [seg.tokensLabel]),
+      el("span", { class: "exo-legend-pct" }, [seg.pctLabel]),
+    ]));
+  }
+  box.appendChild(el("div", { class: "exo-legend" }, rows));
+
+  // Sum the INTEGER tenths, never the one-decimal floats (contextPopover's own note: adding the
+  // rounded floats back up reintroduces exactly the error the apportionment removed).
+  const tenths = pv.segments.reduce((a, seg) => a + (seg.pctTenths || 0), 0);
+  const sumTxt = (Math.round(tenths) / 10).toFixed(1) + "%";
+  box.appendChild(el("div", { class: "exo-sub" }, ["Segments" + (pv.pctBase === "max" ? " + free space" : "") + " account for " + sumTxt + " of the window (exact — apportioned in tenths, not summed floats)."]));
+
+  if (pv.reconciliation && pv.reconciliation.kind === "padded") {
+    box.appendChild(el("div", { class: "exo-sub" }, ["The engine's categories account for less than its own total; the difference is shown as “Other”."]));
+  } else if (pv.reconciliation && pv.reconciliation.kind === "overflow") {
+    box.appendChild(el("div", { class: "exo-sub" }, ["The engine's categories add up to MORE than its reported total — every category is shown truthfully and the bar is widened rather than inventing a negative slice."]));
+  }
+  if (pv.reconciliation && pv.reconciliation.overCapacity) {
+    box.appendChild(el("div", { class: "exo-warn" }, ["⚠ Reported usage exceeds the window size."]));
+  }
+
+  const detail = (title, list, fmt) => {
+    if (!list || !list.length) return;
+    const head = el("button", { class: "exo-disclose" }, ["▸ " + title + " (" + list.length + ")"]);
+    const body = el("div", { class: "exo-detail" }, list.slice(0, 40).map((r) => el("div", { class: "exo-detail-row" }, [el("span", {}, [fmt(r)]), el("span", { class: "exo-legend-tok" }, [r.tokensLabel])])));
+    body.hidden = true;
+    head.addEventListener("click", () => { body.hidden = !body.hidden; head.textContent = (body.hidden ? "▸ " : "▾ ") + title + " (" + list.length + ")"; });
+    box.appendChild(head); box.appendChild(body);
+  };
+  detail("Memory files", pv.details.memoryFiles, (r) => r.path || "(unnamed)");
+  detail("MCP tools", pv.details.mcpTools, (r) => (r.serverName ? r.serverName + " · " : "") + (r.name || "(unnamed)"));
+  detail("System tools", pv.details.systemTools, (r) => r.name || "(unnamed)");
+  detail("System prompt", pv.details.systemPromptSections, (r) => r.name || "(unnamed)");
+  return box;
+}
+
+/** T3.2 — the background-agents fleet. `hasData:false` and `count:0` are rendered DIFFERENTLY, and
+ *  a possibly-stalled agent is made loud (but still labelled a heuristic — it is a guess). */
+function exoRenderAgentsPanel(conv, now) {
+  const L = exoLib(); const s = exoState(conv);
+  const box = el("div", { class: "exo-panel-in exo-agentspanel" }, []);
+  if (!L || !s) return box;
+  const vm = L.agents.shapeAgentsPanel(s.agentPayload, now, { tracking: s.agentTrack });
+
+  if (!vm.hasData) {
+    box.appendChild(el("div", { class: "exo-unavail" }, [
+      el("b", {}, ["No fleet data"]),
+      el("div", { class: "exo-sub" }, ["This conversation has not reported a background-agent panel yet. That is NOT the same as “no agents are running” — we simply have nothing to show."]),
+    ]));
+    return box;
+  }
+  if (vm.count === 0) {
+    box.appendChild(el("div", { class: "exo-empty" }, [
+      el("b", {}, ["No background agents"]),
+      el("div", { class: "exo-sub" }, ["The engine reported its live set and it is empty — nothing is running in the background right now."]),
+    ]));
+    return box;
+  }
+
+  box.appendChild(el("div", { class: "exo-ctxhead" }, [
+    el("b", {}, [vm.summary]),
+    vm.totalTokens > 0 ? el("span", { class: "exo-sub" }, [" · " + L.usage.k(vm.totalTokens) + " tokens"]) : "",
+  ]));
+
+  for (const a of vm.agents) {
+    const kids = [
+      el("span", { class: "exo-agent-dot --" + a.state, title: a.statusKnown ? "status: " + a.status : "no status reported — assumed running because the engine lists it in its live set" }, []),
+      el("span", { class: "exo-agent-lbl" }, [a.label]),
+    ];
+    if (a.description) kids.push(el("span", { class: "exo-agent-desc" }, [a.description]));
+    kids.push(el("span", { class: "ws-spacer" }, []));
+    kids.push(el("span", { class: "exo-agent-el" + (a.elapsedKnown ? "" : " --unknown"), title: a.clockSkew ? "The reported start time disagrees with this device's clock, so the elapsed time is not trustworthy." : "" }, [a.elapsedLabel]));
+    if (a.tokens > 0) kids.push(el("span", { class: "exo-legend-tok" }, [L.usage.k(a.tokens)]));
+    if (a.stale) kids.push(el("span", { class: "exo-stale", title: a.staleNote || "" }, ["⚠ possibly stalled"]));
+    const row = el("div", { class: "exo-agent-row --" + a.state + (a.stale ? " --stale" : ""), title: a.title }, kids);
+    box.appendChild(row);
+  }
+
+  if (vm.anyStale) box.appendChild(el("div", { class: "exo-warn" }, [vm.staleNote]));
+  if (vm.mismatch) box.appendChild(el("div", { class: "exo-sub" }, ["The engine's own totals disagree with the rows above; both are shown as received rather than one being silently preferred."]));
+  box.appendChild(el("div", { class: "exo-sub" }, ["Elapsed times tick on this device's clock against the engine's reported start; “unknown” means the engine gave no usable start time."]));
+  return box;
+}
+
+/** T3.5 — the recall block that goes INLINE in the transcript, with provenance on every hit. */
+function exoRecallNode(conv, ctx) {
+  const L = exoLib(); const s = exoState(conv);
+  if (!L || !s) return null;
+  const cue = s.recall;
+  if (!cue || (!cue.active && !cue.result)) return null;
+
+  const box = el("div", { class: "exo-recall" }, []);
+  const dismiss = el("button", { class: "exo-recall-x", type: "button", title: "Dismiss" }, ["×"]);
+  dismiss.addEventListener("click", () => { s.recall = L.recall.dismissRecallCue(); ctx.repaint(); });
+
+  if (cue.active) {
+    box.appendChild(el("div", { class: "exo-recall-hd" }, [
+      el("span", { class: "exo-spin" }, []),
+      el("b", {}, [L.recall.recallCueLabel(cue) || "Looking up historical turns…"]),
+      el("span", { class: "ws-spacer" }, []), dismiss,
+    ]));
+    box.appendChild(el("div", { class: "exo-sub" }, ["Searching the archived segments — only rolled-off turns are searched; anything still in the live window is already on screen."]));
+    return box;
+  }
+
+  const r = cue.result;
+  box.appendChild(el("div", { class: "exo-recall-hd" }, [
+    el("b", {}, [r.status === "hit" ? "⌗ Recalled " + r.message : r.message]),
+    el("span", { class: "ws-spacer" }, []), dismiss,
+  ]));
+
+  if (r.status === "hit" && r.hit) {
+    const h = r.hit;
+    box.appendChild(el("div", { class: "exo-prov" }, [
+      "from " + (h.provenance.segmentRef || "an archived segment"),
+      h.provenance.linkable ? "" : "  ·  (no stable segment id on this hit)",
+    ]));
+    box.appendChild(el("div", { class: "exo-recall-body" }, [h.text || ""]));
+    if (h.images && h.images.length) {
+      const imgs = [];
+      for (const im of h.images) {
+        // CONTRACT §5: without `workspaceId` an image ref CANNOT be turned into a URL. Say so
+        // rather than emitting a link that 404s.
+        if (im.resolvable && im.url) imgs.push(el("img", { class: "exo-recall-img", src: im.url, alt: "recalled image" }, []));
+        else imgs.push(el("span", { class: "exo-sub" }, ["(an image is attached to this turn but cannot be located — the archive gave no workspace id)"]));
+      }
+      box.appendChild(el("div", { class: "exo-recall-imgs" }, imgs));
+    }
+    if (h.excerpt && h.excerpt.truncated) box.appendChild(el("div", { class: "exo-sub" }, [h.excerpt.marker]));
+  } else if (r.status === "hits" && r.hits.length) {
+    for (const h of r.hits) {
+      const jump = el("button", { class: "exo-btn exo-hit", type: "button", title: "Jump to this turn in the live conversation if it is still there" }, [h.provenance.label]);
+      jump.addEventListener("click", () => exoJumpTo(conv, h.kind, h.number, ctx));
+      box.appendChild(el("div", { class: "exo-hit-row" }, [jump, el("div", { class: "exo-hit-snip" }, [h.snippet || ""]), h.imageCount ? el("span", { class: "exo-sub" }, [" · " + h.imageCount + " image" + (h.imageCount === 1 ? "" : "s")]) : ""]));
+    }
+    if (r.capped) box.appendChild(el("div", { class: "exo-sub" }, ["Showing " + r.shownHits + " of " + r.totalHits + " matches (newest archived segment first — this is a substring scan, not a ranked search)."]));
+  } else {
+    // The honest miss. Never a silent no-op and never a spinner left running.
+    box.appendChild(el("div", { class: "exo-sub" }, [
+      r.reason === "not-found"
+        ? "Nothing matched. Only ARCHIVED (rolled-off) turns are searchable — a turn still in the live window is not found here, and that is not an error."
+        : r.reason === "no-archive"
+          ? "This conversation has not rolled anything into the archive yet, so there is nothing to search."
+          : "The engine could not answer this recall.",
+    ]));
+  }
+  return box;
+}
+
+/**
+ * Build the shared exocortex bar for one conversation.
+ *
+ * ctx = {
+ *   rows()      → the rendered message array (rows carry _pnum/_rnum/_node)
+ *   repaint()   → repaint this workspace
+ *   adopt(win)  → install a new window's rows/offsets into this workspace's own state
+ *   caps        → { compact, newChat } — which tier actions this surface can really perform
+ *   compact(), newChat()
+ * }
+ * Returns { root, sync } — `sync()` re-renders everything from current state and is safe to call on
+ * every paint.
+ */
+function exoMountBar(conv, ctx) {
+  const L = exoLib();
+  const root = el("div", { class: "exo" }, []);
+  if (!L) return { root, sync: () => {} };
+
+  const ctxChip = el("button", { class: "exo-chip exo-chip-ctx", type: "button", title: "What is filling the context window" }, ["◐ ctx —"]);
+  const agentsChip = el("button", { class: "exo-chip exo-chip-agents", type: "button", title: "Background agents" }, ["⚙ agents"]);
+  const jumpInput = el("input", { class: "exo-jump-in", type: "text", inputmode: "text", placeholder: "P#/R# or search archive", title: "Type a turn number (1237, P1237, R#1237) to jump to it, or any text to search the archived turns" });
+  const jumpBtn = el("button", { class: "exo-btn exo-jump-go", type: "button" }, ["Go"]);
+  const recallBtn = el("button", { class: "exo-btn exo-recall-go", type: "button", title: "Look this up in the ARCHIVE (rolled-off turns)" }, ["⌕ Recall"]);
+  const latestBtn = el("button", { class: "exo-chip exo-chip-latest", type: "button", title: "Stop looking at history and follow the live end of the conversation" }, ["⤓ Latest"]);
+  const bar = el("div", { class: "exo-bar" }, [ctxChip, agentsChip, el("span", { class: "exo-jump" }, [jumpInput, jumpBtn, recallBtn]), latestBtn]);
+  const cues = el("div", { class: "exo-cues" }, []);
+  // The "N earlier turns" affordance lives HERE rather than inside the transcript: the Core
+  // renderer's untouched-prefix fast path keys on node identity, and a rebuilt node at the head of
+  // the transcript would force a full replaceChildren on every paint.
+  const edges = el("div", { class: "exo-edges" }, []);
+  const panel = el("div", { class: "exo-panel" }, []);
+  panel.hidden = true;
+  root.replaceChildren(bar, edges, cues, panel);
+
+  const state = () => exoState(conv);
+
+  const submit = () => {
+    const s = state(); if (!s) return;
+    const raw = jumpInput.value;
+    const ref = exoParseTurnRef(raw, "prompt");
+    if (ref) exoJumpTo(conv, ref.kind, ref.number, ctx);
+    else if (String(raw || "").trim()) exoRecall(conv, { query: String(raw).trim() });
+    sync();
+  };
+  jumpBtn.addEventListener("click", submit);
+  jumpInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+  recallBtn.addEventListener("click", () => {
+    const raw = jumpInput.value;
+    const ref = exoParseTurnRef(raw, "prompt");
+    if (ref) exoRecall(conv, { kind: ref.kind, number: ref.number });
+    else if (String(raw || "").trim()) exoRecall(conv, { query: String(raw).trim() });
+    sync();
+  });
+  latestBtn.addEventListener("click", () => exoBackToLatest(conv, ctx));
+  const togglePanel = (which) => { const s = state(); if (!s) return; s.openPanel = s.openPanel === which ? "" : which; sync(); };
+  ctxChip.addEventListener("click", () => {
+    const s = state(); if (!s) return;
+    // Poll on OPEN — CONTRACT §1 is explicit that context usage is never pushed.
+    if (s.openPanel !== "ctx") { const k = exoKeyOf(conv); if (k) wsPost("control", { action: "contextUsage", args: { sessionKey: k } }); }
+    togglePanel("ctx");
+  });
+  agentsChip.addEventListener("click", () => togglePanel("agents"));
+
+  function sync() {
+    const s = state(); if (!s) return;
+    s.onTick = sync;
+    const now = Date.now();
+
+    // --- T3.1 chip -----------------------------------------------------------------
+    const pv = s.popover;
+    const tier = L.ind.contextTierFromPopover(pv);
+    const avail = !!(pv && pv.available);
+    ctxChip.textContent = avail ? "◐ " + pv.headline.pctLabel + " ctx" : "◐ ctx —";
+    ctxChip.title = avail
+      ? pv.headline.text + " — " + tier.label + ". Tap for the breakdown."
+      : "Context usage unavailable for this conversation (not “0%” — unknown). Tap to ask again.";
+    ctxChip.className = "exo-chip exo-chip-ctx --" + (avail ? tier.tone : "muted") + (s.openPanel === "ctx" ? " --open" : "");
+
+    // --- T3.2 chip -----------------------------------------------------------------
+    const avm = L.agents.shapeAgentsPanel(s.agentPayload, now, { tracking: s.agentTrack });
+    agentsChip.textContent = "⚙ " + avm.summary;
+    agentsChip.className = "exo-chip exo-chip-agents"
+      + (avm.anyStale ? " --warn" : avm.errored ? " --danger" : avm.running ? " --ok" : " --muted")
+      + (s.openPanel === "agents" ? " --open" : "");
+    agentsChip.title = avm.hasData
+      ? (avm.anyStale ? avm.staleNote : "Background agents for this conversation. Tap for the fleet.")
+      : "No fleet data reported for this conversation — which is not the same as “nothing is running”.";
+    agentsChip.hidden = !avm.hasData && avm.count === 0 && !s.agentPayload;
+
+    // --- T3.4 affordances ----------------------------------------------------------
+    const aff = L.win.viewAffordances(s.view);
+    const affTxt = exoAffordanceText(aff);
+    latestBtn.hidden = !exoIsPinned(conv) && affTxt.atEnd;
+    latestBtn.className = "exo-chip exo-chip-latest" + (exoIsPinned(conv) ? " --warn" : "");
+    const en = exoEdgeNodes(conv, ctx);
+    edges.replaceChildren.apply(edges, en.above ? [en.above] : []);
+    edges.hidden = !en.above;
+
+    // --- T3.3 cue strip ------------------------------------------------------------
+    const shaped = L.ind.shapeIndicators(s.ind, { now, popover: pv });
+    s.ind = L.ind.pruneIndicators(s.ind, now);
+    const cueKids = [];
+    for (const c of shaped.indicators) {
+      const line = exoCueLine(c);
+      cueKids.push(el("div", { class: "exo-cue --" + line.tone + (line.hedged ? " --guess" : ""), title: line.title }, [
+        line.icon ? el("span", { class: "exo-cue-ico" }, [line.icon]) : "",
+        el("span", {}, [line.text]),
+        line.hedged ? el("span", { class: "exo-guess-tag" }, ["guess"]) : "",
+      ]));
+    }
+    // The tier's ADVICE, with real buttons for the actions this surface can actually perform.
+    const ta = exoTierAffordances(shaped.tier, ctx.caps || {});
+    if (ta.severity >= 1 || (!ta.available && s.breakdownSeen)) {
+      const kids = [el("b", { class: "exo-tier-lbl" }, [ta.label + (ta.pct !== null ? " · " + Math.round(ta.pct) + "%" : "")]), el("span", { class: "exo-tier-advice" }, [ta.advice])];
+      for (const b of ta.buttons) {
+        const btn = el("button", { class: "exo-btn exo-act", type: "button", title: b.title }, [b.label]);
+        btn.addEventListener("click", () => { if (b.action === "compact" && ctx.compact) ctx.compact(); else if (b.action === "newChat" && ctx.newChat) ctx.newChat(); });
+        kids.push(btn);
+      }
+      for (const n of ta.notes) kids.push(el("div", { class: "exo-sub" }, [n]));
+      cueKids.push(el("div", { class: "exo-tier --" + ta.tone }, kids));
+    }
+    // Jump progress — a jump can take more than one round-trip, so it always says something.
+    const jt = exoJumpStatusText(s.jump);
+    if (jt) {
+      const kids = [exoJumpBusy(s.jump) ? el("span", { class: "exo-spin" }, []) : "", el("span", {}, [jt])];
+      if (s.jump && (s.jump.status === "exhausted" || s.jump.status === "missing")) {
+        const rb = el("button", { class: "exo-btn", type: "button" }, ["⌕ Recall " + exoTurnRefLabel(s.jump.kind, s.jump.number)]);
+        rb.addEventListener("click", () => { exoRecall(conv, { kind: s.jump.kind, number: s.jump.number }); sync(); });
+        kids.push(rb);
+      }
+      cueKids.push(el("div", { class: "exo-cue --notice exo-jumpline" }, kids));
+    }
+    cues.replaceChildren(...cueKids);
+    cues.hidden = cueKids.length === 0;
+
+    // --- panels --------------------------------------------------------------------
+    // `--open` is what lets the CSS release the transcript's min-height while a panel is expanded.
+    // Both panes and Pact tabs live in a FIXED-height box with overflow:hidden, so an unbounded
+    // panel would push the compose row off the bottom — the exact mobile regression class that keeps
+    // recurring here. A plain sibling selector (no :has()) so it works on every browser.
+    root.classList.toggle("--open", !!s.openPanel);
+    if (s.openPanel === "ctx") { panel.hidden = false; panel.replaceChildren(exoRenderContextPanel(conv)); }
+    else if (s.openPanel === "agents") { panel.hidden = false; panel.replaceChildren(exoRenderAgentsPanel(conv, now)); }
+    else { panel.hidden = true; panel.replaceChildren(); }
+
+    // The fleet clock has to be driven — nothing about elapsed/staleness moves on its own.
+    if (!s._ticker && (avm.running > 0 || s.openPanel === "agents")) {
+      s._ticker = exoRegisterTicker(() => { const st2 = state(); if (!st2) return; if (!root.isConnected) { if (st2._ticker) { st2._ticker(); st2._ticker = null; } return; } sync(); });
+    } else if (s._ticker && avm.running === 0 && s.openPanel !== "agents") { s._ticker(); s._ticker = null; }
+  }
+
+  sync();
+  return { root, sync };
+}
+
+/** The two honest edge affordances, as transcript nodes. `above` carries an EXACT turn count;
+ *  `below` carries NONE (see exoAffordanceText). Returns { above, below } — either may be null. */
+function exoEdgeNodes(conv, ctx) {
+  const L = exoLib(); const s = exoState(conv);
+  if (!L || !s || !s.view || !s.view.total) return { above: null, below: null };
+  const aff = L.win.viewAffordances(s.view);
+  const txt = exoAffordanceText(aff);
+  let above = null, below = null;
+  if (txt.hasAbove) {
+    const btn = el("button", { class: "ws-show-earlier exo-edge", type: "button" }, [
+      txt.above + (s.extending === "up" ? "  ·  loading…" : "  ·  load earlier"),
+    ]);
+    if (s.extending === "up") btn.disabled = true;
+    btn.addEventListener("click", () => exoExtend(conv, "up", ctx));
+    above = btn;
+  }
+  if (txt.hasBelow) {
+    const btn = el("button", { class: "ws-show-earlier exo-edge", type: "button", title: "The number of turns below is genuinely unknown — the conversation total counts ROWS (tool output included), so any count here would be invented." }, [
+      txt.below + (s.extending === "down" ? "  ·  loading…" : "  ·  load newer"),
+    ]);
+    if (s.extending === "down") btn.disabled = true;
+    btn.addEventListener("click", () => exoExtend(conv, "down", ctx));
+    below = btn;
+  }
+  return { above, below };
+}
+// ===== end EXOCORTEX =============================================================================
+
 // This browser's stable identity for presence — kept across reloads so a refresh doesn't read as
 // a new terminal. A human label (editable) rides along so the roster is legible.
 const WS_CONN_KEY = "cm.conn.v1";
@@ -6316,7 +7251,7 @@ function pactChatSelfHeal() {
     // Watchdog: a DROPPED loadingHistoryDone would leave the synthetic "thinking" set forever (the exact stuck
     // "workspace dead" state). If a cold-load has been active well past any real load time, end it locally AND
     // resync so the server's authoritative status wins (idle if truly done; still-thinking if a real turn began).
-    if (coldLoadStale(t, now)) { coldLoadEnd(t, now); if (t.id === PACT_CHAT.activeId) pactChatPaint(t); wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true } }); continue; }
+    if (coldLoadStale(t, now)) { coldLoadEnd(t, now); if (t.id === PACT_CHAT.activeId) pactChatPaint(t); wsPost("control", { action: "resync", args: exoResyncArgs(t, { sessionKey: t.key, scoped: true }) }); continue; }
     // When the local transcript already exceeds the server cap, a capped resync is SHORTER than local, so the
     // `incoming >= local` guard would REJECT it — even when it carries the dropped reply. Fetch `full` then, so
     // incoming ≥ local and the reply surfaces. Busy branch only fires when stuck, so full is fine there; the
@@ -6325,10 +7260,10 @@ function pactChatSelfHeal() {
     const bigLocal = pactPersistedCount(t.msgs) > PACT_RESYNC_CAP;
     if (pactChatBusy(t) && (now - (t._lastEventAt || 0)) > WS_HEAL_QUIET_MS && (now - (t._healAt || 0)) > WS_HEAL_QUIET_MS) {
       t._healAt = now;
-      wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true, full: bigLocal } });
+      wsPost("control", { action: "resync", args: exoResyncArgs(t, { sessionKey: t.key, scoped: true, full: bigLocal }) });
     } else if (t.id === PACT_CHAT.activeId && !pactChatBusy(t) && (now - (t._lastActiveAt || t._lastResultAt || 0)) < WS_HEAL_ACTIVE_WINDOW_MS && (now - (t._statusSyncAt || 0)) > WS_HEAL_ACTIVE_QUIET_MS) {
       t._statusSyncAt = now;
-      wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true, full: bigLocal && pactInterruptedIdx(t) >= 0 } });
+      wsPost("control", { action: "resync", args: exoResyncArgs(t, { sessionKey: t.key, scoped: true, full: bigLocal && pactInterruptedIdx(t) >= 0 }) });
     }
   }
   // Auto-continue watchdog. pactAutoEnsure is idempotent and derives everything from current state, so
@@ -6566,7 +7501,9 @@ function pactChatResyncAll() {
     // for `full` then. (Counted on persisted messages — the server caps its persisted transcript, not the
     // live-only tool rows.)
     const bigLocal = pactPersistedCount(t.msgs) > PACT_RESYNC_CAP;
-    wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true, full: bigLocal } });
+    // While a tab is parked on a historical band, re-ask for THAT band — a tail resync would yank
+    // the reader back to the live end on every reconnect.
+    wsPost("control", { action: "resync", args: exoResyncArgs(t, { sessionKey: t.key, scoped: true, full: bigLocal }) });
   }
 }
 // ===== PACT RESUME-LOST — pure helper (sliced for lib/pactResumeLost.test.mjs) =====
@@ -6626,6 +7563,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
         tt._transcriptTruncated = !!(data && data.transcriptTruncated);   // baseline is the tail only — older history fetchable via "Show earlier"
         pactSetNumOffsets(tt, data);   // absolute P#/R# numbering: how many prompts/responses precede this window
       } else if (incoming.length >= tt.msgs.length) { tt.msgs = pactPreserveElapsed(tt.msgs, incoming); tt._transcriptTruncated = !!(data && data.transcriptTruncated); pactSetNumOffsets(tt, data); }
+      exoAbsorbWindow(tt, data);   // keep the window model in step so "N earlier turns" is real, not guessed
       pactChatReinjectMigrations(tt);   // splice the worktree-migration markers back into the rehydrated transcript
       pactChatHealWorktree(tt);         // recover a worktree binding the IDE-state layout may have lost
       pactChatSetLoading(tt, false);    // transcript arrived — drop the loader
@@ -6640,7 +7578,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
   }
   const t = sessionKey ? pactChatByKey(sessionKey) : null;
   if (!t) return;
-  if (kind === "state") { if (data && data.session) { if (data.session.status) t.status = data.session.status; if (data.session.usage) t.usage = data.session.usage; pactAdoptServerClock(t, data.session); pactChatMarkTurnBusy(t); pactChatPaint(t); } return; }
+  if (kind === "state") { if (data && data.session) { if (data.session.status) t.status = data.session.status; if (data.session.usage) t.usage = data.session.usage; exoNoteAgents(t, data.session, Date.now()); pactAdoptServerClock(t, data.session); pactChatMarkTurnBusy(t); pactChatPaint(t); } return; }
   if (kind === "permission") { t.perm = { requestId: data.requestId, tool: data.tool || data.name || data.title || "a tool" }; t.status = "awaiting-permission"; pactChatPaint(t); return; }
   if (kind !== "event") return;
   const d = data || {};
@@ -6658,7 +7596,16 @@ function pactChatRoute({ kind, sessionKey, data }) {
     // consumed this; Pact never did, so its model bar's swarm indicator had no data source. Live count, not
     // cumulative: this is "who is working for me right now", which is the actionable signal when a turn
     // stalls waiting on a fan-out.
-    case "background": t._background = Array.isArray(d.tasks) ? d.tasks : []; pactUpdateSwarm(t); return;
+    case "background": t._background = Array.isArray(d.tasks) ? d.tasks : []; exoIngestEvent(t, d); pactUpdateSwarm(t); if (t.id === PACT_CHAT.activeId) pactChatPaint(t); return;
+    // taskStarted/taskDone carry the same `panel` (CONTRACT §2b) and are what keep the fleet's
+    // liveness tracking honest between `background` snapshots.
+    case "taskStarted":
+    case "taskDone": exoIngestEvent(t, d); if (t.id === PACT_CHAT.activeId) pactChatPaint(t); return;
+    // Threshold + recall cues. These frames carry NO inline sessionKey (CONTRACT §0) — they are
+    // routed purely by the frame's key, which is how `t` was resolved above.
+    case "rolling":
+    case "lookingUp":
+    case "recall": exoIngestEvent(t, d); pactChatPaint(t); return;
     // Reconnect catch-up reply (see pactChatResyncAll + `_resync` server-side): the server's
     // AUTHORITATIVE current state. REPLACE the tab's messages with the persisted transcript (never
     // the fresh-open concat — that assumes an empty tab and would DUPLICATE here), guarding on length
@@ -6668,9 +7615,15 @@ function pactChatRoute({ kind, sessionKey, data }) {
     // late sessionOpen reply can't re-concat what we just replaced.
     case "resync": {
       const incoming = pactTranscriptToMsgs(d.transcript);
+      // Exocortex first. A BAND (an `around`/`aroundTurn` answer) is an explicit navigation result and
+      // is always authoritative: the length-based replace guard below exists to stop a SHORTER
+      // persisted snapshot clobbering a live tail, which is a different question entirely.
+      const _w = exoAbsorbWindow(t, d);
+      if (_w) t._exo.extending = null;
+      if (_w && _w.isBand) { pactExoCtx(t).adopt(_w); pactChatHealWorktree(t); }
       // Compare PERSISTED counts, not raw lengths — local carries live-only tool/note/migration rows the
       // server transcript lacks, so raw length always looked "longer" and rejected the replace (see helper).
-      const dec = pactResyncDecision(pactPersistedCount(t.msgs), pactPersistedCount(incoming), d.status, d.live);
+      const dec = (_w && _w.isBand) ? { replace: false, keepLive: false } : pactResyncDecision(pactPersistedCount(t.msgs), pactPersistedCount(incoming), d.status, d.live);
       if (dec.replace) { t.msgs = pactPreserveElapsed(t.msgs, incoming); pactChatReinjectMigrations(t); pactChatHealWorktree(t); t._transcriptTruncated = !!d.transcriptTruncated; pactSetNumOffsets(t, d); }   // keep a live-stamped "Thought for …" the daemon hasn't persisted yet; re-add migration markers; recover a lost worktree binding; refresh P#/R# offsets
       pactChatSetLoading(t, false);   // a resync also satisfies an in-flight load — drop the loader
       if (d.usage) t.usage = d.usage;
@@ -6692,6 +7645,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       pactChatDrainQueue(t);   // a turn that finished during downtime just landed — release any queued follow-up
       // A bookmark jump to a response not in the loaded window triggered a full resync — now complete the jump.
       if (t._pendingBookmarkScroll != null) { const at = t._pendingBookmarkScroll; t._pendingBookmarkScroll = null; requestAnimationFrame(() => pactChatScrollToResponse(t, at)); }
+      if (_w) exoResolveJump(t, pactExoCtx(t), _w);   // resolve an in-flight jump-to-#N against this window
       return;
     }
     // A prompt echoed from ANOTHER device (own sends are guarded out) → a turn is starting here: (re)start
@@ -6726,19 +7680,23 @@ function pactChatRoute({ kind, sessionKey, data }) {
       pactOutboxFlush();       // …and any queue recovered from a deploy/reload that was waiting on this turn
       return;
     // Context-window usage answer for this tab's session — store + repaint the header indicator.
-    case "contextUsage": t.contextUsage = d.usage; if (d.usage && d.usage.model) { t.activeModel = d.usage.model; pactUpdateModelNow(t); } pactUpdateUsageNow(t); return;
+    // CONTRACT §1: `contextBreakdown` is the field new code reads; `ok:false` means UNAVAILABLE,
+    // never "0% used". The raw `usage` stays for the legacy header badge.
+    case "contextUsage": t.contextUsage = d.usage; exoNoteContext(t, d); if (d.usage && d.usage.model) { t.activeModel = d.usage.model; pactUpdateModelNow(t); } pactUpdateUsageNow(t); if (PACT_CHAT._exo && PACT_CHAT._exoTabId === t.id) PACT_CHAT._exo.sync(); return;
     // Cold-load telemetry (see workspace.mjs): the engine is loading a large conversation's history on resume —
     // show "Loading… (N MB)" (not "stuck") until it flips to done + normal output. Both drive pactChatTickTimer.
-    case "loadingHistory": coldLoadBegin(t, d.bytes, Date.now()); pactChatMarkTurnBusy(t); pactChatPaint(t); return;
-    case "loadingHistoryDone": if (coldLoadEnd(t, Date.now())) pactChatPaint(t); return;
+    case "loadingHistory": exoIngestEvent(t, d); coldLoadBegin(t, d.bytes, Date.now()); pactChatMarkTurnBusy(t); pactChatPaint(t); return;
+    case "loadingHistoryDone": { const ch = exoIngestEvent(t, d); if (coldLoadEnd(t, Date.now()) || ch) pactChatPaint(t); return; }
     // The engine RECEIVED the ■ Stop press (emitted before the up-to-6s interrupt await). Confirms the
     // optimistic local flag set on click — so a press is visibly registered even when the interrupt is slow.
     case "stopping": t._stopping = t._stopping || Date.now(); pactChatPaint(t); return;
     // Compaction confirmation — the CLI actually ran `/compact`. Show it (with the token drop) and re-request
     // context usage so the header badge reflects the smaller window immediately (proof it worked).
     case "compacted": {
+      exoIngestEvent(t, d);
       const k = (n) => (n == null ? null : Math.round(n / 1000) + "k");
       const pre = k(d.preTokens), post = k(d.postTokens);
+      pactChatPaint(t);
       pactChatFlashNote("🗜 Context compacted" + (pre && post ? " — " + pre + " → " + post + " tokens" : ""));
       if (t.key) wsPost("control", { action: "contextUsage", args: { sessionKey: t.key } });
       return;
@@ -7716,6 +8674,33 @@ function pactChatMsgNode(m) {
   }
   return el("div", {}, []);
 }
+// The Pact chat's adapter onto the shared exocortex surface (see the EXOCORTEX block). Mirror of
+// the Core cockpit's wsExoCtx: where this workspace's rows live, how to repaint, how to install a
+// fetched window. `t.msgs` is the RENDER form (pactTranscriptToMsgs); the window model always works
+// on the RAW server rows, which is why adopt() converts.
+function pactExoCtx(t) {
+  return {
+    rows: () => (Array.isArray(t.msgs) ? t.msgs : []),
+    repaint: () => pactChatPaint(t),
+    adopt: (w) => {
+      t.msgs = pactTranscriptToMsgs(w.rows);
+      pactChatReinjectMigrations(t);
+      t._promptOffset = w.promptOffset; t._responseOffset = w.responseOffset;
+      t._transcriptTruncated = w.truncated;
+      t._showFrom = 0;          // a band is at most ~501 rows and the target may be anywhere in it
+      t._forceBottom = false;   // this is history — do NOT yank the reader to the live end
+      t.live = "";
+      for (const m of t.msgs) if (m) m._node = null;
+    },
+    onLatest: () => { t._showFrom = undefined; t._forceBottom = true; },
+    // A Pact tab is ONE saved session inside a shared workspace id — every window request must be
+    // scoped to it, exactly as the existing pact resyncs are (CONTRACT §4).
+    scoped: true,
+    caps: { compact: true, newChat: true },
+    compact: () => pactCompact(),
+    newChat: () => pactChatNewTab(),
+  };
+}
 function pactChatPaint(t) {
   if (!PACT_CHAT || t.id !== PACT_CHAT.activeId) return;
   const scroll = PACT_CHAT.host.querySelector(".pc-scroll");
@@ -7749,7 +8734,9 @@ function pactChatPaint(t) {
   // Beyond the messages hidden locally, the server may hold OLDER ones it didn't ship — a resync/open sends
   // only the tail (WS_RESYNC_MSG_CAP) so a big conversation appears instantly on mobile. Keep the chip offered
   // while truncated, and when the reader reaches the local floor, fetch the rest whole (`full: true`).
-  const moreOnServer = !!t._transcriptTruncated;
+  // While parked on a historical band the exocortex edge affordances own "there is more" in both
+  // directions — the legacy chip would fetch the TAIL and silently undo the jump.
+  const moreOnServer = !!t._transcriptTruncated && !exoIsPinned(t);
   if (hiddenCount > 0 || moreOnServer) {
     const chunk = Math.min(100, hiddenCount);
     const label = hiddenCount > 0
@@ -7770,6 +8757,13 @@ function pactChatPaint(t) {
       (() => { const b = el("button", { class: "pc-deny" }, ["Deny"]); b.addEventListener("click", () => pactChatDecide(t, "deny")); return b; })(),
     ]);
     nodes.push(bar);
+  }
+  // Exocortex chips/cues, then the inline recall block + the honest "more below" affordance.
+  if (PACT_CHAT._exo && PACT_CHAT._exoTabId === t.id) PACT_CHAT._exo.sync();
+  {
+    const xctx = pactExoCtx(t);
+    const rn = exoRecallNode(t, xctx); if (rn) nodes.push(rn);
+    const en = exoEdgeNodes(t, xctx); if (en.below) nodes.push(en.below);
   }
   const timerSpan = () => el("span", { class: "pc-timer", title: "Time on this response" }, [t._turnStartedAt ? pactFmtDuration(Date.now() - t._turnStartedAt) : ""]);
   if (t.live) nodes.push(el("div", { class: "pc-msg pc-asst pc-live" }, [el("div", { class: "pc-asst-body" }, [t.live]), el("div", { class: "pc-live-meta" }, ["▍ ", timerSpan()])]));
@@ -8261,11 +9255,18 @@ function pactChatRender() {
   // DESKTOP order, top → bottom: header (tabs + actions) · transcript · pasted-image strip · continuation
   // line (suggest + ★ bookmark) · type box · action bar (upload/repo/worktree ··· Stop · Send) · model bar.
   // Mobile keeps its existing compact composition untouched — that pass comes after this one is confirmed.
-  if (mob) host.replaceChildren(head, scroll, composeExtras, el("div", { class: "pc-toolrow" }, [suggest, wtPill]), compose);
+  // Exocortex bar for the ACTIVE tab — context chip, agents chip, jump/search box and the cue strip,
+  // directly above the transcript on BOTH layouts. In flow, so its panels can never be clipped on a
+  // phone. Rebuilt with the host (this function recreates .pc-scroll on every tab switch), so the
+  // mount is re-taken and tagged with the tab it belongs to.
+  const exoMount = active ? exoMountBar(active, pactExoCtx(active)) : null;
+  PACT_CHAT._exo = exoMount; PACT_CHAT._exoTabId = active ? active.id : null;
+  const exoNode = exoMount ? exoMount.root : el("span", {}, []);
+  if (mob) host.replaceChildren(head, exoNode, scroll, composeExtras, el("div", { class: "pc-toolrow" }, [suggest, wtPill]), compose);
   else {
     // ★ Bookmark moves onto the continuation line, beside the suggested-next chip.
     const contLine = el("div", { class: "pc-contline" }, [suggest, bmWrap]);
-    host.replaceChildren(head, scroll, composeExtras, contLine, compose, actionBar, modelBar);
+    host.replaceChildren(head, exoNode, scroll, composeExtras, contLine, compose, actionBar, modelBar);
   }
   pactChatUpdateSuggest(pactChatActive());
   pactUpdateSwarm(pactChatActive());   // a rebuild mints a fresh .pc-swarm — repaint from the tab's live set
@@ -9658,7 +10659,9 @@ function viewWorkspace() {
     // sends only the tail (see WS_RESYNC_MSG_CAP) so a big conversation appears instantly on mobile. When it's
     // truncated, the chip must stay offered even after every local turn is revealed, and clicking it fetches
     // the rest whole (`full: true`) — the resync reply swaps in the complete transcript and repaints.
-    const moreOnServer = !!p._transcriptTruncated;
+    // While parked on a historical band (a jump-to-#N), the exocortex edge affordances own "there is
+    // more" in BOTH directions; the legacy chip would fetch the TAIL and silently undo the jump.
+    const moreOnServer = !!p._transcriptTruncated && !exoIsPinned(p);
     // Invalidate all cached nodes if the transcript array itself was swapped (resync/reopen give a
     // brand-new array) — reused nodes from a different conversation would be flat-out wrong.
     if (ui._txRef !== p.transcript) { ui._txRef = p.transcript; ui._turnCache = new Map(); ui._domLead = []; ui._showEarlierNode = null; }
@@ -9829,6 +10832,49 @@ function viewWorkspace() {
   }
 
   // ---- one pane ------------------------------------------------------------------
+  // ---- Exocortex (Phase 2) --------------------------------------------------------------
+  // The context popover, threshold cues, jump-to-#N + windowed transcript, the agents fleet and the
+  // recall block are ONE implementation shared with the Pact chat (see the EXOCORTEX block at module
+  // scope). This is the Core cockpit's adapter: it supplies the three things only this workspace
+  // knows — where its rows live, how to repaint, and how to install a fetched window.
+  function wsExoCtx(p) {
+    return {
+      rows: () => (Array.isArray(p.transcript) ? p.transcript : []),
+      repaint: () => paintPane(p),
+      adopt: (w) => {
+        p.transcript = wsBackfillTurnWorkspace(w.rows, p.workspaceId || wsWorkspaceId(p.repo, p.worktree));
+        p._promptOffset = w.promptOffset; p._responseOffset = w.responseOffset;
+        p._transcriptTruncated = w.truncated;
+        // A band is at most ~501 rows and the target turn may sit anywhere in it, so render the whole
+        // band rather than the usual trailing-turns cap — and do NOT snap to the bottom: the reader
+        // asked to look at history.
+        p._revealAll = true; p._scrollBottomNext = false; p._loadingMore = false;
+        const ui = paneUI.get(p.id);
+        if (ui) { ui._txRef = null; ui._turnCache = new Map(); ui._domLead = []; ui._showEarlierNode = null; }
+      },
+      onLatest: () => { p._revealAll = false; p._revealTurns = WS_TURN_RENDER_CAP; p._scrollBottomNext = true; const ui = paneUI.get(p.id); if (ui) { ui._txRef = null; ui._turnCache = new Map(); ui._domLead = []; } },
+      // Core reads the MERGED workspace history — `scoped` stays off here (CONTRACT §4).
+      scoped: false,
+      caps: { compact: !p.readonly, newChat: true },
+      compact: () => wsCompact(p),
+      newChat: () => wsNewChatFrom(p),
+    };
+  }
+  // "Start a fresh conversation" as a real action (the `newChat` tier advice must not be a dead
+  // button). Prefers an already-empty box; otherwise grows the grid by one row, which is exactly
+  // what the Panes picker does. Mobile has its own flat 1xN path.
+  function wsNewChatFrom(p) {
+    if (st.isMobile) { addPaneMobile(); return; }
+    const empty = st.panes.find((x) => x !== p && !(x.transcript || []).length && !x.repo);
+    const seed = (q) => { if (p.repo && !q.repo) { q.repo = p.repo; q.worktree = p.worktree; assignKey(q); paintPane(q); } setActive(q.id); saveLayout(); };
+    if (empty) { seed(empty); return; }
+    if (st.panes.length >= WS_MAX_PANES) { note(`That's the maximum of ${WS_MAX_PANES} chat boxes — close one first.`); return; }
+    const cols = st.cols || 1;
+    setLayout(cols, Math.ceil((st.panes.length + 1) / cols));
+    const fresh = st.panes[st.panes.length - 1];
+    if (fresh) seed(fresh);
+  }
+
   function buildPane(p) {
     const repoSel = el("select", { class: "wsel wsel-sm" }, []); fillRepoSelect(repoSel, p.repo);
     const wtSel = el("select", { class: "wsel wsel-sm wsel-wt", title: "Worktree — a separate checkout for a parallel workspace on this repo" }, []);
@@ -9944,7 +10990,11 @@ function viewWorkspace() {
     activityLog.hidden = true;
     activityLine.addEventListener("click", () => { activityLog.hidden = !activityLog.hidden; if (!activityLog.hidden) renderActivityLog(p); });
     // Bottom-up order now matches Pact exactly: … transcript → attachments → type box → MODEL BAR.
-    const paneRoot = el("div", { class: "ws-pane" }, [topBar, activityLine, activityLog, transcriptEl, composeExtras, composeRow, controlsBar]);
+    // Exocortex bar — context chip + agents chip + jump/search box + the cue strip, directly above
+    // the transcript. In flow (not an anchored popup) so its panels can never be clipped by the
+    // pane's overflow on a narrow phone viewport.
+    const exo = exoMountBar(p, wsExoCtx(p));
+    const paneRoot = el("div", { class: "ws-pane" }, [topBar, activityLine, activityLog, exo.root, transcriptEl, composeExtras, composeRow, controlsBar]);
 
     paneRoot.addEventListener("mousedown", () => setActive(p.id));
     // Repointing a pane to a different repo/worktree abandons its OLD identity — bump `_gen` so
@@ -10056,7 +11106,7 @@ function viewWorkspace() {
     // Desktop: dock the Live/Held bulb just above Send. Mobile: syncMobileBar homes it in the pane HEADER
     // instead (by the identity), so don't dock to the compose here — it would flash there before moving.
     if (!st.isMobile) stick.dockMode(sendWrap, "stick-mode--dock");
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, stick, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, stopBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, _bmPop: bmPop, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, stick, promptEl, repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, stopBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, exo, _bmPop: bmPop, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
     if (p.draft) { promptEl.value = p.draft; wsAutoResizePrompt(promptEl); }   // restore the saved compose draft after a view switch / reload
     return paneRoot;
   }
@@ -10222,6 +11272,7 @@ function viewWorkspace() {
     const usg = wsUsageLabel(p.usage, p.contextUsage);
     ui.usageEl.textContent = usg.text || "—";
     ui.usageEl.title = usg.title;
+    if (ui.exo) ui.exo.sync();   // exocortex chips/cues are pure functions of this pane's state
     // paintPane fires on every streamed event during a turn — a full replaceChildren() would
     // otherwise (a) blow away any tool-group a user just expanded (fixed by handing the pane's
     // persisted `_expandedGroups` into renderTranscript) and (b) yank the scroll position back to
@@ -10265,6 +11316,15 @@ function viewWorkspace() {
         if (q.images && q.images.length) kids.push(el("div", { class: "ws-user-images" }, q.images.map((img) => el("img", { class: "ws-user-image", src: img.dataUrl, alt: "attached image (queued)" }, []))));
         kids.push(q.text, el("span", { class: "ws-queued-tag" }, [queuedTag]));
         tailExtras.push(line(queuedCls, kids));
+      }
+      // Exocortex tail: the recalled turn (inline, with its provenance) and the honest "more below"
+      // affordance — no count, because the number of turns below is genuinely unknown (the row total
+      // includes tool output). The matching "N earlier turns" sits in the exo bar above the transcript,
+      // where it does not invalidate renderTranscriptInto's untouched-prefix cache every paint.
+      {
+        const xctx = wsExoCtx(p);
+        const rn = exoRecallNode(p, xctx); if (rn) tailExtras.push(rn);
+        const en = exoEdgeNodes(p, xctx); if (en.below) tailExtras.push(en.below);
       }
       renderTranscriptInto(ui, p, tailExtras);
     }
@@ -10953,8 +12013,11 @@ function viewWorkspace() {
       // every pane's selector is repainted so a newly-available model shows up everywhere at once,
       // not just in whichever pane happened to ask.
       if (Array.isArray(data.models) && data.models.length) { st.models = data.models; OMNI_CATALOG = data.models.filter((m) => m && typeof m.value === "string" && m.value.startsWith("omni/")); try { localStorage.setItem("cm_models", JSON.stringify(data.models)); } catch {} for (const p of st.panes) paintPane(p); }
-      if (Array.isArray(data.sessions)) { setLiveSessions(data.sessions); for (const s of data.sessions) for (const p of panesOf(s.sessionKey)) { p.status = s.status || p.status; if (s.mode) p.mode = s.mode; if (s.usage) p.usage = s.usage; if (s.background) p._background = s.background; paintPane(p); } }
-      if (data.session) { upsertLiveSession(data.session); for (const p of panesOf(data.session.sessionKey)) { Object.assign(p, { status: data.session.status ?? p.status, mode: data.session.mode ?? p.mode, usage: data.session.usage ?? p.usage }); if (data.session.background) p._background = data.session.background; paintPane(p); } }
+      // NOTE (CONTRACT §2b): the agents tracker MUST see every state frame as well as every
+      // background event, keyed per sessionKey — its staleness heuristic measures "when did THIS
+      // client last see THIS agent change", and skipped frames make a healthy fleet read as stalled.
+      if (Array.isArray(data.sessions)) { setLiveSessions(data.sessions); for (const s of data.sessions) for (const p of panesOf(s.sessionKey)) { p.status = s.status || p.status; if (s.mode) p.mode = s.mode; if (s.usage) p.usage = s.usage; if (s.background) p._background = s.background; exoNoteAgents(p, s, Date.now()); paintPane(p); } }
+      if (data.session) { upsertLiveSession(data.session); for (const p of panesOf(data.session.sessionKey)) { Object.assign(p, { status: data.session.status ?? p.status, mode: data.session.mode ?? p.mode, usage: data.session.usage ?? p.usage }); if (data.session.background) p._background = data.session.background; exoNoteAgents(p, data.session, Date.now()); paintPane(p); } }
       // NOTE: the server's own defaultMode is deliberately NOT mirrored here. Every pane sends
       // its mode with each prompt, so the toolbar picker is a local "mode for new panes"
       // preference — echoing the server's would clobber it on every list refresh.
@@ -10978,9 +12041,14 @@ function viewWorkspace() {
         const p = st.panes.find((x) => x.id === req.paneId); if (!p) { wsDiag("openReply " + String(sessionKey).slice(-20) + " NO-PANE"); continue; }   // its pane was trimmed away
         if ((p._gen || 0) !== req.gen) { wsDiag("openReply " + String(sessionKey).slice(-20) + " GEN-MISMATCH"); continue; }   // this pane has moved on since the request — discard, don't apply
         wsDiag("openReply " + String(sessionKey).slice(-20) + " tx=" + (data.transcript || []).length + " mode=" + req.mode);
-        p.transcript = wsBackfillTurnWorkspace(data.transcript || [], data.workspaceId || wsWorkspaceId(data.repo || p.repo, data.worktree || p.worktree));
-        p._transcriptTruncated = !!data.transcriptTruncated;   // server sent only the tail — more is fetchable via "Show earlier"
-        p._promptOffset = data.promptOffset || 0; p._responseOffset = data.responseOffset || 0;   // absolute P#/R# numbering (counts the un-shipped ones)
+        // Exocortex: run every transcript payload through the window model (normalizeBand →
+        // applyBand → band cache) so affordances and jumps have a real model to work from. It takes
+        // OVER the rows only for a BAND (an `around`/`aroundTurn` answer, i.e. windowStart present);
+        // a plain tail/full reply keeps the long-standing path below untouched.
+        const _w = exoAbsorbWindow(p, data);
+        p.transcript = wsBackfillTurnWorkspace((_w && _w.isBand ? _w.rows : data.transcript) || [], data.workspaceId || wsWorkspaceId(data.repo || p.repo, data.worktree || p.worktree));
+        p._transcriptTruncated = _w && _w.isBand ? _w.truncated : !!data.transcriptTruncated;   // server sent only the tail — more is fetchable via "Show earlier"
+        p._promptOffset = (_w && _w.isBand ? _w.promptOffset : data.promptOffset) || 0; p._responseOffset = (_w && _w.isBand ? _w.responseOffset : data.responseOffset) || 0;   // absolute P#/R# numbering (counts the un-shipped ones)
         p._expandedGroups = new Set();   // a freshly-(re)opened transcript has no expand state yet
         p._revealTurns = WS_TURN_RENDER_CAP; p._revealAll = false; p._loadWindow = undefined; p._loadingMore = false;   // a (re)opened conversation starts capped
         p._scrollBottomNext = true;      // …and lands at the bottom (latest), not scrolled up
@@ -11014,7 +12082,13 @@ function viewWorkspace() {
           if (req.mode === "resume") note(alsoOpen ? "Resuming here — this conversation is also open in another box; both drive the same session." : "Resuming — your next message continues this session.");
         } else { p.readonly = true; p.resume = null; note("Reopened read-only. Pick the repo or Resume to continue."); }
         wsBmAdopt(p); wsMarkBookmarks(p);   // this pane just adopted a conversation identity — pull its shared bookmarks
+        // The resume/restore branch above may have just ADOPTED a different sessionKey, which resets
+        // this pane's exocortex state by design (a repointed pane must inherit nothing). Re-absorb so
+        // the window model describes the conversation the pane now actually holds.
+        const _w2 = exoAbsorbWindow(p, data) || _w;
+        if (_w2 && _w2.isBand) { p._revealAll = true; p._scrollBottomNext = false; }
         paintPane(p); setUsageTotal(); saveLayout();
+        if (_w2) exoResolveJump(p, wsExoCtx(p), _w2);   // a jump-to-#N answered on the open path
       }
       return;
     }
@@ -11079,11 +12153,16 @@ function viewWorkspace() {
       if (data.kind === "resync") {
         for (const p of targets) {
           const prevStatus = p.status, prevLen = (p.transcript || []).length;
-          if (Array.isArray(data.transcript)) { p.transcript = wsBackfillTurnWorkspace(data.transcript, data.workspaceId || wsWorkspaceId(p.repo, p.worktree)); p._transcriptTruncated = !!data.transcriptTruncated; p._promptOffset = data.promptOffset || 0; p._responseOffset = data.responseOffset || 0;
+          // Exocortex window model first — see the `transcript` branch above for why a BAND takes
+          // over the rows while a tail/full reply does not.
+          const _w = exoAbsorbWindow(p, data);
+          if (Array.isArray(data.transcript)) { p.transcript = wsBackfillTurnWorkspace((_w && _w.isBand ? _w.rows : data.transcript), data.workspaceId || wsWorkspaceId(p.repo, p.worktree)); p._transcriptTruncated = _w && _w.isBand ? _w.truncated : !!data.transcriptTruncated; p._promptOffset = (_w && _w.isBand ? _w.promptOffset : data.promptOffset) || 0; p._responseOffset = (_w && _w.isBand ? _w.responseOffset : data.responseOffset) || 0;
             // Initial load (this pane was empty until now — the app-open path fills it via resync on `hello`,
             // AFTER the grid was built): land at the bottom (latest), not scrolled up at the top.
-            if (prevLen === 0 && p.transcript.length > 0) p._scrollBottomNext = true;
-            p._loadingMore = false; }   // a windowed "Show earlier" fetch just landed — clear the loading cue
+            if (prevLen === 0 && p.transcript.length > 0 && !(_w && _w.isBand)) p._scrollBottomNext = true;
+            // A band is history: render all of it and do NOT yank the reader to the tail.
+            if (_w && _w.isBand) { p._revealAll = true; p._scrollBottomNext = false; }
+            p._loadingMore = false; if (p._exo) p._exo.extending = null; }   // a windowed "Show earlier" fetch just landed — clear the loading cue
           if (data.status) p.status = data.status;
           if (data.usage) p.usage = data.usage;
           if (data.mode) p.mode = data.mode;
@@ -11115,14 +12194,24 @@ function viewWorkspace() {
           // A bookmark jump to a response that wasn't loaded triggered a full resync (wsScrollToResponse) —
           // now that the whole history has landed, complete the jump.
           if (p._pendingBookmarkScroll != null) { const at = p._pendingBookmarkScroll; p._pendingBookmarkScroll = null; requestAnimationFrame(() => wsScrollToResponse(p, at)); }
+          // Resolve an in-flight jump-to-#N against the window that just landed: a hit flashes the
+          // turn; a miss probes again (planJump bisects from the 2nd attempt) unless the engine
+          // already answered exactly via `aroundTurn`.
+          if (_w) exoResolveJump(p, wsExoCtx(p), _w);
         }
         return;
       }
       // Context-window usage is per-conversation — stored on the requesting pane(s) only.
       // Cold-load telemetry (workspace.mjs): the engine is loading a large conversation's history on resume — show
       // "Loading… (N MB)" (not "stuck") until the first output flips it to done. Drives the WS_TICK_TIMER label.
-      if (data.kind === "loadingHistory") { for (const p of targets) { coldLoadBegin(p, data.bytes, Date.now()); paintPane(p); } return; }
-      if (data.kind === "loadingHistoryDone") { for (const p of targets) { if (coldLoadEnd(p, Date.now())) paintPane(p); } return; }
+      if (data.kind === "loadingHistory") { for (const p of targets) { exoIngestEvent(p, data); coldLoadBegin(p, data.bytes, Date.now()); paintPane(p); } return; }
+      if (data.kind === "loadingHistoryDone") { for (const p of targets) { const ch = exoIngestEvent(p, data); if (coldLoadEnd(p, Date.now()) || ch) paintPane(p); } return; }
+      // Exocortex indicator/recall cues. These frames carry NO inline sessionKey (CONTRACT §0), so
+      // they are routed purely by the frame's key — which `targets` already is.
+      if (data.kind === "rolling" || data.kind === "lookingUp" || data.kind === "recall") {
+        for (const p of targets) { exoIngestEvent(p, data); paintPane(p); }
+        return;
+      }
       // The engine RECEIVED the ■ Stop press (emitted before the up-to-6s interrupt await) — confirms the
       // optimistic flag the click already set, and covers a Stop pressed from another device/tab.
       if (data.kind === "stopping") { for (const p of targets) { if (!p._stopping) p._stopping = Date.now(); wsApplyStall(p); } return; }
@@ -11131,6 +12220,10 @@ function viewWorkspace() {
         // scroll, breaking Held; see the paintPane comment). A contextUsage answer changes no transcript.
         for (const p of targets) {
           p.contextUsage = data.usage;
+          // CONTRACT §1: read `contextBreakdown`, not the raw SDK `usage` — and `ok:false` means
+          // UNAVAILABLE, never "0% used" (shapeContextPopover keeps the two apart).
+          exoNoteContext(p, data);
+          const ui0 = paneUI.get(p.id); if (ui0 && ui0.exo) ui0.exo.sync();
           const prevModel = p.activeModel;
           if (data.usage && data.usage.model) p.activeModel = data.usage.model;
           const ui = paneUI.get(p.id);
@@ -11147,6 +12240,7 @@ function viewWorkspace() {
         const k = (n) => (n == null ? null : Math.round(n / 1000) + "k");
         const pre = k(data.preTokens), post = k(data.postTokens);
         for (const p of targets) {
+          exoIngestEvent(p, data);
           logActivity(p, "🗜 Context compacted" + (pre && post ? " — " + pre + " → " + post + " tokens" : ""));
           if (p.sessionKey && !p.readonly) wsPost("control", { action: "contextUsage", args: { sessionKey: p.sessionKey } });
         }
@@ -11209,7 +12303,8 @@ function viewWorkspace() {
         // one signal that hidden work is happening even while the chat sits idle/free (see
         // claudeSession.mjs). `background` REPLACES the live set; taskStarted/taskDone just narrate.
         if (data.kind === "interrupted") { p._stopping = 0; logActivity(p, "■ Stopped — the response was interrupted; send another message anytime.", "ws-act-ok"); continue; }
-        if (data.kind === "background") { p._background = data.tasks || []; schedulePaint(p); continue; }
+        if (data.kind === "background") { p._background = data.tasks || []; exoIngestEvent(p, data); schedulePaint(p); continue; }
+        if (data.kind === "taskStarted" || data.kind === "taskDone") exoIngestEvent(p, data);
         if (data.kind === "taskStarted") { if (!data.skipTranscript) logActivity(p, "⚙ Background " + (data.workflowName ? `workflow “${data.workflowName}”` : "task") + " started" + (data.description ? " — " + data.description : ""), "ws-act-ok"); continue; }
         if (data.kind === "taskDone") { if (!data.skipTranscript) logActivity(p, (data.status === "completed" ? "✓" : "⚠") + " Background task " + data.status + (data.summary ? " — " + data.summary : ""), data.status === "completed" ? "ws-act-ok" : "ws-act-err"); continue; }
         // A user turn echoed by the server: this pane sent it (clear the pending buffer) or a
@@ -11271,9 +12366,11 @@ function viewWorkspace() {
       if (!p.sessionKey || p.readonly) continue;
       // Watchdog: a dropped loadingHistoryDone would strand the synthetic "thinking" (stuck "Working…" pane).
       // Past any real load time, end it locally and resync so the server's true status wins. See coldLoadEnd.
-      if (coldLoadStale(p, now)) { coldLoadEnd(p, now); paintPane(p); wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey, full: !!p._revealAll, limit: p._loadWindow } }); continue; }
+      if (coldLoadStale(p, now)) { coldLoadEnd(p, now); paintPane(p); wsPost("control", { action: "resync", args: exoResyncArgs(p, { sessionKey: p.sessionKey, full: !!p._revealAll, limit: p._loadWindow }) }); continue; }
       wsApplyStall(p);   // refresh the Stop-button stall cue as time passes (no repaint needed while stuck)
-      const args = { sessionKey: p.sessionKey, full: !!p._revealAll, limit: p._loadWindow };
+      // While the reader is parked on a historical band (jump-to-#N), every self-heal must re-ask for
+      // THAT band — a default tail resync would silently yank them back to the live end every ~8s.
+      const args = exoResyncArgs(p, { sessionKey: p.sessionKey, full: !!p._revealAll, limit: p._loadWindow });
       // Busy but silent: keep the longer 20s threshold — a pane legitimately mid-thought (before its first
       // token, or between tool calls) can be quiet for a bit, and we don't want to resync it every few seconds.
       if (paneBusy(p) && (now - (p._lastEventAt || 0)) > WS_HEAL_QUIET_MS && (now - (p._healAt || 0)) > WS_HEAL_QUIET_MS) {
@@ -11292,7 +12389,7 @@ function viewWorkspace() {
     // big conversation shows in a fraction of a second on mobile instead of transferring its whole history.
     // If this pane was already showing the full history ("Show earlier" was clicked), re-request it whole so
     // a reconnect doesn't silently drop the revealed older messages back off the top.
-    for (const p of st.panes) if (p.sessionKey && !p.readonly) wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey, full: !!p._revealAll, limit: p._loadWindow } });
+    for (const p of st.panes) if (p.sessionKey && !p.readonly) wsPost("control", { action: "resync", args: exoResyncArgs(p, { sessionKey: p.sessionKey, full: !!p._revealAll, limit: p._loadWindow }) });
   }
   function openStream() {
     try { WS_ES && WS_ES.close(); } catch {}

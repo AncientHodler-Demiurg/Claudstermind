@@ -42,7 +42,7 @@ until 0.3 is confirmed *by the user*, not just by tests.
 
 ---
 
-## Phase 1 — Exocortex: finish the server  *(Wave 2 follow-passes)*
+## Phase 1 — Exocortex: finish the server  ✅ DONE (v1.5.91-94)
 
 Goal: close out the three half-wired server integrations so the client has a complete contract to build
 against. Detail lives in `docs/work/agentic-chat-engine/plan.md`; this is the roll-up.
@@ -72,7 +72,7 @@ against a moving target.
 
 ---
 
-## Phase 2 — Exocortex: the client  *(Wave 3 — the actual "context viewer" ask)*
+## Phase 2 — Exocortex: the client  ✅ DONE (v1.5.95)
 
 Goal: the user's repeated ask — *see how full the context is, get warned before it's a problem, and
 navigate a long conversation without deleting it*. Currently **0% built**.
@@ -81,16 +81,16 @@ Each of T3.1–T3.5 edits `dashboard/public/app.js` → **serial with each other
 helper* is a separate new `lib/*.mjs` file → those CAN be built in parallel, then mounted serially.
 That split is the main speedup available here:
 
-- [ ] **2.0** ⇉ Build the five pure helpers as standalone tested modules (parallel agents, new files only)
-- [ ] **2.1** → **T3.1** Shared **context popover** — the breakdown of what's eating the window. Mount in
+- [x] **2.0** ⇉ Build the five pure helpers as standalone tested modules (parallel agents, new files only)
+- [x] **2.1** → **T3.1** Shared **context popover** — the breakdown of what's eating the window. Mount in
       Core + Pact.
-- [ ] **2.2** → **T3.3** **Threshold indicators** — compacting / rolling / looking-up, reusing the
+- [x] **2.2** → **T3.3** **Threshold indicators** — compacting / rolling / looking-up, reusing the
       `pact-sync-cue` pattern. *This is the "indicator of thresholds" ask.*
-- [ ] **2.3** → **T3.4** **Jump-to-#N** + windowed render + LRU scroll cache (uses the server `around`
+- [x] **2.3** → **T3.4** **Jump-to-#N** + windowed render + LRU scroll cache (uses the server `around`
       action). *This is what makes a very long conversation usable without deleting it.*
-- [ ] **2.4** → **T3.2** Shared **background-agents panel** — what subagents are running, and their token
+- [x] **2.4** → **T3.2** Shared **background-agents panel** — what subagents are running, and their token
       spend. *Also fixes the "you said work was happening in the background and I couldn't tell" complaint.*
-- [ ] **2.5** → **T3.5** **Recall cue** surfaced inline in the transcript.
+- [x] **2.5** → **T3.5** **Recall cue** surfaced inline in the transcript.
 
 **Exit criteria:** the user can open a very long conversation, see exactly how full it is, get warned
 before hitting a wall, jump to any turn, and recall archived content — without losing history.
@@ -125,7 +125,7 @@ is not a safe assumption today.
 - [ ] **4.1** ⇉ Claude CLI auto-updater service on AncientIntel — poll for the latest CLI and update.
       **Not in this repo** (no systemd unit or install script exists anywhere) → this is host-level work
       that has to be written from scratch.
-- [ ] **4.2** ⇉ Fix or formally accept the **3 pre-existing test failures** (static diff highlighter,
+- [x] **4.2** ⇉ Fixed all 3 pre-existing test failures — suite is fully green (static diff highlighter,
       model-catalog control-models cache, tunnel restart-trigger). They've been waved through as
       "unrelated" for many versions; before a 2.0 they get fixed or explicitly quarantined with a reason.
 - [ ] **4.3** ⇉ Branch hygiene — decide whether `feat-pact-changed-review` merges to `main` before the
@@ -143,6 +143,14 @@ is not a safe assumption today.
 - [ ] **4.5** ⇉ **Kimi exposes 0 models** — 1.5.84 restored Cursor, but the live gateway returns no Kimi
       models at all (`omniProviderOf`'s `kimi|moonshot|km` prefixes match nothing). Either the account is
       disconnected or its ids use an unrecognized prefix. The new sweep bench (0.4b) is the tool to confirm.
+- [ ] **4.8** ⇉ **contextUsage `ok:false` payload trap** — the "unavailable" object is `ok:false` WITH
+      `percentage: 0` / `totalTokens: 0`, so any code reading `percentage` without also checking `ok`
+      recreates the "unavailable renders as 0%" bug. Needs `null` numerics, owned together with
+      `lib/contextUsage.mjs` + `lib/contextPopover.mjs`. Documented in CONTRACT.md §1 meanwhile.
+- [ ] **4.9** ⇉ `lib/recallCue.mjs` still classifies misses by string-matching; switch it to the new
+      machine-readable `reason` field now that the server emits one.
+- [ ] **4.10** ⇉ Phase 2 UI is **unverified in a real browser** — mobile layout is reasoned + CSS-only,
+      not tested on a phone. Needs a real pass.
 - [ ] **4.6** ⇉ **OmniRoute bench is local-only** — `/api/omni/*` returns 404 `local-only` in OIDC/relay
       mode. Wiring a long-running SSE sweep through the tunnel needs new `agent/agent.mjs` command handlers.
 - [ ] **4.4** ⇉ Commit cadence: stop accumulating 39-version piles. Checkpoint commit per phase.

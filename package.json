@@ -1,9 +1,9 @@
 {
   "name": "claudstermind",
-  "version": "1.5.94",
+  "version": "1.5.95",
   "private": true,
   "type": "module",
-  "description": "Claudstermind workspace root — shared test/runtime deps for the online relay tunnel.",
+  "description": "Claudstermind workspace root \u2014 shared test/runtime deps for the online relay tunnel.",
   "scripts": {
     "app": "electron --no-sandbox control/electron/main.cjs",
     "status": "node control/cli.mjs status",

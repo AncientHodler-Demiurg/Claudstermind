@@ -4,6 +4,63 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.95] - 2026-09-05
+### Added
+- **Exocortex Phase 2 — the context viewer, threshold indicators, jump-to-#N, agents panel and recall
+  cue are now actually in the UI** (Core + Pact, desktop + mobile). Five pure, separately-tested modules
+  (`contextPopover`, `thresholdIndicator`, `transcriptWindow`, `scrollCache`, `agentsPanel`, `recallCue`
+  — 231 tests between them) mounted behind one shared bar.
+  - **Jump to any turn #N in a huge conversation, without deleting anything.** Sends `aroundTurn` AND
+    `around` together (the contract makes that unambiguous): a current engine answers in one exact hop,
+    an older one still converges via interpolate-then-bisect. Already-on-screen and cached-band jumps
+    cost ZERO requests. Windows are cached in a byte-bounded LRU (not entry-bounded — a band is 1..501
+    rows and a row is 40B..200KB, so an entry cap bounds nothing).
+  - **Context breakdown popover.** "Unavailable" renders as explicitly NOT "0% used". Percentages are
+    summed from integer tenths so the slices genuinely account for 100.0%.
+  - **Threshold indicators with actionable advice**, not just a number — the tier tells you what to do
+    (roll / new chat / compact) and renders real buttons for the actions that exist. Anything inferred
+    is prefixed "Possibly:", tagged as a guess and dashed-bordered, because the SDK gives NO live
+    compaction signal — only a post-hoc one. One timer from `nextIndicatorDeadline`; no polling.
+  - **Background agents panel** — the fix for "you said agents were working and I had no way to tell".
+    "No fleet data" and "the live set is empty" render DIFFERENTLY. A stalled agent is called out
+    explicitly, labelled as a heuristic.
+  - **Recall cue** with provenance (absolute turn # + segment). A miss says "Nothing matched" and why;
+    an image that can't be located says so instead of offering a link that 404s.
+  - The client bundle (`dashboard/public/exocortex.js`) is GENERATED from the `lib/` sources by
+    `exocortex.gen.mjs`, with a drift test that fails with the exact regenerate command — so the
+    browser copy can never silently diverge from the tested modules.
+### Fixed
+- **Pact PDF export produced only the first page.** Root cause was CSS clipping a fully-populated DOM,
+  NOT editor virtualization: `body.ws-full { height:100vh; overflow:hidden }` (set for the Pact view)
+  plus `html { overflow-x:hidden }` — which blocks overflow propagating to the viewport and turns that
+  into a hard clip — made the body a ONE-PAGE-TALL clipping box at print time, so nothing past page 1
+  was ever laid out. Measured in real headless Chromium: a 400-line file went 1 page -> 8 pages, a
+  300-line .md 1 -> 9. The code print also now renders on white paper with a darkened same-hue palette,
+  because it used to rely on the dark theme background for contrast — unprintable with "Background
+  graphics" off, which is the default. Page density improved 42 -> 50 lines.
+- **The cold-load cue could stick ON forever.** If a cold load ended without producing output, the only
+  event that would ever arrive was `{status:"ended"}` — and it was being filtered out. Terminal events
+  now flush the cue with `ok:false`.
+- **`sessionOpen` ignored its `full` argument** — found by converting `capTranscript` to an options
+  object, which forced every call site to be re-examined.
+- **Two long-standing "pre-existing, unrelated" test failures were real defects.** The Pact static
+  highlighter coloured diff lines with the WRONG families (a v1.4.55 fix had been applied only to the
+  generated file, never its generator, so any regenerate silently reverted it — now fixed in the
+  GENERATOR); and the relay restart-trigger test was environment-dependent, building its bridge against
+  the real repo tree so a cold snapshot blocked the event loop for a measured 3688ms past a 3000ms
+  deadline. No assertion was weakened — one was strengthened.
+### Changed
+- **`recall` events carry a machine-readable `reason`** (`not-found`/`no-archive`/`refused`/
+  `internal-error`). Previously a miss was distinguishable only by string-matching English messages.
+- **`panel.agents[]` carries `startedAt`**, so a reconnecting client can show a trustworthy elapsed
+  clock instead of a browser-local timer that resets on reload.
+- **BREAKING (deliberate): `elapsedMs` is `null`, not `0`, when unknown.** `0` was emitted for both
+  "no startedAt" and "no now"; a truly 0ms-old agent is unobservable, so a frozen "0s" forever was
+  exactly what made the fleet look dead.
+- `promptTotal`/`responseTotal` on every window mode; `windowEnd` documented as EXCLUSIVE and locked by
+  a test; `clamped` reported rather than inferred; roll-retention promoted to a stated GUARANTEE with a
+  test that fails if a roll ever starts splicing the transcript (jump-to-#N depends on it).
+
 ## [1.5.94] - 2026-09-05
 ### Added
 - **`docs/work/agentic-chat-engine/CONTRACT.md` — the FROZEN server contract** the five parallel Phase-2

@@ -2379,3 +2379,143 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    reduced-motion opt-out isn't nested inside another @media (invalid). */
 @keyframes pactmStatePulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
 @media (prefers-reduced-motion: reduce) { .pactm-frow-state { animation: none !important; } }
+
+/* ===== EXOCORTEX (ROADMAP-2.0 §2 / T3.1–T3.5) ==================================================
+   The shared context/navigation surface mounted in BOTH the Core cockpit panes and the Pact chat.
+   Deliberately built from IN-FLOW disclosure blocks (like .ws-activity / .ws-activity-log) rather
+   than anchored popups: a pane clips its overflow, and an anchored popup on a narrow phone viewport
+   is exactly how "panel clipped / unreachable on mobile" keeps happening. Everything here wraps,
+   scrolls, and stays inside its parent's width. */
+.exo { display: flex; flex-direction: column; gap: 0; min-width: 0; flex: 0 0 auto; }
+/* A pane and a Pact chat both live in a FIXED-height box with overflow:hidden, and the transcript
+   carries a min-height. Without releasing it, an open panel grows the column past the box and clips
+   the COMPOSE ROW off the bottom — the mobile regression that keeps recurring in this app. `~` (not
+   :has) so every browser honours it; .exo is always a previous sibling of the scroller. */
+.exo.--open ~ .ws-transcript { min-height: 90px; }
+.exo.--open ~ .pc-scroll { min-height: 0; }
+.exo-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 8px;
+  background: var(--panel2); border-bottom: 1px solid var(--line); min-width: 0; }
+.exo-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; line-height: 1.5;
+  background: var(--chip); color: var(--ink-dim); border: 1px solid var(--line); border-radius: 999px;
+  padding: 2px 9px; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.exo-chip:hover { color: var(--ink); border-color: var(--accent); }
+.exo-chip.--open { color: var(--ink); border-color: var(--accent); background: var(--panel-2); }
+.exo-chip.--ok { color: #34d399; border-color: color-mix(in srgb, #34d399 45%, var(--line)); }
+.exo-chip.--notice { color: #7aa2f7; border-color: color-mix(in srgb, #7aa2f7 45%, var(--line)); }
+.exo-chip.--warn { color: #fbbf24; border-color: color-mix(in srgb, #fbbf24 45%, var(--line)); }
+.exo-chip.--danger { color: var(--danger); border-color: color-mix(in srgb, #f87171 55%, var(--line)); }
+.exo-chip.--muted { color: var(--ink-mute); }
+/* The jump/search box. `flex: 1 1 140px` is what makes it drop onto its own full-width row on a
+   phone instead of squeezing the chips off the edge. */
+.exo-jump { display: flex; align-items: center; gap: 4px; flex: 1 1 140px; min-width: 120px; }
+.exo-jump-in { flex: 1 1 auto; min-width: 0; font-size: 11px; padding: 3px 8px; border-radius: 999px;
+  background: var(--bg-2); color: var(--ink); border: 1px solid var(--line); }
+.exo-jump-in:focus { outline: none; border-color: var(--accent); }
+.exo-btn { font-size: 11px; padding: 3px 9px; border-radius: 999px; cursor: pointer;
+  background: var(--chip); color: var(--ink-dim); border: 1px solid var(--line); white-space: nowrap; }
+.exo-btn:hover { color: var(--ink); border-color: var(--accent); }
+.exo-btn:disabled { opacity: .5; cursor: default; }
+.exo-edges { display: flex; justify-content: center; padding: 3px 8px; background: var(--panel2);
+  border-bottom: 1px solid var(--line); }
+.exo-edges .exo-edge { margin-bottom: 0; }
+.exo-cues { display: flex; flex-direction: column; gap: 3px; padding: 4px 8px; background: var(--panel2);
+  border-bottom: 1px solid var(--line); }
+.exo-cue { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 11px; color: var(--ink-dim); }
+.exo-cue.--ok { color: #34d399; }
+.exo-cue.--notice { color: #7aa2f7; }
+.exo-cue.--warn { color: #fbbf24; }
+.exo-cue.--danger { color: var(--danger); }
+/* A client-side GUESS is drawn differently from something the engine reported — dashed, tagged. */
+.exo-cue.--guess { border-left: 2px dashed currentColor; padding-left: 6px; font-style: italic; }
+.exo-guess-tag { font-size: 9px; text-transform: uppercase; letter-spacing: .04em; font-style: normal;
+  border: 1px dashed currentColor; border-radius: 4px; padding: 0 4px; opacity: .85; }
+.exo-tier { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 11px;
+  border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; color: var(--ink-dim); }
+.exo-tier.--notice { border-color: color-mix(in srgb, #7aa2f7 45%, var(--line)); }
+.exo-tier.--warn { border-color: color-mix(in srgb, #fbbf24 55%, var(--line)); }
+.exo-tier.--danger { border-color: color-mix(in srgb, #f87171 60%, var(--line));
+  background: color-mix(in srgb, #f87171 8%, transparent); }
+.exo-tier-lbl { color: var(--ink); white-space: nowrap; }
+.exo-tier-advice { flex: 1 1 200px; min-width: 0; }
+.exo-jumpline { gap: 8px; }
+.exo-sub { font-size: 10.5px; color: var(--ink-mute); flex-basis: 100%; }
+.exo-warn { font-size: 10.5px; color: #fbbf24; flex-basis: 100%; }
+/* The disclosure panel. Bounded height + its own scroll: a 40-row MCP tool list can never push the
+   compose box off a phone screen. */
+.exo-panel { max-height: 42vh; overflow: auto; -webkit-overflow-scrolling: touch;
+  background: var(--panel2); border-bottom: 1px solid var(--line); }
+.exo-panel-in { display: flex; flex-direction: column; gap: 5px; padding: 8px 10px; min-width: 0; }
+.exo-ctxhead { font-size: 12px; color: var(--ink); }
+.exo-unavail, .exo-empty { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--ink); }
+.exo-unavail { border-left: 3px solid var(--ink-mute); padding-left: 8px; }
+.exo-empty { border-left: 3px solid #34d399; padding-left: 8px; }
+/* T3.1 — the composition bar. Colours come from the SDK verbatim (CONTRACT §1). */
+.exo-bar-track { display: flex; width: 100%; height: 12px; border-radius: 6px; overflow: hidden;
+  background: var(--bg-2); border: 1px solid var(--line); }
+.exo-seg { display: block; height: 100%; background: var(--ink-mute); min-width: 1px; }
+.exo-seg.--free { background: repeating-linear-gradient(45deg, var(--bg-2), var(--bg-2) 3px, var(--line) 3px, var(--line) 6px); }
+.exo-seg.--deferred { opacity: .65; }
+.exo-legend { display: flex; flex-direction: column; gap: 2px; }
+.exo-legend-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-dim); min-width: 0; }
+.exo-legend-row.--free { color: var(--ink-mute); }
+.exo-swatch { width: 9px; height: 9px; border-radius: 2px; background: var(--ink-mute); flex: 0 0 auto; }
+.exo-swatch.--free { background: var(--line); }
+.exo-legend-lbl { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.exo-legend-tok { font: 600 10.5px/1.5 ui-monospace, monospace; color: var(--ink-mute); }
+.exo-legend-pct { font: 600 10.5px/1.5 ui-monospace, monospace; color: var(--ink-dim); min-width: 42px; text-align: right; }
+.exo-disclose { align-self: flex-start; background: none; border: none; color: var(--ink-dim);
+  font-size: 11px; cursor: pointer; padding: 2px 0; }
+.exo-disclose:hover { color: var(--ink); }
+.exo-detail { display: flex; flex-direction: column; gap: 1px; padding-left: 10px; }
+.exo-detail-row { display: flex; gap: 8px; justify-content: space-between; font-size: 10.5px;
+  color: var(--ink-mute); min-width: 0; }
+.exo-detail-row > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* T3.2 — the fleet. A stalled agent has to be impossible to miss. */
+.exo-agent-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-dim);
+  border: 1px solid var(--line); border-radius: 8px; padding: 3px 7px; flex-wrap: wrap; min-width: 0; }
+.exo-agent-row.--stale { border-color: #fbbf24; background: color-mix(in srgb, #fbbf24 10%, transparent); }
+.exo-agent-row.--error { border-color: var(--danger); background: color-mix(in srgb, #f87171 10%, transparent); }
+.exo-agent-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--ink-mute); }
+.exo-agent-dot.--running { background: #34d399; animation: exoPulse 1.6s ease-in-out infinite; }
+.exo-agent-dot.--done { background: var(--ink-mute); }
+.exo-agent-dot.--error { background: var(--danger); }
+.exo-agent-dot.--unknown { background: #fbbf24; }
+.exo-agent-lbl { color: var(--ink); font-weight: 600; }
+.exo-agent-desc { flex: 1 1 120px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.exo-agent-el { font: 600 10.5px/1.5 ui-monospace, monospace; }
+.exo-agent-el.--unknown { color: var(--ink-mute); font-style: italic; }
+.exo-stale { font-size: 10px; font-weight: 700; color: #fbbf24; border: 1px solid #fbbf24;
+  border-radius: 5px; padding: 0 5px; }
+@keyframes exoPulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .exo-agent-dot.--running, .exo-spin { animation: none !important; } }
+.exo-spin { width: 10px; height: 10px; flex: 0 0 auto; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, currentColor 35%, transparent); border-top-color: currentColor;
+  animation: exoSpin .9s linear infinite; }
+@keyframes exoSpin { to { transform: rotate(360deg); } }
+/* T3.5 — the recalled turn, inline in the transcript. */
+.exo-recall { border: 1px solid color-mix(in srgb, #7aa2f7 45%, var(--line)); border-radius: 10px;
+  background: color-mix(in srgb, #7aa2f7 7%, transparent); padding: 7px 9px; margin: 4px 0;
+  display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.exo-recall-hd { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--ink); }
+.exo-recall-x { background: none; border: none; color: var(--ink-mute); cursor: pointer; font-size: 15px;
+  line-height: 1; padding: 0 2px; }
+.exo-recall-x:hover { color: var(--ink); }
+.exo-prov { font: 600 10.5px/1.5 ui-monospace, monospace; color: var(--ink-mute); }
+.exo-recall-body { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: var(--ink-dim);
+  max-height: 30vh; overflow: auto; }
+.exo-recall-imgs { display: flex; flex-wrap: wrap; gap: 6px; }
+.exo-recall-img { max-width: 160px; max-height: 120px; border-radius: 6px; border: 1px solid var(--line); }
+.exo-hit-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; font-size: 11.5px;
+  color: var(--ink-dim); min-width: 0; }
+.exo-hit-snip { flex: 1 1 160px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Mobile: the bar is the first thing under the chat header, so it must never be the thing that
+   pushes the transcript off-screen. Chips shrink, the jump box gets its own row, panels cap lower. */
+@media (max-width: 820px) {
+  .exo-bar { padding: 4px 6px; gap: 5px; }
+  .exo-chip, .exo-btn, .exo-jump-in { font-size: 11.5px; padding: 3px 8px; }
+  .exo-jump { flex: 1 1 100%; order: 9; }
+  .exo-panel { max-height: 32vh; }
+  .exo-recall-body { max-height: 26vh; }
+  .exo-tier-advice { flex-basis: 100%; }
+}

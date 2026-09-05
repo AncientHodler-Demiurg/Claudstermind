@@ -80,6 +80,11 @@
   <script src="/pact-medallion.js"></script>
   <script src="/md-mini.js"></script>
   <script src="/deploy-helpers.js"></script>
+  <!-- Exocortex (Phase 2) — the GENERATED browser mirror of the pure lib/ helpers behind the context
+       popover, threshold indicators, windowed transcript + jump-to-#N, the agents panel and recall.
+       Classic script → window.EXO, loaded before app.js. Regenerate with
+       `node dashboard/public/exocortex.gen.mjs`; lib/exocortexBundle.test.mjs fails if it is stale. -->
+  <script src="/exocortex.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
