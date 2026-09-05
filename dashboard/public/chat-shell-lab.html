@@ -20,8 +20,8 @@ label{font-size:11.5px;color:var(--dim);display:flex;gap:5px;align-items:center;
 #metrics{font:11px ui-monospace,Consolas,monospace;color:var(--dim);white-space:pre-wrap;background:#080d1a;border:1px solid var(--line);border-radius:6px;padding:7px;line-height:1.55}
 #metrics b{color:var(--ok)}
 /* ---------- stage ---------- */
-#stage{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;padding:18px;overflow:auto}
-#shell{width:100%;max-width:900px;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 10px 40px #0006}
+#stage{flex:1;min-width:0;display:flex;align-items:stretch;justify-content:center;padding:18px;overflow:hidden}
+#shell{width:100%;max-width:960px;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 10px 40px #0006}
 /* ===== THE THREE REGIONS. The boundaries are the point — 1px rule + a background TONE STEP so you can
    always see where a region ends, even mid-scroll. This is spec invariant I3. ===== */
 .rg-header{flex:0 0 auto;background:var(--hdr);border-bottom:2px solid var(--line);box-shadow:0 2px 0 #0003}
@@ -50,6 +50,16 @@ body.showbounds .rg-core{outline:1px dashed #3ddc9755;outline-offset:-2px}
 .frow{display:flex;align-items:center;gap:6px;padding:5px 9px;min-height:30px}
 .frow+.frow{border-top:1px solid #ffffff0d}
 .frow.--gone{display:none}
+/* the type box sits in a wrapper so ghost text can be overlaid exactly on top of it */
+.tawrap{position:relative;width:100%}
+#ghost{position:absolute;inset:0;padding:7px 9px;font:inherit;font-size:12.5px;line-height:18px;color:#6b7796;pointer-events:none;white-space:pre-wrap;overflow:hidden}
+#ghost kbd{background:#1a2440;border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:10.5px;color:var(--dim)}
+/* Stop/Send + auto-continue live in ONE bordered group, per feedback */
+.sendgrp{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:9px;padding:3px 5px;background:#0c1424}
+.sendgrp.--auto{border-color:#3ddc9755;background:#0c1a1c}
+.sendgrp .rounds{font-size:10.5px;color:var(--dim);white-space:nowrap}
+.autolbl{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--dim);white-space:nowrap;cursor:pointer}
+.autolbl input{margin:0}
 #typebox{width:100%;resize:none;background:#0a1020;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit;font-size:12.5px;line-height:18px;outline:none;display:block}
 #typebox:focus{border-color:var(--acc)}
 .btn-send{background:var(--acc);color:#1a0b2e;font-weight:700;border-color:var(--acc)}
@@ -80,7 +90,7 @@ body.showbounds .rg-core{outline:1px dashed #3ddc9755;outline-offset:-2px}
   <div class="grp"><b>Footer growth</b>
     <div class="row"><button id="expandBtn">⇕ Expand (40% → full)</button></div>
     <label><input type="checkbox" id="bounds" checked> Highlight region boundaries</label>
-    <div class="row" style="margin-top:6px"><span class="sub">Shell height</span></div>
+    <label style="margin-top:6px"><input type="checkbox" id="fit" checked> Fit shell to available height</label>
     <input type="range" id="shellH" min="320" max="900" value="620">
   </div>
 
@@ -114,7 +124,9 @@ var CS = window.ChatShell;
 var S = {
   kind: "core", expanded: false, prevLevel: 0,
   turns: 8, convs: [{ n: "Master", act: true }], agents: 0, recon: false, cue: true, imgs: 0,
-  repo: "Claudstermind"
+  repo: "Claudstermind", model: "Opus 4.5", auto: true, autoN: 4,
+  ctxTok: 93016, ctxMax: 1000000,
+  suggest: "Continue with the next item on the list."
 };
 var $ = function (s, r) { return (r || document).querySelector(s); };
 function el(t, a, k) { var e = document.createElement(t); for (var x in (a || {})) { if (x === "class") e.className = a[x]; else if (x === "html") e.innerHTML = a[x]; else e.setAttribute(x, a[x]); } (k || []).forEach(function (c) { e.appendChild(typeof c === "string" ? document.createTextNode(c) : c); }); return e; }
@@ -122,7 +134,7 @@ function el(t, a, k) { var e = document.createElement(t); for (var x in (a || {}
 function build() {
   var slots = CS.slotsFor(S.kind);
   var shell = $("#shell");
-  shell.style.height = $("#shellH").value + "px";
+  shell.style.height = shellTargetH() + "px";
   shell.replaceChildren();
 
   /* ================= HEADER — fixed height, max 3 rows, transient status is a CHIP ============== */
@@ -168,87 +180,143 @@ function build() {
   var ftr = el("div", { class: "rg-footer" });
   if (S.imgs) {
     var ir = el("div", { class: "frow", id: "f-img" });
-    for (var j = 0; j < S.imgs; j++) ir.appendChild(el("span", { class: "chip" }, ["🖼 shot-" + (j + 1) + ".png ×"]));
+    for (var j = 0; j < S.imgs; j++) ir.appendChild(el("span", { class: "chip" }, ["\uD83D\uDDBC shot-" + (j + 1) + ".png \u00d7"]));
     ftr.appendChild(ir);
   }
-  if (slots.footer.contLine) {
-    ftr.appendChild(el("div", { class: "frow", id: "f-cont" }, [el("span", { class: "chip" }, ["💡 suggested next"]), el("span", { class: "spacer" }), el("button", {}, ["★"])]));
-  }
-  ftr.appendChild(el("div", { class: "frow", id: "f-auto" }, [el("label", {}, ["Auto-continue (4/10)"]), el("span", { class: "spacer" })]));
+  // The pasted-image strip collapses to a single count chip rather than a whole row.
+  var imgChip = el("span", { class: "chip --gone", id: "f-imgchip" }, ["\uD83D\uDDBC " + S.imgs]);
 
+  // TYPE BOX + ghost suggestion. The old "continuation line" row is GONE: the suggested next prompt is
+  // ghost text inside the box, Tab to accept. That reclaims a whole row and puts the suggestion where
+  // you would actually type it.
   var taRow = el("div", { class: "frow" });
-  var ta = el("textarea", { id: "typebox", placeholder: "Message the agent… (⌘/Ctrl+Enter to send)" });
-  taRow.appendChild(ta); ftr.appendChild(taRow);
+  var wrap = el("div", { class: "tawrap" });
+  var ta = el("textarea", { id: "typebox", placeholder: "Message the agent\u2026 (\u2318/Ctrl+Enter to send)" });
+  var ghost = el("div", { id: "ghost" });
+  wrap.appendChild(ta); wrap.appendChild(ghost); taRow.appendChild(wrap); ftr.appendChild(taRow);
 
+  // ACTION ROW: attach \u00b7 meta \u00b7 history \u2026 [ auto-continue + Stop + Send ] in ONE rectangle.
   var act = el("div", { class: "frow", id: "f-act" });
-  act.appendChild(el("button", { id: "f-attach" }, ["📎"]));
+  act.appendChild(el("button", { id: "f-attach", title: "Attach" }, ["\uD83D\uDCCE"]));
   var meta = el("span", { class: "row", id: "f-meta", style: "gap:6px" });
-  if (slots.footer.repoPicker) { var sel = el("select", { class: "sel" }); ["Claudstermind", "OuronetPact", "AncientHub"].forEach(function (r) { sel.appendChild(el("option", {}, [r])); }); sel.value = S.repo; sel.onchange = function () { S.repo = sel.value; render(); }; meta.appendChild(sel); }
-  else meta.appendChild(el("span", { class: "chip" }, ["🔒 OuronetPact"]));
-  meta.appendChild(el("span", { class: "chip" }, ["⑂ main"]));
+  if (slots.footer.repoPicker) {
+    var rsel = el("select", { class: "sel" });
+    ["Claudstermind", "OuronetPact", "AncientHub"].forEach(function (r) { rsel.appendChild(el("option", {}, [r])); });
+    rsel.value = S.repo; rsel.onchange = function () { S.repo = rsel.value; render(); };
+    meta.appendChild(rsel);
+  } else meta.appendChild(el("span", { class: "chip" }, ["\uD83D\uDD12 OuronetPact"]));
+  meta.appendChild(el("span", { class: "chip" }, ["\u2442 main"]));
   act.appendChild(meta);
-  act.appendChild(el("button", { id: "f-hist", title: "Conversations in THIS repository" }, ["🕐"]));
+  act.appendChild(imgChip);
+  act.appendChild(el("button", { id: "f-hist", title: "Conversations in THIS repository" }, ["\uD83D\uDD50"]));
+  act.appendChild(el("span", { class: "chip --gone", id: "f-modelchip2" }, [S.model]));
   act.appendChild(el("span", { class: "spacer" }));
-  act.appendChild(el("button", { class: "btn-stop" }, ["■ Stop"]));
-  act.appendChild(el("button", { class: "btn-send" }, ["Send"]));
+
+  var autoCb = el("input", { type: "checkbox", id: "f-autocb" });
+  if (S.auto) autoCb.setAttribute("checked", "checked");
+  var grp = el("div", { class: "sendgrp" + (S.auto ? " --auto" : ""), id: "f-sendgrp" }, [
+    el("label", { class: "autolbl", title: "Auto-continue: send the next prompt automatically when idle" }, [autoCb, "auto"]),
+    el("span", { class: "rounds" }, [S.auto ? S.autoN + "/10" : "\u2014"]),
+    el("button", { class: "btn-stop" }, ["\u25a0 Stop"]),
+    el("button", { class: "btn-send" }, ["Send"])
+  ]);
+  autoCb.onchange = function () { S.auto = this.checked; render(); };
+  act.appendChild(grp);
   ftr.appendChild(act);
 
+  // MODEL ROW: a real selector + effort + the context readout WITH ITS CEILING + the expand toggle.
   var mb = el("div", { class: "frow", id: "f-model" });
-  mb.appendChild(el("span", { class: "chip --acc", id: "f-modelchip" }, ["Opus 4.5"]));
-  var mExtra = el("span", { class: "row", id: "f-modelextra", style: "gap:6px" });
-  mExtra.appendChild(el("span", { class: "chip" }, ["Default effort"]));
-  mExtra.appendChild(el("span", { class: "chip" }, ["Fast"]));
-  mExtra.appendChild(el("span", { class: "chip" }, ["93,016 tok · 16%"]));
-  mb.appendChild(mExtra);
+  var msel = el("select", { class: "sel", id: "f-modelsel" });
+  ["Opus 4.5", "Opus 5", "Sonnet 5", "Haiku 4.5", "Fable 5.1"].forEach(function (m) { msel.appendChild(el("option", {}, [m])); });
+  msel.value = S.model; msel.onchange = function () { S.model = msel.value; render(); };
+  mb.appendChild(msel);
+  var esel = el("select", { class: "sel" });
+  ["Default effort", "low", "medium", "high", "xhigh", "max"].forEach(function (m) { esel.appendChild(el("option", {}, [m])); });
+  mb.appendChild(esel);
+  mb.appendChild(el("label", {}, [el("input", { type: "checkbox" }), " Fast"]));
+  // THE CEILING, spelled out — "16%" alone never said 16% of what.
+  var pct = Math.round(S.ctxTok / S.ctxMax * 100);
+  mb.appendChild(el("span", { class: "chip --acc", id: "f-ctx", title: "Context window: " + S.ctxTok.toLocaleString() + " of " + S.ctxMax.toLocaleString() + " tokens used" },
+    [S.ctxTok.toLocaleString() + " / " + (S.ctxMax / 1000) + "k tok \u00b7 " + pct + "%"]));
   mb.appendChild(el("span", { class: "spacer" }));
-  mb.appendChild(el("button", { id: "f-expand" }, [S.expanded ? "⇕ Collapse (full → 40%)" : "⇕ Expand (40% → full)"]));
+  mb.appendChild(el("button", { id: "f-expand" }, [S.expanded ? "\u21d5 Collapse (full \u2192 40%)" : "\u21d5 Expand (40% \u2192 full)"]));
   ftr.appendChild(mb);
   shell.appendChild(ftr);
 
   $("#f-hist").onclick = openHist;
   $("#f-expand").onclick = toggleExpand;
   ta.addEventListener("input", function () { S.prevLevel = 0; layout(); });
+  // Ghost suggestion: Tab accepts it. Only offered when the box is empty — never overwrites your typing.
+  ta.addEventListener("keydown", function (e) {
+    if (e.key === "Tab" && !ta.value && S.suggest) { e.preventDefault(); ta.value = S.suggest; S._text = ta.value; S.prevLevel = 0; layout(); }
+  });
   ta.value = S._text || "";
   layout();
 }
 
-/* The ONLY place geometry is decided — and it is decided by the shared pure module, not by CSS luck. */
+/* The ONLY place geometry is decided — by the shared pure module, from MEASURED input, not CSS luck. */
+function measureFrees(ftr) {
+  // v1 hardcoded these and was WRONG by ~90px, which clipped the footer. Measure what each step really
+  // frees; a step that frees no row height declares 0 rather than a plausible-looking number.
+  var modelRow = $("#f-model"), imgRow = $("#f-img");
+  return [
+    { id: "modelRow",   frees: modelRow ? modelRow.offsetHeight : 0 },
+    { id: "imageStrip", frees: imgRow ? imgRow.offsetHeight : 0 },
+    { id: "meta",       frees: 0 }
+  ];
+}
+
 function layout() {
   var shell = $("#shell"), ta = $("#typebox");
   var hdr = shell.querySelector(".rg-header"), ftr = shell.querySelector(".rg-footer"), core = shell.querySelector(".rg-core");
   var lineH = 18, minTypeH = lineH + 16;
 
-  // reset before measuring, so the natural content height is honest
+  // Un-collapse everything before measuring, or we would measure a footer that is already collapsed and
+  // then "free" height that was never there — the exact class of error that clipped v1.
+  ["#f-model", "#f-img", "#f-meta", "#f-modelchip2", "#f-imgchip"].forEach(function (sel) { var n = $(sel); if (n) n.classList.remove("--gone"); });
+  $("#f-modelchip2").classList.add("--gone"); $("#f-imgchip").classList.add("--gone");
+
   ta.style.height = "auto"; ta.style.overflowY = "hidden";
   var contentH = Math.max(minTypeH, ta.scrollHeight);
   var footerBaseH = ftr.offsetHeight - ta.offsetHeight + minTypeH;
+  var steps = measureFrees(ftr);
 
   var r = CS.computeShell({
     shellH: shell.clientHeight, headerH: hdr.offsetHeight, footerBaseH: footerBaseH,
     contentH: contentH, minTypeH: minTypeH, lineH: lineH,
-    expanded: S.expanded, prevLevel: S.prevLevel
+    expanded: S.expanded, prevLevel: S.prevLevel, steps: steps
   });
   S.prevLevel = r.collapseLevel;
 
   ta.style.height = r.typeH + "px";
   ta.style.overflowY = r.typeScrolls ? "auto" : "hidden";
   core.classList.toggle("--gone", r.coreHidden);
-  core.style.flex = r.coreHidden ? "0 0 0" : "1 1 auto";
 
-  var map = { modelBar: "#f-modelextra", contLine: "#f-cont", meta: "#f-meta", attach: "#f-attach" };
-  Object.keys(map).forEach(function (k) { var n = $(map[k]); if (n) n.classList.toggle("--gone", !!r.collapsed[k]); });
-  $("#f-modelchip").style.display = "";                     // the model chip always survives
-  ["#f-act .btn-send", "#f-act .btn-stop"].forEach(function (s) { var n = $(s); if (n) n.classList.remove("--gone"); });
+  // Apply the collapse decision to WHOLE ROWS, so the freed height is real.
+  var mr = $("#f-model"); if (mr) mr.classList.toggle("--gone", !!r.collapsed.modelRow);
+  $("#f-modelchip2").classList.toggle("--gone", !r.collapsed.modelRow);
+  $("#f-modelchip2").textContent = S.model;
+  var im = $("#f-img"); if (im) im.classList.toggle("--gone", !!r.collapsed.imageStrip);
+  $("#f-imgchip").classList.toggle("--gone", !(r.collapsed.imageStrip && S.imgs));
+  var mt = $("#f-meta"); if (mt) mt.classList.toggle("--gone", !!r.collapsed.meta);
 
+  // Ghost suggestion, positioned exactly over the empty box.
+  var g = $("#ghost");
+  if (!ta.value && S.suggest) { g.innerHTML = ""; g.appendChild(document.createTextNode(S.suggest + "  ")); var k = document.createElement("kbd"); k.textContent = "Tab"; g.appendChild(k); }
+  else g.textContent = "";
+
+  var used = hdr.offsetHeight + (r.coreHidden ? 0 : r.coreH) + r.footerH;
   $("#metrics").innerHTML =
     "shell      " + shell.clientHeight + "\nheader     " + hdr.offsetHeight +
     "\ncore@rest  <b>" + Math.round(r.coreAtRest) + "</b>\ncore now   <b>" + Math.round(r.coreH) + "</b>" +
     (r.coreHidden ? "  (VANISHED)" : "") +
+    "\nfooter     " + Math.round(r.footerH) +
+    "\nsum        " + Math.round(used) + " / " + shell.clientHeight + (used <= shell.clientHeight + 1 ? "  \u2713 fits" : "  \u2717 CLIPPED") +
     "\ntype box   <b>" + Math.round(r.typeH) + "</b> / cap " + Math.round(r.cap) +
     "\n  base cap " + Math.round(r.baseCap) + (r.capIsFloored ? "  (row-floored)" : "") +
-    "\n  freed    " + r.freed + " px from collapsed rows" +
-    "\nscrolling  " + (r.typeScrolls ? "YES — text scrolls" : "no") +
-    "\ncollapse   level " + r.collapseLevel + "/4" +
+    "\n  freed    " + r.freed + " px (measured)" + (r.freedOverPromised ? "  \u26a0 over-promised" : "") +
+    "\nscrolling  " + (r.typeScrolls ? "YES \u2014 text scrolls" : "no") +
+    "\ncollapse   level " + r.collapseLevel + "/" + steps.length +
     "\nSend/Stop  <b>visible</b> (invariant I5)";
 }
 
@@ -277,7 +345,13 @@ $("#wPact").onclick = function () { S.kind = "pact"; this.classList.add("on"); $
 function note() { $("#wNote").textContent = S.kind === "pact" ? "Pact: repo LOCKED, many tabs, continuation line on." : "Core: repo CHOSEN, one active conversation, no continuation line."; }
 $("#expandBtn").onclick = toggleExpand;
 $("#bounds").onchange = function () { document.body.classList.toggle("showbounds", this.checked); };
-$("#shellH").oninput = function () { $("#shell").style.height = this.value + "px"; layout(); };
+// v1 capped the slider at 900px, so on a tall screen there was always dead space below the shell and
+// "max" was not actually max. The range now tracks the REAL available stage height.
+function stageAvail() { var st = $("#stage"); return Math.max(320, st.clientHeight - 36); }
+function shellTargetH() { var sl = $("#shellH"); return $("#fit").checked ? stageAvail() : Math.min(+sl.value, stageAvail()); }
+function syncSlider() { var sl = $("#shellH"); sl.max = stageAvail(); sl.disabled = $("#fit").checked; if ($("#fit").checked) sl.value = stageAvail(); }
+$("#shellH").oninput = function () { $("#shell").style.height = shellTargetH() + "px"; layout(); };
+$("#fit").onchange = function () { syncSlider(); $("#shell").style.height = shellTargetH() + "px"; layout(); };
 document.querySelectorAll("[data-fill]").forEach(function (b) {
   b.onclick = function () {
     var n = +b.dataset.fill;
@@ -296,7 +370,8 @@ $("#histBtn").onclick = openHist;
 $("#histX").onclick = function () { $("#hist").classList.remove("--open"); };
 $("#hOpen").onclick = function () { this.classList.add("on"); $("#hRet").classList.remove("on"); openHist(); };
 $("#hRet").onclick = function () { this.classList.add("on"); $("#hOpen").classList.remove("on"); openHist(); };
-window.addEventListener("resize", layout);
+window.addEventListener("resize", function () { syncSlider(); $("#shell").style.height = shellTargetH() + "px"; layout(); });
+syncSlider();
 document.body.classList.add("showbounds");
 $("#cue").classList.add("on");
 note(); render();

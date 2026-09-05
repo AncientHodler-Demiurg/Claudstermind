@@ -4,6 +4,30 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.102] - 2026-09-06
+### Fixed
+- **Chat Shell Lab: the footer was clipped at 100%, cutting off the Stop/Send row.** Root cause was in
+  the layout module, not the rendering: `COLLAPSE_STEPS` carried **hardcoded** `frees` values
+  (34/30/26 px) while the renderer only hid *inline spans*, which free almost no row height. The module
+  therefore granted the type box ~90 px it never received, the footer overflowed the shell, and its
+  bottom row was cut off. Steps are now **measured by the caller and passed in**; the fallback table
+  declares `0` rather than a plausible-looking guess. Two guards added: `freed` can never exceed the
+  footer chrome that actually exists (reported as `freedOverPromised`), and the footer can never be
+  taller than the space beneath the header. Both are asserted against a deliberately lying caller.
+- **"At 100% Core vanishes" did not actually vanish** — it left `minTypeH` of Core on screen. The
+  percentage caps how much the type box may **grow** (how much of Core it takes), not the box's total
+  height; the two differ by exactly the box's resting height.
+- **The shell-height slider capped at 900 px**, so on a tall screen "max" left dead space below the
+  shell. It now tracks the real available stage height, with a **Fit** toggle on by default.
+### Changed (lab)
+- **Context readout states its ceiling**: `93,016 / 1000k tok · 9%` instead of a bare percentage that
+  never said *of what*.
+- **A real model selector** in the footer (plus effort and fast-mode), not a static chip.
+- **Auto-continue no longer eats a row.** It moved into the same bordered rectangle as Stop and Send,
+  with its tick box and round counter, so the whole send cluster reads as one control.
+- **The continuation-line row is gone.** The suggested next prompt is now **ghost text inside the type
+  box, Tab to accept** — reclaiming a row and putting the suggestion where you would type it.
+
 ## [1.5.101] - 2026-09-05
 ### Added
 - **Chat Shell Lab — `/chat-shell-lab.html`.** A mockup page for agreeing the unified
