@@ -4,6 +4,30 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.110] - 2026-09-06
+### Fixed
+- **The lab's Go button was never wired — and neither was the context medallion.** `doJump()` existed and
+  was correct, and *nothing ever called it*. A string replacement had silently failed to match (the file
+  held a literal glyph where the patch used an escape), so the input and button were still the original
+  handler-less ones. Across several rounds I "verified" by checking that `doJump` existed — which proves
+  nothing about whether anything invokes it. The same silent no-op had left the context medallion a
+  static chip that looked clickable and did nothing.
+  - **New guard: `lib/chatShellLab.test.mjs`.** Ten interactive controls must each have a handler
+    attached, `doJump` must be *called* from at least three places, every turn bubble must carry the
+    `data-turn` marker jump queries, and the outcome must be reported inline. The test found the
+    medallion immediately. A control that renders but is wired to nothing looks identical to a broken
+    feature *and* to a working one that is refusing — this makes that state unshippable.
+- **Jump now reports its result inline and persistently**, beside the control that produced it, instead
+  of only via a toast. An auto-dismissing toast is indistinguishable from nothing happening, which is
+  exactly how a working control gets reported as broken.
+### Added (lab)
+- **Worktree picker** — was a dead `⑂ main` label. Now lists the available worktrees plus an explicit
+  "＋ create a new worktree…".
+- **Bookmark count on the star** — empty ☆ when there are none, filled **★ with the number** when there
+  are, and clicking opens a list of bookmarked answers, each with a jump button.
+- **Recall now responds**, stating what it would search and how many wrapped answers are in scope,
+  rather than being an inert button.
+
 ## [1.5.109] - 2026-09-06
 ### Fixed
 - **Jump appeared to do nothing.** The code was correct — the lab only held 8 turns, so `R#23` genuinely

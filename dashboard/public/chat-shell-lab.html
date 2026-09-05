@@ -301,11 +301,33 @@ function build() {
   hdr.appendChild(r1);
 
   var r2 = el("div", { class: "hrow" });
-  r2.appendChild(el("span", { class: "chip --acc" }, ["◐ 66% ctx"]));
+  // Was a static chip with no handler at all — it LOOKED clickable and did nothing.
+  var ctxBtn = el("button", { class: "chip --acc", title: "What is filling the context window" },
+    ["\u25d0 " + Math.round(S.ctxTok / S.ctxMax * 100) + "% ctx"]);
+  ctxBtn.onclick = openCtx;
+  r2.appendChild(ctxBtn);
   r2.appendChild(el("span", { class: "chip" }, ["⚙ " + S.agents + " agents"]));
-  r2.appendChild(el("input", { class: "sel", style: "flex:1", placeholder: "P#/R# or search archive" }));
-  r2.appendChild(el("button", {}, ["Go"]));
-  r2.appendChild(el("button", {}, ["⌕ Recall"]));
+  // WIRED. Previously this input and the Go button below were created with NO handlers at all, so
+  // doJump() existed, was correct, and was never once called — the control looked broken because
+  // nothing was connected to it. The result is now reported INLINE beside the button (see .jstat):
+  // a floating toast can be missed or clipped, and when it is, a working control reads as broken.
+  var jin = el("input", { class: "sel", id: "h-jump", style: "flex:1",
+    placeholder: "R#12 or P#12 to jump \u00b7 or text to search the archive" });
+  jin.value = S.jumpText || "";
+  jin.oninput = function () { S.jumpText = jin.value; };
+  jin.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); S.jumpText = jin.value; doJump(jin.value); } };
+  r2.appendChild(jin);
+  var jgo = el("button", { title: "Jump to that turn in this conversation" }, ["Go"]);
+  jgo.onclick = function () { S.jumpText = jin.value; doJump(jin.value); };
+  r2.appendChild(jgo);
+  r2.appendChild(el("span", { class: "jstat", id: "h-jstat" }, []));
+  var rec = el("button", { title: "Search the ARCHIVE — turns already wrapped out of the live window. Jump only reaches loaded turns; Recall reaches the ones that are not." }, ["⌕ Recall"]);
+  rec.onclick = function () {
+    var q = (jin.value || "").trim();
+    flashMsg(q ? "Recall: searching the archive for \u201c" + q + "\u201d — " + fmt(Math.max(0, S.responses - 40)) + " wrapped answers to scan"
+               : "Type some text first — Recall searches wrapped turns by content, not by number.", !!q);
+  };
+  r2.appendChild(rec);
   hdr.appendChild(r2);
   // ROLLUP BAR — replaces the old one-line advice text. Same row, far more information: the ceilings
   // that actually drive a wrap, plus the auto tick and a manual wrap button.
@@ -402,13 +424,33 @@ function build() {
     rsel.value = S.repo; rsel.onchange = function () { S.repo = rsel.value; render(); };
     meta.appendChild(rsel);
   } else meta.appendChild(el("span", { class: "chip" }, ["\uD83D\uDD12 OuronetPact"]));
-  meta.appendChild(el("span", { class: "chip" }, ["\u2442 main"]));
+  // A real worktree picker: available worktrees plus an explicit "create new". It was a dead label.
+  var wsel = el("select", { class: "sel", id: "f-wt", title: "Worktree this conversation runs in" });
+  S.worktrees.forEach(function (w) { wsel.appendChild(el("option", { value: w }, ["\u2442 " + w])); });
+  wsel.appendChild(el("option", { value: "__new__" }, ["\uff0b create a new worktree\u2026"]));
+  wsel.value = S.worktree;
+  wsel.onchange = function () {
+    if (wsel.value === "__new__") {
+      var name = (window.prompt("New worktree name", "feat-") || "").trim();
+      if (!name) { wsel.value = S.worktree; return; }
+      if (S.worktrees.indexOf(name) < 0) S.worktrees.push(name);
+      S.worktree = name;
+    } else S.worktree = wsel.value;
+    render();
+  };
+  meta.appendChild(wsel);
   act.appendChild(meta);
   act.appendChild(imgChip);
   act.appendChild(el("button", { id: "f-hist", title: "Conversations in THIS repository" }, ["\uD83D\uDD50"]));
+  // Empty star when there are none; FILLED star + the count when there are. "Are there any, and how
+  // many" is the question you ask before clicking, so the answer belongs on the button itself.
   var nbm = Object.keys(S.bm).filter(function (k) { return S.bm[k]; }).length;
-  act.appendChild(el("button", { id: "f-bm", title: nbm ? nbm + " bookmarked answer(s) — click to list" : "No bookmarks yet" },
-    [nbm ? "\u2605 " + nbm : "\u2606"]));
+  var bmBtn = el("button", { id: "f-bm", class: nbm ? "--on" : "",
+    title: nbm ? nbm + " bookmarked answer" + (nbm === 1 ? "" : "s") + " \u2014 click to list"
+               : "No bookmarks yet \u2014 star an answer to add one" },
+    nbm ? [el("span", {}, ["\u2605"]), el("span", { class: "bmn" }, [String(nbm)])] : [el("span", {}, ["\u2606"])]);
+  bmBtn.onclick = function () { if (nbm) openBm(); };
+  act.appendChild(bmBtn);
   act.appendChild(el("span", { class: "chip --gone", id: "f-modelchip2" }, [S.model]));
   // The EXPAND toggle lives HERE, in the never-collapsing action row — not in the model row, which is
   // collapse step 1. It used to vanish exactly when a long prompt made you want it.
@@ -575,7 +617,15 @@ function doJump(raw) {
   node.classList.add("--flash");
   setTimeout(function () { node.classList.remove("--flash"); }, 1400);
 }
-function flashMsg(t) { var n = $("#jumpmsg"); if (!n) return; n.textContent = t; n.style.display = "block"; setTimeout(function () { n.style.display = "none"; }, 2600); }
+function flashMsg(t, ok) {
+  // Report INLINE, beside the control that produced the result, and leave it there. A toast that
+  // auto-dismisses is indistinguishable from nothing happening — which is precisely how a wired,
+  // working control ends up reported as broken.
+  var n = $("#h-jstat");
+  if (n) { n.textContent = t; n.className = "jstat " + (ok ? "--ok" : "--err"); n.title = t; }
+  var f = $("#jumpmsg");                                   // secondary signal only
+  if (f) { f.textContent = t; f.style.display = "block"; setTimeout(function () { f.style.display = "none"; }, 3200); }
+}
 function fmtChars(n) { n = Number(n || 0); return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(n); }
 /* Bookmark + share on EVERY answer. Bookmarks are what make a long conversation navigable, so they
    belong on the turn itself, not only in a toolbar somewhere else. */
@@ -630,6 +680,19 @@ function openWrap() {
     $("#wrappop").classList.remove("--open"); render();
   };
   b.appendChild(el("div", { class: "row" }, [el("span", { class: "spacer" }), go]));
+  $("#wrappop").classList.add("--open");
+}
+
+function openBm() {
+  var b = $("#wrapbody"); b.replaceChildren();
+  $("#wrappop").querySelector(".pophd span").textContent = "\u27f3 Wrap conversation";
+  $("#wrappop").querySelector(".pophd span").textContent = "\u2605 Bookmarked answers";
+  Object.keys(S.bm).filter(function (k) { return S.bm[k]; }).sort(function (a, c) { return a - c; }).forEach(function (n) {
+    var row = el("div", { class: "kv" }, [el("span", { class: "k tR" }, ["R#" + n]), el("span", { class: "v" }, ["An assistant answer\u2026"])]);
+    var go = el("button", {}, ["jump"]);
+    go.onclick = function () { $("#wrappop").classList.remove("--open"); doJump("R#" + n); };
+    row.appendChild(go); b.appendChild(row);
+  });
   $("#wrappop").classList.add("--open");
 }
 
