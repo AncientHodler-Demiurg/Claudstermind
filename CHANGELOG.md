@@ -4,6 +4,38 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.86] - 2026-09-05
+### Added
+- **OmniRoute model test bench (Admin → Model routing).** 1.5.84 fixed a catalog bug that had been silently
+  dropping Cursor (~220 models) and Kimi entirely — which meant the models you most wanted to test weren't
+  in any list to test. This is the tool that actually tests them. Two modes over one server primitive:
+  - **Manual** — pick any exposed model (Auto combos, per-provider groups, or Anthropic direct), fire one
+    prompt, see the raw reply or the **raw provider error, verbatim** (`402 insufficient credits`,
+    `model not found`, a timeout…). A failure that produced partial text before dying shows both — that's a
+    different diagnosis from one that produced none.
+  - **Sweep** — the same prompt at every model in scope (all, one provider, or just the combos), with a
+    live pass/fail table streamed row by row over SSE, a progress bar, a failures-only filter, and a
+    "Copy report" TSV dump. Stoppable mid-run; models already in flight still finish and still report.
+  - Concurrency is **bounded** (default 3, hard-capped at 8 server-side): a 200-model sweep must not hit
+    every connected provider at once. Only one sweep can run process-wide; a second start is refused.
+  - **Every test spawns a BRAND-NEW session pinned to the model under test.** Switching a live session's
+    model does not re-route the provider — the base URL and auth token are fixed at spawn
+    (`lib/claudeSession.mjs`) — so a bench that reused a session would report on the wrong provider
+    entirely. Test sessions are never registered, never resumed, deny all tool use, and are torn down the
+    moment they settle or time out.
+  - New: `WorkspaceManager#testModel` + `#modelCatalogSnapshot` (`lib/workspace.mjs`); `runModelSweep` /
+    `summarizeSweepRow` / `createSweepRun` (`lib/modelSweep.mjs`, 20 tests); endpoints `/api/omni/models`,
+    `/api/omni/test`, `/api/omni/sweep` (GET snapshot, POST start), `/api/omni/sweep/stop`,
+    `/api/omni/sweep/stream`; `viewModelTest()` in the client. Local-dashboard only — the bench needs this
+    machine's Claude token and the loopback OmniRoute gateway, so the relay answers a plain 404 for it.
+### Changed
+- **The Master (prime) Pact conversation is now pinned FIRST in the tab bar** — desktop strip and the mobile
+  "Conversations" sheet alike — no matter when it was created or promoted. This is a render-only reorder
+  (`pactTabsDisplayOrder`, `lib/pactTabsDisplayOrder.test.mjs`): `PACT_CHAT.tabs` itself stays in creation
+  order, because that array's order is what `pactChatCloseTab` falls back to when deciding which tab becomes
+  active after a close — reordering it in place would silently change close behaviour. The sort is stable, so
+  every other conversation keeps its relative position.
+
 ## [1.5.84] - 2026-09-05
 ### Fixed
 - **OmniRoute was silently dropping entire connected accounts from the model catalog.** `keepOmniId` (added

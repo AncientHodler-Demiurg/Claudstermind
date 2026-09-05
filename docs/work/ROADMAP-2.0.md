@@ -24,16 +24,16 @@ Goal: stop the bleeding (uncommitted work) and get the user able to use the Pact
 
 - [x] **0.1** Commit + push the 39-version pile as a restore point — `86c45a2`
 - [x] **0.2** Gitignore `dashboard/data/routing.json` (per-install runtime state, was being tracked)
-- [ ] **0.3** ⇉ **Pact auto-continue actually works** — v1.5.85 *(agent in flight)*
+- [ ] **0.3** ⇉ **Pact auto-continue actually works** — v1.5.87 *(agent in flight)*
       - The user's stated blocker: ticking auto-continue does not reliably continue turns.
       - Has had 4 rounds of patches (1.5.47/48/49, 1.5.80) and is still broken → this pass must make the
         state machine *structurally* correct, not add a 5th band-aid.
       - Decision logic extracted to a pure, unit-tested helper; regression test for the actual stuck state.
-- [ ] **0.4** ⇉ **Master pinned first + OmniRoute test chat box** — v1.5.86 *(agent in flight)*
-      - **0.4a** Pin the prime/Master conversation first in the desktop tab bar AND the mobile
+- [x] **0.4** ⇉ **Master pinned first + OmniRoute test chat box** — v1.5.86 ✅
+      - [x] **0.4a** Pin the prime/Master conversation first in the desktop tab bar AND the mobile
         Conversations sheet, via a *display-order wrapper* (must not mutate `PACT_CHAT.tabs`, because
         `pactChatCloseTab` falls back to `tabs[0]`).
-      - **0.4b** OmniRoute test chat box — manual mode (one model, one prompt, raw result/error) and
+      - [x] **0.4b** OmniRoute test chat box — manual mode (one model, one prompt, raw result/error) and
         sweep mode (one prompt at every exposed model → pass/fail table). Bounded concurrency;
         a fresh pinned session per model, since switching a live session's model does not re-route.
 
@@ -121,6 +121,11 @@ is not a safe assumption today.
       "unrelated" for many versions; before a 2.0 they get fixed or explicitly quarantined with a reason.
 - [ ] **4.3** ⇉ Branch hygiene — decide whether `feat-pact-changed-review` merges to `main` before the
       2.0 bump. Right now `main` does not contain any of this work.
+- [ ] **4.5** ⇉ **Kimi exposes 0 models** — 1.5.84 restored Cursor, but the live gateway returns no Kimi
+      models at all (`omniProviderOf`'s `kimi|moonshot|km` prefixes match nothing). Either the account is
+      disconnected or its ids use an unrecognized prefix. The new sweep bench (0.4b) is the tool to confirm.
+- [ ] **4.6** ⇉ **OmniRoute bench is local-only** — `/api/omni/*` returns 404 `local-only` in OIDC/relay
+      mode. Wiring a long-running SSE sweep through the tunnel needs new `agent/agent.mjs` command handlers.
 - [ ] **4.4** ⇉ Commit cadence: stop accumulating 39-version piles. Checkpoint commit per phase.
 
 ---

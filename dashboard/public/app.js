@@ -969,7 +969,7 @@ function viewAdmin(sectionId) {
   else if (!s || !s.enabled) pane.replaceChildren(el("div", { class: "admin-empty" }, ["That section is planned — coming later."]));
   else if (sectionId === "ops") pane.replaceChildren(viewOps());
   else if (sectionId === "relay") pane.replaceChildren(viewRelay());
-  else if (sectionId === "routing") pane.replaceChildren(viewRouting());
+  else if (sectionId === "routing") pane.replaceChildren(viewRouting(), viewModelTest());
   else if (sectionId === "tokens") pane.replaceChildren(viewTokens());
   else if (sectionId === "deploy") pane.replaceChildren(viewDeploy());
   else pane.replaceChildren(el("div", { class: "admin-empty" }, ["Unknown section."]));
@@ -1079,6 +1079,272 @@ function viewRouting() {
     p1, p2, defWrap, modelWrap, permWrap,
     el("div", { class: "route-actions" }, [save, status]),
   ]);
+}
+/* ---------- Admin → Model routing → the OmniRoute model TEST BENCH ----------
+   The answer to "does this OmniRoute model ACTUALLY work?" — a question that had no way to be asked while
+   lib/omniRoute.mjs's keepOmniId was silently dropping Cursor (~220 models) and Kimi from the catalog
+   entirely (fixed in 1.5.84): the models you wanted to test weren't in any list to test. Two modes over ONE
+   server primitive (POST /api/omni/test → WorkspaceManager#testModel):
+     • MANUAL — one model, one prompt, the raw reply or the raw error.
+     • SWEEP  — the same prompt at EVERY exposed model, a pass/fail table, streamed row by row.
+   Every single test spawns a BRAND-NEW session PINNED to the model under test. Switching a live session's
+   model does NOT re-route the provider (base URL + auth token are fixed at spawn — see lib/claudeSession.mjs),
+   so a bench that reused a session would cheerfully report on whatever provider it originally spawned on.
+   Provider errors are shown VERBATIM: an ugly "402 insufficient credits" / "model not found" string is
+   precisely the diagnosis this panel exists to surface, so nothing here prettifies or swallows one. */
+let MTEST = {
+  catalog: null,        // { anthropic:[], omni:[] } — null until the first /api/omni/models answers
+  loading: false,
+  error: null,          // catalog-load failure (the bench is local-only; the relay answers 404)
+  prompt: "Reply with exactly: OK",
+  model: "",
+  timeoutMs: 45000,
+  concurrency: 3,
+  scope: "combos",
+  result: null,         // the last MANUAL result, verbatim from the server
+  sweep: null,          // the live sweep snapshot, kept current by the SSE stream
+  sweepFilter: "all",
+};
+let MTEST_ES = null;
+
+const mtestOmni = () => (MTEST.catalog && MTEST.catalog.omni) || [];
+/** The model ids the CURRENT sweep scope covers. "combos" is the safe default (10 self-healing picks);
+ *  "all" is the real diagnostic sweep (hundreds of models, minutes long); a provider name narrows to one
+ *  connected account, which is how you answer "is Cursor broken, or is it just this model?". */
+function mtestScopeModels() {
+  const omni = mtestOmni();
+  if (MTEST.scope === "all") return omni.map((m) => m.value);
+  if (MTEST.scope === "combos") return omni.filter((m) => m.combo).map((m) => m.value);
+  return omni.filter((m) => !m.combo && (m.providerLabel || "Other") === MTEST.scope).map((m) => m.value);
+}
+async function mtestLoadCatalog() {
+  if (MTEST.loading) return;
+  MTEST.loading = true; MTEST.error = null;
+  try {
+    const j = await (await fetch("/api/omni/models", { cache: "no-store" })).json();
+    MTEST.catalog = { anthropic: j.anthropic || [], omni: j.omni || [] };
+    if (j.ok === false) MTEST.error = j.error || j.message || "The model catalog is unavailable here.";
+  } catch (e) {
+    MTEST.catalog = { anthropic: [], omni: [] };
+    MTEST.error = String((e && e.message) || e);
+  }
+  MTEST.loading = false;
+}
+/** Subscribe to the server's sweep stream. Replays a `snapshot` frame first, so a browser that opens the
+ *  panel MID-sweep (or reconnects after a reload) sees every row already collected, not an empty table. */
+function mtestOpenSweepStream(card, onChange) {
+  if (MTEST_ES) { try { MTEST_ES.close(); } catch {} MTEST_ES = null; }
+  let es; try { es = new EventSource("/api/omni/sweep/stream"); } catch { return; }
+  MTEST_ES = es;
+  es.onmessage = (e) => {
+    // Self-clean: there is no unmount hook for an admin pane, so the first event after the card left the
+    // DOM closes the stream instead of leaking an EventSource per visit to this section.
+    if (card && !card.isConnected) { try { es.close(); } catch {} if (MTEST_ES === es) MTEST_ES = null; return; }
+    let ev; try { ev = JSON.parse(e.data); } catch { return; }
+    if (ev.kind === "snapshot" || ev.kind === "end") MTEST.sweep = ev;
+    else if (ev.kind === "start") MTEST.sweep = { running: true, total: ev.total, done: 0, rows: [], prompt: ev.prompt, startedAt: ev.startedAt, finishedAt: null };
+    else if (ev.kind === "row") {
+      if (!MTEST.sweep) MTEST.sweep = { running: true, total: ev.total, done: 0, rows: [] };
+      MTEST.sweep.rows = MTEST.sweep.rows.concat([ev.row]);
+      MTEST.sweep.done = ev.done; MTEST.sweep.total = ev.total; MTEST.sweep.running = true;
+    } else return;
+    onChange();
+  };
+}
+function viewModelTest() {
+  const card = el("div", { class: "admin-card mtest-card" }, []);
+  const status = el("span", { class: "admin-note" }, []);
+
+  // ---- shared prompt (both modes send the SAME text, so a sweep is comparable across models) ----
+  const promptTa = el("textarea", { class: "mtest-prompt", rows: "2", placeholder: "Prompt to send to the model under test" }, []);
+  promptTa.value = MTEST.prompt;
+  promptTa.addEventListener("input", () => { MTEST.prompt = promptTa.value; });
+  const timeoutIn = el("input", { class: "wsel wsel-sm mtest-num", type: "number", min: "5", max: "180", step: "5", title: "Per-model timeout in seconds — a dead provider must not stall the whole sweep" });
+  timeoutIn.value = String(Math.round(MTEST.timeoutMs / 1000));
+  timeoutIn.addEventListener("change", () => { MTEST.timeoutMs = Math.min(180, Math.max(5, Number(timeoutIn.value) || 45)) * 1000; timeoutIn.value = String(MTEST.timeoutMs / 1000); });
+
+  // ---- MANUAL: one model, one prompt ----
+  const modelSel = el("select", { class: "wsel wsel-sm mtest-model" }, []);
+  modelSel.addEventListener("change", () => { MTEST.model = modelSel.value; });
+  const fillModels = () => {
+    const cat = MTEST.catalog || { anthropic: [], omni: [] };
+    const mk = (m) => el("option", { value: m.value, title: m.value }, [(m.displayName || m.value) + "  —  " + m.value]);
+    const omni = cat.omni || [];
+    const combos = omni.filter((m) => m.combo), rest = omni.filter((m) => !m.combo);
+    const groups = [];
+    if (combos.length) groups.push(el("optgroup", { label: "OmniRoute · Auto combos" }, combos.map(mk)));
+    const byProv = new Map();
+    for (const m of rest) { const k = m.providerLabel || "Other"; if (!byProv.has(k)) byProv.set(k, []); byProv.get(k).push(m); }
+    for (const [label, list] of byProv) groups.push(el("optgroup", { label: "OmniRoute · " + label + " (" + list.length + ")" }, list.map(mk)));
+    if ((cat.anthropic || []).length) groups.push(el("optgroup", { label: "Anthropic (direct, no OmniRoute)" }, cat.anthropic.map(mk)));
+    modelSel.replaceChildren(...groups);
+    if (MTEST.model) modelSel.value = MTEST.model;
+    MTEST.model = modelSel.value || "";
+  };
+  const manualOut = el("div", { class: "mtest-out" }, []);
+  const paintManual = () => {
+    const r = MTEST.result;
+    if (!r) { manualOut.replaceChildren(); return; }
+    const p = r.provider || null;
+    const head = el("div", { class: "mtest-out-head " + (r.ok ? "--ok" : "--bad") }, [
+      el("b", {}, [r.ok ? "✓ answered" : "✗ failed"]),
+      el("span", { class: "mtest-out-meta" }, [
+        (r.model || "?") + (p && p.label ? "  ·  " + p.label + (p.account ? " (" + p.account + ")" : "") : "")
+        + "  ·  " + (Number.isFinite(r.latencyMs) ? r.latencyMs + " ms" : "—"),
+      ]),
+    ]);
+    const kids = [head, el("pre", { class: "mtest-raw" }, [r.ok ? (r.reply || "(the model answered with an empty body)") : String(r.error || "Unknown error")])];
+    // A failure that still produced text before dying is a DIFFERENT diagnosis (the provider answered,
+    // then broke) than one that produced none — so show both, never just the error.
+    if (!r.ok && r.reply) kids.push(el("div", { class: "mtest-sub" }, ["Partial text received before the failure:"]), el("pre", { class: "mtest-raw" }, [r.reply]));
+    manualOut.replaceChildren(...kids);
+  };
+  const runBtn = el("button", { class: "loginbtn" }, ["Run test"]);
+  runBtn.addEventListener("click", async () => {
+    if (!MTEST.model) { status.textContent = "⚠ Pick a model first."; return; }
+    runBtn.disabled = true;
+    status.textContent = "Testing " + MTEST.model + " — spawning a fresh session pinned to it…";
+    MTEST.result = null; paintManual();
+    try {
+      const res = await fetch("/api/omni/test", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: MTEST.model, prompt: MTEST.prompt, timeoutMs: MTEST.timeoutMs }) });
+      MTEST.result = await res.json();
+    } catch (e) {
+      MTEST.result = { ok: false, model: MTEST.model, error: "The request itself failed (the dashboard, not the model): " + String((e && e.message) || e) };
+    }
+    status.textContent = ""; runBtn.disabled = false; paintManual();
+  });
+
+  // ---- SWEEP: the same prompt at every model in scope, bounded concurrency, streamed rows ----
+  const scopeSel = el("select", { class: "wsel wsel-sm" }, []);
+  scopeSel.addEventListener("change", () => { MTEST.scope = scopeSel.value; paintSweepHead(); });
+  const fillScope = () => {
+    const omni = mtestOmni();
+    const provs = [...new Set(omni.filter((m) => !m.combo).map((m) => m.providerLabel || "Other"))];
+    scopeSel.replaceChildren(
+      el("option", { value: "combos" }, ["Auto combos only (" + omni.filter((m) => m.combo).length + ")"]),
+      el("option", { value: "all" }, ["EVERY exposed OmniRoute model (" + omni.length + ")"]),
+      ...provs.map((p) => el("option", { value: p }, [p + " only (" + omni.filter((m) => !m.combo && (m.providerLabel || "Other") === p).length + ")"])),
+    );
+    scopeSel.value = MTEST.scope;
+    if (!scopeSel.value) { MTEST.scope = "combos"; scopeSel.value = "combos"; }
+  };
+  const concIn = el("input", { class: "wsel wsel-sm mtest-num", type: "number", min: "1", max: "8", step: "1", title: "How many models are tested at once. Bounded on purpose — a 200-model sweep must not hit every provider simultaneously (the server hard-caps this at 8)." });
+  concIn.value = String(MTEST.concurrency);
+  concIn.addEventListener("change", () => { MTEST.concurrency = Math.min(8, Math.max(1, Number(concIn.value) || 3)); concIn.value = String(MTEST.concurrency); });
+
+  const startBtn = el("button", { class: "loginbtn" }, ["Start sweep"]);
+  const stopBtn = el("button", { class: "ghost" }, ["Stop"]);
+  const sweepHead = el("div", { class: "mtest-sweep-head" }, []);
+  const sweepTable = el("div", { class: "mtest-table-wrap" }, []);
+  const filterSel = el("select", { class: "wsel wsel-sm" }, [
+    el("option", { value: "all" }, ["All rows"]),
+    el("option", { value: "fail" }, ["Failures only"]),
+    el("option", { value: "ok" }, ["Passes only"]),
+  ]);
+  filterSel.value = MTEST.sweepFilter;
+  filterSel.addEventListener("change", () => { MTEST.sweepFilter = filterSel.value; paintSweepTable(); });
+  const copyBtn = el("button", { class: "ghost", title: "Copy the whole table as TSV — paste it into an issue or a note" }, ["Copy report"]);
+  copyBtn.addEventListener("click", async () => {
+    const rows = (MTEST.sweep && MTEST.sweep.rows) || [];
+    const tsv = ["model\tprovider\tstatus\tms\tresult"].concat(
+      rows.map((r) => [r.model, (r.provider && r.provider.label) || "", r.status, r.latencyMs == null ? "" : r.latencyMs, String(r.preview || "").replace(/[\t\r\n]+/g, " ")].join("\t")),
+    ).join("\n");
+    try { await navigator.clipboard.writeText(tsv); copyBtn.textContent = "Copied ✓"; setTimeout(() => { copyBtn.textContent = "Copy report"; }, 1500); }
+    catch { copyBtn.textContent = "Copy failed"; setTimeout(() => { copyBtn.textContent = "Copy report"; }, 1500); }
+  });
+
+  function paintSweepHead() {
+    const s = MTEST.sweep;
+    const running = !!(s && s.running);
+    startBtn.disabled = running;
+    stopBtn.disabled = !running;
+    scopeSel.disabled = running; concIn.disabled = running; timeoutIn.disabled = running;
+    const scoped = mtestScopeModels().length;
+    if (!s || !s.total) { sweepHead.replaceChildren(el("span", { class: "mtest-sub" }, [scoped + " model" + (scoped === 1 ? "" : "s") + " in scope. Nothing swept yet."])); return; }
+    const pass = s.rows.filter((r) => r.ok).length, fail = s.rows.length - pass;
+    const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
+    sweepHead.replaceChildren(
+      el("div", { class: "mtest-bar" }, [el("i", { style: "width:" + pct + "%" }, [])]),
+      el("span", { class: "mtest-sub" }, [
+        (running ? "Sweeping… " : "Finished. ")
+        + s.done + " / " + s.total + " tested  ·  ✓ " + pass + " passed  ·  ✗ " + fail + " failed"
+        + (running ? "" : (s.done < s.total ? "  (stopped early)" : "")),
+      ]),
+    );
+  }
+  function paintSweepTable() {
+    const rows = ((MTEST.sweep && MTEST.sweep.rows) || []).filter((r) => MTEST.sweepFilter === "all" || (MTEST.sweepFilter === "ok" ? r.ok : !r.ok));
+    if (!rows.length) { sweepTable.replaceChildren(); return; }
+    const head = el("tr", {}, [
+      el("th", {}, ["Model"]), el("th", {}, ["Provider"]), el("th", {}, ["Status"]), el("th", {}, ["ms"]), el("th", {}, ["Reply / RAW error"]),
+    ]);
+    const body = rows.map((r) => el("tr", { class: r.ok ? "--ok" : "--bad" }, [
+      el("td", { class: "mtest-td-model", title: r.model }, [r.model]),
+      el("td", {}, [(r.provider && r.provider.label) || "—"]),
+      el("td", {}, [el("span", { class: "mtest-pill " + (r.ok ? "--ok" : "--bad") }, [r.ok ? "pass" : "fail"])]),
+      el("td", { class: "mtest-td-ms" }, [r.latencyMs == null ? "—" : String(r.latencyMs)]),
+      // Verbatim. `preview` is the reply's first 200 chars on success, or the provider's own error text
+      // in full on failure — deliberately unformatted so nothing is lost between provider and eyeball.
+      el("td", {}, [el("pre", { class: "mtest-raw --inline" }, [String(r.preview || "")])]),
+    ]));
+    sweepTable.replaceChildren(el("table", { class: "mtest-table" }, [el("thead", {}, [head]), el("tbody", {}, body)]));
+  }
+  const paintSweep = () => { paintSweepHead(); paintSweepTable(); };
+
+  startBtn.addEventListener("click", async () => {
+    const models = mtestScopeModels();
+    if (!models.length) { status.textContent = "⚠ No models in that scope."; return; }
+    startBtn.disabled = true;
+    status.textContent = "Starting a sweep over " + models.length + " model" + (models.length === 1 ? "" : "s") + "…";
+    try {
+      const res = await fetch("/api/omni/sweep", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ models, prompt: MTEST.prompt, timeoutMs: MTEST.timeoutMs, concurrency: MTEST.concurrency }) });
+      const j = await res.json();
+      status.textContent = j && j.ok ? "" : ("⚠ " + ((j && (j.message || j.reason)) || ("http " + res.status)));
+    } catch (e) { status.textContent = "⚠ " + String((e && e.message) || e); }
+    paintSweepHead();
+  });
+  stopBtn.addEventListener("click", async () => {
+    stopBtn.disabled = true;
+    try { await fetch("/api/omni/sweep/stop", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); } catch {}
+    status.textContent = "Stop requested — models already in flight still finish and still report.";
+  });
+
+  card.replaceChildren(
+    el("h2", {}, ["Model test bench"]),
+    el("p", { class: "admin-sub" }, ["Does a given model ACTUALLY answer, end to end? Every test below spawns a brand-new throwaway session pinned to that one model — switching a live chat's model doesn't re-route the provider, so this is the only honest way to ask. Tools are denied outright; nothing here touches your repos. Errors are shown exactly as the provider returned them."]),
+    el("div", { class: "route-default" }, [
+      el("div", { class: "route-label" }, ["Prompt (used by both modes)"]),
+      promptTa,
+      el("span", { class: "mtest-inline" }, [el("span", { class: "mtest-sub" }, ["Timeout per model (s)"]), timeoutIn]),
+    ]),
+    el("div", { class: "route-path mtest-pane" }, [
+      el("div", { class: "route-head" }, [el("b", {}, ["Manual — one model"])]),
+      el("div", { class: "mtest-inline" }, [modelSel, runBtn]),
+      manualOut,
+    ]),
+    el("div", { class: "route-path mtest-pane" }, [
+      el("div", { class: "route-head" }, [el("b", {}, ["Sweep — every model in scope"]), el("span", { class: "route-badge" }, ["long-running"])]),
+      el("div", { class: "mtest-inline" }, [scopeSel, el("span", { class: "mtest-sub" }, ["at once"]), concIn, startBtn, stopBtn]),
+      sweepHead,
+      el("div", { class: "mtest-inline" }, [filterSel, copyBtn]),
+      sweepTable,
+    ]),
+    el("div", { class: "route-actions" }, [status]),
+  );
+
+  // First paint from whatever we already know, then load the catalog and repaint. Opening the sweep stream
+  // LAST means its replayed `snapshot` frame can immediately show a sweep that is already running from
+  // another tab (or from before a page reload) rather than a misleadingly empty table.
+  fillModels(); fillScope(); paintManual(); paintSweep();
+  if (!MTEST.catalog) {
+    mtestLoadCatalog().then(() => {
+      if (!card.isConnected) return;
+      fillModels(); fillScope(); paintSweepHead();
+      if (MTEST.error) status.textContent = "⚠ Model catalog: " + MTEST.error;
+    });
+  }
+  mtestOpenSweepStream(card, paintSweep);
+  return card;
 }
 /* ---------- Admin → Deploy & Version (§10 + the §3 deploy button) ---------- */
 let DEPLOY_ES = null;
@@ -5998,6 +6264,11 @@ function pactChatSelfHeal() {
       wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true, full: bigLocal && pactInterruptedIdx(t) >= 0 } });
     }
   }
+  // Auto-continue watchdog. pactAutoEnsure is idempotent and derives everything from current state, so
+  // running it on the heartbeat can only converge — and it means the loop no longer depends on some paint
+  // path remembering to re-arm it. Every previous round of auto-continue bugs was a missed re-arm; this
+  // makes a missed one cost ≤4s instead of stranding the sweep forever.
+  pactAutoEnsure(pactChatActive());
 }
 // Manual "sync now" — the page-reload-equivalent WITHOUT reloading: reconnect the live SSE stream, whose
 // `hello` re-fetches every tab's authoritative state (pactChatResyncAll) and flushes the outbox — so a
@@ -6611,9 +6882,11 @@ function pactMergeQueued(items, imgCap) {
 // item (pactChatDrainQueue) can be sent identically once the tab goes idle, not only a prompt typed
 // while the tab was already free. First-message preamble/auto-name + resume handling live here so both
 // entry points inherit them.
-async function pactChatDispatch(t, text, images) {
+async function pactChatDispatch(t, text, images, opts) {
   if (!PACT_CHAT || !t) return;
+  opts = opts || {};
   t._suggestDismissed = false;   // a new turn is starting — un-dismiss so the next idle suggestion shows
+  t._autoDeadline = 0;           // …and it owns the tab now: the next auto-continue round gets a FULL fresh countdown
   images = images || [];
   let payload = text;
   // A slash command (/compact, /clear, …) must reach the CLI RAW — never wrapped in the skill preamble or the
@@ -6689,8 +6962,12 @@ async function pactChatDispatch(t, text, images) {
         ? "Not connected — this message was NOT sent, but it's saved and retries when you're back online."
         : "This message couldn't be sent, but it's saved. It'll retry automatically — or press Retry.";
     t.msgs.push({ kind: "error", text: why, retry: () => { pactOutboxRemove(boxId); pactChatDispatch(t, text, images); } });
+    // Refill the compose so a human’s typed message isn’t lost — but NEVER for an auto-continue send: its
+    // text is machine-generated, and text sitting in the box PAUSES the loop (see pactAutoDecide "composing"),
+    // so one offline blip would have silently ended the sweep, with the draft persisted across reloads.
     const ta = PACT_CHAT.host && PACT_CHAT.host.querySelector(".pc-input");
-    if (ta && !ta.value.trim()) { ta.value = text; t.draft = text; pactChatAutosize(ta); pactStateSave(); }
+    if (!opts.auto && ta && !ta.value.trim()) { ta.value = text; t.draft = text; pactChatAutosize(ta); pactStateSave(); }
+    if (opts.auto) pactChatUpdateSuggest(t);   // re-evaluate: the loop is free to re-arm for the next round
     t._forceBottom = true; pactChatPaint(t);
     if (r && r._status === 401) sessionSetExpired(true);
   }
@@ -6904,12 +7181,74 @@ function pactChatSend(t) {
   t._autoCount = 0; t._autoCap = PACT_AUTO_CAP; t._suggestDismissed = false;   // a HUMAN prompt resets the auto-continue loop (+ ceiling) + un-dismisses
   pactChatDispatch(t, text, attachedImages);
 }
-// ===== Idle "suggested next prompt" chip (Claude-GUI-style follow-up) =====
+// ===== Idle "suggested next prompt" chip + AUTO-CONTINUE (Claude-GUI-style follow-up) =====
 // When the active tab goes idle after a turn, offer a next-prompt derived from the agent's stated next step.
-// ↳ Use drops it in the compose box to edit; ▷ Send fires it; an optional Auto toggle auto-sends it after a
-// short countdown, BOUNDED to PACT_AUTO_CAP rounds — so an autonomous sweep continues without a human between
-// turns, but can't run away. Only shown when idle, not typing, and after at least one agent reply.
+// ↳ Use drops it in the compose box to edit; ▷ Send fires it; the Auto-continue toggle auto-sends it after a
+// short countdown, BOUNDED to a rolling ceiling of PACT_AUTO_CAP rounds — so an autonomous sweep continues
+// without a human between turns, but can't run away.
+//
+// SHAPE (v1.5.85 rewrite — this machine had four rounds of patches and still stalled):
+//   pactAutoDecide()        — PURE. The ONE place that decides whether the loop counts down, and WHY not.
+//   pactAutoEnsure()        — the imperative shell: reads the live tab + compose box, calls the decider,
+//                             owns the single interval, fires the send. Idempotent and self-correcting.
+//   pactChatUpdateSuggest() — draws the bar from the SAME decision object. It calls ensure; ensure NEVER
+//                             calls it back, so the two can't ping-pong.
+// The old code evaluated one set of conditions in the renderer and a DIFFERENT set inside the countdown tick.
+// Where they disagreed (`_suggestDismissed`: the tick treated it as a stop condition, the renderer didn't) the
+// two called each other without bound — `RangeError: Maximum call stack size exceeded` out of every repaint.
+// One decider + one direction of calls means that whole class of bug cannot come back.
+// ===== PACT AUTO-CONTINUE — pure decision helper (sliced by lib/pactAutoContinue.test.mjs; keep the markers) =====
 const PACT_AUTO_CAP = 10, PACT_AUTO_DELAY_MS = 6000;
+/** Decide what the auto-continue loop should be doing RIGHT NOW, from plain data only (no DOM, no timers).
+ *  in : { autoContinue, busy, hasReply, active, composeText, autoCount, autoCap, deadline, now }
+ *  out: { show, on, busy, composing, capReached, autoCount, autoCap, arm, fire, deadline, msLeft, reason }
+ *
+ *  `reason` is WHY the countdown isn't running ("" while it is) and is rendered to the user: a suppressed
+ *  autonomous loop must never be silent — "I ticked the box and nothing happened" is precisely the failure
+ *  this feature kept producing, because every gate hid itself.
+ *
+ *  A dismissed SUGGESTION (the ✕) is deliberately NOT an input here. Dismissing hides the chip; it does not
+ *  stop the loop — which is what the ✕'s own tooltip has always promised. */
+function pactAutoDecide(s) {
+  s = s || {};
+  const now = typeof s.now === "number" ? s.now : Date.now();
+  const autoCap = (typeof s.autoCap === "number" && s.autoCap > 0) ? s.autoCap : PACT_AUTO_CAP;
+  const autoCount = (typeof s.autoCount === "number" && s.autoCount > 0) ? s.autoCount : 0;
+  const composing = !!(s.composeText && String(s.composeText).trim());
+  const d = { show: false, on: !!s.autoContinue, busy: !!s.busy, composing,
+    capReached: autoCount >= autoCap, autoCount, autoCap,
+    arm: false, fire: false, deadline: 0, msLeft: 0, reason: "" };
+  // The bar — and with it the Auto toggle — is visible whenever this tab is on screen and has produced at
+  // least one reply: busy or idle, typing or not. The state of an autonomous loop is always visible and
+  // always switchable. (The old renderer hid the whole bar the moment the compose box had any text, so a
+  // leftover draft — including one the failed-send path itself put there — made Auto-continue disappear.)
+  if (!s.active) { d.reason = "inactive"; return d; }     // another tab is on screen — that tab owns the loop
+  if (!s.hasReply) { d.reason = "no-reply"; return d; }
+  d.show = true;
+  if (!d.on) { d.reason = "off"; return d; }
+  if (d.busy) { d.reason = "busy"; return d; }            // a round is running — re-arms when it ends
+  if (d.capReached) { d.reason = "cap"; return d; }       // rolling ceiling reached — needs a human "+N"
+  if (composing) { d.reason = "composing"; return d; }    // your half-typed message outranks the robot
+  // Armed. KEEP a live deadline rather than minting a new one: a turn produces dozens of repaints, and every
+  // one of them re-evaluates this — restarting the countdown each time would mean it never reaches zero.
+  const kept = (typeof s.deadline === "number" && s.deadline > 0 && s.deadline <= now + PACT_AUTO_DELAY_MS) ? s.deadline : 0;
+  d.arm = true;
+  d.deadline = kept || (now + PACT_AUTO_DELAY_MS);
+  d.msLeft = Math.max(0, d.deadline - now);
+  d.fire = now >= d.deadline;   // a deadline already past (throttled background tab, slept phone) fires at once
+  return d;
+}
+/** Has this conversation produced at least one agent reply? The bar only exists after one. */
+function pactAutoHasReply(msgs) { return !!(Array.isArray(msgs) && msgs.some((m) => m && m.role === "assistant" && m.text)); }
+/** The human-readable reason the loop is paused — "" when it's counting down or simply switched off. */
+function pactAutoWhy(d) {
+  if (!d || !d.on) return "";
+  if (d.reason === "busy") return "a round is running…";
+  if (d.reason === "cap") return "paused at " + d.autoCount + "/" + d.autoCap + " rounds — ▷ Continue grants the next " + PACT_AUTO_CAP;
+  if (d.reason === "composing") return "paused — send or clear your message to resume";
+  return "";
+}
+// ===== end PACT AUTO-CONTINUE pure helper =====
 function pactSuggestNext(t) {
   if (!t || !Array.isArray(t.msgs)) return null;
   const lastAsst = [...t.msgs].reverse().find((m) => m.role === "assistant" && m.text);
@@ -6921,85 +7260,96 @@ function pactSuggestNext(t) {
   if (m) return { text: "Continue with " + m[1] + "." };
   return { text: "Continue where you left off." };
 }
+function pactAutoNextText(t) { return ((pactSuggestNext(t) || {}).text) || "Continue where you left off."; }
 function pactAutoStop(t) { if (t && t._autoTimer) { clearInterval(t._autoTimer); t._autoTimer = null; } if (t) t._autoDeadline = 0; }
 function pactChatDispatchSuggest(t, text) {
   if (!t || pactChatBusy(t)) return;
-  t._autoCount = (t._autoCount || 0) + 1;   // auto/suggest send counts toward the cap (a human send resets it)
-  pactChatDispatch(t, text, []);
+  t._autoCount = (t._autoCount || 0) + 1;   // an auto/suggested send counts toward the ceiling (a human send resets it)
+  pactAutoStop(t);                          // the round owns the tab now — no countdown while it runs
+  pactChatDispatch(t, text, [], { auto: true });
   t._forceBottom = true; pactChatPaint(t); pactStateSave();
 }
-function pactAutoStart(t, text) {
-  if (!t || t._autoTimer) return;
-  t._autoDeadline = Date.now() + PACT_AUTO_DELAY_MS;
-  const tick = () => {
-    const ta = PACT_CHAT && PACT_CHAT.host && PACT_CHAT.host.querySelector(".pc-input");
-    if (!t._autoContinue || pactChatBusy(t) || t._suggestDismissed || (ta && ta.value.trim())) { pactAutoStop(t); pactChatUpdateSuggest(t); return; }
-    const left = Math.max(0, Math.ceil((t._autoDeadline - Date.now()) / 1000));
-    const cd = PACT_CHAT && PACT_CHAT.host && PACT_CHAT.host.querySelector(".pc-suggest-count");
-    if (cd) cd.textContent = " · sending in " + left + "s";
-    if (Date.now() >= t._autoDeadline) { pactAutoStop(t); pactChatDispatchSuggest(t, text); }
-  };
-  tick(); t._autoTimer = setInterval(tick, 250);
+/** The imperative shell around pactAutoDecide: owns the single 250 ms countdown interval and fires the send.
+ *  IDEMPOTENT and SELF-CORRECTING — calling it repeatedly can only converge on the right state, so no missed
+ *  call site can strand the loop (pactChatSelfHeal calls it every 4 s for exactly that reason). Returns the
+ *  decision so the renderer draws from the SAME evaluation. Never calls pactChatUpdateSuggest. */
+function pactAutoEnsure(t) {
+  if (!PACT_CHAT) return null;
+  // Exactly ONE tab may own a countdown: the one on screen. The old code only ever stopped the tab it was
+  // handed, so switching tabs left the previous tab's interval alive — ticking against the NEW tab's compose
+  // box and writing into the new tab's countdown element.
+  for (const o of PACT_CHAT.tabs) if (o !== t && o._autoTimer) pactAutoStop(o);
+  if (!t) return null;
+  const ta = PACT_CHAT.host && PACT_CHAT.host.querySelector(".pc-input");
+  const d = pactAutoDecide({
+    autoContinue: t._autoContinue, busy: pactChatBusy(t), hasReply: pactAutoHasReply(t.msgs),
+    active: t.id === PACT_CHAT.activeId, composeText: ta ? ta.value : (t.draft || ""),
+    autoCount: t._autoCount, autoCap: t._autoCap, deadline: t._autoDeadline, now: Date.now(),
+  });
+  if (!d.arm) { pactAutoStop(t); return d; }
+  t._autoDeadline = d.deadline;
+  if (d.fire) { pactChatDispatchSuggest(t, pactAutoNextText(t)); return d; }
+  if (!t._autoTimer) t._autoTimer = setInterval(() => pactAutoTick(t), 250);
+  return d;
+}
+function pactAutoTick(t) {
+  const d = pactAutoEnsure(t);
+  const cd = PACT_CHAT && PACT_CHAT.host && PACT_CHAT.host.querySelector(".pc-suggest-count");
+  if (cd) cd.textContent = (d && d.arm && !d.fire) ? " · sending in " + Math.max(1, Math.ceil(d.msLeft / 1000)) + "s" : "";
+  if (d && !d.arm) pactChatUpdateSuggest(t);   // the reason changed (busy / cap / you started typing) — redraw once
 }
 function pactChatUpdateSuggest(t) {
   if (!PACT_CHAT || !PACT_CHAT.host) return;
   const box = PACT_CHAT.host.querySelector(".pc-suggest"); if (!box) return;
-  const active = pactChatActive();
-  if (!active || !t || active.id !== t.id) { box.hidden = true; box.replaceChildren(); box.classList.remove("--running"); pactAutoStop(t); return; }
-  const busy = pactChatBusy(t);
+  const d = pactAutoEnsure(t);   // ONE evaluation drives both the loop and this drawing
+  if (!d || !d.show) { box.hidden = true; box.replaceChildren(); box.classList.remove("--running"); return; }
+  if (d.fire) return;            // ensure just dispatched — that path repaints; don't draw a stale frame
   const ta = PACT_CHAT.host.querySelector(".pc-input");
-  const typing = !!(ta && ta.value.trim());
-  const hasReply = !!(Array.isArray(t.msgs) && t.msgs.some((m) => m.role === "assistant" && m.text));
-  const autoOn = !!t._autoContinue;
-  const autoCap = t._autoCap || PACT_AUTO_CAP;   // dynamic ceiling — a manual "continue" at the limit grants a fresh batch (10→20→30…)
-  const capReached = (t._autoCount || 0) >= autoCap;
-  // The Auto-continue control is ALWAYS on screen once there's been a reply — on OR off, idle OR mid-round — so
-  // its state is always visible and switchable. The suggestion (Use/Send/countdown) is the extra shown when idle.
-  if (!hasReply || typing) { box.hidden = true; box.replaceChildren(); box.classList.remove("--running"); pactAutoStop(t); return; }
+  const mob = pactIsMobile();    // on mobile this bar shares a compact row with the worktree pill (pc-toolrow)
+  const autoCap = d.autoCap, capReached = d.capReached;
   box.hidden = false;
-  box.classList.toggle("--running", busy && autoOn);
-  const mob = pactIsMobile();   // on mobile this bar shares a compact row with the worktree pill (pc-toolrow)
+  box.classList.toggle("--running", d.busy && d.on);
   // The always-present Auto toggle — works idle OR mid-round; unchecking stops the countdown AND future rounds.
-  const autoCb = el("input", { type: "checkbox" }); autoCb.checked = autoOn;
+  const autoCb = el("input", { type: "checkbox" }); autoCb.checked = d.on;
   autoCb.addEventListener("change", () => {
     t._autoContinue = autoCb.checked;
-    if (autoCb.checked && (t._autoCount || 0) >= autoCap) t._autoCap = (t._autoCount || 0) + PACT_AUTO_CAP;   // turning it back on at the limit grants the next batch
-    if (!autoCb.checked) pactAutoStop(t);
+    if (autoCb.checked && (t._autoCount || 0) >= autoCap) t._autoCap = (t._autoCount || 0) + PACT_AUTO_CAP;   // re-ticking at the limit grants the next batch
+    t._autoDeadline = 0;   // a deliberate toggle always starts a fresh countdown
     pactChatUpdateSuggest(t); pactStateSave();
   });
-  const autoLbl = el("label", { class: "pc-suggest-auto" + (autoOn ? " --on" : ""),
-    title: "Auto-continue: automatically send the next prompt when idle (up to " + PACT_AUTO_CAP + " rounds). Toggle any time — including WHILE a round is running." },
-    [autoCb, document.createTextNode(" " + (mob ? "Auto" : "Auto-continue") + ((t._autoCount || 0) ? " (" + t._autoCount + "/" + autoCap + ")" : ""))]);
-  const sugText = ((pactSuggestNext(t) || {}).text) || "Continue where you left off.";   // for the auto-send + the idle suggestion
-  if (busy) {
+  const autoLbl = el("label", { class: "pc-suggest-auto" + (d.on ? " --on" : ""),
+    title: "Auto-continue: automatically send the next prompt when idle (up to " + PACT_AUTO_CAP + " rounds per batch). Toggle any time — including WHILE a round is running." },
+    [autoCb, document.createTextNode(" " + (mob ? "Auto" : "Auto-continue") + (d.autoCount ? " (" + d.autoCount + "/" + autoCap + ")" : ""))]);
+  const cd = el("span", { class: "pc-suggest-count" }, [d.arm ? " · sending in " + Math.max(1, Math.ceil(d.msLeft / 1000)) + "s" : ""]);
+  const why = pactAutoWhy(d);
+  const whyEl = why ? el("span", { class: "pc-suggest-sub" }, [" — " + why]) : "";   // "" (never null) — el() appends kids verbatim
+  if (d.busy) {
     // Mid-round: state + the toggle. On → offer Stop; off → the toggle lets you turn it on right now.
-    pactAutoStop(t);
-    const parts = mob ? [autoLbl] : [el("span", { class: "pc-suggest-lbl" }, autoOn ? ["🔁 ", el("b", {}, ["Auto-continue on"]), el("span", { class: "pc-suggest-sub" }, [" — a round is running…"])] : ["🔁 Auto-continue"]), autoLbl];
-    if (autoOn) { const stop = el("button", { class: "pc-suggest-btn pc-suggest-stopauto", type: "button", title: "Turn auto-continue off now (the running round still finishes)" }, [mob ? "■" : "■ Stop auto"]); stop.addEventListener("click", () => { t._autoContinue = false; pactAutoStop(t); pactChatUpdateSuggest(t); pactStateSave(); }); parts.push(stop); }
+    const parts = mob ? [autoLbl] : [el("span", { class: "pc-suggest-lbl" }, d.on ? ["🔁 ", el("b", {}, ["Auto-continue on"]), whyEl] : ["🔁 Auto-continue"]), autoLbl];
+    if (d.on) { const stop = el("button", { class: "pc-suggest-btn pc-suggest-stopauto", type: "button", title: "Turn auto-continue off now (the running round still finishes)" }, [mob ? "■" : "■ Stop auto"]); stop.addEventListener("click", () => { t._autoContinue = false; pactAutoStop(t); pactChatUpdateSuggest(t); pactStateSave(); }); parts.push(stop); }
     box.replaceChildren(...parts);
     return;
   }
-  // Idle: the suggestion (unless dismissed) + the persistent Auto toggle.
+  // Idle: the suggestion (unless dismissed) + the persistent Auto toggle + why it's paused, if it is.
   const sug = t._suggestDismissed ? null : pactSuggestNext(t);
-  const cd = el("span", { class: "pc-suggest-count" }, []);
   const parts = [];
   if (sug) {
     const sendBtn = el("button", { class: "pc-suggest-btn pc-suggest-send", type: "button", title: capReached ? "Continue and grant the next " + PACT_AUTO_CAP + " auto rounds: " + sug.text : "Send: " + sug.text }, [capReached ? "▷ Continue (+" + PACT_AUTO_CAP + ")" : "▷ Send"]);
-    sendBtn.addEventListener("click", () => { if ((t._autoCount || 0) >= autoCap) t._autoCap = (t._autoCount || 0) + PACT_AUTO_CAP; pactAutoStop(t); pactChatDispatchSuggest(t, sug.text); });
-    const dismiss = el("button", { class: "pc-suggest-x", type: "button", title: "Dismiss the suggestion (Auto-continue stays)" }, ["✕"]);
+    sendBtn.addEventListener("click", () => { if ((t._autoCount || 0) >= autoCap) t._autoCap = (t._autoCount || 0) + PACT_AUTO_CAP; pactChatDispatchSuggest(t, sug.text); });
+    const dismiss = el("button", { class: "pc-suggest-x", type: "button", title: "Dismiss the suggestion (Auto-continue keeps running)" }, ["✕"]);
     dismiss.addEventListener("click", () => { t._suggestDismissed = true; pactChatUpdateSuggest(t); });
     if (mob) {
       parts.push(autoLbl, cd, sendBtn, dismiss);   // compact: drop the verbose "Suggested next: …" text + Use
     } else {
       const useBtn = el("button", { class: "pc-suggest-btn", type: "button", title: "Put it in the compose box to edit" }, ["↳ Use"]);
-      useBtn.addEventListener("click", () => { if (ta) { ta.value = sug.text; pactChatAutosize(ta); ta.focus(); } pactAutoStop(t); pactChatUpdateSuggest(t); });
+      useBtn.addEventListener("click", () => { if (ta) { ta.value = sug.text; t.draft = sug.text; pactChatAutosize(ta); ta.focus(); } pactChatUpdateSuggest(t); });
       parts.push(el("span", { class: "pc-suggest-lbl" }, [capReached ? "Auto limit reached — " : "Suggested next: ", el("b", {}, [sug.text])]), useBtn, sendBtn, autoLbl, cd, dismiss);
     }
   } else {
-    parts.push(...(mob ? [autoLbl] : [el("span", { class: "pc-suggest-lbl" }, ["🔁 Auto-continue"]), autoLbl]));
+    parts.push(...(mob ? [autoLbl, cd] : [el("span", { class: "pc-suggest-lbl" }, ["🔁 Auto-continue"]), autoLbl, cd]));
   }
+  if (whyEl) parts.push(whyEl);   // idle + paused (cap / composing): say so, never fail silently
   box.replaceChildren(...parts);
-  if (autoOn && !capReached) pactAutoStart(t, sugText); else pactAutoStop(t);
 }
 // The moment the tab genuinely stops being busy (its turn-end `result`, or any other idle transition),
 // release whatever queued while it was working — MERGED into ONE prompt (Core drainQueue parity), not
@@ -7786,7 +8136,9 @@ function pactChatRender() {
   // Enter inserts a newline (default textarea behavior) — sending is the button, or ⌘/Ctrl+Enter. This
   // matches the Core cockpit compose exactly so Enter behaves the same everywhere (v1.3.4).
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); pactChatSend(pactChatActive()); } });
-  input.addEventListener("input", () => { pactChatAutosize(input); const a = pactChatActive(); if (a) { a.draft = input.value; pactStateSave(); } });
+  // A keystroke repaints nothing else, so the auto-continue bar has to be told: typing PAUSES the countdown
+  // and clearing the box RESUMES it. Without this the loop stayed dead after you emptied the compose.
+  input.addEventListener("input", () => { pactChatAutosize(input); const a = pactChatActive(); if (a) { a.draft = input.value; pactStateSave(); pactChatUpdateSuggest(a); } });
   // Image attach: a hidden file input + 📎 button, plus paste (on the textarea) and drag-drop (onto
   // the compose row) — all three funnel into pactAttachImageFiles → the exact same attached state.
   const imgFileInput = el("input", { type: "file", accept: WS_IMG_ALLOWED_TYPES.join(","), multiple: "", class: "pc-img-input" });

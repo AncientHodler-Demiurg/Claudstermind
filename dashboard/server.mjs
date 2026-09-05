@@ -39,6 +39,7 @@ import { readBrain, scanPackages, cachedActivity } from "../lib/snapshot.mjs";
 import { executeCommand } from "../lib/commands.mjs";
 import { createBridge } from "../agent/agent.mjs";
 import { WorkspaceManager } from "../lib/workspace.mjs";
+import { createSweepRun } from "../lib/modelSweep.mjs";
 import { SessiondClient } from "../lib/sessiondClient.mjs";
 import * as store from "../lib/workspaceStore.mjs";
 import { readVersion } from "../lib/version.mjs";
@@ -427,6 +428,32 @@ if (!OIDC) {
 // ---- Deploy pipeline state (ships THIS repo to the live box; see lib/deploy.mjs) ----
 const CM_ROOT = resolve(__dir, "..");                 // the Claudstermind repo root (source of the tar)
 const DEPLOY = { running: false, log: [], subs: new Set(), startedAt: null, result: null };
+
+// ---- OmniRoute model test bench (Admin → Model routing → "Test a model") ----------------------------
+// Two modes, one primitive: MANUAL fires one prompt at one model; SWEEP fires the same prompt at every
+// exposed model and tabulates pass/fail. Both go through WorkspaceManager#testModel, which spawns a
+// BRAND-NEW session PINNED to the model under test — the only correct way to test one, because an
+// existing session's setModel() does NOT re-route the provider (base URL + auth token are fixed at
+// spawn, see lib/claudeSession.mjs), so reusing a live session would silently keep testing whatever
+// provider it originally spawned on. That is also why the bench is a SEPARATE manager and never
+// `WORKSPACE`: under the sessiond engine `WORKSPACE` is a SessiondClient (a thin socket proxy with no
+// testModel at all), and even under the in-process engine we do not want throwaway probe sessions
+// anywhere near the real session registry, its transcripts, or its broadcast sink.
+let TEST_BENCH = null;
+function testBench() {
+  if (TEST_BENCH) return TEST_BENCH;
+  TEST_BENCH = new WorkspaceManager({ root: MASTER_ROOT, secretsDir: SECRETS_DIR, listRepos: localListRepos, send: () => {} });
+  return TEST_BENCH;
+}
+// One sweep at a time, process-wide (createSweepRun refuses a concurrent start): a second sweep would
+// double the load on every provider, which is exactly what the pool exists to prevent. The prompt and
+// per-model timeout for the run in flight live here because `testFn` is bound once at construction
+// while they are chosen per request — safe precisely because only one sweep can ever be running.
+let SWEEP_OPTS = { promptText: "", timeoutMs: 45000 };
+const SWEEP = createSweepRun({
+  concurrency: 3,
+  testFn: (model) => testBench().testModel({ model, promptText: SWEEP_OPTS.promptText, timeoutMs: SWEEP_OPTS.timeoutMs }),
+});
 function deployLog(line) { DEPLOY.log.push(line); if (DEPLOY.log.length > 2000) DEPLOY.log.shift(); for (const w of DEPLOY.subs) { try { w(line); } catch {} } }
 function startDeploy() {
   if (DEPLOY.running) return { ok: false, reason: "already-running", message: "A deploy is already in progress." };
@@ -862,6 +889,60 @@ const handler = async (req, res) => {
     const { sessionKey = null, ...data } = d;
     try { WORKSPACE.handleIn(action, sessionKey, data); return sendJSON(res, 200, { ok: true }); }
     catch (e) { return sendJSON(res, 500, { ok: false, message: String(e && e.message || e) }); }
+  }
+
+  // The bench spawns REAL Claude sessions on THIS machine's disk + token, so it only exists on the local
+  // dashboard. On the relay (OIDC mode) there is no token and no loopback OmniRoute gateway — say so
+  // plainly instead of constructing a manager that could only ever answer "no Claude token".
+  if (path.startsWith("/api/omni/") && OIDC) {
+    return sendJSON(res, 404, { ok: false, reason: "local-only", message: "The model test bench runs on the work machine — open the local dashboard." });
+  }
+  // ---- OmniRoute model test bench: catalog, one-shot manual test, and the sweep ----
+  // POSTs here are already gated above (sameOrigin + canExecute); the GETs are read-side, so they only
+  // need canRead (also already checked). Every one of these degrades to a plain JSON error rather than
+  // throwing: this panel's entire job is diagnosing a broken provider, so it must survive one.
+  if (path === "/api/omni/models" && req.method === "GET") {
+    res.setHeader("cache-control", "no-store");
+    // Prefer the LIVE engine's catalog when it can answer (its warm cache reflects real sessions);
+    // otherwise the bench's own snapshot, which still merges OmniRoute's live /v1/models list.
+    const src = (WORKSPACE && typeof WORKSPACE.modelCatalogSnapshot === "function") ? WORKSPACE : testBench();
+    try { return sendJSON(res, 200, { ok: true, ...(await src.modelCatalogSnapshot()) }); }
+    catch (e) { return sendJSON(res, 200, { ok: false, anthropic: [], omni: [], error: String(e && e.message || e) }); }
+  }
+  if (path === "/api/omni/test" && req.method === "POST") {
+    const d = await readBody(req);
+    const timeoutMs = Math.min(180000, Math.max(1000, Number(d.timeoutMs) || 45000));
+    // testModel never throws — a hard SDK/network failure comes back as { ok:false, error:<raw text> }.
+    // Pass it through VERBATIM (200, not 5xx): the raw provider error IS the answer this tool exists for.
+    const r = await testBench().testModel({ model: d.model, promptText: d.prompt, timeoutMs });
+    return sendJSON(res, 200, r);
+  }
+  if (path === "/api/omni/sweep" && req.method === "GET") {
+    res.setHeader("cache-control", "no-store");
+    return sendJSON(res, 200, { ok: true, ...SWEEP.snapshot() });
+  }
+  if (path === "/api/omni/sweep" && req.method === "POST") {
+    const d = await readBody(req);
+    const models = Array.isArray(d.models) ? d.models.filter((m) => typeof m === "string" && m) : [];
+    if (SWEEP.snapshot().running) return sendJSON(res, 409, { ok: false, reason: "busy", message: "A sweep is already running — stop it first." });
+    if (!models.length) return sendJSON(res, 400, { ok: false, reason: "no-models", message: "No models to sweep." });
+    SWEEP_OPTS = { promptText: String(d.prompt || ""), timeoutMs: Math.min(180000, Math.max(1000, Number(d.timeoutMs) || 45000)) };
+    // Fire and DON'T await: a 200-model sweep runs for many minutes, far past any HTTP timeout. The caller
+    // gets an immediate "accepted" and watches /api/omni/sweep/stream for rows as they land.
+    SWEEP.start(models, SWEEP_OPTS.promptText, { concurrency: Number(d.concurrency) }).catch(() => {});
+    return sendJSON(res, 200, { ok: true, total: models.length });
+  }
+  if (path === "/api/omni/sweep/stop" && req.method === "POST") {
+    return sendJSON(res, 200, { ok: true, ...SWEEP.stop() });
+  }
+  if (path === "/api/omni/sweep/stream" && req.method === "GET") {
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
+    const write = (ev) => { try { res.write(`data: ${JSON.stringify(ev)}\n\n`); } catch {} };
+    write({ kind: "snapshot", ...SWEEP.snapshot() });   // replay so a late/reconnecting viewer sees the whole run
+    const off = SWEEP.subscribe(write);
+    const hb = setInterval(() => { try { res.write(": keep-alive\n\n"); } catch {} }, 25000); hb.unref?.();
+    req.on("close", () => { clearInterval(hb); off(); });
+    return;
   }
 
   // ---- Deploy & Version: ship this build to the live box (local machine holds source + SSH) ----
