@@ -271,7 +271,14 @@ function startBridgeFromConfig() {
       // Lets the live site trigger the self-restart pre-flight+restart pipeline over the tunnel,
       // the same way deploy above does — without this, agent/agent.mjs's `frame.kind === "restart"`
       // branch has nothing to call in production (dashboard-self-restart-safety, task 2.3).
-      restart: { start: () => startSelfRestart(), subscribe: subscribeRestartLog },
+      // `opts` carries the reload dialog's forceDaemon tick from the LIVE site (the hub path) — without
+      // threading it here the tick would work locally but silently no-op over the tunnel, which is the
+      // one place it matters most (no terminal access to run systemctl by hand).
+      restart: { start: (opts) => startSelfRestart({ forceDaemon: !!(opts && opts.forceDaemon) }), subscribe: subscribeRestartLog },
+      // Lets the live site READ the local process list (Deploy → "Running locally"). Without this the
+      // relay has nothing to forward, the browser's fetch 404s, and the tab renders the misleading
+      // "Process list unavailable." even though the local endpoint answers fine.
+      processes: () => gatherDeployProcesses(readVersion().gitSha),
       // The relay reports its browsers up the tunnel; merge them into the authoritative list here.
       onRemotePresence: (connections) => applyRemotePresence(connections),
     }).start();
@@ -481,7 +488,7 @@ async function workspaceSummaries() {
   } catch { /* engine unreachable — treat as no live sessions */ }
   return [];
 }
-async function gatherDeployProcesses(liveSha) {
+export async function gatherDeployProcesses(liveSha) {
   const sessiond = probeSessiond();
   let apps = [];
   try {
@@ -619,8 +626,27 @@ export function startSelfRestart(overrides = {}) {
   // pending prompt (the deploy-survivable-agents property). deployChangedFiles(runningSha) covers both
   // committed (runningSha..HEAD) and working-tree changes the reload will load. Can't tell → be safe
   // and restart the engine too. A web-only reload keeps sessiond (and every running agent) alive.
+  //
+  // FORCE SEAM (`forceDaemon`): git-derived detection is blind to anything git doesn't track — most
+  // importantly `node_modules/`, where the bundled Claude CLI lives. Bumping @anthropic-ai/claude-agent-sdk
+  // swaps the binary the engine spawns, but changes ZERO tracked files, so daemonAffected comes back false
+  // and Reload leaves sessiond running the old CLI in memory ("I reloaded but the engine kept running old
+  // code"). Rather than guess at every untracked-but-engine-affecting case, the reload dialog offers an
+  // explicit opt-in tick; when the user ticks it we restart the engine regardless of what git saw. It only
+  // ever ADDS a restart (never suppresses an auto-detected one), so the safe default is unchanged.
+  // `daemonAffectedFn` is a test seam ONLY: production never passes it, so the git-derived detection below
+  // is unchanged. Without it a test cannot distinguish "forceDaemon worked" from "git happened to report an
+  // engine change anyway" — which it does whenever the working tree has uncommitted engine edits, silently
+  // turning the forceDaemon test into one that passes even with the feature removed.
+  const { forceDaemon, daemonAffectedFn, ...restOverrides } = overrides;
   let restartDaemon = true;
-  try { restartDaemon = deployPlan(deployChangedFiles(readVersion().gitSha)).daemonAffected; } catch { restartDaemon = true; }
+  try {
+    restartDaemon = daemonAffectedFn
+      ? !!daemonAffectedFn()
+      : deployPlan(deployChangedFiles(readVersion().gitSha)).daemonAffected;
+  } catch { restartDaemon = true; }
+  if (forceDaemon) restartDaemon = true;
+  overrides = restOverrides;
   runSelfRestart({ onLog: restartLog, restartDaemon, ...overrides })
     .then((r) => { RESTART.result = r; restartLog(r.ok ? "__DONE_OK__" : "__DONE_FAIL__"); })
     .catch((e) => { RESTART.result = { ok: false, error: String(e && e.message || e) }; restartLog("__DONE_FAIL__"); })
@@ -880,7 +906,9 @@ const handler = async (req, res) => {
     return;
   }
   if (path === "/api/dashboard/restart" && req.method === "POST") {   // gated above (sameOrigin + canExecute + local-only)
-    return sendJSON(res, 200, startSelfRestart());
+    // `forceDaemon` is the reload dialog's "also restart the engine" tick — see startSelfRestart.
+    const body = await readBody(req).catch(() => ({}));
+    return sendJSON(res, 200, startSelfRestart({ forceDaemon: !!(body && body.forceDaemon) }));
   }
   if (path === "/api/release" && req.method === "POST") {
     const d = await readBody(req);
@@ -1237,7 +1265,7 @@ const handler = async (req, res) => {
     const patch = {};
     if (typeof b.url === "string") patch.url = b.url;
     if (typeof b.enabled === "boolean") patch.enabled = b.enabled;
-    const cfg = writeRelayConfig(DATA_DIR, patch);
+    let cfg; try { cfg = writeRelayConfig(DATA_DIR, patch); } catch (e) { return sendJSON(res, 500, { ok: false, reason: e.message }); }
     startBridgeFromConfig();                                     // apply the change immediately
     return sendJSON(res, 200, { ok: true, config: cfg, status: relayStatus() });
   }
@@ -1254,7 +1282,8 @@ const handler = async (req, res) => {
     if (typeof b.omniEnabled === "boolean") patch.omniEnabled = b.omniEnabled;
     if (b.defaultPath === "claude" || b.defaultPath === "omni") patch.defaultPath = b.defaultPath;
     if (typeof b.omniDefaultModel === "string") patch.omniDefaultModel = b.omniDefaultModel;
-    const cfg = writeRoutingConfig(DATA_DIR, patch);   // normalizeRoutingConfig enforces the invariants
+    if (typeof b.defaultPermissionMode === "string") patch.defaultPermissionMode = b.defaultPermissionMode;   // normalize rejects anything not in PERMISSION_MODES
+    let cfg; try { cfg = writeRoutingConfig(DATA_DIR, patch); } catch (e) { return sendJSON(res, 500, { ok: false, reason: e.message }); }   // corrupt file → refuse, don't reset fields
     return sendJSON(res, 200, { ok: true, config: cfg });
   }
   if (path === "/api/routing") {

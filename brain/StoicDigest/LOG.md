@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-09-01 — Grading reworked to 1–7 levels + pillar chips removed (live)
+
+**What happened:** Owner wanted a **7-level** difficulty scale (1=newcomer/child → 7=internals expert) instead of 4 named tiers, plus pillar chips gone. Also debated and **dropped a rigour metric** — owner rightly noted a single article mixes opinion/sourced/measured, so rigour is per-claim, not whole-article; provenance stays **inline** (measured/inference/cited). Design principle recorded: *only grade whole-article aggregates (level=hardest rung, length=sum, kind=purpose); never per-claim epistemic status.*
+
+**Implemented:** `content.config.ts` `level` → `z.number().int().min(1).max(7).default(4)`. `ReadingBadges.astro` rewritten: colour-graded 7-segment meter (`▰▰▰▰▰▰▱`, green→red, `LEVEL` map 1–7 with names Newcomer/General/Crypto-aware/Developer/Blockchain-dev/Chainweb-Pact/Expert + hints), kind badge, length band (Quick/Standard/Long/Treatise from readingTime), assumes line on full variant. Removed pillar chips from `StoryRow` + article header (kept pillar data + Topics nav). De-duped readingTime (issue-sub now date-only; ReadingBadges carries length). `docs/ARTICLE-GRADING.md` rewritten to the 7-level spec. `IssueCard` is unused (untouched).
+
+**Grades (owner deferred to my call):** #001 **L4** Developer/announcement · #003 **L5** Blockchain-dev/explainer · #002 **L6** Chainweb-Pact/record. #003<#002 on purpose (teaches internals vs assumes them). Colour green→red kept (consistent w/ severity palette; L4–6 render amber→orange→red = gold-adjacent/on-brand). Deployed via `./scripts/deploy.sh`, live-verified.
+
+## 2026-09-01 — Article grading (level / kind / assumes) shipped live
+
+**What happened:** Implemented reader-signposting badges per `docs/ARTICLE-GRADING.md`. Owner had already built most of it (content.config `LEVELS`=general/informed/technical/deep, `KINDS`=announcement/explainer/record/essay, `assumes[]`, defaults informed/explainer/[]; `ReadingBadges.astro` card+full variants w/ tooltip hints; IssueCard; `[id].astro` full variant + assumes line; graded frontmatter on all 3). I finished the gaps: **StoryRow** now accepts+renders the badges (main list component), **homepage hero** shows them, **topics/[pillar]** passes them. Built (Linux `npx astro build` — real; the doc's "build exits 0 doing nothing" caveat is Windows-Z:-only) + deployed. Live-verified badges on home + articles, assumes line on #002.
+
+**Gradings:** #001 technical/announcement, #002 deep/record, #003 technical/explainer (matches spec).
+**Core rule honored:** badges grade the ARTICLE not the reader — no "experts only" copy; a `deep`/`record` badge just tells readers length/assumed-knowledge is deliberate (Alex's "newsletter vs blog vs documentation" fix). Grade UP when unsure. To add a level/kind: edit `LEVELS`/`KINDS` in content.config **and** the label/hint maps in ReadingBadges (both must agree).
+
 ## 2026-08-27 — Issue #003 written (local, draft): "Physiology of a Chainweb Transaction"
 
 **What happened:** Wrote issue-003 from `.docs/.handoffs/2026-08-27-transaction-physiology.md` — a follow-up to CryptoPascal31's *Anatomy of a Kadena Transaction* (credited + linked early). Covers the two costs of a tx, the "invisible half" (`/local` vs `?preflight=true`) + the 777,189-vs-580M story, the **seventh-power** size penalty (shape, not pricing; split = 128×/halving), the **three-limits-at-three-layers** novel finding, cross-chain comparison, signers free→priced + CPU-seconds budget + the **"mempool is a filter, consensus is the law"** distinction, a Pact-lines table, and a close on 3 honest unknowns. `draft: true` (owner publishes Friday). Kept **local, not deployed** per owner ("construct locally first").

@@ -45,6 +45,12 @@
   .foot .refresh { margin-left:auto; background:transparent; border:1px solid var(--line); color:var(--mute);
     border-radius:7px; padding:4px 10px; cursor:pointer; font-size:11px; }
   .note { padding:0 20px 14px; color:var(--dim); font-size:11px; }
+  .tabs { display:flex; gap:6px; padding:2px 18px 0; border-bottom:1px solid var(--line); }
+  .tabs button { padding:8px 16px; border-radius:9px 9px 0 0; border:1px solid var(--line); border-bottom:none;
+    background:transparent; color:var(--mute); font-weight:700; font-size:12.5px; cursor:pointer; margin-bottom:-1px; }
+  .tabs button.on { background:var(--panel); color:var(--ink); border-bottom:1px solid var(--panel); }
+  .tabs button:hover:not(.on) { color:var(--ink); }
+  [hidden] { display:none !important; }
   /* styled confirm (no native popup) */
   .scrim { position:fixed; inset:0; background:#0a0d14cc; display:none; align-items:center; justify-content:center; padding:24px; }
   .scrim.show { display:flex; }
@@ -63,15 +69,34 @@
     <span class="logo">Claudstermind</span>
     <span id="badge" class="badge"><span class="d"></span><span id="badgeTxt">…</span></span>
   </header>
-  <div class="actions">
-    <button class="start" data-act="start">▶ Start all</button>
-    <button class="restart" data-act="restart">↻ Restart all</button>
-    <button class="stop" data-act="stop">■ Stop all</button>
+  <div class="tabs">
+    <button id="tabCm" class="on" data-tab="cm">Claudstermind</button>
+    <button id="tabDmp" data-tab="dmp">DMP</button>
   </div>
-  <div id="units" class="units"></div>
-  <div id="probes" class="probes"></div>
-  <div class="foot"><span id="stamp">—</span><button id="refresh" class="refresh">↻ Refresh</button></div>
-  <div class="note">Closing this window does <b>not</b> stop the stack — the services keep running. Reopen anytime.</div>
+
+  <div id="viewCm">
+    <div class="actions">
+      <button class="start" data-act="start">▶ Start all</button>
+      <button class="restart" data-act="restart">↻ Restart all</button>
+      <button class="stop" data-act="stop">■ Stop all</button>
+    </div>
+    <div id="units" class="units"></div>
+    <div id="probes" class="probes"></div>
+    <div class="foot"><span id="stamp">—</span><button id="refresh" class="refresh">↻ Refresh</button></div>
+    <div class="note">Closing this window does <b>not</b> stop the stack — the services keep running. Reopen anytime.</div>
+  </div>
+
+  <div id="viewDmp" hidden>
+    <div class="actions">
+      <button class="start" data-dact="start">▶ Start DMP</button>
+      <button class="restart" data-dact="restart">↻ Restart DMP</button>
+      <button class="stop" data-dact="stop">■ Stop DMP</button>
+    </div>
+    <div id="dunits" class="units"></div>
+    <div id="dprobes" class="probes"></div>
+    <div class="foot"><span id="dstamp">—</span><button id="drefresh" class="refresh">↻ Refresh</button></div>
+    <div class="note">DMP main runs here on AncientIntel (:4002) — the one writable DB + AI. The VPS is a relay + read-only replica: when AncientIntel is off it still serves a browsable snapshot.</div>
+  </div>
 
   <div id="scrim" class="scrim"><div class="confirm">
     <h3 id="cTitle">Confirm</h3><p id="cMsg"></p>

@@ -204,6 +204,65 @@ test("runSelfRestart with restartDaemon:false restarts the WEB only — a web-on
     "engine code unchanged → sessiond is NOT restarted, so in-flight turns (and a pending prompt) survive");
 });
 
+// The reload dialog's "also restart the session engine" tick. git-derived detection is blind to
+// node_modules/ — bumping the bundled Claude CLI changes zero TRACKED files, so daemonAffected comes
+// back false and the engine would keep the old binary in memory. forceDaemon is the user's override.
+test("startSelfRestart({ forceDaemon: true }) restarts the ENGINE even when git detected no tracked change", async () => {
+  let spawned = null;
+  const r = startSelfRestart({
+    forceDaemon: true,
+    // Pin git-detection to FALSE — that is the exact situation the tick exists for (a bumped CLI under
+    // node_modules/, invisible to git). Without pinning, a working tree with uncommitted engine edits
+    // reports daemonAffected:true on its own and this test would pass even with forceDaemon deleted.
+    daemonAffectedFn: () => false,
+    repoRoot: "/fake/repo",
+    scratchPort: 34570,
+    runPreflightFn: async () => ({ ok: true }),
+    spawnFn: (cmd, args, opts) => { spawned = { cmd, args, opts }; return { unref() {} }; },
+  });
+  assert.equal(r.ok, true, "the pre-flight should start");
+  // startSelfRestart is fire-and-forget (it returns before the async pipeline resolves) — wait for the
+  // real spawn rather than asserting on a race.
+  for (let i = 0; i < 100 && !spawned; i++) await new Promise((res) => setTimeout(res, 10));
+  assert.ok(spawned, "spawnFn should have been called");
+  assert.deepEqual(spawned.args, ["-n", "systemctl", "restart", "claudstermind-sessiond", "claudstermind"],
+    "forceDaemon must add sessiond — this is the whole point of the tick (a CLI bump git cannot see)");
+});
+
+test("forceDaemon only ever ADDS the engine restart — it never suppresses an auto-detected one", async () => {
+  // Guard against a regression where threading the flag accidentally turned into an override that could
+  // set restartDaemon=false. Absent/false forceDaemon must leave the git-derived decision untouched.
+  let spawned = null;
+  const r = startSelfRestart({
+    forceDaemon: false,
+    daemonAffectedFn: () => true,     // git DID see an engine change
+    repoRoot: "/fake/repo",
+    scratchPort: 34571,
+    runPreflightFn: async () => ({ ok: true }),
+    spawnFn: (cmd, args, opts) => { spawned = { cmd, args, opts }; return { unref() {} }; },
+  });
+  assert.equal(r.ok, true);
+  for (let i = 0; i < 100 && !spawned; i++) await new Promise((res) => setTimeout(res, 10));
+  assert.ok(spawned, "spawnFn should have been called");
+  assert.deepEqual(spawned.args, ["-n", "systemctl", "restart", "claudstermind-sessiond", "claudstermind"],
+    "an unticked box must NOT cancel the auto-detected engine restart");
+});
+
+test("no tick + no git-detected engine change → web only (the untouched default path)", async () => {
+  let spawned = null;
+  const r = startSelfRestart({
+    daemonAffectedFn: () => false,
+    repoRoot: "/fake/repo",
+    scratchPort: 34572,
+    runPreflightFn: async () => ({ ok: true }),
+    spawnFn: (cmd, args, opts) => { spawned = { cmd, args, opts }; return { unref() {} }; },
+  });
+  assert.equal(r.ok, true);
+  for (let i = 0; i < 100 && !spawned; i++) await new Promise((res) => setTimeout(res, 10));
+  assert.deepEqual(spawned.args, ["-n", "systemctl", "restart", "claudstermind"],
+    "web-only reload keeps sessiond and every in-flight agent turn alive");
+});
+
 /** A minimal fake child_process.ChildProcess: real EventEmitter (so `.on("exit"/"error")` works
  *  exactly like production code expects), a fake `.stderr` stream, and `.unref()`. Lets a test
  *  simulate the restart command actually running and failing fast — the exact production

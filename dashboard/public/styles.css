@@ -116,7 +116,10 @@ main { padding: 18px 24px 60px; }
 .admin-empty { color: var(--ink-mute); padding: 40px 8px; text-align: center; font-size: 14px; }
 @media (max-width: 820px) {
   .admin-layout { flex-direction: column; }
-  .admin-side { width: auto; flex: none; flex-direction: row; overflow-x: auto; position: static; }
+  /* Wrap the section pills onto as many rows as needed so EVERY tab is visible (no hidden horizontal
+     scroll that clipped "Tokens" → "To"); each pill stays on one line (no more "Model routing" splitting). */
+  .admin-side { width: auto; flex: none; flex-direction: row; flex-wrap: wrap; overflow-x: visible; position: static; gap: 6px; }
+  .admin-item { flex: 0 0 auto; white-space: nowrap; }
 }
 [hidden] { display: none !important; }   /* §5.3 the [hidden]-wins rule */
 
@@ -204,6 +207,15 @@ main { padding: 18px 24px 60px; }
   font-family: ui-monospace, monospace; font-size: 13px; line-height: 1.5; resize: vertical; }
 .modal-bd textarea:focus { outline: none; border-color: var(--accent); }
 .modal-sub { font-size: 12px; color: var(--ink-dim); margin-bottom: 9px; }
+/* Optional opt-in tick in a modal (showModal's `checkbox`) — e.g. Reload's "also restart the session
+   engine". Grid so the sub-label lines up under the bold label, not under the box. */
+.modal-check { display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; align-items: center;
+  margin-top: 11px; padding: 10px 11px; background: var(--chip); border: 1px solid var(--line);
+  border-radius: 8px; cursor: pointer; }
+.modal-check:hover { border-color: var(--accent); }
+.modal-check input { margin: 0; cursor: pointer; width: 15px; height: 15px; accent-color: var(--accent); }
+.modal-check b { font-size: 12.5px; font-weight: 600; }
+.modal-check-sub { grid-column: 2; font-size: 11.5px; color: var(--ink-dim); line-height: 1.45; }
 .modal-ft { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); }
 .modal-ft .btn-primary { background: var(--accent); color: #0b1020; border: 1px solid var(--accent); font-weight: 700; }
 .modal-ft .btn-primary:hover { filter: brightness(1.08); }
@@ -562,6 +574,9 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    compose row, rather than pinned in a header far from where you're actually typing. Mirrors
    Claude's own chat UI, which keeps its controls near the input, not in a fixed top bar. */
 .ws-pane-controls { display: flex; align-items: center; gap: 6px; padding: 6px 9px; border-top: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+/* Core's model bar now sits at the BOTTOM of the pane (was above the composer) — matching Pact's
+   .pc-modelbar so the two workspaces read identically. Same surface treatment as Pact's. */
+.ws-pane-controls.--modelbar { background: var(--panel2); border-top: 1px solid var(--line); border-bottom: 0; }
 /* Pane turn-lock status icon — plain CSS spinner (no glyph, no dependency): a muted ring
    at rest, spinning while the pane's session is mid-turn (busy), still again the moment
    that turn concludes (success or error). Toggled by paintPane() from p.status. */
@@ -635,6 +650,9 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pactm-modebar { display: flex; justify-content: space-between; align-items: flex-end; gap: 8px; padding: 3px 4px 0; flex: 0 0 auto; }
 .pactm-modebar-bulb { flex: 1 1 auto; display: flex; justify-content: center; align-items: center; min-width: 0; margin-bottom: 3px; }
 .pactm-modebar .stick-mode { font-size: 10.5px; padding: 2px 10px 2px 8px; opacity: 1; }
+/* Mobile model picker docked in the mode strip (both workspaces) — grows to fill the middle without crushing
+   the Conversations/Bookmarks bars flanking it. */
+.pactm-modebar .cm-mmodel, .ws-mmodebar .cm-mmodel { flex: 1 1 auto; min-width: 0; max-width: 46%; align-self: center; height: 22px; }
 .pactm-mbtn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; height: 19px; padding: 0 8px;
   border-radius: 7px 7px 0 0; border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--line)); border-bottom: none;
   background: color-mix(in srgb, var(--accent) 13%, var(--panel)); color: var(--accent);
@@ -811,6 +829,8 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   background: #f87171; border: 1px solid #f87171; color: #2a0a0a; white-space: nowrap; }
 .ws-stop:hover { filter: brightness(1.05); }
 .ws-stop[hidden] { display: none; }
+/* Same acknowledgement treatment as Pact's — a pressed Stop reads as pressed. */
+.ws-stop:disabled { opacity: .55; cursor: not-allowed; filter: none !important; }
 /* Busy = Claude is mid-turn in this pane. The button itself becomes the loud indicator
    (orange), reverting to the normal accent color the instant the turn ends — a bigger,
    harder-to-miss signal than the small header spinner dot alone. */
@@ -1576,26 +1596,28 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    Ten families; `…x` auxiliaries share their family hue, dimmed + italic ("helper of the thing above").
    HEAVY-READ is deliberately the LOUDEST read colour (amber) so a scan on a hot path jumps out. The
    family classifier lives in pact-cm-mode.js (wraps window.pactClassifyWord). */
-.pact-code .pk-compute  { color: #9ccdff; }                       /* COMPUTE — UC/UCk (calm blue) */
-.pact-code .pk-computex { color: #9ccdff; opacity: .68; font-style: italic; }  /* UCx aux */
-.pact-code .pk-read     { color: #5aa9ec; }                       /* READ — UR/URC (blue) */
-.pact-code .pk-readx    { color: #5aa9ec; opacity: .68; font-style: italic; }  /* URCx/URU aux·dim */
-.pact-code .pk-heavy    { color: #ff9d3c; font-weight: 700; }     /* HEAVY-READ ⚠ — URH/URD scans (LOUD amber) */
-.pact-code .pk-heavyx   { color: #ff9d3c; opacity: .72; font-style: italic; }  /* URHx aux */
-.pact-code .pk-enforce  { color: #e06c75; }                       /* ENFORCE — UEV/CAP (red) */
-.pact-code .pk-ctor     { color: #e6e6a3; }                       /* CONSTRUCT — UDC (pale yellow) */
-.pact-code .pk-ctorx    { color: #e6e6a3; opacity: .68; font-style: italic; }  /* UDCx aux */
-.pact-code .pk-const    { color: #8b98a5; }                       /* CONSTANT — CT (muted) */
-.pact-code .pk-write    { color: #d670c8; font-weight: 600; }     /* WRITE — WI/WU/WW (magenta) */
-.pact-code .pk-recipe   { color: #8ec07c; font-weight: 700; }     /* RECIPE — A/C/CC (bold green) */
-.pact-code .pk-orch     { color: #b58ae6; }                       /* PROTECTED — XI/XE/XB (purple) */
-.pact-code .pk-struct   { color: #6f7b8a; }                       /* STRUCTURAL — GOV/P|/SECURE/UEV_IMC (dim) */
-/* Legacy class names the read-only base highlighter (pact-highlight.js, not editable) still emits on
-   deleted diff lines — re-pointed to the nearest new family so those lines approximate the new palette. */
-.pact-code .pk-readd    { color: #ff9d3c; font-weight: 700; }     /* URD/URDC (static) → HEAVY-READ */
-.pact-code .pk-admin    { color: #8ec07c; font-weight: 700; }     /* A (static) → RECIPE */
-.pact-code .pk-client   { color: #8ec07c; font-weight: 700; }     /* C (static) → RECIPE */
-.pact-code .pk-cap      { color: #e06c75; }                       /* CAP (static) → ENFORCE */
+/* The 9 StoicSyntax bands — palette from the stoicsyntax-pact package (README/configurationDefaults), so the
+   web viewer matches VS Code/Cursor and the explorer. Cool = unprotected, warm/red = protected. */
+.pact-code .pk-compute  { color: #4ec9b0; }                       /* COMPUTE — UC/UCk (teal) */
+.pact-code .pk-computex { color: #4ec9b0; opacity: .68; font-style: italic; }
+.pact-code .pk-read     { color: #4fb6e0; }                       /* READ — UR/URC/URD/URDC (cyan) */
+.pact-code .pk-readx    { color: #4fb6e0; opacity: .68; font-style: italic; }
+.pact-code .pk-ctor     { color: #dcdcaa; }                       /* CONSTRUCT — UDC (yellow) */
+.pact-code .pk-ctorx    { color: #dcdcaa; opacity: .68; font-style: italic; }
+.pact-code .pk-enforce  { color: #e5c07b; }                       /* ENFORCE — UEV (amber) */
+.pact-code .pk-cap      { color: #e6c200; font-weight: 700; }     /* CAP — CAP_ (gold, bold) */
+.pact-code .pk-client   { color: #98c379; }                       /* CLIENT — C_ (green) */
+.pact-code .pk-orch     { color: #e5a663; }                       /* ORCH — XI/XE/XB (orange) */
+.pact-code .pk-admin    { color: #e06c75; font-weight: 700; }     /* ADMIN — A_ (salmon, bold) */
+.pact-code .pk-write    { color: #ef5350; font-weight: 700; }     /* WRITE — WI/WU/WW/W (red, bold) */
+/* Extra families still emitted by the editable CodeMirror mode (pact-cm-mode.js) for URH/CT/GOV etc.,
+   which the package's 9-band set doesn't split out — kept so the editor doesn't lose them. */
+.pact-code .pk-heavy    { color: #ff9d3c; font-weight: 700; }
+.pact-code .pk-heavyx   { color: #ff9d3c; opacity: .72; font-style: italic; }
+.pact-code .pk-const    { color: #8b98a5; }
+.pact-code .pk-recipe   { color: #98c379; font-weight: 700; }
+.pact-code .pk-struct   { color: #6f7b8a; }
+.pact-code .pk-readd    { color: #4fb6e0; }
 
 /* Band legend — a compact strip between the editor header and the code, teaching the color language. */
 .pact-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 6px 12px; border-bottom: 1px solid var(--line);
@@ -1604,11 +1626,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-legend-item code { font: 700 11px ui-monospace, monospace; }
 .pact-legend-desc { color: var(--ink-mute); }
 /* Reuse the family colors on the legend's <code> tags (new 10-family palette). */
-.pact-legend .pk-compute { color: #9ccdff; } .pact-legend .pk-read { color: #5aa9ec; }
-.pact-legend .pk-heavy { color: #ff9d3c; font-weight: 700; } .pact-legend .pk-enforce { color: #e06c75; }
-.pact-legend .pk-ctor { color: #e6e6a3; } .pact-legend .pk-const { color: #8b98a5; }
-.pact-legend .pk-write { color: #d670c8; } .pact-legend .pk-recipe { color: #8ec07c; font-weight: 700; }
-.pact-legend .pk-orch { color: #b58ae6; } .pact-legend .pk-struct { color: #6f7b8a; }
+.pact-legend .pk-compute { color: #4ec9b0; } .pact-legend .pk-read { color: #4fb6e0; }
+.pact-legend .pk-ctor { color: #dcdcaa; } .pact-legend .pk-enforce { color: #e5c07b; }
+.pact-legend .pk-cap { color: #e6c200; font-weight: 700; } .pact-legend .pk-client { color: #98c379; }
+.pact-legend .pk-orch { color: #e5a663; } .pact-legend .pk-admin { color: #e06c75; font-weight: 700; }
+.pact-legend .pk-write { color: #ef5350; font-weight: 700; }
 
 /* ===== CodeMirror 5 — the editable Pact editor surface (replaces the textarea overlay). The host fills
    the box; the CM instance fills the host. Dark theme matched to the app; per-box font-size is applied
@@ -1676,26 +1698,142 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .CodeMirror .cm-pk-sq      { color: #da70d6; }
 .CodeMirror .cm-pk-brace   { color: #179fff; }
 .CodeMirror .cm-pk-op      { color: #56b6c2; }
-/* StoicSyntax COLOUR FAMILIES for the editable/diff CM — same hex as `.pact-code .pk-*` above. */
-.CodeMirror .cm-pk-compute  { color: #9ccdff; }
-.CodeMirror .cm-pk-computex { color: #9ccdff; opacity: .68; font-style: italic; }
-.CodeMirror .cm-pk-read     { color: #5aa9ec; }
-.CodeMirror .cm-pk-readx    { color: #5aa9ec; opacity: .68; font-style: italic; }
+/* StoicSyntax COLOUR FAMILIES for the editable/diff CM — MUST stay in lockstep with the package-aligned
+   `.pact-code .pk-*` bands above (same hex). The editable view has to look identical to the read-only one. */
+.CodeMirror .cm-pk-compute  { color: #4ec9b0; }
+.CodeMirror .cm-pk-computex { color: #4ec9b0; opacity: .68; font-style: italic; }
+.CodeMirror .cm-pk-read     { color: #4fb6e0; }
+.CodeMirror .cm-pk-readx    { color: #4fb6e0; opacity: .68; font-style: italic; }
 .CodeMirror .cm-pk-heavy    { color: #ff9d3c; font-weight: 700; }
 .CodeMirror .cm-pk-heavyx   { color: #ff9d3c; opacity: .72; font-style: italic; }
-.CodeMirror .cm-pk-enforce  { color: #e06c75; }
-.CodeMirror .cm-pk-ctor     { color: #e6e6a3; }
-.CodeMirror .cm-pk-ctorx    { color: #e6e6a3; opacity: .68; font-style: italic; }
+.CodeMirror .cm-pk-ctor     { color: #dcdcaa; }
+.CodeMirror .cm-pk-ctorx    { color: #dcdcaa; opacity: .68; font-style: italic; }
+.CodeMirror .cm-pk-enforce  { color: #e5c07b; }
+.CodeMirror .cm-pk-cap      { color: #e6c200; font-weight: 700; }
 .CodeMirror .cm-pk-const    { color: #8b98a5; }
-.CodeMirror .cm-pk-write    { color: #d670c8; font-weight: 600; }
-.CodeMirror .cm-pk-recipe   { color: #8ec07c; font-weight: 700; }
-.CodeMirror .cm-pk-orch     { color: #b58ae6; }
+.CodeMirror .cm-pk-recipe   { color: #98c379; font-weight: 700; }
+.CodeMirror .cm-pk-client   { color: #98c379; }
+.CodeMirror .cm-pk-orch     { color: #e5a663; }
+.CodeMirror .cm-pk-admin    { color: #e06c75; font-weight: 700; }
+.CodeMirror .cm-pk-write    { color: #ef5350; font-weight: 700; }
 .CodeMirror .cm-pk-struct   { color: #6f7b8a; }
-/* Legacy names (base highlighter output on deleted diff lines) → nearest new family. */
-.CodeMirror .cm-pk-readd    { color: #ff9d3c; font-weight: 700; }
-.CodeMirror .cm-pk-admin    { color: #8ec07c; font-weight: 700; }
-.CodeMirror .cm-pk-client   { color: #8ec07c; font-weight: 700; }
-.CodeMirror .cm-pk-cap      { color: #e06c75; }
+/* Legacy name (package classifier output on deleted diff lines) → mirror the read band. */
+.CodeMirror .cm-pk-readd    { color: #4fb6e0; }
+
+/* ===== StoicSyntax MEDALLIONS (pact-medallion.js) — read-only <pre> viewer + editable CM twin ===== */
+/* Per-editor-box "Read-only ⇄ Edit" ticker (Pact/Repl only). */
+.pact-ed-editck { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 7px; font-size: 11px; font-weight: 700;
+  cursor: pointer; background: var(--chip); border: 1px solid var(--line); color: var(--ink-dim); white-space: nowrap; }
+.pact-ed-editck:hover { color: var(--ink); }
+.pact-ed-editck.--on { background: color-mix(in srgb, #2b6cff 22%, transparent); border-color: #2b6cff; color: #cfe0ff; }
+
+/* Idle "suggested next prompt" chip in the Pact chat (feature A). */
+.pc-suggest { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 10px; margin: 0 8px 6px;
+  border: 1px solid var(--line); border-radius: 9px; background: color-mix(in srgb, #2b6cff 8%, var(--panel2)); font-size: 12px; }
+.pc-suggest[hidden] { display: none; }
+.pc-suggest-lbl { color: var(--ink-dim); } .pc-suggest-lbl b { color: var(--ink); font-weight: 700; }
+.pc-suggest-btn { padding: 3px 10px; border-radius: 7px; font-size: 11.5px; font-weight: 700; cursor: pointer; background: var(--chip); border: 1px solid var(--line); color: var(--ink); }
+.pc-suggest-btn:hover { filter: brightness(1.08); }
+.pc-suggest-send { background: #2b6cff; border-color: #2b6cff; color: #fff; }
+.pc-suggest-auto { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-dim); cursor: pointer; user-select: none; font-weight: 600; }
+.pc-suggest-auto.--on { color: #cfe0ff; }
+.pc-suggest-count { color: #9ab7ff; font-variant-numeric: tabular-nums; }
+.pc-suggest-x { margin-left: auto; background: transparent; border: 0; color: var(--ink-dim); cursor: pointer; font-size: 13px; line-height: 1; }
+.pc-suggest-x:hover { color: var(--ink); }
+/* mid-round: Auto-continue is running — highlighted bar with an always-clickable off toggle */
+.pc-suggest.--running { background: color-mix(in srgb, #2b6cff 14%, var(--panel2)); border-color: #2b6cff; }
+.pc-suggest.--running .pc-suggest-lbl b { color: #cfe0ff; }
+.pc-suggest-stopauto { margin-left: auto; background: #7a2230; border-color: #a83549; color: #ffd9df; }
+.pc-suggest-stopauto:hover { filter: brightness(1.1); }
+/* MOBILE: the Auto/suggest bar shares ONE row with the worktree pill (pc-toolrow) to save a vertical row. */
+.pc-toolrow { display: flex; align-items: center; gap: 8px; margin: 0 8px 6px; min-width: 0; }
+.pc-toolrow .pc-suggest { flex: 1 1 auto; min-width: 0; margin: 0; padding: 5px 8px; gap: 6px; flex-wrap: nowrap; overflow: hidden; }
+.pc-toolrow .pc-suggest > * { flex: 0 0 auto; }
+.pc-toolrow .pc-suggest-auto { min-width: 0; }
+.pc-toolrow .pc-suggest-sub { display: none; }
+.pc-toolrow .pc-suggest-stopauto { margin-left: 0; }
+.pc-toolrow .pc-wtpill { flex: 0 0 auto; align-self: center; }
+
+/* Read-only medallion view (full fidelity: angled caps, padded medallions, per-type, foreign-black). */
+.pact-medallion-scroll { height: 100%; min-height: 0; overflow: auto; background: #0d1226; }
+.pact-medallion-pre { margin: 0; padding: 10px 14px 10px 0; tab-size: 2; font: 11px/2.05 ui-monospace, "SF Mono", Menlo, monospace; color: #c8d0e6; background: transparent; }
+/* Two columns: a fixed number gutter + a WRAPPING code column (view-mode word-wrap — no horizontal scroll). */
+.pact-medallion-pre .pml-row { display: flex; align-items: baseline; }
+.pact-medallion-pre .pml-code { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* line-number gutter — fixed width (all numbers align), sticky-left, always present so blank lines keep height */
+.pact-medallion-pre .pml-ln { flex: 0 0 auto; box-sizing: content-box; width: var(--pml-lnw, 3ch); padding: 0 10px; margin-right: 12px; text-align: right;
+  color: #5a6675; font-weight: 400; user-select: none; position: sticky; left: 0; background: #0d1226; border-right: 1px solid #1b2440; }
+/* a source line that WRAPPED onto >1 visual line — subtle wash + a left accent on the code so it's clearly one line */
+.pact-medallion-pre .pml-row.--wrapped { background: rgba(120, 160, 255, .05); }
+.pact-medallion-pre .pml-row.--wrapped .pml-code { box-shadow: inset 2px 0 0 rgba(120, 160, 255, .45); }
+/* read-only search: the matched line, scrolled into view + tinted */
+.pact-medallion-pre .pml-row.--rohit { background: rgba(250, 214, 90, .16); }
+.pact-medallion-pre .pml-row.--rohit .pml-ln { background: #2c2a17; }
+.pact-medallion-pre .cmt { color: #647085; font-style: italic; } .pact-medallion-pre .bi { color: #66cfc1; } .pact-medallion-pre .bib { color: #66cfc1; font-weight: 700; }
+.pact-medallion-pre .ty { color: #c2c8d2; } .pact-medallion-pre .struct { color: #737b8c; } .pact-medallion-pre .structb { color: #737b8c; font-weight: 700; }
+.pact-medallion-pre .bk0 { color: #e5616e; } .pact-medallion-pre .bk1 { color: #e0b64a; } .pact-medallion-pre .bk2 { color: #5aa8f0; }
+.pact-medallion-pre .form { display: inline-block; margin: 0 3px; padding: 0 8px; line-height: 1.05; font-weight: 700; border-radius: 8px; background: #332a0e; border: 2px solid #f3c81b; color: #f6d24a; }
+.pact-medallion-pre .ctor { color: #f3c81b; font-weight: 700; } .pact-medallion-pre .ctorx { color: #e4c136; font-style: italic; }
+.pact-medallion-pre .compute { color: #3181e9; font-weight: 700; } .pact-medallion-pre .ck { color: #4d90e8; } .pact-medallion-pre .cx { color: #9dbeea; font-style: italic; }
+.pact-medallion-pre .rl { color: #e8b683; } .pact-medallion-pre .rx { color: #e8b683; font-style: italic; } .pact-medallion-pre .heavy { color: #ec8013; font-weight: 700; } .pact-medallion-pre .cost { color: #a36633; }
+.pact-medallion-pre .val { color: #be274a; font-weight: 700; } .pact-medallion-pre .cap { color: #be274a; }
+.pact-medallion-pre .ww { color: #e61990; font-weight: 700; } .pact-medallion-pre .wu { color: #e46db2; } .pact-medallion-pre .wi { color: #e89fca; }
+.pact-medallion-pre .xi { color: #a045d5; font-weight: 700; } .pact-medallion-pre .xe { color: #ab5fd7; } .pact-medallion-pre .xb { color: #b577da; }
+.pact-medallion-pre .adm { color: #1d9a4d; font-weight: 700; } .pact-medallion-pre .cli { color: #9adfb1; } .pact-medallion-pre .const { color: #9298a4; }
+.pact-medallion-pre .tag { display: inline-block; margin: 0 3px; padding: 0 7px; line-height: 1.05; font-weight: 700; border-radius: 8px; background: #33132a; border: 2px solid #e61990; color: #f28cc4; }
+.pact-medallion-pre .tagO { display: inline-block; margin: 0 3px; padding: 0 7px; line-height: 1.05; font-weight: 700; border-radius: 8px; background: #33220e; border: 2px solid #ec8013; color: #f0b06a; }
+.pact-medallion-pre .strBlk { background: #33291a; color: #e8b06a; -webkit-box-decoration-break: clone; box-decoration-break: clone; padding: 0.42em 6px; border-radius: 6px; }
+.pact-medallion-pre .capmed { display: inline-block; margin: 0 3px; padding: 2px; line-height: 1; clip-path: polygon(7px 0, calc(100% - 7px) 0, 100% 50%, calc(100% - 7px) 100%, 7px 100%, 0 50%); }
+.pact-medallion-pre .capmedi { display: inline-block; padding: 0 9px; line-height: 1.05; font-weight: 700; clip-path: polygon(7px 0, calc(100% - 7px) 0, 100% 50%, calc(100% - 7px) 100%, 7px 100%, 0 50%); }
+.pact-medallion-pre .capBo { background: #c9925e; } .pact-medallion-pre .capBi { background: #241a10; color: #e6b985; }
+.pact-medallion-pre .capSo { background: #b7c0cf; } .pact-medallion-pre .capSi { background: #181c24; color: #d8dee8; }
+.pact-medallion-pre .capGo { background: #dcb64d; } .pact-medallion-pre .capGi { background: #23200e; color: #ecca63; }
+.pact-medallion-pre .capKo { background: #565b66; } .pact-medallion-pre .capKi { background: #191b22; color: #cbd0da; }
+.pact-medallion-pre .fnK { display: inline-block; margin: 0 3px; padding: 0 6px; line-height: 1.05; font-weight: 700; border: 2px solid #565b66; border-radius: 6px; background: #191b22; color: #cbd0da; }
+
+/* Editable twin — CodeMirror mode "stoicmedallion" emits cm-md-*; pills gated behind .CodeMirror.mdl. Base = coloured text. */
+.CodeMirror .cm-md-cmt { color: #647085; font-style: italic; } .CodeMirror .cm-md-section { color: #8a93a8; font-weight: 600; } .CodeMirror .cm-md-op { color: #8892ad; }
+.CodeMirror .cm-md-bi { color: #66cfc1; } .CodeMirror .cm-md-bib { color: #66cfc1; font-weight: 700; } .CodeMirror .cm-md-ty { color: #c2c8d2; }
+.CodeMirror .cm-md-struct { color: #737b8c; } .CodeMirror .cm-md-structb { color: #737b8c; font-weight: 700; }
+.CodeMirror .cm-md-bk0 { color: #e5616e; } .CodeMirror .cm-md-bk1 { color: #e0b64a; } .CodeMirror .cm-md-bk2 { color: #5aa8f0; }
+.CodeMirror .cm-md-ctor { color: #f3c81b; font-weight: 700; } .CodeMirror .cm-md-ctorx { color: #e4c136; font-style: italic; } .CodeMirror .cm-md-compute { color: #3181e9; font-weight: 700; } .CodeMirror .cm-md-ck { color: #4d90e8; } .CodeMirror .cm-md-cx { color: #9dbeea; font-style: italic; }
+.CodeMirror .cm-md-rl { color: #e8b683; } .CodeMirror .cm-md-rx { color: #e8b683; font-style: italic; } .CodeMirror .cm-md-heavy { color: #ec8013; font-weight: 700; } .CodeMirror .cm-md-cost { color: #a36633; }
+.CodeMirror .cm-md-val { color: #be274a; font-weight: 700; } .CodeMirror .cm-md-cap { color: #be274a; } .CodeMirror .cm-md-ww { color: #e61990; font-weight: 700; } .CodeMirror .cm-md-wu { color: #e46db2; } .CodeMirror .cm-md-wi { color: #e89fca; }
+.CodeMirror .cm-md-xi { color: #a045d5; font-weight: 700; } .CodeMirror .cm-md-xe { color: #ab5fd7; } .CodeMirror .cm-md-xb { color: #b577da; } .CodeMirror .cm-md-adm { color: #1d9a4d; font-weight: 700; } .CodeMirror .cm-md-cli { color: #9adfb1; } .CodeMirror .cm-md-const { color: #9298a4; }
+.CodeMirror .cm-md-num-int { color: #7db0f2; } .CodeMirror .cm-md-num-dec { color: #8ab6f0; } .CodeMirror .cm-md-bool { color: #e58ba0; } .CodeMirror .cm-md-strv { color: #e8b06a; } .CodeMirror .cm-md-strblk { color: #e8b06a; } .CodeMirror .cm-md-ref { color: #aeb9c9; } .CodeMirror .cm-md-schema { color: #f6d24a; }
+.CodeMirror .cm-md-form { color: #f6d24a; font-weight: 700; } .CodeMirror .cm-md-tag { color: #f28cc4; font-weight: 700; } .CodeMirror .cm-md-tagO { color: #f0b06a; font-weight: 700; }
+.CodeMirror .cm-md-capB { color: #e6b985; font-weight: 700; } .CodeMirror .cm-md-capS { color: #d8dee8; font-weight: 700; } .CodeMirror .cm-md-capG { color: #ecca63; font-weight: 700; } .CodeMirror .cm-md-capK { color: #cbd0da; font-weight: 700; } .CodeMirror .cm-md-fnK { color: #cbd0da; font-weight: 700; }
+.CodeMirror .cm-md-ty-integer { color: #3181e9; } .CodeMirror .cm-md-ty-decimal { color: #4d90e8; } .CodeMirror .cm-md-ty-string { color: #ec8013; } .CodeMirror .cm-md-ty-bool { color: #be274a; } .CodeMirror .cm-md-ty-time { color: #1d9a4d; } .CodeMirror .cm-md-ty-guard { color: #a045d5; } .CodeMirror .cm-md-ty-keyset { color: #b577da; } .CodeMirror .cm-md-ty-object { color: #f3c81b; } .CodeMirror .cm-md-ty-list { color: #3fbfae; } .CodeMirror .cm-md-ty-table { color: #a36633; } .CodeMirror .cm-md-ty-module { color: #8fa3bd; } .CodeMirror .cm-md-ty-value { color: #9298a4; }
+/* Medallion mode ON: caret-safe pills — background + inset box-shadow (border) + radius. NO padding/border/inline-block. */
+.CodeMirror.mdl .cm-md-num-int { background: color-mix(in srgb, #3181e9 20%, #0b1020); color: color-mix(in srgb, #3181e9 62%, #fff); border-radius: 6px; font-weight: 700; }
+.CodeMirror.mdl .cm-md-num-dec { background: color-mix(in srgb, #4d90e8 20%, #0b1020); color: color-mix(in srgb, #4d90e8 62%, #fff); border-radius: 6px; font-weight: 700; }
+.CodeMirror.mdl .cm-md-bool { background: color-mix(in srgb, #be274a 26%, #0b1020); color: color-mix(in srgb, #be274a 58%, #fff); border-radius: 6px; font-weight: 700; }
+.CodeMirror.mdl .cm-md-strv { background: #33291a; color: #e8b06a; border-radius: 6px; } .CodeMirror.mdl .cm-md-strblk { background: #33291a; color: #e8b06a; }
+.CodeMirror.mdl .cm-md-ref { background: color-mix(in srgb, #8fa3bd 22%, #0b1020); color: color-mix(in srgb, #8fa3bd 60%, #fff); border-radius: 6px; font-weight: 700; }
+.CodeMirror.mdl .cm-md-schema { background: color-mix(in srgb, #f3c81b 18%, #0b1020); color: #f6d24a; border-radius: 6px; font-weight: 700; }
+.CodeMirror.mdl .cm-md-form { background: #332a0e; box-shadow: inset 0 0 0 2px #f3c81b; color: #f6d24a; border-radius: 6px; font-weight: 700; }
+.CodeMirror.mdl .cm-md-tag { background: #33132a; box-shadow: inset 0 0 0 2px #e61990; color: #f28cc4; border-radius: 7px; font-weight: 700; }
+.CodeMirror.mdl .cm-md-tagO { background: #33220e; box-shadow: inset 0 0 0 2px #ec8013; color: #f0b06a; border-radius: 7px; font-weight: 700; }
+.CodeMirror.mdl .cm-md-ty-integer { background: color-mix(in srgb, #3181e9 20%, #0b1020); box-shadow: inset 0 0 0 2px #3181e9; color: color-mix(in srgb, #3181e9 60%, #fff); font-weight: 700; }
+.CodeMirror.mdl .cm-md-ty-decimal { background: color-mix(in srgb, #4d90e8 20%, #0b1020); box-shadow: inset 0 0 0 2px #4d90e8; color: color-mix(in srgb, #4d90e8 60%, #fff); font-weight: 700; }
+.CodeMirror.mdl .cm-md-ty-string { background: color-mix(in srgb, #ec8013 18%, #0b1020); box-shadow: inset 0 0 0 2px #ec8013; color: color-mix(in srgb, #ec8013 62%, #fff); font-weight: 700; }
+.CodeMirror.mdl .cm-md-ty-bool { background: color-mix(in srgb, #be274a 22%, #0b1020); box-shadow: inset 0 0 0 2px #be274a; color: color-mix(in srgb, #be274a 60%, #fff); font-weight: 700; }
+.CodeMirror.mdl .cm-md-ty-time { background: color-mix(in srgb, #1d9a4d 20%, #0b1020); box-shadow: inset 0 0 0 2px #1d9a4d; color: color-mix(in srgb, #1d9a4d 62%, #fff); font-weight: 700; }
+.CodeMirror.mdl .cm-md-ty-guard { background: color-mix(in srgb, #a045d5 20%, #0b1020); box-shadow: inset 0 0 0 2px #a045d5; color: color-mix(in srgb, #a045d5 62%, #fff); font-weight: 700; }
+.CodeMirror.mdl .cm-md-ty-keyset { background: color-mix(in srgb, #b577da 20%, #0b1020); box-shadow: inset 0 0 0 2px #b577da; color: color-mix(in srgb, #b577da 62%, #fff); font-weight: 700; }
+.CodeMirror.mdl .cm-md-ty-object { background: color-mix(in srgb, #f3c81b 18%, #0b1020); box-shadow: inset 0 0 0 2px #f3c81b; color: #f6d24a; font-weight: 700; }
+.CodeMirror.mdl .cm-md-ty-list { background: color-mix(in srgb, #3fbfae 18%, #0b1020); box-shadow: inset 0 0 0 2px #3fbfae; color: color-mix(in srgb, #3fbfae 62%, #fff); font-weight: 700; }
+.CodeMirror.mdl .cm-md-ty-table { background: color-mix(in srgb, #a36633 24%, #0b1020); box-shadow: inset 0 0 0 2px #a36633; color: color-mix(in srgb, #a36633 64%, #fff); font-weight: 700; }
+.CodeMirror.mdl .cm-md-ty-module { background: color-mix(in srgb, #8fa3bd 20%, #0b1020); box-shadow: inset 0 0 0 2px #8fa3bd; color: color-mix(in srgb, #8fa3bd 62%, #fff); font-weight: 700; }
+.CodeMirror.mdl .cm-md-ty-value { background: color-mix(in srgb, #9298a4 20%, #0b1020); box-shadow: inset 0 0 0 2px #9298a4; color: color-mix(in srgb, #9298a4 62%, #fff); font-weight: 700; }
+/* ANGLED metallic caps — hexagon painted on ::before (outer metal) / ::after (dark fill) BEHIND the text; span only gets position:relative → caret-safe. */
+.CodeMirror.mdl .cm-md-capB, .CodeMirror.mdl .cm-md-capS, .CodeMirror.mdl .cm-md-capG, .CodeMirror.mdl .cm-md-capK { position: relative; z-index: 0; font-weight: 800; background: transparent; box-shadow: none; border-radius: 0; }
+.CodeMirror.mdl .cm-md-capB::before, .CodeMirror.mdl .cm-md-capS::before, .CodeMirror.mdl .cm-md-capG::before, .CodeMirror.mdl .cm-md-capK::before { content: ""; position: absolute; inset: 0; z-index: -2; clip-path: polygon(5px 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 5px 100%, 0 50%); }
+.CodeMirror.mdl .cm-md-capB::after, .CodeMirror.mdl .cm-md-capS::after, .CodeMirror.mdl .cm-md-capG::after, .CodeMirror.mdl .cm-md-capK::after { content: ""; position: absolute; inset: 1.5px; z-index: -1; clip-path: polygon(4px 0, calc(100% - 4px) 0, 100% 50%, calc(100% - 4px) 100%, 4px 100%, 0 50%); }
+.CodeMirror.mdl .cm-md-capB::before { background: #c9925e; } .CodeMirror.mdl .cm-md-capB::after { background: #241a10; }
+.CodeMirror.mdl .cm-md-capS::before { background: #b7c0cf; } .CodeMirror.mdl .cm-md-capS::after { background: #181c24; }
+.CodeMirror.mdl .cm-md-capG::before { background: #dcb64d; } .CodeMirror.mdl .cm-md-capG::after { background: #23200e; }
+.CodeMirror.mdl .cm-md-capK::before { background: #565b66; } .CodeMirror.mdl .cm-md-capK::after { background: #191b22; }
 
 .pact-right { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 /* Same fence for the chat/terminal zone: the compose box's per-keystroke autosize reflow now stays
@@ -1740,6 +1878,12 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pc-tab-x:hover { color: var(--ink); }
 /* Prime conversation — always open, can't be closed. A ★ marker replaces the × close. */
 .pc-tab-prime { color: var(--accent); font-size: 11px; line-height: 1; padding: 0 2px; cursor: default; }
+/* "Make Master" ☆ on a non-prime tab: subtle, brightens on hover. */
+.pc-tab-tail { display: inline-flex; align-items: center; gap: 3px; }
+.pc-tab-mkprime { color: var(--ink-mute); font-size: 12px; line-height: 1; padding: 0 2px; cursor: pointer; opacity: .4; }
+.pc-tab:hover .pc-tab-mkprime { opacity: .8; }
+.pc-tab-mkprime:hover { opacity: 1; color: var(--amber, #fbbf24); }
+.pactm-frow-tail { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
 .pc-mode { flex: 0 0 auto; max-width: 96px; }
 .pc-usage { flex: 0 0 auto; font-size: 10.5px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
 .pc-usage[hidden] { display: none; }
@@ -1751,6 +1895,7 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .route-card .admin-sub { color: var(--ink-dim); font-size: 12.5px; margin: 0 0 14px; }
 .route-path { border: 1px solid var(--line, #22304a); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; background: color-mix(in srgb, var(--panel, #101827) 60%, transparent); }
 .route-head { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: default; }
+.route-omni-open { margin-left: auto; font-size: 12px; white-space: nowrap; }
 .route-head input[type=checkbox] { cursor: pointer; }
 .route-badge { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line, #33415c); color: var(--ink-dim); }
 .route-badge.on { color: #34d399; border-color: color-mix(in srgb, #34d399 45%, transparent); }
@@ -1776,6 +1921,12 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pc-hist-panel { width: min(680px, 96vw); max-height: 78vh; overflow: hidden; display: flex; flex-direction: column;
   background: var(--panel, #12161c); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 18px 50px rgba(0,0,0,.5); }
 .pc-hist-hd { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: 13px; }
+/* Open/Retired split — a currently-open chat vs one whose tab was closed (still resumable below). */
+.pc-hist-tabs { display: flex; gap: 6px; padding: 8px 12px 0; }
+.pc-hist-tabbtn { background: transparent; border: 1px solid var(--line); color: var(--ink-mute); border-radius: 999px;
+  padding: 4px 12px; font-size: 11.5px; font-weight: 600; cursor: pointer; }
+.pc-hist-tabbtn:hover { border-color: var(--accent); color: var(--ink); }
+.pc-hist-tabbtn.--active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .pc-hist-list { overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
 .pc-hist-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; border: 1px solid transparent; }
 .pc-hist-row:hover { background: var(--chip); border-color: var(--line); }
@@ -1878,6 +2029,39 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pc-deny { padding: 3px 12px; border-radius: 6px; background: var(--chip); border: 1px solid var(--line); color: var(--ink); cursor: pointer; }
 .pc-compose { display: flex; gap: 6px; align-items: flex-end; padding: 8px; border-top: 1px solid var(--line); }
 .pc-compose.pc-drag { background: var(--chip); box-shadow: inset 0 0 0 1px var(--accent); }
+/* ── Unified chat box (desktop). The old single header carried 12 controls and overflowed; these three
+   rows split it by concern: identity on top, composing in the middle, model/session at the bottom. ── */
+/* Type box is full-width on its own row; its controls live in .pc-actionbar directly beneath it. */
+.pc-compose.--stacked { padding: 8px 10px 6px; border-bottom: 0; }
+.pc-compose.--stacked .pc-input { width: 100%; }
+/* Header: tabs left, the three chat actions right-aligned. */
+.pc-head-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+/* The line BENEATH the type box: upload · worktree · repo on the left, Stop + Send right. */
+.pc-actionbar { display: flex; align-items: center; gap: 7px; padding: 0 10px 7px;
+  border-bottom: 1px solid var(--line); }
+.pc-repo-lbl { font-size: 11.5px; color: var(--ink-dim); font-weight: 600; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+/* Stop keeps its slot at all times — enabled mid-turn, dimmed otherwise — so the row never reflows
+   when a turn starts or ends and the Send button never jumps under the cursor. */
+.pc-actionbar .pc-stop { display: inline-flex !important; }
+.pc-actionbar .pc-stop:disabled { opacity: .38; cursor: default; }
+/* The model bar: the bottom row. Readouts left, actions right. */
+.pc-modelbar { display: flex; align-items: center; gap: 9px; padding: 6px 10px 7px;
+  background: var(--panel2); border-top: 1px solid var(--line); flex-wrap: wrap; }
+.pc-modelbar .pc-model-now { font-size: 11.5px; color: var(--ink-dim); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+.pc-modelbar .pc-usage { font-size: 11.5px; color: var(--ink-dim); white-space: nowrap; }
+/* Continuation line: suggested-next chip + the ★ bookmark control. */
+.pc-contline { display: flex; align-items: center; gap: 8px; padding: 0 8px; }
+.pc-contline .pc-suggest { flex: 1 1 auto; min-width: 0; margin: 0 0 6px; }
+/* Agent swarm: one figure per live subagent, lighting up as they spawn. */
+.pc-swarm { display: inline-flex; align-items: center; gap: 3px; min-height: 14px; }
+.pc-swarm-fig { width: 5px; height: 12px; border-radius: 2px; background: var(--line);
+  transition: background .18s ease, box-shadow .18s ease; }
+.pc-swarm-fig.--on { background: #6ee7a8; box-shadow: 0 0 5px rgba(110,231,168,.65); }
+.pc-swarm-n { font-size: 11px; color: #6ee7a8; font-weight: 700; margin-left: 2px; font-variant-numeric: tabular-nums; }
+/* Repo-scoped history toggle — visibly ON so the filter is never invisible. */
+.ws-ico.--on { background: var(--accent); border-color: var(--accent); color: #0b1020; }
 .pc-img-input { display: none; }
 .pc-attach { flex: 0 0 auto; align-self: flex-end; font-size: 15px; }
 .pc-attach:disabled { opacity: .4; cursor: default; }
@@ -1906,6 +2090,12 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   background: #f87171; border: 1px solid #f87171; color: #2a0a0a; white-space: nowrap; }
 .pc-stop:hover { filter: brightness(1.05); }
 .pc-stop[hidden] { display: none; }
+/* Pressed ■ Stop — the acknowledgement state. Dimmed + not-allowed while the engine's interrupt lands, so
+   the press is unmistakably registered instead of looking like the button did nothing. */
+.pc-stop--pending, .pactm-cbtn-stop--pending { opacity: .55; cursor: not-allowed; filter: none !important; }
+.pc-stop--pending:hover { filter: none; }
+/* Pact DESKTOP model picker — sits beside the read-only "· model" readout in the chat header. */
+.pc-model-sel { flex: 0 0 auto; max-width: 150px; }
 .pc-send.busy { background: #f59e0b; border-color: #f59e0b; color: #1a1400; }
 .pc-send.busy:hover { filter: brightness(1.05); }
 .pc-send.busy.deepwork { background: #f87171; border-color: #f87171; color: #2a0a0a; }
@@ -1925,6 +2115,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pact-md .md-code { font: 12px ui-monospace, monospace; background: var(--chip); padding: 1px 5px; border-radius: 5px; }
 .pact-md .md-pre { background: #0b0f14; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow: auto; }
 .pact-md .md-pre code { font: 12px/1.5 ui-monospace, monospace; color: #cbd5e1; white-space: pre; }
+/* Markdown tables (the Ouronet worksheets). Inline color spans in cells keep their own color. */
+.pact-md .md-table { border-collapse: collapse; margin: 12px 0; font-size: 12.5px; max-width: 100%; }
+.pact-md .md-table th, .pact-md .md-table td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; vertical-align: top; white-space: nowrap; }
+.pact-md .md-table th { background: var(--chip); font-weight: 700; }
+.pact-md .md-table tr:nth-child(even) td { background: rgba(255,255,255,.02); }
 /* ⧉ copy button anchored to a code block (Pact chat handoff windows). Anchored on the pre; always
    faintly visible (mobile has no hover) and solid on hover. `pre` scrolls, so keep the button sticky
    to the top-right of the viewport of the block via position:absolute on the (relative) pre. */
@@ -2053,6 +2248,10 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .pactm-frow-x { flex: 0 0 auto; min-width: 34px; min-height: 34px; background: transparent; border: none;
     color: var(--ink-dim); font-size: 20px; line-height: 1; cursor: pointer;
     -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  .pactm-frow-mkprime { flex: 0 0 auto; min-width: 34px; min-height: 34px; background: transparent; border: none;
+    color: var(--ink-dim); font-size: 18px; line-height: 1; cursor: pointer;
+    -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  .pactm-frow-mkprime:active { color: var(--accent); }
   /* Prime conversation marker in the mobile conversation sheet — no close, a ★ instead. */
   .pactm-frow-prime { flex: 0 0 auto; min-width: 34px; text-align: center; color: var(--accent);
     font-size: 15px; line-height: 1; }

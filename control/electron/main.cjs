@@ -20,8 +20,12 @@ const DASH_URL = process.env.CM_DASHBOARD_URL || "http://localhost:3001"; // loc
 const USE_SUDO = process.env.CM_USE_SUDO === "1";                          // fallback if no polkit rule is installed
 const POLL_MS = 3000;
 
+const DMP_REMOTE_URL = process.env.DMP_REMOTE_URL || null;   // VPS public DMP URL → lights the remote /healthz row
+
 let _core = null;
 function core() { return _core || (_core = import("../../lib/controlPlane.mjs")); }
+let _dmp = null;
+function dmpCore() { return _dmp || (_dmp = import("../../lib/dmpControlPlane.mjs")); }
 
 let win = null, tray = null, pollTimer = null;
 
@@ -112,6 +116,18 @@ ipcMain.handle("cm:control", async (_e, action, id) => {
   const results = [];
   for (const u of ordered) results.push({ id: u.id, label: u.label, ...c.controlUnit(action, u.unit, { useSudo: USE_SUDO }) });
   poll();   // reflect the change immediately
+  return results;
+});
+
+// ---- DMP satellite (the "DMP" tab) — its own control plane, pulled on demand by the renderer when that tab is
+// active (kept off the main 3s poller so it costs nothing while you're on the Claudstermind tab). ----
+ipcMain.handle("dmp:status", async () => { const c = await dmpCore(); return c.gatherDmpStatus({ remoteUrl: DMP_REMOTE_URL }); });
+
+ipcMain.handle("dmp:control", async (_e, action, id) => {
+  const c = await dmpCore();
+  const units = id ? c.DMP_UNITS.filter((u) => u.id === id) : c.DMP_UNITS.slice();
+  const results = [];
+  for (const u of units) results.push({ id: u.id, label: u.label, ...c.controlDmpUnit(action, u.unit, { useSudo: USE_SUDO }) });
   return results;
 });
 

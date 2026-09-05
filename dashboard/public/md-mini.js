@@ -24,6 +24,11 @@
       p = p.replace(/__([^_]+)__/g, "<strong>$1</strong>");
       p = p.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
       p = p.replace(/(^|[^_A-Za-z0-9])_([^_]+)_/g, "$1<em>$2</em>");
+      // Re-enable ONE safe inline HTML subset — <span style="color:…"> … </span> — by un-escaping just those
+      // tags, so colored text in a .md (VS Code / Obsidian / Typora style) actually renders instead of showing
+      // the raw tag. Every OTHER tag stays escaped, so no script/attribute/other-HTML injection is possible; the
+      // allowed color value is a hex, rgb()/rgba(), or a bare CSS color word — nothing else.
+      p = p.replace(/&lt;span style="(color:\s*(?:#[0-9a-fA-F]{3,8}|rgba?\([\d.,%\s]+\)|[a-zA-Z]+))\s*"&gt;/g, '<span style="$1">').replace(/&lt;\/span&gt;/g, "</span>");
       return p;
     }).join("");
   }
@@ -45,6 +50,17 @@
       var h = line.match(/^(#{1,6})\s+(.*)$/);                     // heading
       if (h) { var lv = h[1].length; out.push("<h" + lv + ' class="md-h">' + inline(esc(h[2])) + "</h" + lv + ">"); i++; continue; }
       if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { out.push('<hr class="md-hr">'); i++; continue; }  // hr
+      // table: a `| … |` header row immediately followed by a `|---|---|` separator (the worksheets are tables).
+      if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < n && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]) && lines[i + 1].indexOf("-") >= 0) {
+        var cells = function (l) { return l.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map(function (c) { return inline(esc(c.trim())); }); };
+        var head = cells(line); i += 2;   // consume header + separator
+        var body = [];
+        while (i < n && /^\s*\|.*\|\s*$/.test(lines[i])) { body.push(cells(lines[i])); i++; }
+        var thd = "<tr>" + head.map(function (c) { return "<th>" + c + "</th>"; }).join("") + "</tr>";
+        var tbd = body.map(function (r) { return "<tr>" + r.map(function (c) { return "<td>" + c + "</td>"; }).join("") + "</tr>"; }).join("");
+        out.push('<table class="md-table"><thead>' + thd + "</thead><tbody>" + tbd + "</tbody></table>");
+        continue;
+      }
       if (/^\s*>\s?/.test(line)) {                                 // blockquote
         var bq = [];
         while (i < n && /^\s*>\s?/.test(lines[i])) { bq.push(inline(esc(lines[i].replace(/^\s*>\s?/, "")))); i++; }

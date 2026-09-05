@@ -1,158 +1,158 @@
-// Pact / StoicSyntax syntax highlighter for the Pact IDE viewer.
-//
-// A single-pass tokenizer (scan left-to-right, emit escaped <span class="pk-…"> per token) — NOT
-// regex-replace over HTML, which double-substitutes inside already-inserted spans. The star feature
-// is StoicSyntax PREFIX coloring: in this discipline the function prefix IS the contract, so we color
-// the whole identifier by its prefix band — unprotected reads/compute in cool colors, protected
-// state-changers (admin/orchestration/persistence) in warm/red. Prefixes appear at a segment boundary
-// (word start, or after `|` `.` `:` `>`), so `IC|UDC_…`, `URC|KDA-PID_CLAD`, and the cap-name shape
-// `SWP|A_…` all resolve to the right band.
-//
-// Classic script (no import/export) so the browser loads it via <script src> before app.js; the Node
-// test evals this source with a fake `window` and exercises window.pactHighlight.
+// GENERATED — DO NOT EDIT. Browser build of the "stoicsyntax-pact" package (packages/stoicsyntax-pact).
+// Regenerate after changing the tokenizer:  node packages/stoicsyntax-pact/build-vendor.mjs
+// Classic script (no import/export) so index.html loads it via <script src> before app.js; sets
+// window.pactHighlight(code)->html and window.pactBandLegend for the file viewer + band legend.
 (function (root) {
-  "use strict";
+// StoicSyntax-Pact tokenizer — framework-agnostic.
+//
+// The canonical implementation of the StoicSyntax coloring rule: in this discipline the function
+// PREFIX is the contract, so an identifier is classified by its prefix band. `tokenize()` returns a
+// flat token stream any renderer can style (CodeMirror, a web IDE, a terminal, tests); `toHtml()` is
+// a convenience for web viewers. Single pass, so it never double-processes. Pure — no DOM, no deps.
+//
+// Bands: compute/read/ctor/enforce/cap are UNPROTECTED (cool); client/orch/admin/write are PROTECTED
+// (warm/red). A prefix is recognized at a segment boundary — string start, or after `| . : >` — so it
+// resolves inside qualified names (`IC|UDC_…`, `URC|KDA-PID_CLAD`) and cap-name shapes (`SWP|A_…`,
+// `SWP|C>…`).
 
-  // Pact 5 builtins + special forms, SOURCED from kadena-io/pact-5 (Pact/Core/Builtin.hs) — source, not
-  // docs (no `verify`/`create-user-guard`/`try`; formal verification is gone). Mirrors the canonical
-  // packages/stoicsyntax-pact/src/tokenizer.mjs; see brain/OuronetPact/PACT-REFERENCE.md.
-  var KEYWORDS = new Set([
-    "let", "let*", "lambda", "and", "or", "enforce", "enforce-one", "with-capability", "step",
-    "step-with-rollback", "use", "implements", "bless",
-    "abs", "acquire-module-admin", "add-time", "and?", "at", "base64-decode", "base64-encode",
-    "begin-named-tx", "begin-tx", "bind", "ceiling", "ceiling-prec", "chain-data", "commit-tx", "compose",
-    "compose-capability", "concat", "cond", "contains", "continue", "continue-pact",
-    "continue-pact-rollback-yield", "continue-pact-rollback-yield-object", "continue-pact-with-rollback",
-    "create-capability-guard", "create-capability-pact-guard", "create-module-guard", "create-pact-guard",
-    "create-principal", "create-table", "days", "dec", "define-keyset", "define-namespace",
-    "define-read-keyset", "describe-keyset", "describe-module", "describe-namespace", "describe-table",
-    "diff-time", "distinct", "drop", "emit-event", "enforce-guard", "enforce-keyset", "enforce-pact-version",
-    "enforce-pact-version-range", "enforce-verifier", "enumerate", "enumerate-step", "env-ask-gasmodel",
-    "env-chain-data", "env-data", "env-enable-repl-natives", "env-events", "env-exec-config", "env-gas",
-    "env-gaslimit", "env-gaslog", "env-gasmodel", "env-hash", "env-keys", "env-milligas", "env-module-admin",
-    "env-namespace-policy", "env-set-debug-flag", "env-set-gas", "env-set-milligas", "env-sigs",
-    "env-stackframe", "env-verifiers", "exp", "expect", "expect-failure", "expect-failure-match",
-    "expect-that", "filter", "floor", "floor-prec", "fold", "fold-db", "format", "format-time", "hash",
-    "hash-keccak256", "hash-poseidon", "hours", "hyperlane-decode-token-message",
-    "hyperlane-encode-token-message", "hyperlane-message-id", "identity", "if", "insert",
-    "install-capability", "int-to-str", "is-charset", "is-principal", "keys", "keyset-ref-guard", "length",
-    "list-modules", "ln", "load", "load-with-env", "log", "make-list", "map", "minutes", "mod", "namespace",
-    "negate", "not", "or?", "pact-id", "pact-state", "pact-version", "pairing-check", "parse-time",
-    "point-add", "poseidon-hash-hack-a-chain", "print", "read", "read-decimal", "read-integer",
-    "read-keyset", "read-msg", "read-msg-default", "read-string", "read-with-fields", "remove",
-    "require-capability", "reset-pact-state", "resume", "reverse", "rollback-tx", "round", "round-prec",
-    "scalar-mult", "select", "select-with-fields", "shift", "show", "sig-keyset", "sort", "sort-object",
-    "sqrt", "static-redeploy", "str-to-int", "str-to-int-base", "str-to-list", "take", "test-capability",
-    "time", "tx-hash", "typecheck", "typeof", "typeof-principal", "update", "validate-principal",
-    "verify-spv", "where", "with-default-read", "with-read", "write", "xor", "yield", "yield-to-chain",
-    "zip",
-  ]);
-  // def-forms per the Pact 5 lexer — NB: no `defproperty` (property system removed in Pact 5).
-  var DEFS = new Set([
-    "module", "interface", "defun", "defcap", "defconst", "defschema", "deftable", "defpact",
-  ]);
+// The Pact 5 builtin + special-form set, SOURCED from kadena-io/pact-5 (pact/Pact/Core/Builtin.hs) plus
+// parser-level special forms. Source is authoritative over the docs: `verify`, `create-user-guard`,
+// `try`, `keys-all`/`keys-any`/`keys-2` and the formal-verification system are NOT in Pact 5 — see
+// brain/OuronetPact/PACT-REFERENCE.md. Precision/field/rollback variants below are real Pact 5 natives.
+const KEYWORDS = new Set([
+  // parser-level special forms (not in the builtin registry, but valid Pact)
+  "let", "let*", "lambda", "and", "or", "enforce", "enforce-one", "with-capability", "step",
+  "step-with-rollback", "use", "implements", "bless",
+  // natives from Builtin.hs
+  "abs", "acquire-module-admin", "add-time", "and?", "at", "base64-decode", "base64-encode",
+  "begin-named-tx", "begin-tx", "bind", "ceiling", "ceiling-prec", "chain-data", "commit-tx", "compose",
+  "compose-capability", "concat", "cond", "contains", "continue", "continue-pact",
+  "continue-pact-rollback-yield", "continue-pact-rollback-yield-object", "continue-pact-with-rollback",
+  "create-capability-guard", "create-capability-pact-guard", "create-module-guard", "create-pact-guard",
+  "create-principal", "create-table", "days", "dec", "define-keyset", "define-namespace",
+  "define-read-keyset", "describe-keyset", "describe-module", "describe-namespace", "describe-table",
+  "diff-time", "distinct", "drop", "emit-event", "enforce-guard", "enforce-keyset", "enforce-pact-version",
+  "enforce-pact-version-range", "enforce-verifier", "enumerate", "enumerate-step", "env-ask-gasmodel",
+  "env-chain-data", "env-data", "env-enable-repl-natives", "env-events", "env-exec-config", "env-gas",
+  "env-gaslimit", "env-gaslog", "env-gasmodel", "env-hash", "env-keys", "env-milligas", "env-module-admin",
+  "env-namespace-policy", "env-set-debug-flag", "env-set-gas", "env-set-milligas", "env-sigs",
+  "env-stackframe", "env-verifiers", "exp", "expect", "expect-failure", "expect-failure-match",
+  "expect-that", "filter", "floor", "floor-prec", "fold", "fold-db", "format", "format-time", "hash",
+  "hash-keccak256", "hash-poseidon", "hours", "hyperlane-decode-token-message",
+  "hyperlane-encode-token-message", "hyperlane-message-id", "identity", "if", "insert",
+  "install-capability", "int-to-str", "is-charset", "is-principal", "keys", "keyset-ref-guard", "length",
+  "list-modules", "ln", "load", "load-with-env", "log", "make-list", "map", "minutes", "mod", "namespace",
+  "negate", "not", "or?", "pact-id", "pact-state", "pact-version", "pairing-check", "parse-time",
+  "point-add", "poseidon-hash-hack-a-chain", "print", "read", "read-decimal", "read-integer",
+  "read-keyset", "read-msg", "read-msg-default", "read-string", "read-with-fields", "remove",
+  "require-capability", "reset-pact-state", "resume", "reverse", "rollback-tx", "round", "round-prec",
+  "scalar-mult", "select", "select-with-fields", "shift", "show", "sig-keyset", "sort", "sort-object",
+  "sqrt", "static-redeploy", "str-to-int", "str-to-int-base", "str-to-list", "take", "test-capability",
+  "time", "tx-hash", "typecheck", "typeof", "typeof-principal", "update", "validate-principal",
+  "verify-spv", "where", "with-default-read", "with-read", "write", "xor", "yield", "yield-to-chain",
+  "zip",
+]);
+// Def-forms per the Pact 5 lexer (LexUtils.hs). NB: `defproperty` is GONE in Pact 5 (property system removed).
+const DEFS = new Set([
+  "module", "interface", "defun", "defcap", "defconst", "defschema", "deftable", "defpact",
+]);
 
-  // Prefix → band class. Order matters (specific/single-letter handled with a strict [_>] boundary so
-  // they can't swallow multi-letter prefixes). The lead class `[|.:>]` requires a real segment start;
-  // the trailing class allows `_`, cap-arrow `>`, or a `|` band separator (multi-letter only).
-  // `\d*` after the letters = an optional WRITE-COUNT (e.g. `WU7_`, `WI2_`, `A1_`, `XE2_`) — the digit
-  // only says how many writes the fn does; it never changes the band. The read band is split: UR/URC
-  // (reads) vs URD/URDC (derived reads) get distinct blues — URDC/URD tested first so UR can't swallow.
-  var BANDS = [
-    ["pk-write",   /(?:^|[|.:>])(?:WI|WU|WW|W)\d*[_>]/],
-    ["pk-admin",   /(?:^|[|.:>])A\d*[_>]/],
-    ["pk-client",  /(?:^|[|.:>])C\d*[_>]/],
-    ["pk-orch",    /(?:^|[|.:>])(?:XI|XE|XB)\d*[_>]/],
-    ["pk-cap",     /(?:^|[|.:>])CAP\d*[_>|]/],
-    ["pk-enforce", /(?:^|[|.:>])UEV\d*[_>|]/],
-    ["pk-ctor",    /(?:^|[|.:>])UDC\d*[_>|]/],
-    ["pk-readd",   /(?:^|[|.:>])(?:URDC|URD)\d*[_>|]/],
-    ["pk-read",    /(?:^|[|.:>])(?:URC|UR)\d*[_>|]/],
-    ["pk-compute", /(?:^|[|.:>])(?:UCK|UC)\d*[_>|]/],
-  ];
+// [tokenType, prefix-detector]. Order matters: single-letter bands use a strict [_>] boundary so they
+// can't swallow multi-letter prefixes; the lead class requires a real segment start.
+const BANDS = [
+  ["write", /(?:^|[|.:>])(?:WI|WU|WW|W)[_>]/],
+  ["admin", /(?:^|[|.:>])A[_>]/],
+  ["client", /(?:^|[|.:>])C[_>]/],
+  ["orch", /(?:^|[|.:>])(?:XI|XE|XB)[_>]/],
+  ["cap", /(?:^|[|.:>])CAP[_>|]/],
+  ["enforce", /(?:^|[|.:>])UEV[_>|]/],
+  ["ctor", /(?:^|[|.:>])UDC[_>|]/],
+  ["read", /(?:^|[|.:>])(?:URDC|URD|URC|UR)[_>|]/],
+  ["compute", /(?:^|[|.:>])(?:UCK|UC)[_>|]/],
+];
 
-  var NUM = /^-?\d+(\.\d+)?$/;
-  var WORD = /[A-Za-z0-9_|<>.\-]/;
+// One-line human description of each band — for legends / docs.
+const BAND_LEGEND = [
+  ["compute", "UC_", "pure compute"],
+  ["read", "UR_", "reads / derives"],
+  ["ctor", "UDC_", "object constructors"],
+  ["enforce", "UEV_", "enforce / validate"],
+  ["cap", "CAP_", "capability"],
+  ["client", "C_", "client recipe"],
+  ["orch", "XE_", "orchestration write"],
+  ["admin", "A_", "admin"],
+  ["write", "W_", "persistence write"],
+];
 
-  function esc(s) {
-    return s.replace(/[&<>]/g, function (c) { return c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"; });
-  }
+const NUM = /^-?\d+(\.\d+)?$/;
+const WORD = /[A-Za-z0-9_|<>.\-]/;
 
-  function classifyWord(w) {
-    if (NUM.test(w)) return "pk-number";
-    if (w === "true" || w === "false") return "pk-bool";
-    if (DEFS.has(w)) return "pk-def";
-    if (KEYWORDS.has(w)) return "pk-keyword";
-    for (var i = 0; i < BANDS.length; i++) if (BANDS[i][1].test(w)) return BANDS[i][0];
-    return null;
-  }
+/** Classify a bare identifier → a token type, or "text" if it carries no special meaning. */
+function classifyWord(w) {
+  if (NUM.test(w)) return "number";
+  if (w === "true" || w === "false") return "bool";
+  if (DEFS.has(w)) return "def";
+  if (KEYWORDS.has(w)) return "keyword";
+  for (const [type, re] of BANDS) if (re.test(w)) return type;
+  return "text";
+}
 
-  function pactHighlight(code) {
-    var out = [];
-    function push(cls, text) { out.push(cls ? '<span class="' + cls + '">' + esc(text) + "</span>" : esc(text)); }
-    var n = code.length, i = 0;
-    while (i < n) {
-      var c = code[i];
-      // comment to end of line — `;;`+ reads as a structural section bar
-      if (c === ";") {
-        var j = i; while (j < n && code[j] !== "\n") j++;
-        var seg = code.slice(i, j);
-        push(/^;;/.test(seg) ? "pk-section" : "pk-comment", seg);
-        i = j; continue;
-      }
-      // string literal (handles \" escapes)
-      if (c === '"') {
-        var k = i + 1;
-        while (k < n) { if (code[k] === "\\") { k += 2; continue; } if (code[k] === '"') { k++; break; } k++; }
-        push("pk-string", code.slice(i, k)); i = k; continue;
-      }
-      // `:type` annotation (a single colon + a letter). Checked before `::`.
-      if (c === ":" && code[i + 1] !== ":" && /[A-Za-z]/.test(code[i + 1] || "")) {
-        var t = i + 1; while (t < n && WORD.test(code[t])) t++;
-        push("pk-type", code.slice(i, t)); i = t; continue;
-      }
-      // `::` module-ref accessor
-      if (c === ":" && code[i + 1] === ":") { push("pk-op", "::"); i += 2; continue; }
-      // brackets, colored by kind
-      if (c === "(" || c === ")") { push("pk-paren", c); i++; continue; }
-      if (c === "[" || c === "]") { push("pk-sq", c); i++; continue; }
-      if (c === "{" || c === "}") { push("pk-brace", c); i++; continue; }
-      // identifier / number / prefix word
-      if (WORD.test(c)) {
-        var w = i; while (w < n && WORD.test(code[w])) w++;
-        var word = code.slice(i, w);
-        // Route through the GLOBAL classifier, which pact-cm-mode.js wraps with the StoicSyntax colour
-        // families (OuronetInformational/StoicSyntax-Prefixes.md §4). This keeps the static <pre>
-        // highlighter (used for deleted diff lines) in lockstep with the editable CodeMirror view — one
-        // source of truth. Falls back to the local band classifier if the wrapper isn't installed
-        // (`root.pactClassifyWord = classifyWord` below guarantees the global always exists).
-        push((root.pactClassifyWord || classifyWord)(word), word); i = w; continue;
-      }
-      // anything else (whitespace, operators, punctuation) — passthrough, escaped
-      var d = i;
-      while (d < n && !WORD.test(code[d]) && code[d] !== ";" && code[d] !== '"' && code[d] !== ":" &&
-             code[d] !== "(" && code[d] !== ")" && code[d] !== "[" && code[d] !== "]" && code[d] !== "{" && code[d] !== "}") d++;
-      if (d === i) d = i + 1;
-      push(null, code.slice(i, d)); i = d;
+/**
+ * Tokenize Pact source into a flat [{ type, value }] stream. Token types:
+ *   comment · section (`;;` bars) · string · number · bool · keyword · def · type (`:Type`) ·
+ *   op (`::`) · paren · sq · brace · compute/read/ctor/enforce/cap/client/orch/admin/write · text.
+ * Whitespace/other punctuation is emitted as `text` so `tokens.map(t=>t.value).join("")` === input.
+ */
+function tokenize(code) {
+  const out = [];
+  const push = (type, value) => { if (value) out.push({ type, value }); };
+  const n = code.length;
+  let i = 0;
+  while (i < n) {
+    const c = code[i];
+    if (c === ";") {
+      let j = i; while (j < n && code[j] !== "\n") j++;
+      const seg = code.slice(i, j);
+      push(/^;;/.test(seg) ? "section" : "comment", seg);
+      i = j; continue;
     }
-    return out.join("");
+    if (c === '"') {
+      let k = i + 1;
+      while (k < n) { if (code[k] === "\\") { k += 2; continue; } if (code[k] === '"') { k++; break; } k++; }
+      push("string", code.slice(i, k)); i = k; continue;
+    }
+    if (c === ":" && code[i + 1] !== ":" && /[A-Za-z]/.test(code[i + 1] || "")) {
+      let t = i + 1; while (t < n && WORD.test(code[t])) t++;
+      push("type", code.slice(i, t)); i = t; continue;
+    }
+    if (c === ":" && code[i + 1] === ":") { push("op", "::"); i += 2; continue; }
+    if (c === "(" || c === ")") { push("paren", c); i++; continue; }
+    if (c === "[" || c === "]") { push("sq", c); i++; continue; }
+    if (c === "{" || c === "}") { push("brace", c); i++; continue; }
+    if (WORD.test(c)) {
+      let w = i; while (w < n && WORD.test(code[w])) w++;
+      const word = code.slice(i, w);
+      push(classifyWord(word), word); i = w; continue;
+    }
+    let d = i;
+    while (d < n && !WORD.test(code[d]) && code[d] !== ";" && code[d] !== '"' && code[d] !== ":" &&
+           code[d] !== "(" && code[d] !== ")" && code[d] !== "[" && code[d] !== "]" && code[d] !== "{" && code[d] !== "}") d++;
+    if (d === i) d = i + 1;
+    push("text", code.slice(i, d)); i = d;
   }
+  return out;
+}
 
-  // The band legend (class → human label + one-liner), so the UI can teach the color language.
-  var LEGEND = [
-    ["pk-compute", "UC_", "pure compute"],
-    ["pk-read", "UR_", "reads"],
-    ["pk-readd", "URD_", "derived reads"],
-    ["pk-ctor", "UDC_", "object ctors"],
-    ["pk-enforce", "UEV_", "enforce / validate"],
-    ["pk-cap", "CAP_", "capability"],
-    ["pk-client", "C_", "client recipe"],
-    ["pk-orch", "XE_", "orchestration"],
-    ["pk-admin", "A_", "admin"],
-    ["pk-write", "W_", "persistence write"],
-  ];
+const ESC = (s) => s.replace(/[&<>]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"));
 
-  root.pactHighlight = pactHighlight;
-  root.pactClassifyWord = classifyWord;
-  root.pactBandLegend = LEGEND;
-})(typeof window !== "undefined" ? window : this);
+/** Render to HTML `<span class="{prefix}{type}">…</span>` (type `text` emits bare escaped text). */
+function toHtml(code, { classPrefix = "pk-" } = {}) {
+  return tokenize(code).map((t) => (t.type === "text" ? ESC(t.value) : `<span class="${classPrefix}${t.type}">${ESC(t.value)}</span>`)).join("");
+}
+
+  root.pactHighlight = (code) => toHtml(code);
+  // Legacy shape the CodeMirror editor mode (pact-cm-mode.js) + tests expect: a per-word classifier that
+  // returns a "pk-<band>" class (or "" for plain text). The package's classifyWord returns the bare band name.
+  root.pactClassifyWord = (w) => { const t = classifyWord(w); return t === "text" ? null : "pk-" + t; };
+  root.pactBandLegend = BAND_LEGEND;
+})(typeof window !== "undefined" ? window : globalThis);

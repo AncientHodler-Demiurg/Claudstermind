@@ -6,4 +6,6 @@ contextBridge.exposeInMainWorld("cm", {
   status: () => ipcRenderer.invoke("cm:status"),               // → { units, probes, overall } (manual/first paint)
   control: (action, id) => ipcRenderer.invoke("cm:control", action, id),   // action: start|stop|restart, id: engine|web|null
   onStatus: (cb) => ipcRenderer.on("cm:status", (_e, s) => cb(s)),         // main pushes a fresh snapshot every few seconds
+  dmpStatus: () => ipcRenderer.invoke("dmp:status"),                       // → DMP { units, main, remote, tunnelOk, snapshotAgeMs, overall }
+  dmpControl: (action, id) => ipcRenderer.invoke("dmp:control", action, id),   // action: start|stop|restart, id: dmp-main|dmp-snapshot|null
 });

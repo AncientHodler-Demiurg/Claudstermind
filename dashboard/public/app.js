@@ -146,6 +146,10 @@ let LAST_MAIN = "#overview"; // where the admin "back" returns to
 // an optional path you enable, and you pick which enabled path a NEW chat defaults to. Fetched on boot; applied
 // client-side (filter the selector, choose a new chat's default model), so flipping it needs no engine restart.
 let ROUTING = { omniEnabled: false, defaultPath: "claude", omniDefaultModel: "omni/auto" };
+// True only after a CONFIRMED /api/routing read. saveRouting refuses to write until then, so a failed boot
+// fetch (flaky link) can never overwrite the GLOBAL, cross-device routing config with these hardcoded defaults
+// (the same class of bug as the Pact ide-state clobber). See the boot loader + saveRouting + viewRouting.
+let ROUTING_LOADED = false;
 // The model catalog is answered by the ENGINE only while a session is live (getSupportedModels needs a running
 // `claude`), and a sessiond restart clears its in-memory cache — so right after a deploy the dropdown is empty
 // until the next turn. Cache the last catalog in the browser so the selector is always populated; the engine's
@@ -155,6 +159,9 @@ let OMNI_CATALOG = readCachedModels().filter((m) => m && typeof m.value === "str
 const routingOmniVisible = () => !!(ROUTING && ROUTING.omniEnabled);
 // The model id a NEW chat starts on: null (⇒ Claude "Default") unless the default path is an enabled OmniRoute.
 const routingDefaultModel = () => (ROUTING && ROUTING.defaultPath === "omni" && ROUTING.omniEnabled) ? (ROUTING.omniDefaultModel || "omni/auto") : null;
+// The permission mode a NEW chat/pane starts in — a GLOBAL admin setting (routing.json), so it applies on every
+// device including mobile. Falls back to "default" (ask before tools) until routing is loaded.
+const routingDefaultPermMode = () => (ROUTING && WS_MODE_IDS.has(ROUTING.defaultPermissionMode)) ? ROUTING.defaultPermissionMode : "default";
 // Client-side source of truth (works on the relay too, where /api/routing isn't proxied). Mirrors
 // lib/routing.mjs's normalize so the two agree. Server POST is a best-effort sync for the local dashboard.
 function normalizeRoutingClient(c = {}) {
@@ -162,7 +169,8 @@ function normalizeRoutingClient(c = {}) {
   let defaultPath = c.defaultPath === "omni" ? "omni" : "claude";
   if (defaultPath === "omni" && !omniEnabled) defaultPath = "claude";
   const omniDefaultModel = (typeof c.omniDefaultModel === "string" && c.omniDefaultModel.startsWith("omni/")) ? c.omniDefaultModel : "omni/auto";
-  return { omniEnabled, defaultPath, omniDefaultModel };
+  const defaultPermissionMode = WS_MODE_IDS.has(c.defaultPermissionMode) ? c.defaultPermissionMode : "default";
+  return { omniEnabled, defaultPath, omniDefaultModel, defaultPermissionMode };
 }
 
 function parseHash(h) {
@@ -171,17 +179,34 @@ function parseHash(h) {
   const section = sectionById(parts[0]) ? parts[0] : "overview";
   return { admin: false, section, sub: parts[1] || null };
 }
+let _pendingGatedHash = null;   // a gated hash (e.g. #workspace) held while the connection comes up; re-applied by the /api/me poll
+// If a gated deep-link was parked while the connection came up and its gate now passes, navigate back to it so
+// the user lands on their chat instead of being stranded on Overview. Returns true once it fires. Shared by the
+// slow (10s) health poll and the fast recovery poll below.
+function tryApplyPendingGated() {
+  if (!_pendingGatedHash) return false;
+  const s = sectionById(parseHash(_pendingGatedHash).section);
+  if (!s || (s.gate && !s.gate())) return false;
+  const h = _pendingGatedHash; _pendingGatedHash = null;
+  if (location.hash !== h) location.hash = h; else applyRoute();   // hashchange re-enters applyRoute; else re-apply directly
+  return true;
+}
 function applyRoute() {
   ROUTE = parseHash(location.hash);
   if (ROUTE.admin) { VIEW = "admin"; ADMIN_SECTION = ROUTE.section; }
   else {
     let sec = sectionById(ROUTE.section) || SECTIONS[0];
     if (sec.gate && !sec.gate()) {
-      // A gated section (e.g. Workspace for a non-ancient viewer) reached by URL → rewrite the
-      // address to overview so the URL matches the view; the replace re-enters applyRoute.
-      if (location.hash && location.hash !== "#overview") { location.replace("#overview"); return; }
+      // A gated section (e.g. Workspace) reached by URL but the gate isn't satisfied *yet*. This fires on a
+      // fresh load / PWA reopen (start_url is #workspace) while the relay + work machine are still connecting:
+      // ME.mode/canExecute lag behind for a beat. The old code did location.replace("#overview") here, which
+      // DESTROYED the hash — so even after the connection landed the user was stranded on Overview and had to
+      // navigate back to their chat manually ("chat box closed on refresh"). Instead: keep the hash intact,
+      // remember it, and render Overview as a transient fallback. The /api/me poll re-applies once ME improves.
+      _pendingGatedHash = location.hash && location.hash !== "#overview" ? location.hash : null;
+      wsDiag("applyRoute GATE-FAIL parked=" + _pendingGatedHash + " mode=" + ME.mode + " canExec=" + ME.canExecute);
       sec = SECTIONS[0]; ROUTE = { admin: false, section: "overview", sub: null };
-    }
+    } else { if (_pendingGatedHash) wsDiag("applyRoute gate-pass, clearing park"); _pendingGatedHash = null; }
     if (sec.subs && sec.subs.length) { const sub = sec.subs.find((x) => x.id === ROUTE.sub) || sec.subs[0]; ROUTE.sub = sub.id; VIEW = sub.view; }  // normalize so L3 highlight matches
     else VIEW = sec.view;
     LAST_MAIN = location.hash && location.hash !== "#admin" ? location.hash : "#overview";   // set only for a passing route
@@ -380,7 +405,10 @@ async function boot() {
   try { const v = await (await fetch("/api/version", { cache: "no-store" })).json(); const vc = $("#phVer"); if (vc) { vc.textContent = "v" + v.version; vc.title = `v${v.version}${v.gitSha ? " · " + v.gitSha : ""}${v.builtAt ? " · " + v.builtAt : ""}${v.engine ? " · engine: " + v.engine : ""}`; } showEngineBadge(v.engine); } catch {}
   // Routing preference is a GLOBAL server setting (dashboard/data/routing.json). Read it from the server —
   // works on both surfaces now (local direct; relay forwards over the tunnel). No per-browser divergence.
-  try { const r = await (await fetch("/api/routing", { cache: "no-store" })).json(); if (r && typeof r.defaultPath === "string") ROUTING = normalizeRoutingClient(r); } catch {}
+  for (let a = 1; a <= 3 && !ROUTING_LOADED; a++) {   // retry so a flaky link doesn't strand us on defaults (which saveRouting is then blocked from persisting)
+    try { const r = await (await fetch("/api/routing", { cache: "no-store" })).json(); if (r && typeof r.defaultPath === "string") { ROUTING = normalizeRoutingClient(r); ROUTING_LOADED = true; } } catch {}
+    if (!ROUTING_LOADED && a < 3) await new Promise((res) => setTimeout(res, 400 * a));
+  }
 
   applyPhCollapsed(phHeaderCollapsed());   // restore the collapsed-header preference before first paint
   renderHeader();
@@ -417,8 +445,21 @@ async function boot() {
       sessionSetExpired(next.authenticated === false);
       renderHeader();
       renderSessionPill();
+      tryApplyPendingGated();
       if (flipped) render();
     }, 10_000);
+    // Fast recovery: while a gated deep-link is parked (fresh reopen — start_url is #workspace — with the work
+    // machine still connecting), poll quickly so the user is bounced to their chat within ~1s of the connection
+    // landing, not up to a full 10s health-poll cycle. Idles cheaply (no fetch) once nothing is parked.
+    let _fastIdle = 0;
+    const _fast = setInterval(async () => {
+      if (!_pendingGatedHash) { if (++_fastIdle > 40) clearInterval(_fast); return; }   // ~32s of no parked route → stop
+      _fastIdle = 0;
+      let next; try { next = await (await fetch("/api/me", { cache: "no-store" })).json(); } catch { return; }
+      next._fetchedAt = Date.now(); ME = next;
+      renderHeader();
+      tryApplyPendingGated();
+    }, 800);
     // A faster tick just for the "updated Xs ago" freshness on the receiving-end pill.
     setInterval(renderLinkPill, 2_000);
   }
@@ -594,7 +635,7 @@ function render() {
   if (VIEW !== "cascade" && CASCADE_TIMER) { clearInterval(CASCADE_TIMER); CASCADE_TIMER = null; }
   if (VIEW !== "ops" && OPS_TIMER) { clearInterval(OPS_TIMER); OPS_TIMER = null; }
   if (VIEW !== "relay" && RELAY_TIMER) { clearInterval(RELAY_TIMER); RELAY_TIMER = null; }
-  if (VIEW !== "workspace" && WS_ES) { try { WS_ES.close(); } catch {} WS_ES = null; if (WS_HEAL_TIMER) { clearInterval(WS_HEAL_TIMER); WS_HEAL_TIMER = null; } }
+  if (VIEW !== "workspace" && WS_ES) { try { WS_ES.close(); } catch {} WS_ES = null; if (WS_HEAL_TIMER) { clearInterval(WS_HEAL_TIMER); WS_HEAL_TIMER = null; } if (WS_TICK_TIMER) { clearInterval(WS_TICK_TIMER); WS_TICK_TIMER = null; } }
   if (!(VIEW === "admin" && ADMIN_SECTION === "deploy") && DEPLOY_ES) { try { DEPLOY_ES.close(); } catch {} DEPLOY_ES = null; }
   if (!(VIEW === "admin" && ADMIN_SECTION === "deploy") && RESTART_ES) { try { RESTART_ES.close(); } catch {} RESTART_ES = null; }
   if (VIEW !== "git" && GIT_TIMER) { clearInterval(GIT_TIMER); GIT_TIMER = null; }
@@ -936,6 +977,10 @@ function viewAdmin(sectionId) {
 }
 /* ---------- Admin → Model routing (two paths: Direct Claude built-in + optional OmniRoute) ---------- */
 async function saveRouting(patch) {
+  // Refuse to write if we never got a confirmed read of the current config: saveRouting sends the FULL config
+  // (defaults + patch), so writing from an unconfirmed default `ROUTING` would clobber the real global settings
+  // for every device. A failed boot load leaves ROUTING_LOADED false → the panel must re-load before saving.
+  if (!ROUTING_LOADED) return { ok: false, reason: "not-loaded" };
   // Server is authoritative — it's a global setting. POST works on both surfaces (local direct; relay forwards
   // to the work machine over the tunnel). Use the server's normalized config as the new truth.
   const want = normalizeRoutingClient({ ...ROUTING, ...patch });
@@ -961,7 +1006,13 @@ function viewRouting() {
   const omniCb = el("input", { type: "checkbox" }); omniCb.checked = !!cur.omniEnabled;
   const omniBadge = el("span", { class: "route-badge" }, [cur.omniEnabled ? "enabled" : "disabled"]);
   const p2 = el("div", { class: "route-path" }, [
-    el("label", { class: "route-head" }, [omniCb, el("b", {}, ["OmniRoute"]), omniBadge]),
+    el("label", { class: "route-head" }, [omniCb, el("b", {}, ["OmniRoute"]), omniBadge,
+      // Open OmniRoute's OWN admin dashboard (attach accounts, pick combos, keys) proxied through the tunnel —
+      // `/mirror/20128/` is served identically by the local dashboard AND the relay, so this one link works
+      // both at home and remotely (behind the relay's ancient gate). OmniRoute stays bound to loopback.
+      el("a", { class: "ghost route-omni-open", href: "/mirror/20128/", target: "_blank", rel: "noopener",
+        title: "Open OmniRoute's admin dashboard — proxied through the tunnel; works locally and remotely (behind your ancient login). OmniRoute never leaves loopback." }, ["Open admin ↗"]),
+    ]),
     el("div", { class: "route-sub" }, [omniCount ? `${omniCount} models exposed by your gateway key (cc/claude-*, auto/*, groq, free…).` : "No OmniRoute models detected — set OMNIROUTE_KEY on the sessiond service (see control/README) and restart it."]),
   ]);
 
@@ -980,6 +1031,13 @@ function viewRouting() {
   modelSel.value = cur.omniDefaultModel; modelSel.disabled = !cur.omniEnabled;
   const modelWrap = el("div", { class: "route-default" }, [el("div", { class: "route-label" }, ["Default OmniRoute model (when OmniRoute is the default path)"]), modelSel]);
 
+  // Default permission mode a NEW chat starts in — GLOBAL (applies on every device incl. mobile). "Bypass" runs
+  // tools without prompting, best for long autonomous runs; "Manual" asks before each tool.
+  const permSel = el("select", { class: "wsel wsel-sm" }, WS_MODES.map((m) => el("option", { value: m.id }, [m.label + (m.id === "bypassPermissions" ? " — no prompts" : m.id === "default" ? " — ask each tool" : "")])));
+  permSel.value = WS_MODE_IDS.has(cur.defaultPermissionMode) ? cur.defaultPermissionMode : "default";
+  const permWrap = el("div", { class: "route-default" }, [el("div", { class: "route-label" }, ["Default permission mode for a NEW chat"]), permSel,
+    el("div", { class: "route-sub" }, ["Applies on every device including mobile. Each chat can still be switched from its own mode selector."])]);
+
   // Toggling OmniRoute off must also disable its dependent controls + un-pick the omni default.
   omniCb.addEventListener("change", () => {
     rOmni.disabled = !omniCb.checked; modelSel.disabled = !omniCb.checked;
@@ -990,18 +1048,35 @@ function viewRouting() {
   const save = el("button", { class: "loginbtn" }, ["Save routing"]);
   save.addEventListener("click", async () => {
     save.disabled = true; status.textContent = "Saving…";
-    const patch = { omniEnabled: omniCb.checked, defaultPath: rOmni.checked ? "omni" : "claude", omniDefaultModel: modelSel.value };
+    const patch = { omniEnabled: omniCb.checked, defaultPath: rOmni.checked ? "omni" : "claude", omniDefaultModel: modelSel.value, defaultPermissionMode: permSel.value };
     const j = await saveRouting(patch);
     save.disabled = false;
+    const permLbl = (WS_MODES.find((m) => m.id === (ROUTING && ROUTING.defaultPermissionMode)) || {}).label || "Manual";
     status.textContent = (j && j.ok)
-      ? "✓ Saved. New chats start on " + (ROUTING.defaultPath === "omni" ? ("OmniRoute (" + ROUTING.omniDefaultModel + ")") : "Direct Claude") + "."
+      ? "✓ Saved. New chats start on " + (ROUTING.defaultPath === "omni" ? ("OmniRoute (" + ROUTING.omniDefaultModel + ")") : "Direct Claude") + ", " + permLbl + " mode."
       : ("⚠ Could not save" + (j && j.reason ? " — " + j.reason : "") + ".");
   });
 
+  // If the boot fetch never confirmed the current config, saving is blocked (see saveRouting) so a stale default
+  // can't overwrite the global setting. Auto-retry on open (usually self-heals before you touch anything) and show
+  // a clear banner + manual Retry instead of silently presenting the defaults as if they were the real config.
+  const guardBanner = ROUTING_LOADED ? "" : (() => {
+    const retry = el("button", { class: "ghost" }, ["Retry"]);
+    const reload = async () => {
+      retry.disabled = true; retry.textContent = "Loading…";
+      try { const r = await (await fetch("/api/routing", { cache: "no-store" })).json(); if (r && typeof r.defaultPath === "string") { ROUTING = normalizeRoutingClient(r); ROUTING_LOADED = true; render(); return; } } catch {}
+      retry.disabled = false; retry.textContent = "Retry";
+    };
+    retry.addEventListener("click", reload);
+    setTimeout(reload, 0);
+    return el("div", { class: "admin-note", style: "color:var(--amber,#fbbf24);border:1px solid var(--amber,#fbbf24);border-radius:8px;padding:8px 10px;margin-bottom:10px" },
+      ["⚠ Couldn't load the current routing — saving is disabled so a stale default can't overwrite it. ", retry]);
+  })();
   return el("div", { class: "admin-card route-card" }, [
+    guardBanner,
     el("h2", {}, ["Model routing"]),
     el("p", { class: "admin-sub" }, ["Two paths. Direct Claude is built-in and always on; OmniRoute is optional. Pick which enabled path a NEW chat starts on — existing chats keep their model, and any chat's model is still switchable from its own selector."]),
-    p1, p2, defWrap, modelWrap,
+    p1, p2, defWrap, modelWrap, permWrap,
     el("div", { class: "route-actions" }, [save, status]),
   ]);
 }
@@ -1232,9 +1307,22 @@ function viewDeploy() {
   let LAST_PROC = null;
 
   const PROC_ICON = { running: "●", stopped: "◐", "not-installed": "○", unknown: "◌" };
+  // The process list lives on the WORK MACHINE. Locally that's a plain GET; over the tunnel the relay
+  // has no GET route for it (a GET 404s → ok:false → the misleading "Process list unavailable."), so
+  // remote goes through the relay's POST forwarder, which relays a `deployProcesses` cmd to the bridge.
+  // One helper so all four call sites below behave identically local and remote.
+  async function fetchProcesses() {
+    try {
+      const remote = ME && ME.mode !== "local";
+      const r = remote
+        ? await fetch("/api/admin/processes", { method: "POST", headers: { "content-type": "application/json" }, body: "{}", cache: "no-store" })
+        : await fetch("/api/admin/processes", { cache: "no-store" });
+      return await r.json();
+    } catch { return { ok: false }; }
+  }
   async function refreshProcesses() {
     let d = {};
-    try { d = await (await fetch("/api/admin/processes", { cache: "no-store" })).json(); } catch { d = { ok: false }; }
+    d = await fetchProcesses();
     LAST_PROC = d;
     // Reload banner: engine-affecting reloads restart sessiond (interrupt agents); web-only reloads
     // keep the engine + every running agent alive. `reloadDaemonAffected` defaults to the safe
@@ -1312,7 +1400,7 @@ function viewDeploy() {
       const poll = async () => {
         if (done) return;
         let count = null;
-        try { const d = await (await fetch("/api/admin/processes", { cache: "no-store" })).json(); count = (d && d.busy && d.busy.count) || 0; } catch { count = null; }
+        const d = await fetchProcesses(); count = d && d.ok !== false ? ((d.busy && d.busy.count) || 0) : null;
         if (done) return;
         if (count === 0) return finish(true);   // idle → safe to deploy
         countEl.textContent = count == null ? "(checking…)" : (count === 1 ? "1 agent still working…" : count + " agents still working…");
@@ -1330,7 +1418,7 @@ function viewDeploy() {
   async function deployConfirm() {
     let plan = LAST_PROC && LAST_PROC.plan, busy = LAST_PROC && LAST_PROC.busy;
     try {
-      const d = await (await fetch("/api/admin/processes", { cache: "no-store" })).json();
+      const d = await fetchProcesses();
       LAST_PROC = d; if (d.plan) plan = d.plan; if (d.busy) busy = d.busy;
     } catch { /* keep the last known plan/busy — fail toward the standard confirm below */ }
     const count = (busy && busy.count) || 0;
@@ -1363,7 +1451,7 @@ function viewDeploy() {
   async function reloadConfirm() {
     let daemonHit = true, busy = LAST_PROC && LAST_PROC.busy;
     try {
-      const d = await (await fetch("/api/admin/processes", { cache: "no-store" })).json();
+      const d = await fetchProcesses();
       LAST_PROC = d; if (typeof d.reloadDaemonAffected === "boolean") daemonHit = d.reloadDaemonAffected; if (d.busy) busy = d.busy;
     } catch { /* keep last known — fail toward the standard confirm below */ }
     const count = (busy && busy.count) || 0;
@@ -1375,12 +1463,24 @@ function viewDeploy() {
       });
       if (choice === false) return false;            // Cancel
       if (choice === true) { if ((await deployWaitForIdle()) === false) return false; }   // Wait → drain to idle
-      return true;                                   // drained idle / "now" / "reload now anyway" → proceed
+      return { force: false };                       // drained idle / "now" / "reload now anyway" → proceed (engine already restarting)
     }
-    return await showModal({ title: "Reload the local dashboard", confirmLabel: "Reload",
+    // The engine-restart tick. Only offered when git DIDN'T already detect an engine change — when it did,
+    // the engine restarts anyway and a tick would be a no-op checkbox that implies a choice the user doesn't have.
+    // The case it exists for: an untracked change git can't see (a bumped Claude CLI under node_modules/), where
+    // the engine would otherwise keep running the old binary in memory with no way to say otherwise short of a
+    // terminal on the host — which, over the hub, the user doesn't have.
+    const res = await showModal({ title: "Reload the local dashboard", confirmLabel: "Reload",
       sub: daemonHit
         ? "Run a sandboxed pre-flight and, only if it passes, reload now? This picks up engine changes and briefly restarts the engine."
-        : "Run a sandboxed pre-flight and, only if it passes, reload now? Web-only change — the engine and any running agents keep going." });
+        : "Run a sandboxed pre-flight and, only if it passes, reload now? Web-only change — the engine and any running agents keep going.",
+      checkbox: daemonHit ? null : {
+        label: "Also restart the session engine",
+        sub: "Tick this after updating the Claude CLI or anything else outside git's view — the engine keeps its old code in memory until it restarts. Interrupts any running chats.",
+      } });
+    if (daemonHit) return res === true ? { force: false } : false;   // no checkbox → plain boolean contract
+    if (!res || res.ok !== true) return false;
+    return { force: !!res.checked };
   }
 
   // Self-restart safety: a sandboxed pre-flight, then (only on ok:true) the real restart —
@@ -1601,10 +1701,14 @@ function viewDeploy() {
     const restartBtn = el("button", { class: "loginbtn secondary" }, [restarting ? "Reloading…" : "⟳ Reload"]);
     if (restarting || !canRestart) restartBtn.disabled = true;
     restartBtn.addEventListener("click", async () => {
-      if (!(await reloadConfirm())) return;   // custom modal (+ busy-agent guard when the reload restarts the engine)
+      // reloadConfirm resolves false (cancelled) or { force } — `force` is the "also restart the session
+      // engine" tick, threaded to the server so an untracked change (a bumped Claude CLI under node_modules/)
+      // can restart sessiond even though git saw nothing. See startSelfRestart's FORCE SEAM note.
+      const conf = await reloadConfirm();   // custom modal (+ busy-agent guard when the reload restarts the engine)
+      if (!conf) return;
       restarting = true; rNote.textContent = "Starting reload pre-flight…"; openRestartStream();
       refreshRestartBtn();
-      const r = await wsPost2("/api/dashboard/restart", {});
+      const r = await wsPost2("/api/dashboard/restart", { forceDaemon: !!conf.force });
       if (!r.ok) { try { RESTART_ES.close(); } catch {} RESTART_ES = null; restarting = false; rNote.textContent = "⚠ " + (r.message || "could not start"); reloadRunning = false; renderTerm(); refreshRestartBtn(); }
     });
     rActions.replaceChildren(restartBtn);
@@ -2162,15 +2266,21 @@ async function gitPost(pathq, body, btn, g) {
 /* ---------- themed modal — replaces window.prompt/confirm ---------- */
 // A promise-based dialog matching the dashboard theme. `editable` shows a textarea
 // (returns its text on confirm); otherwise it's a confirm dialog (returns true).
-function showModal({ title, sub, value = "", editable = false, confirmLabel = "Confirm", danger = false, thirdLabel = null }) {
+/** `checkbox` (optional) adds one opt-in tick above the buttons: { label, sub, checked }. When present the
+ *  promise resolves to an OBJECT ({ ok, checked }) instead of a bare boolean, so every existing caller —
+ *  none of which pass `checkbox` — keeps its current true/false/"third"/null contract untouched. */
+function showModal({ title, sub, value = "", editable = false, confirmLabel = "Confirm", danger = false, thirdLabel = null, checkbox = null }) {
   return new Promise((resolve) => {
-    let ta = null;
-    const finish = (result) => { document.removeEventListener("keydown", onKey); overlay.remove(); resolve(result); };
+    let ta = null, cb = null;
+    // With a checkbox, every non-cancel outcome carries the tick state alongside it.
+    const wrap = (result) => (checkbox && result !== false && result !== null ? { ok: result, checked: !!(cb && cb.checked) } : result);
+    const finish = (result) => { document.removeEventListener("keydown", onKey); overlay.remove(); resolve(wrap(result)); };
     const onKey = (e) => {
       if (e.key === "Escape") finish(editable ? null : false);
       else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) finish(editable ? (ta ? ta.value : "") : true);
     };
     if (editable) { ta = el("textarea", { spellcheck: "false" }); ta.value = value; }
+    if (checkbox) { cb = el("input", { type: "checkbox" }); cb.checked = !!checkbox.checked; }
     const confirmBtn = el("button", { class: "ghost btn-primary", style: danger ? "background:#f87171;border-color:#f87171" : "" },
       [confirmLabel]);
     confirmBtn.addEventListener("click", () => finish(editable ? ta.value : true));
@@ -2187,6 +2297,10 @@ function showModal({ title, sub, value = "", editable = false, confirmLabel = "C
         el("div", { class: "modal-bd" }, [
           sub ? el("div", { class: "modal-sub" }, [sub]) : "",
           ...(editable ? [ta] : []),
+          ...(checkbox ? [el("label", { class: "modal-check" }, [
+            cb, el("b", {}, [checkbox.label || ""]),
+            checkbox.sub ? el("span", { class: "modal-check-sub" }, [checkbox.sub]) : "",
+          ])] : []),
         ]),
         el("div", { class: "modal-ft" }, [
           editable ? el("span", { class: "modal-hint" }, ["⌘/Ctrl+Enter to confirm · Esc to cancel"]) : "",
@@ -2408,6 +2522,7 @@ let WS_ES = null;   // the Workspace EventSource (SSE stream of Claude session o
 let WS_LAST_MSG_AT = 0;    // Date.now() of the last message (real event OR heartbeat) this stream delivered
 let WS_STALE_TIMER = null;   // polls WS_LAST_MSG_AT; force-reconnects a stream that's gone quiet too long
 let WS_HEAL_TIMER = null;    // fast (~4s) local self-heal — surfaces a dropped reply in ~8s, not the 25s heartbeat gap
+let WS_TICK_TIMER = null;    // 1s live elapsed tick — updates each busy pane's "Working… M:SS" + stall cue (Pact parity)
 // Mobile: collapse the compose textarea to one line so a long draft stops eating the transcript (mirrors the
 // Pact mobile compose collapse). Persisted so it sticks across reloads.
 let WS_COMPOSE_BIG = (() => { try { return localStorage.getItem("ws.compose.big") === "1"; } catch { return false; } })();
@@ -2792,6 +2907,21 @@ function pactOutboxAbsorbQueues() {
 // The workspace id a pane attaches to: repo + worktree. TWO terminals selecting the same repo
 // (and worktree) derive the SAME key, so they drive — and watch — the one shared conversation.
 const wsWorkspaceId = (repo, worktree) => (repo ? repo + "@" + (worktree || "main") : null);
+// --- Restore diagnostic (temporary): a localStorage ring buffer that SURVIVES a reload, so we can see
+// exactly what happened during the boot where a conversation vanished. Read it via the 🐞 button on the
+// workspace mobile tab row, or window.wsDiagDump(). Wrapped so it can never break the app. ---
+const WS_DIAG_KEY = "cm.ws.diag";
+function wsDiag(msg) {
+  try {
+    const arr = JSON.parse(localStorage.getItem(WS_DIAG_KEY) || "[]");
+    const d = new Date(); const ts = String(d.getMinutes()).padStart(2, "0") + ":" + String(d.getSeconds()).padStart(2, "0");
+    arr.push(ts + " " + String(msg).slice(0, 400));
+    while (arr.length > 120) arr.shift();
+    localStorage.setItem(WS_DIAG_KEY, JSON.stringify(arr));
+  } catch {}
+}
+function wsDiagText() { try { return (JSON.parse(localStorage.getItem(WS_DIAG_KEY) || "[]")).join("\n") || "(empty)"; } catch { return "(unreadable)"; } }
+try { window.wsDiagDump = () => { console.log(wsDiagText()); return wsDiagText(); }; window.wsDiagClear = () => { try { localStorage.removeItem(WS_DIAG_KEY); } catch {} }; } catch {}
 // A reloaded/reopened transcript has per-turn `workspaceId` stripped by the server, but the user
 // message renderer needs it to build the /api/workspace/image URL — without it, an image-bearing
 // prompt reloads looking like it had no attachments. Stamp it back from the frame-level id (the
@@ -2975,6 +3105,10 @@ function connIdentity() {
 // Pane grid limits. 8 across is sized for an ultrawide (5120px ⇒ ~600px a pane); narrower
 // screens keep the panes readable and scroll the grid sideways instead of crushing them.
 const WS_MAX_COLS = 8, WS_MAX_ROWS = 2;
+// Absolute pane cap, shared by the desktop grid (max 8×2) AND the mobile flat 1×N list. The desktop grid can
+// only express up to WS_MAX_COLS×WS_MAX_ROWS panes, but mobile stacks one pane per "tab" with no 2-row limit,
+// so the persisted pane COUNT — not cols×rows — is what restore must honor. See loadLayout / addPaneMobile.
+const WS_MAX_PANES = WS_MAX_COLS * WS_MAX_ROWS;
 // How long a reopen/resume ("control open") waits for a "transcript" or error reply before giving
 // up and surfacing an explicit note — covers a disconnected bridge, which otherwise never answers
 // at all and would leave the UI (and the pendingOpens entry) waiting forever.
@@ -2993,6 +3127,12 @@ const WS_SCROLL_NEAR_BOTTOM_PX = 4;
 // WITHOUT content-visibility's on-scroll rendering (which made scrolling feel like it was
 // "loading"). Everything rendered is real and accurately sized, so scrolling stays smooth.
 const WS_TURN_RENDER_CAP = 20;
+// "Show earlier" reveals this many MORE turns per click — incrementally, from what's already loaded — instead of
+// dumping the whole conversation into the DOM at once (which stalled the page hard on a 5000-prompt history and
+// only cleared on reload). When the reveal outruns what the server shipped, the client fetches the NEXT window
+// (WS_LOAD_WINDOW_STEP more messages), NOT the entire thing (`full`). Both keep the page responsive.
+const WS_TURN_REVEAL_STEP = 30;
+const WS_LOAD_WINDOW_STEP = 250;   // one page = the server's default tail cap (WS_RESYNC_MSG_CAP)
 // ===== PACT VISIBLE-WINDOW — pure cap helper (sliced for lib/pactVisibleStart.test.mjs) =====
 // The Pact chat renders individual messages: user / assistant TEXT plus collapsed tool_use rows (the
 // Read / Bash / Edit lines). Capping by RAW message count was wrong — a tool-heavy turn fills the window
@@ -3049,6 +3189,41 @@ const WS_MODES = [
 const WS_MODE_IDS = new Set(WS_MODES.map((m) => m.id));
 const clampInt = (v, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(v) || lo)));
 
+// ---- scroll-movement LOGGER (diagnostic) ----
+// Every scrollTop change on a stick-controlled scroller is recorded with WHEN, from→to, the Live/Held state,
+// and — for programmatic writes — a STACK TRACE of whatever set it. So a mystery "yank" reveals its own culprit.
+// Turn on:  window.scrollDebug(true)  in the console, then RELOAD (or add ?scrolldebug=1 to the URL, or set
+//           localStorage.scrollDebug='1'). Reproduce the jump. Then:  window.dumpScrollLog()  (copies to clipboard).
+// Off by default — call sites are guarded by `SCROLL_DEBUG &&` so there's zero cost when off.
+let SCROLL_DEBUG = false, _stickSeq = 0;
+const SCROLL_LOG = [];
+try { if ((typeof localStorage !== "undefined" && localStorage.getItem("scrollDebug") === "1") || /[?&]scrolldebug\b/.test(location.search)) SCROLL_DEBUG = true; } catch {}
+function slog(e) {
+  e.t = (typeof performance !== "undefined" ? Math.round(performance.now()) : Date.now());
+  SCROLL_LOG.push(e);
+  if (SCROLL_LOG.length > 1000) SCROLL_LOG.shift();
+  if (SCROLL_DEBUG === "verbose") console.log("[scroll]", e.what, e);
+}
+function scrollStack() {
+  return (new Error().stack || "").split("\n").slice(3, 8)   // drop Error + slog wrapper + the scrollTop setter
+    .map((l) => l.trim().replace(/^at\s+/, "").replace(/\s*\(?https?:\/\/[^\s)]*\/([^\s)]+)\)?/, " @$1"))
+    .filter(Boolean).join("  ←  ");
+}
+if (typeof window !== "undefined") {
+  window.scrollDebug = (on) => { SCROLL_DEBUG = on === "verbose" ? "verbose" : !!on; try { localStorage.setItem("scrollDebug", SCROLL_DEBUG ? "1" : "0"); } catch {} console.log("scrollDebug =", SCROLL_DEBUG, "— RELOAD to install the scrollTop interceptor if it wasn't already on."); return SCROLL_DEBUG; };
+  window.clearScrollLog = () => { SCROLL_LOG.length = 0; console.log("scroll log cleared"); };
+  window.dumpScrollLog = () => {
+    const txt = SCROLL_LOG.map((e) =>
+      `+${String(e.t).padStart(7)}ms  ${(e.id || "").padEnd(11)} ${e.what.padEnd(15)}` +
+      `${e.from != null ? ` ${e.from}→${e.to}` : e.top != null ? ` top=${e.top}` : ""}` +
+      `${e.pinned != null ? `  [${e.pinned ? "Live" : "Held"}]` : ""}` +
+      `${e.stack ? `\n            ↳ ${e.stack}` : ""}`
+    ).join("\n");
+    console.log(txt || "(scroll log empty — is scrollDebug on? did you reproduce the jump?)");
+    try { navigator.clipboard && navigator.clipboard.writeText(txt); console.log("[copied to clipboard]"); } catch {}
+    return SCROLL_LOG.slice();
+  };
+}
 // ---- stick-to-bottom controller (shared by the workspace transcript AND the Pact chat) ----
 // "Read at your own pace": new output only auto-scrolls while the reader is already at the bottom.
 // Scroll up and you keep your spot instead of being yanked down mid-stream; a blinking "↓ New
@@ -3065,6 +3240,18 @@ function attachStickController(scrollEl, opts = {}) {
   const parent = scrollEl.parentNode;
   if (parent) parent.insertBefore(wrap, scrollEl);
   wrap.appendChild(scrollEl);
+  const dbgId = (opts.wrapClass || "stick") + "#" + (++_stickSeq);
+  // Diagnostic: shadow scrollTop on THIS element so every PROGRAMMATIC write is logged with a stack — the one
+  // thing that finally names whoever yanks a Held reader. (Native user-scroll doesn't go through this setter.)
+  if (SCROLL_DEBUG && !scrollEl._scrollHooked) {
+    scrollEl._scrollHooked = true;
+    const d = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
+    if (d && d.set) Object.defineProperty(scrollEl, "scrollTop", {
+      configurable: true,
+      get() { return d.get.call(this); },
+      set(v) { const from = Math.round(d.get.call(this)); if (from !== Math.round(v)) slog({ id: dbgId, what: "SET scrollTop", from, to: Math.round(v), stack: scrollStack() }); d.set.call(this, v); },
+    });
+  }
   const pill = el("button", { class: "stick-pill", type: "button", title: "Jump to the latest output" }, ["↓ New output"]);
   wrap.appendChild(pill);
   // Persistent mode "bulb" — tells you at a glance which mode the transcript is in, ALWAYS visible (unlike
@@ -3090,6 +3277,10 @@ function attachStickController(scrollEl, opts = {}) {
   // so that the instant you scroll up even a little, nothing may auto-scroll you back down.
   const nearPx = typeof opts.nearPx === "number" ? opts.nearPx : WS_SCROLL_NEAR_BOTTOM_PX;
   const atBottom = () => (scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight) < nearPx;
+  // The exact position a HELD reader is parked at, and when they last scrolled by hand — used by the
+  // bulletproof MutationObserver below to re-assert their spot after any DOM change, without fighting an
+  // active scroll.
+  let _heldTop = 0, _lastUserScroll = 0;
   // A stable "what am I looking at" anchor for the NOT-pinned case: the first child whose bottom edge is
   // below the scroller's top, plus how far its own top sits from that edge. Captured in sample() (before
   // the DOM changes) and restored in apply(), so content inserted / removed / replaced ABOVE the viewport
@@ -3118,27 +3309,50 @@ function attachStickController(scrollEl, opts = {}) {
     return node ? { node, delta: node.offsetTop - st } : null;
   };
   const ctrl = {
-    pinned: true, scrollEl, wrap, pill, _anchor: null,
-    // Read the live position. Call BEFORE replacing/growing content, when scrollTop still reflects
-    // where the reader actually is — the answer is "were they at DEAD BOTTOM a moment ago?". When they
-    // weren't, also snapshot a visual anchor so apply() can pin their exact spot afterward.
-    sample() { this.pinned = atBottom(); this._anchor = this.pinned ? null : captureAnchor(); reflect(); return this.pinned; },
-    // Act on that decision once the DOM has changed: glue to the tail, or hold the reader's exact spot
-    // (anchor restore) and reveal the pulsing pill that new output arrived.
+    // `_expectedTop` = the scrollTop WE last set (or that a paint's content-shrink clamped us to). The scroll
+    // listener ignores any scroll event landing there, so a paint that reflows/clamps the view can NEVER flip
+    // Held→Live — only a genuine user scroll (to a different position) changes the mode. This is the fix for
+    // "Held jumps to Live a few seconds later": a periodic self-heal resync repaints, the transcript shrinks
+    // (e.g. the live buffer is cleared), the browser clamps scrollTop to the bottom, and that clamp's scroll
+    // event used to re-pin to Live. -1 until the first paint (no real position matches it).
+    pinned: true, scrollEl, wrap, pill, _anchor: null, _prevTop: null, _expectedTop: -1, _lastH: 0,
+    // Call BEFORE the DOM change. CRUCIAL: it does NOT re-derive `pinned` from the scroll position — `pinned`
+    // (Live/Held) is owned by the USER (the scroll listener sets it); a paint only READS it. Re-deriving it here
+    // is exactly what janked a Held reader down: mid-stream the content grows/clamps near the tail, `atBottom()`
+    // reads true, and the paint flipped to Live. Held now means Held, absolutely. Snapshot the anchor so a change
+    // ABOVE the viewport can be held in place (a no-op for the normal append-below).
+    sample() { this._prevTop = scrollEl.scrollTop; this._anchor = this.pinned ? null : captureAnchor(); SCROLL_DEBUG && slog({ id: dbgId, what: "sample", top: Math.round(scrollEl.scrollTop), pinned: this.pinned }); return this.pinned; },
     apply(stick) {
       if (stick) { scrollEl.scrollTop = scrollEl.scrollHeight; this.pinned = true; this._anchor = null; pill.classList.remove("--show"); }
       else {
+        // HELD: hold the reader's EXACT spot and NEVER auto-scroll to the tail. The restore only moves scrollTop
+        // when content ABOVE the viewport changed (a no-op during streaming, which appends below), so it can't jank.
         const a = this._anchor;
         if (a && a.node && a.node.parentNode === scrollEl) {
-          const target = a.node.offsetTop - a.delta;   // scrollTop that returns the anchor to its recorded viewport spot
-          if (Math.abs(target - scrollEl.scrollTop) >= 1) scrollEl.scrollTop = target;   // ignore sub-px noise
+          const target = a.node.offsetTop - a.delta;
+          if (Math.abs(target - scrollEl.scrollTop) >= 1) scrollEl.scrollTop = target;
+        } else if (this._prevTop != null && Math.abs(this._prevTop - scrollEl.scrollTop) >= 1) {
+          // The anchor NODE was destroyed by a full replaceChildren rebuild (the Pact chat rebuilds ALL
+          // message nodes every repaint; the workspace does too on a cache reset). During streaming the
+          // content ABOVE the viewport is unchanged, so restoring the raw scrollTop captured in sample()
+          // holds the reader's EXACT spot. THIS is the fix for "Held yanks me down mid-turn": the rebuild
+          // reset scrollTop to the top/clamp and, with no surviving node to re-anchor to, nothing put it back.
+          scrollEl.scrollTop = this._prevTop;
         }
-        this.pinned = false; pill.classList.add("--show");
+        this.pinned = false;
+        _heldTop = scrollEl.scrollTop;   // the position the hold observer re-asserts on any later mutation
+        // Show "New output" ONLY when the content actually GREW (new, unseen output) — never on a no-op repaint.
+        // So it stops blinking once the stream is quiet, and once you scroll to the bottom the listener clears it
+        // for good; it won't re-appear unless MORE new output arrives.
+        if (scrollEl.scrollHeight - 1 > this._lastH) pill.classList.add("--show");
       }
+      this._lastH = scrollEl.scrollHeight;
       reflect();
+      this._expectedTop = scrollEl.scrollTop;   // this paint's resting position — the scroll it emits is ours, not the user's
+      SCROLL_DEBUG && slog({ id: dbgId, what: stick ? "apply Live" : "apply Held", top: Math.round(scrollEl.scrollTop), pinned: this.pinned });
     },
     // Force back to the tail and re-pin (pill click, or a just-sent message).
-    pin() { this.pinned = true; this._anchor = null; scrollEl.scrollTop = scrollEl.scrollHeight; pill.classList.remove("--show"); reflect(); },
+    pin() { this.pinned = true; this._anchor = null; scrollEl.scrollTop = scrollEl.scrollHeight; pill.classList.remove("--show"); this._lastH = scrollEl.scrollHeight; reflect(); this._expectedTop = scrollEl.scrollTop; SCROLL_DEBUG && slog({ id: dbgId, what: "pin→Live", top: Math.round(scrollEl.scrollTop) }); },
     modeTag,
     // Re-home the mode bulb out of the default bottom-left float and into `mountEl` with placement class
     // `cls` (docked above the Send button on desktop, or inline in the Pact mobile control bar). Idempotent
@@ -3152,16 +3366,43 @@ function attachStickController(scrollEl, opts = {}) {
   };
   let raf = 0;
   scrollEl.addEventListener("scroll", () => {
+    // Ignore a scroll event that just lands where a paint left us (our own reflow/clamp/restore) — only a real
+    // user scroll to a DIFFERENT position may change Live/Held. Without this, a heal-resync repaint that shrank
+    // the transcript clamped scrollTop to the bottom and yanked a Held reader to Live.
+    if (Math.abs(scrollEl.scrollTop - ctrl._expectedTop) < 2) return;
+    _lastUserScroll = Date.now();   // a GENUINE user scroll — the hold observer won't fight this
     if (raf) return;
     raf = (window.requestAnimationFrame || ((fn) => setTimeout(fn, 16)))(() => {
       raf = 0;
-      // Reaching the bottom by hand re-pins and dismisses the pill; scrolling up just unpins
-      // (the pill only turns ON when new output lands via apply(), not merely on scroll-up).
+      // A GENUINE user scroll: reaching the bottom re-pins Live and clears the pill for good (you've seen it all);
+      // scrolling up sets Held (the pill only re-shows when NEW output lands via apply(), not merely on scroll-up).
       if (atBottom()) { ctrl.pinned = true; pill.classList.remove("--show"); }
-      else ctrl.pinned = false;
+      else { ctrl.pinned = false; _heldTop = scrollEl.scrollTop; }
+      ctrl._expectedTop = scrollEl.scrollTop;   // the user's position is now the baseline our own paints compare against
       reflect();
+      SCROLL_DEBUG && slog({ id: dbgId, what: "user-scroll", top: Math.round(scrollEl.scrollTop), pinned: ctrl.pinned });
     });
   }, { passive: true });
+  // ===== BULLETPROOF HOLD =====
+  // The sample()/apply() dance only holds if EVERY paint path remembers to call it — and one didn't, which is
+  // why Held kept breaking. This observer is authoritative: on ANY DOM mutation inside the scroller while the
+  // reader is Held, it snaps scrollTop back to exactly where they were. It doesn't matter which code changed the
+  // DOM (streaming text, a full replaceChildren rebuild, a resync/heal, a cross-pane repaint) — a Held reader
+  // cannot be moved. Skipped while Live (following the tail is intended) and for ~150ms after a real user scroll
+  // (so it never fights someone scrolling down to go Live). During normal append-below streaming scrollTop
+  // doesn't change, so the callback early-returns — it only acts when something actually tried to move you.
+  if (typeof MutationObserver === "function") {
+    const mo = new MutationObserver(() => {
+      if (ctrl.pinned) return;                                  // Live — let the tail follow
+      if (Date.now() - _lastUserScroll < 150) return;           // don't fight an active user scroll
+      if (Math.abs(scrollEl.scrollTop - _heldTop) < 1) return;  // nothing moved us
+      SCROLL_DEBUG && slog({ id: dbgId, what: "observer-hold", from: Math.round(scrollEl.scrollTop), to: _heldTop });
+      scrollEl.scrollTop = _heldTop;                            // snap back to the reader's exact spot
+      ctrl._expectedTop = scrollEl.scrollTop;                   // our own correction — the scroll listener ignores it
+    });
+    mo.observe(scrollEl, { childList: true, subtree: true, characterData: true });
+    ctrl._mo = mo;
+  }
   pill.addEventListener("click", () => ctrl.pin());
   modeTag.addEventListener("click", () => ctrl.pin());   // the bulb is also a "jump to latest + go Live" button
   reflect();   // paint the initial state (starts Live/pinned)
@@ -3217,18 +3458,10 @@ function pactHighlightLines(content, rel) {
 // the StoicSyntax COLOUR FAMILIES (OuronetInformational/StoicSyntax-Prefixes.md §4), NOT the read-only base
 // highlighter's window.pactBandLegend (older bands), so the strip matches what the editor colours by.
 function pactLegend() {
-  const legend = [
-    ["pk-compute", "UC_",  "COMPUTE — pure, no reads/enforce"],
-    ["pk-read",    "UR_",  "READ — bounded point read"],
-    ["pk-heavy",   "URH_", "HEAVY-READ ⚠ — scan (select/keys); OFF the execution path only"],
-    ["pk-enforce", "UEV_", "ENFORCE — read + enforce; can abort the tx (UEV_/CAP_)"],
-    ["pk-ctor",    "UDC_", "CONSTRUCT — data/object builder"],
-    ["pk-const",   "CT_",  "CONSTANT — constant accessor"],
-    ["pk-write",   "WU_",  "WRITE — raw persistence (WI_/WU_/WW_)"],
-    ["pk-recipe",  "C_",   "RECIPE — client/admin entrypoint (A_/C_/CC_)"],
-    ["pk-orch",    "XI_",  "PROTECTED — protected orchestration (XI_/XE_/XB_)"],
-    ["pk-struct",  "GOV",  "STRUCTURAL — governance/policy/SECURE/UEV_IMC boilerplate"],
-  ];
+  // Single source: the stoicsyntax-pact package publishes its band list as window.pactBandLegend
+  // ([type, prefix, description]), so the strip always matches exactly what the highlighter colours by.
+  const bands = (typeof window !== "undefined" && Array.isArray(window.pactBandLegend)) ? window.pactBandLegend : [];
+  const legend = bands.map(([type, tag, desc]) => ["pk-" + type, tag, desc]);
   return el("div", { class: "pact-legend" }, legend.map(([cls, tag, desc]) =>
     el("span", { class: "pact-legend-item", title: desc }, [el("code", { class: cls }, [tag]), el("span", { class: "pact-legend-desc" }, [desc])])));
 }
@@ -3649,8 +3882,8 @@ function pactEdTabMenu(clientX, clientY, g, tb) {
     { label: "Clone to", submenu: cloneSub },
     { label: "Move to", submenu: moveSub },
     "---",
-    { label: "Text size  A+", onClick: () => { g.fontPx = Math.min(22, (g.fontPx || 12.5) + 1); pactEdRenderGroup(g); pactStateSave(); } },
-    { label: "Text size  A−", onClick: () => { g.fontPx = Math.max(9, (g.fontPx || 12.5) - 1); pactEdRenderGroup(g); pactStateSave(); } },
+    { label: "Text size  A+", onClick: () => { g.fontPx = Math.min(22, (g.fontPx || 11) + 1); pactEdRenderGroup(g); pactStateSave(); } },
+    { label: "Text size  A−", onClick: () => { g.fontPx = Math.max(11, (g.fontPx || 11) - 1); pactEdRenderGroup(g); pactStateSave(); } },
     "---",
     { label: "Find / Replace…", onClick: () => { PACT_ED.activeId = g.id; g.active = tb.path; pactEdLayout(); const gg = PACT_ED.groups.find((x) => x.id === g.id); if (gg) { const s = pactEdSearchState(gg); s.open = true; s.replaceMode = true; pactEdRenderGroupFooter(gg); pactEdSyncSearchPanel(gg, true); } } },
   ]);
@@ -3844,6 +4077,13 @@ function pactEdRenderGroup(g) {
     md.addEventListener("click", (e) => { e.stopPropagation(); active.editing = !active.editing; pactEdRenderGroup(g); });
     ctx.push(md);
   }
+  // Pact/Repl edit-mode ticker (this box, this file): read-only medallions by default; tick to edit.
+  if (active && (active.name.toLowerCase().endsWith(".pact") || active.name.toLowerCase().endsWith(".repl"))) {
+    const isEd = !!active.editing;
+    const ck = el("button", { class: "pact-ed-editck" + (isEd ? " --on" : ""), title: isEd ? "Editing — click to return to the read-only medallion view" : "Read-only medallion view — click to edit this file" }, [isEd ? "✎ Editing" : "👁 Read-only"]);
+    ck.addEventListener("click", (e) => { e.stopPropagation(); active.editing = !active.editing; pactEdRenderGroup(g); });
+    ctx.push(ck);
+  }
   const s = pactEdSearchState(g);
   const findBtn = el("button", { class: "pact-ed-ico" + (s.open && !s.replaceMode ? " --on" : ""), title: "Find in this box (Ctrl/⌘-F)" }, ["🔍"]);
   findBtn.addEventListener("click", (e) => { e.stopPropagation(); pactEdToggleSearch(g, false); });
@@ -3851,16 +4091,24 @@ function pactEdRenderGroup(g) {
   replBtn.addEventListener("click", (e) => { e.stopPropagation(); pactEdToggleSearch(g, true); });
   // Font size as a single stepper: ◀ <px> ▶ — the number shows this box's exact font size so you always
   // know how big each box is. Clicking snaps to whole px going forward. (v1.4.9)
-  const curPx = Math.round(g.fontPx || 12.5);
+  const curPx = Math.round(g.fontPx || 11);
   const fDown = el("button", { class: "pact-font-arrow", title: "Smaller font (this box)" }, ["◀"]);
   const fNum = el("span", { class: "pact-font-num", title: "Font size for this box (px)" }, [String(curPx)]);
   const fUp = el("button", { class: "pact-font-arrow", title: "Bigger font (this box)" }, ["▶"]);
-  fDown.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.max(9, curPx - 1); pactEdRenderGroup(g); pactStateSave(); });
+  fDown.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.max(11, curPx - 1); pactEdRenderGroup(g); pactStateSave(); });
   fUp.addEventListener("click", (e) => { e.stopPropagation(); g.fontPx = Math.min(22, curPx + 1); pactEdRenderGroup(g); pactStateSave(); });
   const fontStep = el("div", { class: "pact-font-step", title: "Font size for this box" }, [fDown, fNum, fUp]);
   const split = el("button", { class: "pact-ed-ico", title: "Split — open another editor box (up to 8)" }, ["⊞"]);
   split.addEventListener("click", (e) => { e.stopPropagation(); pactEdAddGroup(); });
   const right = [findBtn, replBtn, fontStep, split];
+  const an = active ? active.name.toLowerCase() : "";
+  if (active && (an.endsWith(".pact") || an.endsWith(".repl") || an.endsWith(".md"))) {
+    const pdf = el("button", { class: "pact-ed-ico", title: an.endsWith(".md")
+      ? "Export this doc as a paginated PDF — RENDERED (colours + tables). Pick “Save as PDF”. (Use this, not Ctrl+P.)"
+      : "Export this file's read-only view as a paginated PDF (pick “Save as PDF” in the dialog)" }, ["🖨"]);
+    pdf.addEventListener("click", (e) => { e.stopPropagation(); pactExportPdf(g); });
+    right.unshift(pdf);
+  }
   if (PACT_ED.groups.length > 1) {
     const closeG = el("button", { class: "pact-ed-ico", title: "Close this editor box" }, ["×"]);
     closeG.addEventListener("click", (e) => { e.stopPropagation(); pactEdCloseGroup(g.id); });
@@ -3891,6 +4139,78 @@ function pactCountOccurrences(text, query, caseSensitive) {
 function pactEdSearchState(g) { return g._search || (g._search = { find: "", replace: "", cs: false, open: false, replaceMode: false }); }
 // The mounted editor for the active tab — the editable CM, or the read-only diff CM when it's an agent
 // edit. Native find/replace targets it (replace is gated off for the read-only diff via pactEdActiveDiff).
+// ---- Export a .pact/.repl box's read-only medallion view as a paginated PDF -----------------------------
+// The whole file is rendered into a STANDALONE print document inside a hidden iframe — NOT the live page — so
+// the browser's print captures ONLY the code, the ENTIRE file (not the scroll viewport), paginated across
+// pages. Zero dependencies; you pick "Save as PDF" in the print dialog. The doc links the app stylesheet and
+// carries the current theme so it looks exactly like the read-only view; print-color-adjust:exact keeps the
+// medallion colours + dark background. `.pact-medallion-pre` height/overflow are overridden so it is NOT a
+// scroll container (which would otherwise clip to the viewport) — every line flows and paginates.
+function pactExportPdf(g) {
+  const a = g && g.tabs && g.tabs.find((t) => t.path === g.active);
+  if (!a) return;
+  const path = String(a.path || "pact-file");
+  const isMd = /\.md$/i.test(path) && typeof window.mdRender === "function";
+  document.getElementById("pact-print-root")?.remove();
+  document.getElementById("pact-print-style")?.remove();
+  const root = document.createElement("div");
+  root.id = "pact-print-root";
+  const style = document.createElement("style");
+  style.id = "pact-print-style";
+  if (isMd) {
+    // A .md doc/worksheet: print the RENDERED markdown (colour spans + tables) on WHITE — far lighter than laying
+    // out thousands of wrapped SOURCE lines (which hung the preview) AND it's what you actually want to see. Inline
+    // colours survive (they're not "background graphics", so they print even with that box unchecked).
+    root.innerHTML = '<div class="px-title">' + escapeHtml(path) + '</div><div class="pact-md pact-print-md">' + window.mdRender(String(a.content || "")) + "</div>";
+    style.textContent =
+      "#pact-print-root{display:none;}" +
+      "@media print{" +
+        "@page{size:A4 portrait;margin:12mm 10mm;}" +
+        "body{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important;}" +
+        "body>*:not(#pact-print-root){display:none!important;}" +
+        "#pact-print-root{display:block!important;position:static!important;width:auto!important;height:auto!important;background:#fff!important;color:#111!important;}" +
+        "#pact-print-root .pact-print-md{color:#111!important;font:13px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}" +
+        "#pact-print-root .pact-print-md .md-h{color:#111!important;margin:14px 0 6px;}" +
+        "#pact-print-root .pact-print-md .md-table{border-collapse:collapse;width:100%;margin:8px 0;}" +
+        "#pact-print-root .pact-print-md .md-table th,#pact-print-root .pact-print-md .md-table td{border:1px solid #bbb!important;padding:4px 7px;font-size:10.5px;vertical-align:top;text-align:left;}" +
+        "#pact-print-root .pact-print-md .md-table th{background:#f0f0f0!important;font-weight:700;}" +
+        "#pact-print-root .pact-print-md tr{break-inside:avoid;}" +
+        "#pact-print-root .pact-print-md code,#pact-print-root .pact-print-md pre{background:#f4f4f4!important;color:#111!important;}" +
+        "#pact-print-root .px-title{font:600 10px/1.4 ui-monospace,monospace;padding:0 0 8px;color:#555;word-break:break-all;}" +
+      "}";
+  } else {
+    if (typeof window.pactMedallionHtml !== "function") return;
+    const lines = window.pactMedallionHtml(String(a.content || "")).split("\n");
+    const lnw = Math.max(2, String(lines.length).length) + 1;   // gutter scales to the largest line number
+    const rows = lines.map((ln, i) =>
+      '<div class="pml-row"><span class="pml-ln">' + (i + 1) + '</span><span class="pml-code">' + ln + "</span></div>"
+    ).join("");
+    // Print via the MAIN window with an isolated print container — NOT a hidden iframe (a 1px iframe wrapped every
+    // char and hung). A print-only stylesheet hides everything except our root; @page drives a sane width.
+    root.innerHTML = '<div class="px-title">' + escapeHtml(path) + "</div>" +
+      '<div class="pact-medallion-pre">' + rows + "</div>";
+    style.textContent =
+      "#pact-print-root{display:none;}" +
+      "@media print{" +
+        "@page{size:A4 portrait;margin:12mm 8mm;}" +
+        "html,body{background:var(--bg,#0e1420)!important;}" +
+        "body{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important;}" +
+        "body>*:not(#pact-print-root){display:none!important;}" +
+        "#pact-print-root{display:block!important;position:static!important;width:auto!important;height:auto!important;}" +
+        "#pact-print-root .pact-medallion-pre{height:auto!important;max-height:none!important;overflow:visible!important;width:100%!important;border:0!important;border-radius:0!important;margin:0!important;}" +
+        "#pact-print-root .pml-row{break-inside:avoid;}" +
+        "#pact-print-root .pml-ln{width:" + lnw + "ch!important;}" +
+        "#pact-print-root .px-title{font:600 10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;padding:0 0 6px;color:var(--mute,#9fb0d0);word-break:break-all;}" +
+      "}";
+  }
+  document.body.appendChild(style);
+  document.body.appendChild(root);
+  const cleanup = () => { try { root.remove(); } catch {} try { style.remove(); } catch {} window.removeEventListener("afterprint", cleanup); };
+  window.addEventListener("afterprint", cleanup);
+  setTimeout(() => { try { window.focus(); window.print(); } catch {} }, 60);
+  setTimeout(cleanup, 180000);   // safety net if afterprint never fires
+  if (typeof pactEdSaveStatus === "function") pactEdSaveStatus("🖨 Choose “Save as PDF” in the print dialog", false);
+}
 function pactEdActiveCm(g) {
   const a = g.tabs.find((t) => t.path === g.active);
   if (!a) return null;
@@ -3903,6 +4223,7 @@ function pactEdSearchClear(g) {
   if (g._searchOverlay && g._searchCm) { try { g._searchCm.removeOverlay(g._searchOverlay); } catch {} }
   if (g._searchScroll) { try { g._searchScroll.clear(); } catch {} g._searchScroll = null; }   // scrollbar stripes
   g._searchOverlay = null; g._searchCm = null;
+  if (g.bodyEl) g.bodyEl.querySelectorAll(".pml-row.--rohit").forEach((r) => r.classList.remove("--rohit"));   // read-only match highlight
 }
 // A CM overlay that highlights every occurrence of a plain-string query (class cm-pact-search-match).
 function pactMakeSearchOverlay(query, cs) {
@@ -3925,7 +4246,41 @@ function pactEdSearchPos(cm, query, cs) {
   while (cur.findNext()) { total++; const f = cur.from(); if (!current && f.line === from.line && f.ch === from.ch) current = total; }
   return { current, total };
 }
+// True when the active tab is showing the READ-ONLY medallion <pre> (no live CodeMirror). Search must then
+// run over the DOM and scroll the <pre>, not a detached/stale editor — that's why "find worked but the view
+// never moved".
+function pactEdIsReadonly(g) {
+  const a = g.tabs.find((t) => t.path === g.active);
+  if (!a || a.agentDiff) return false;
+  const ext = (a.path || "").toLowerCase();
+  return (ext.endsWith(".pact") || ext.endsWith(".repl")) && !a.editing && !!(g.bodyEl && g.bodyEl.querySelector(".pact-medallion-pre"));
+}
+// Read-only find: locate the match in the tab's source text, map its offset to a line, then scroll that
+// line's row into view + highlight it. `dir` >0 next, <0 previous; wraps. Sets the "cur/total" readout.
+function pactMedallionFind(g, dir) {
+  const a = g.tabs.find((t) => t.path === g.active); if (!a) return;
+  const s = pactEdSearchState(g);
+  const pre = g.bodyEl && g.bodyEl.querySelector(".pact-medallion-pre");
+  const count = g._searchPanel && g._searchPanel.querySelector(".pact-search-count");
+  const clearHits = () => pre && pre.querySelectorAll(".pml-row.--rohit").forEach((r) => r.classList.remove("--rohit"));
+  if (!pre || !s.find) { clearHits(); if (count) count.textContent = ""; return; }
+  const content = String(a.content);
+  const hay = s.cs ? content : content.toLowerCase();
+  const needle = s.cs ? s.find : s.find.toLowerCase();
+  const offs = []; let i = 0;
+  while (needle && (i = hay.indexOf(needle, i)) >= 0) { offs.push(i); i += needle.length || 1; }
+  clearHits();
+  if (!offs.length) { a._roMatch = -1; if (count) count.textContent = "0/0"; return; }
+  let cur = (typeof a._roMatch === "number") ? a._roMatch : -1;
+  cur = dir >= 0 ? (cur + 1) % offs.length : (cur - 1 + offs.length) % offs.length;
+  a._roMatch = cur;
+  const line = content.slice(0, offs[cur]).split("\n").length - 1;
+  const row = pre.querySelectorAll(".pml-row")[line];
+  if (row) { row.classList.add("--rohit"); row.scrollIntoView({ block: "center" }); }
+  if (count) count.textContent = (cur + 1) + "/" + offs.length;
+}
 function pactEdSearchUpdateCount(g) {
+  if (pactEdIsReadonly(g)) return;   // the read-only path sets its own "cur/total" in pactMedallionFind
   const count = g._searchPanel && g._searchPanel.querySelector(".pact-search-count");
   if (!count) return;
   const cm = pactEdActiveCm(g), s = pactEdSearchState(g);
@@ -3936,6 +4291,7 @@ function pactEdSearchUpdateCount(g) {
 function pactEdSearchApply(g) {
   const s = pactEdSearchState(g);
   pactEdSearchClear(g);
+  if (pactEdIsReadonly(g)) { const a = g.tabs.find((t) => t.path === g.active); if (a) a._roMatch = -1; pactMedallionFind(g, 1); return; }   // read-only <pre>: DOM search + scroll
   const cm = pactEdActiveCm(g);
   const count = g._searchPanel && g._searchPanel.querySelector(".pact-search-count");
   if (!cm || !s.find) { if (count) count.textContent = ""; return; }
@@ -3951,7 +4307,9 @@ function pactEdSearchApply(g) {
   pactEdSearchUpdateCount(g);
 }
 function pactEdSearchNav(g, dir) {
-  const s = pactEdSearchState(g); const cm = pactEdActiveCm(g);
+  const s = pactEdSearchState(g);
+  if (pactEdIsReadonly(g)) { pactMedallionFind(g, dir); return; }   // read-only <pre>: DOM search + scroll
+  const cm = pactEdActiveCm(g);
   if (!cm || !s.find) return;
   const start = dir > 0 ? cm.getCursor("to") : cm.getCursor("from");
   let cur = cm.getSearchCursor(s.find, start, !s.cs);
@@ -4048,7 +4406,7 @@ function pactEdRenderBody(g, tab) {
   if (tab.agentDiff) {
     const cm = pactEdBuildDiffCm(g, tab, ext);
     g._cm = cm;   // so Ctrl/⌘-F + the search panel target this diff (pactEdActiveCm returns it)
-    cm.getWrapperElement().style.fontSize = (g.fontPx || 12.5) + "px";
+    cm.getWrapperElement().style.fontSize = (g.fontPx || 11) + "px";
     const hd = el("div", { class: "pact-diff-hd" }, [
       el("span", { class: "pd-badge pd-badge-add" }, ["+" + tab.agentDiff.add]),
       el("span", { class: "pd-badge pd-badge-del" }, ["−" + tab.agentDiff.del]),
@@ -4074,6 +4432,31 @@ function pactEdRenderBody(g, tab) {
     g.bodyEl.replaceChildren(el("div", { class: "pact-editor-scroll" }, [md]));
     return;
   }
+  // .pact/.repl render a READ-ONLY medallion view by DEFAULT — the box's ✎ ticker (tab.editing) swaps to the
+  // editable CodeMirror. Full-fidelity medallions here (angled caps, padded, per-type, foreign-black) since a
+  // read-only <pre> has no caret to keep aligned. Falls back to the editor if the engine failed to load.
+  if ((ext.endsWith(".pact") || ext.endsWith(".repl")) && !tab.editing && typeof window.pactMedallionHtml === "function") {
+    // Read-only medallion view WITH a line-number gutter. pactMedallionHtml never lets a <span> straddle a
+    // newline (multi-line strings emit one strBlk span per line; every "\n" is plain text between spans), so
+    // splitting the rendered HTML on "\n" yields balanced, per-source-line HTML — one numbered row each.
+    const lines = window.pactMedallionHtml(String(tab.content)).split("\n");
+    const box = el("div", { class: "pact-medallion-pre" });
+    box.style.fontSize = (g.fontPx || 11) + "px";
+    box.style.setProperty("--pml-lnw", String(lines.length).length + "ch");   // fixed gutter width = digits of the LAST line number, so 2/3/4-digit numbers all align
+    // Each source line is one row: sticky number gutter + a wrapping code column. Long lines wrap (view-mode
+    // word-wrap) instead of scrolling horizontally; the number appears once per source line so a wrapped line
+    // reads as one unit, and rows that actually wrapped get a `--wrapped` accent (marked below).
+    box.innerHTML = lines.map((ln, i) => '<div class="pml-row"><span class="pml-ln">' + (i + 1) + '</span><span class="pml-code">' + ln + "</span></div>").join("");
+    g._cm = null;   // no live editor in read-only mode; a font/search re-render rebuilds as needed
+    // Kill any pending cursor-reveal from a prior EDIT session on this tab (or its diff) — read-only has no
+    // caret, so nothing may auto-scroll it after you stop scrolling.
+    if (tab._cm) { tab._cm._autoScrollCancel = true; clearTimeout(tab._cm._revealT); }
+    if (tab._diffCm) { tab._diffCm._autoScrollCancel = true; clearTimeout(tab._diffCm._revealT); }
+    g.bodyEl.replaceChildren(el("div", { class: "pact-medallion-scroll" }, [box]));
+    const _lh = Math.round((g.fontPx || 11) * 2.05);   // one line's height; a code cell taller than this wrapped
+    requestAnimationFrame(() => { for (const row of box.querySelectorAll(".pml-row")) { const code = row.querySelector(".pml-code"); if (code && code.offsetHeight > _lh * 1.4) row.classList.add("--wrapped"); } });
+    return;
+  }
   // Editable surface: a real CodeMirror 5 instance (see pactEdBuildCm). CM owns line numbers, the caret,
   // scrolling, bracket matching, the active-line highlight, find/replace, and (once wired) inline folding —
   // so all the old textarea-overlay machinery (transparent <textarea> over a highlighted <pre>, the
@@ -4081,7 +4464,7 @@ function pactEdRenderBody(g, tab) {
   // the tab and simply re-appended on tab switches / font changes, keeping undo history + caret.
   const cm = pactEdBuildCm(g, tab, ext);
   g._cm = cm;   // the active box's editor (used by the Ctrl/⌘-F routing + font buttons)
-  const fontPx = g.fontPx || 12.5;
+  const fontPx = g.fontPx || 11;
   cm.getWrapperElement().style.fontSize = fontPx + "px";
   g.bodyEl.replaceChildren(tab._cmHost);
   requestAnimationFrame(() => { cm.refresh(); });   // CM needs a laid-out host to size itself
@@ -4116,12 +4499,16 @@ function pactEdSmoothScrollTo(cm, targetTop) {
   requestAnimationFrame(step);
 }
 function pactEdScheduleCursorReveal(cm) {
+  if (!cm || (cm.getOption && cm.getOption("readOnly"))) return;   // read-only CMs have no editable caret to reveal
   if (cm._autoScrolling) return;      // our own animation is moving the scroll — ignore its scroll events
   cm._autoScrollCancel = true;        // any fresh (user) scroll cancels an in-flight auto-reveal
   clearTimeout(cm._revealT);
   cm._revealT = setTimeout(() => {
     try {
-      const sc = cm.getScrollerElement(); if (!sc) return;
+      const sc = cm.getScrollerElement();
+      // Never scroll a CM that isn't the visible editor: `offsetParent` is null when it's detached/hidden —
+      // e.g. the box switched to the read-only medallion view. This is what stops "read-only jumps to cursor".
+      if (!sc || !sc.offsetParent) return;
       const cc = cm.charCoords(cm.getCursor(), "local");
       const top = sc.scrollTop, bottom = top + sc.clientHeight;
       if (cc.top >= top && cc.bottom <= bottom) return;   // cursor already visible — leave the view alone
@@ -4150,9 +4537,10 @@ function pactEdBuildCm(g, tab, ext) {
     "Cmd-G": "findNext", "Ctrl-G": "findNext",
     "Shift-Cmd-G": "findPrev", "Shift-Ctrl-G": "findPrev",
   };
+  if (isPact && window.pactMedallionComputeCaps) window.pactMedallionComputeCaps(tab.content);   // metallic cap bands before first paint
   const cm = window.CodeMirror(host, {
     value: tab.content,
-    mode: isPact ? "stoicpact" : null,
+    mode: isPact ? (window.CodeMirror.modes && window.CodeMirror.modes.stoicmedallion ? "stoicmedallion" : "stoicpact") : null,
     lineNumbers: true,
     lineWrapping: false,
     tabSize: 2,
@@ -4169,6 +4557,13 @@ function pactEdBuildCm(g, tab, ext) {
     extraKeys,
   });
   cm.on("change", () => { tab.content = cm.getValue(); pactEdMarkDirty(g, tab); });
+  if (isPact && window.CodeMirror.modes && window.CodeMirror.modes.stoicmedallion) {
+    // EDIT MODE = coloured text only (NO medallion pills) — we deliberately do NOT add the `.mdl` class.
+    // Still recompute metallic cap *colours* (bronze/silver/gold) from the whole-doc ;;{Cx}/{Gx} markers as you
+    // type, so cap text stays correctly coloured (debounced). The full medallions live in the read-only view.
+    let _capT = null;
+    cm.on("change", () => { clearTimeout(_capT); _capT = setTimeout(() => { if (window.pactMedallionComputeCaps) { window.pactMedallionComputeCaps(cm.getValue()); cm.setOption("mode", cm.getOption("mode")); } }, 220); });
+  }
   // Remember this box's cursor as it moves, so every open file always has a position (survives content
   // swaps, tab switches, font changes) and the auto-reveal always has a target.
   cm.on("cursorActivity", () => { tab._cursor = cm.getCursor(); });
@@ -5078,7 +5473,9 @@ function pactResumeIdOk(sessionId, key) {
 // the freshly-read state; `PACT_CHAT_NAMES` is the shared { sessionKey -> friendly name } map. ----
 let PACT_STATE_READY = false;
 let PACT_STATE_TIMER = null;
+let PACT_RESTORE_STATE = "ok";   // "loading" | "ok" | "failed" — drives the boot restore cue (see pactSyncCue)
 let PACT_CHAT_NAMES = {};
+let PACT_HIST_TAB = "open";   // "open" | "retired" — which half of the history panel is showing; reset to "open" each time the panel is (re)opened
 // A debounced (~800ms) snapshot of the whole IDE layout, PUT to the shared store. No-op until a
 // restore has completed (or a fresh view is ready), so a burst of layout changes coalesces into one
 // write. A read-only remote viewer's PUT is refused server-side (403) and simply ignored here.
@@ -5113,7 +5510,7 @@ function pactStateSnapshot() {
     rowFlex: Array.isArray(PACT_ED.rowFlex) ? PACT_ED.rowFlex.slice() : null,
   };
   const chat = {
-    tabs: PACT_CHAT.tabs.map((t) => ({ key: t.key, name: t.name, draft: t.draft || "", resume: t.resume || null, prime: !!t.prime, worktree: t.worktree || null, migrations: t.migrations || [], promptStates: t.promptStates || {}, bookmarks: Array.isArray(t.bookmarks) ? t.bookmarks : [] })),
+    tabs: PACT_CHAT.tabs.map((t) => ({ key: t.key, name: t.name, draft: t.draft || "", resume: t.resume || null, prime: !!t.prime, worktree: t.worktree || null, model: t.model || null, migrations: t.migrations || [], promptStates: t.promptStates || {}, bookmarks: Array.isArray(t.bookmarks) ? t.bookmarks : [], autoContinue: !!t._autoContinue, autoCount: t._autoCount || 0, autoCap: t._autoCap || PACT_AUTO_CAP })),
     activeIndex: Math.max(0, PACT_CHAT.tabs.findIndex((t) => t.id === PACT_CHAT.activeId)),
   };
   const right = document.querySelector(".pact-right");
@@ -5125,15 +5522,27 @@ function pactStateSnapshot() {
 // their files, restore chat tabs (name/draft/order/active), and the collapse. Every step is guarded
 // so a missing or malformed field just leaves that part at its fresh default (never throws).
 async function pactRestoreState() {
-  let saved = {};
-  try { const r = await (await fetch("/api/pact/ide-state")).json(); if (r && r.ok && r.state && typeof r.state === "object") saved = r.state; } catch {}
+  PACT_RESTORE_STATE = "loading";
+  // `null` until we get a CONFIRMED response. On a flaky mobile link a single failed fetch used to (1) silently
+  // drop you to a fresh empty "Chat 1" as if your conversations were lost, and (2) then let the next save
+  // OVERWRITE your real saved state with that empty view — actual data loss. So: retry a few times, and if we
+  // never get a good response, leave PACT_STATE_READY false (saving stays OFF → your server state is untouched)
+  // and surface a retry cue instead of masquerading as an empty workspace. `{}` is a legit "empty" success.
+  let saved = null;
+  for (let attempt = 1; attempt <= 4 && saved === null; attempt++) {
+    try { const r = await (await fetch("/api/pact/ide-state")).json(); if (r && r.ok) saved = (r.state && typeof r.state === "object") ? r.state : {}; } catch {}
+    if (saved === null && attempt < 4) await new Promise((res) => setTimeout(res, 700 * attempt));
+  }
+  if (saved === null) { PACT_RESTORE_STATE = "failed"; return; }   // could not load — do NOT arm saving; the cue offers retry
   PACT_CHAT_NAMES = (saved.chatNames && typeof saved.chatNames === "object" && !Array.isArray(saved.chatNames)) ? saved.chatNames : {};
   if (PACT_ED && saved.ackBase && typeof saved.ackBase === "object" && !Array.isArray(saved.ackBase)) { PACT_ED._ackBase = saved.ackBase; pactEdRefreshDiffstats(); }   // restore acknowledged baselines → footer reflects changes since them
   try { if (saved.editor && Array.isArray(saved.editor.groups) && saved.editor.groups.length) pactRestoreEditor(saved.editor); } catch (e) { console.warn("pact editor restore failed", e); }
   try { if (saved.chat && Array.isArray(saved.chat.tabs) && saved.chat.tabs.length) pactRestoreChat(saved.chat); } catch (e) { console.warn("pact chat restore failed", e); }
   try { if (saved.collapse) pactRestoreCollapse(saved.collapse); } catch {}
-  PACT_STATE_READY = true;   // from here on, user changes persist
+  PACT_RESTORE_STATE = "ok";
+  PACT_STATE_READY = true;   // from here on, user changes persist — only AFTER a confirmed load, never after a failure
 }
+function pactRetryRestore() { if (PACT_RESTORE_STATE === "failed") pactRestoreState(); }
 function pactRestoreEditor(ed) {
   const groups = ed.groups.slice(0, 8);
   PACT_ED.groups = groups.map((gs) => ({ id: ++PACT_ED.seq, tabs: [], active: null, fontPx: gs.fontPx || undefined, flex: (typeof gs.flex === "number" && gs.flex > 0) ? gs.flex : 1, worktree: (gs.worktree && gs.worktree !== "main") ? gs.worktree : undefined }));
@@ -5168,11 +5577,17 @@ function pactRestoreChat(ch) {
       resume: pactResumeIdOk(ts.resume, key),
       // the worktree this conversation runs in survives reloads (Stage-2 binding); null/"main" → primary checkout
       worktree: (ts.worktree && ts.worktree !== "main") ? ts.worktree : undefined,
+      // the per-conversation model override survives reloads — otherwise a chat you deliberately moved to
+      // Opus would silently fall back to the default on the next page load
+      model: (typeof ts.model === "string" && ts.model) ? ts.model : undefined,
       // recorded worktree-migration markers, re-injected into the transcript on rehydrate (see pactChatReinjectMigrations)
       migrations: Array.isArray(ts.migrations) ? ts.migrations.filter((m) => m && typeof m.at === "number") : [],
       // interrupted/discarded prompt states ({ <at>: "i" | "d" }) survive reloads (and sync via IDE state)
       promptStates: (ts.promptStates && typeof ts.promptStates === "object" && !Array.isArray(ts.promptStates)) ? ts.promptStates : {},
       bookmarks: Array.isArray(ts.bookmarks) ? ts.bookmarks.filter((x) => typeof x === "number") : [],   // starred responses (sync via IDE state)
+      // Auto-continue survives reloads: the state + round count are restored so the bar shows "Auto on" again
+      // and the loop re-arms (and you can still switch it off). Otherwise a reload silently killed the loop.
+      _autoContinue: !!ts.autoContinue, _autoCount: (typeof ts.autoCount === "number" ? ts.autoCount : 0), _autoCap: (typeof ts.autoCap === "number" && ts.autoCap > 0 ? ts.autoCap : PACT_AUTO_CAP),
       // the prime (undeletable) conversation flag survives reloads; ensurePrime backfills older layouts
       prime: !!ts.prime };
   });
@@ -5243,6 +5658,8 @@ let PACT_CHAT = null;   // { host, tabs:[t], activeId, seq, es, mode, conn }
 let PACT_STREAM_LAST_MSG_AT = 0;
 let PACT_STREAM_STALE_TIMER = null;
 let PACT_TICK_TIMER = null;
+let PACT_STREAM_ERR = false;      // set when the SSE errors/drops; cleared on the next real message/hello
+let PACT_LAST_SYNC_KICK = 0;      // throttle for the proactive catch-up resync the sync cue fires
 let PACT_HEAL_TIMER = null;   // heartbeat-INDEPENDENT self-heal — recovers a stuck "Working…" tab even if the stream goes silent (no heartbeats)
 // ===== PACT DURATION — pure helper (unit-tested via lib/pactDuration.test.mjs) =====
 // M:SS (or H:MM:SS past an hour) for the LIVE ticking timer. Junk/negative → "0:00".
@@ -5388,6 +5805,7 @@ function pactChatToggleHistory() {
   if (!PACT_CHAT) return;
   const existing = document.querySelector(".pc-hist-overlay");
   if (existing) { existing.remove(); return; }
+  PACT_HIST_TAB = "open";   // always open on the live tab, not wherever it was left last time
   const panel = el("div", { class: "pc-hist-panel" }, [el("div", { class: "hint", style: "padding:14px" }, ["Loading saved chats…"])]);
   const overlay = el("div", { class: "pc-hist-overlay" }, [panel]);
   overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) overlay.remove(); });
@@ -5395,16 +5813,40 @@ function pactChatToggleHistory() {
   wsPost("control", { action: "sessions", args: { repo: PACT_REPO } });
 }
 function pactChatCloseHistory() { const o = document.querySelector(".pc-hist-overlay"); if (o) o.remove(); }
+// Open vs Retired: a saved chat is "open" while one of the current Pact tabs still has it loaded (matched by
+// sessionId === tab.key, same identity fillModelSelect/pactRowIsPrime already rely on); every other saved
+// chat — one you resumed once and later closed the tab for, or never opened this session — is "retired". Not
+// a new lifecycle state on disk: every saved chat already lives in the same `sessions` list forever (nothing
+// is ever silently dropped from it); this is purely a view filter so a long-running repo's history doesn't
+// bury your currently-open conversations under months of finished ones.
+function pactHistIsOpen(r, tabs) { return !!(r && r.sessionId && Array.isArray(tabs) && tabs.some((t) => t && t.key === r.sessionId)); }
 function pactChatRenderHistory() {
   const panel = document.querySelector(".pc-hist-panel"); if (!panel) return;
   const rows = (PACT_CHAT && PACT_CHAT.sessions) || [];
+  const tabs = (PACT_CHAT && PACT_CHAT.tabs) || [];
+  const openRows = rows.filter((r) => pactHistIsOpen(r, tabs));
+  const retiredRows = rows.filter((r) => !pactHistIsOpen(r, tabs));
+  if (PACT_HIST_TAB !== "open" && PACT_HIST_TAB !== "retired") PACT_HIST_TAB = "open";
   const refresh = el("button", { class: "pact-ed-ico", title: "Refresh" }, ["⟳"]);
   refresh.addEventListener("click", () => wsPost("control", { action: "sessions", args: { repo: PACT_REPO } }));
   const close = el("button", { class: "pact-ed-ico", title: "Close" }, ["×"]);
   close.addEventListener("click", pactChatCloseHistory);
   const head = el("div", { class: "pc-hist-hd" }, ["🕐 Pact chat history", el("span", { class: "ws-spacer" }, []), refresh, close]);
-  const list = el("div", { class: "pc-hist-list" }, rows.length ? rows.map(pactHistRow) : [el("div", { class: "hint", style: "padding:14px" }, ["No saved Pact chats yet — send a first message to start one."])]);
-  panel.replaceChildren(head, list);
+  const mkTabBtn = (key, label, n) => {
+    const b = el("button", { class: "pc-hist-tabbtn" + (PACT_HIST_TAB === key ? " --active" : ""), type: "button" }, [label + " (" + n + ")"]);
+    b.addEventListener("click", () => { if (PACT_HIST_TAB !== key) { PACT_HIST_TAB = key; pactChatRenderHistory(); } });
+    return b;
+  };
+  const tabsBar = el("div", { class: "pc-hist-tabs" }, [
+    mkTabBtn("open", "Open", openRows.length),
+    mkTabBtn("retired", "Retired", retiredRows.length),
+  ]);
+  const shown = PACT_HIST_TAB === "retired" ? retiredRows : openRows;
+  const emptyMsg = PACT_HIST_TAB === "retired"
+    ? "No retired chats — a chat lands here once you close its tab (or it's never been (re)opened this session)."
+    : "No open chats right now — send a first message to start one, or resume one from Retired.";
+  const list = el("div", { class: "pc-hist-list" }, shown.length ? shown.map(pactHistRow) : [el("div", { class: "hint", style: "padding:14px" }, [emptyMsg])]);
+  panel.replaceChildren(head, tabsBar, list);
 }
 function pactHistName(r) { return (r.sessionId && PACT_CHAT_NAMES[r.sessionId]) || r.name || pactDeriveChatName(r.firstPrompt) || "Untitled chat"; }
 // ===== PACT PRIME ROW — pure helper (sliced for lib/pactPrimeRow.test.mjs) =====
@@ -5508,7 +5950,17 @@ function pactChatInit(host) {
   PACT_CHAT = { host, tabs: [], activeId: null, seq: 0, es: null, mode: "bypassPermissions", conn: connIdentity() };
   // Flush the draft/layout on a page refresh or close too (keepalive lets the PUT outlive the page),
   // so a prompt typed right before reloading isn't lost. Registered once.
-  if (!PACT_UNLOAD_HOOKED) { PACT_UNLOAD_HOOKED = true; window.addEventListener("pagehide", (e) => { if (PACT_STATE_READY) { if (!e.persisted) pactOutboxAbsorbQueues(); pactStateFlush(true); } }); }
+  if (!PACT_UNLOAD_HOOKED) {
+    PACT_UNLOAD_HOOKED = true;
+    // Fold queued (orange) messages into the durable outbox on ANY unload — including a bfcache pagehide
+    // (e.persisted === true), which the old `if (!e.persisted)` guard skipped, silently losing the bubble on a
+    // mobile back/forward or backgrounded reload. Absorbing is idempotent (it nulls _queue after moving), so
+    // it's safe on a bfcache save that later restores. A visibilitychange→hidden pass adds a second safety net
+    // for browsers that skip pagehide. This is the "orange bubble lost on refresh" fix.
+    const persist = () => { if (PACT_STATE_READY) { pactOutboxAbsorbQueues(); pactStateFlush(true); } };
+    window.addEventListener("pagehide", persist);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") persist(); });
+  }
   pactChatOpenStream();
   pactChatNewTab();
   pactChatEnsurePrime();   // the fresh tab becomes the prime (undeletable) conversation
@@ -5528,6 +5980,10 @@ function pactChatSelfHeal() {
   const now = Date.now();
   for (const t of PACT_CHAT.tabs) {
     if (!t.key) continue;
+    // Watchdog: a DROPPED loadingHistoryDone would leave the synthetic "thinking" set forever (the exact stuck
+    // "workspace dead" state). If a cold-load has been active well past any real load time, end it locally AND
+    // resync so the server's authoritative status wins (idle if truly done; still-thinking if a real turn began).
+    if (coldLoadStale(t, now)) { coldLoadEnd(t, now); if (t.id === PACT_CHAT.activeId) pactChatPaint(t); wsPost("control", { action: "resync", args: { sessionKey: t.key, scoped: true } }); continue; }
     // When the local transcript already exceeds the server cap, a capped resync is SHORTER than local, so the
     // `incoming >= local` guard would REJECT it — even when it carries the dropped reply. Fetch `full` then, so
     // incoming ≥ local and the reply surfaces. Busy branch only fires when stuck, so full is fine there; the
@@ -5570,12 +6026,82 @@ function pactChatFlashNote(text) {
 // on another device, or been restored after a reload — so the timer shows everywhere, not only on the
 // device that sent the prompt. Cleared on "result" (which also stamps the reply's total time).
 function pactChatMarkTurnBusy(t) { if (t && (t.status === "thinking" || t.status === "deepwork") && !t._turnStartedAt) t._turnStartedAt = Date.now(); }
+// Adopt the SERVER's authoritative turn clock (from a state/resync payload) so a reloaded / re-entered tab shows
+// the REAL elapsed instead of restarting from zero, and the stall cue reflects REAL silence. turnStartedAt is
+// adopted only when the server says a turn IS running (a number); an idle (null) never zeroes a local counter.
+// lastActivityAt takes the later of local/server so a chunk that streamed after the snapshot isn't rolled back.
+function pactAdoptServerClock(t, src) {
+  if (!t || !src) return;
+  if (typeof src.turnStartedAt === "number") t._turnStartedAt = src.turnStartedAt;
+  if (typeof src.lastActivityAt === "number") t._lastActiveAt = Math.max(t._lastActiveAt || 0, src.lastActivityAt);
+}
+// "Stuck?" is judged by SILENCE, not total turn duration. A turn that has produced nothing for this long is
+// surfaced as possibly/likely stuck, so a genuinely wedged turn (the 44+ min hang) is OBVIOUS. CRUCIALLY this
+// is time since the last REAL streamed event (_lastActiveAt — refreshed by every delta/tool event but NOT by
+// the self-heal resync, so it can't be masked), NOT time since the turn STARTED: opus deep-work turns legitimately
+// stream for 15+ minutes, and keying off total elapsed branded every one of them "likely stuck" mid-stream.
+const PACT_STALL_SOFT_MS = 5 * 60_000;    // 5 min of silence → "still working — ■ Stop if stuck"
+const PACT_STALL_HARD_MS = 12 * 60_000;   // 12 min of silence → "⚠ likely stuck — ■ Stop or ↻ Reload engine"
+// Connection/sync health cue. On a flaky mobile link the SSE stream can silently drop events (or whole ~25s
+// heartbeats), leaving the display STALE — a turn that's genuinely running looks finished, and a queued message
+// won't drain. The green "Live" badge only means the socket is open, so it can't reveal this. When the stream has
+// gone quiet past the heartbeat window we (a) surface a visible "Syncing…/Reconnecting…" banner so you KNOW the
+// display may be behind, and (b) proactively fire a catch-up resync (throttled) so the latest actually arrives
+// rather than waiting out the ~65s zombie-stream watchdog.
+function pactSyncCue() {
+  let cue = document.getElementById("pact-sync-cue");
+  if (!PACT_CHAT || !PACT_CHAT.es) { if (cue) cue.remove(); return; }
+  let state, text, tappable = false;
+  if (PACT_RESTORE_STATE === "failed") {
+    // The boot fetch of your saved conversations failed (flaky link) — your real state is untouched (saving is
+    // held off); tap to retry rather than silently show an empty "Chat 1".
+    state = "reconnecting"; text = "⚠ Couldn't load your conversations — tap to retry"; tappable = true;
+  } else if (PACT_RESTORE_STATE === "loading") {
+    state = "syncing"; text = "⟳ Loading your conversations…";
+  } else {
+    const quiet = Date.now() - (PACT_STREAM_LAST_MSG_AT || 0);
+    if (PACT_STREAM_ERR || quiet > WS_STALE_MS) state = "reconnecting";   // socket error, or past the ~65s zombie window
+    else if (quiet > 32_000) state = "syncing";                          // missed at least one ~25s heartbeat
+    else state = "live";
+    if (state !== "live" && Date.now() - PACT_LAST_SYNC_KICK > 12_000) { PACT_LAST_SYNC_KICK = Date.now(); try { pactChatResyncAll(); } catch {} }
+    if (state === "live") { if (cue) cue.remove(); return; }
+    text = state === "reconnecting" ? "⟳ Reconnecting… your display may be behind" : "⟳ Syncing… catching up on the latest";
+  }
+  if (!cue) { cue = el("div", { id: "pact-sync-cue" }); document.body.appendChild(cue); }
+  const color = state === "reconnecting" ? "background:#3a1414;color:#f87171;border:1px solid #f87171" : "background:#3a2f12;color:#fbbf24;border:1px solid #fbbf24";
+  cue.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);top:62px;z-index:9999;padding:6px 14px;border-radius:999px;font-size:12px;font-weight:600;box-shadow:0 2px 12px rgba(0,0,0,.45);" + (tappable ? "cursor:pointer;" : "pointer-events:none;") + color;
+  cue.textContent = text;
+  cue.onclick = tappable ? pactRetryRestore : null;
+}
 // Update the active tab's live elapsed timer in place (no full repaint) once a second while it's busy.
 function pactChatTickTimer() {
   if (!PACT_CHAT || !PACT_CHAT.host) return;
+  pactSyncCue();   // reflect stream health every second (independent of whether a tab is busy)
   const t = pactChatActive(); if (!t) return;
   const node = PACT_CHAT.host.querySelector(".pc-timer");
-  if (node && pactChatBusy(t) && t._turnStartedAt) node.textContent = pactFmtDuration(Date.now() - t._turnStartedAt);
+  if (!node || !pactChatBusy(t) || !t._turnStartedAt) return;
+  const elapsed = Date.now() - t._turnStartedAt;                     // total turn time — the visible readout
+  // Cold-loading a large conversation on resume: a one-time multi-minute grind (the SDK loading the whole session
+  // file), NOT a stall. Say so — with the size — and suppress the "likely stuck" cue while it loads.
+  if (t._coldLoad) {
+    const mb = Math.round((t._coldLoad.bytes || 0) / 1048576);
+    node.textContent = pactFmtDuration(elapsed) + "  ⟳ Loading a large conversation" + (mb ? " (" + mb + " MB)" : "") + " — one-time, fast after this…";
+    node.style.color = "var(--amber, #fbbf24)";
+    return;
+  }
+  if (t._coldLoadDoneAt && Date.now() - t._coldLoadDoneAt < 4000) {   // brief "done" confirmation, then normal
+    node.textContent = pactFmtDuration(elapsed) + "  ✓ loaded, continuing";
+    node.style.color = "var(--green, #34d399)";
+    return;
+  }
+  // Silence since the last real event — the stall signal. Use the LATER of (turn start, last real event): a
+  // local send bumps _turnStartedAt but not _lastActiveAt (which still holds the PRIOR turn's stamp), so
+  // without the max a send after a long idle gap would instantly, wrongly read as "stuck".
+  const quiet = Date.now() - Math.max(t._lastActiveAt || 0, t._turnStartedAt || 0);
+  const hard = quiet > PACT_STALL_HARD_MS, soft = !hard && quiet > PACT_STALL_SOFT_MS;
+  node.textContent = pactFmtDuration(elapsed)
+    + (hard ? "  ⚠ likely stuck — ■ Stop or ↻ Reload engine" : soft ? "  · ■ Stop if stuck" : "");
+  node.style.color = hard ? "var(--red, #f87171)" : soft ? "var(--amber, #fbbf24)" : "";
 }
 // The Pact chat ALWAYS has exactly one "prime" conversation: it can never be closed, so there is never a
 // state with zero conversations (a chat box always has one discussion open). If none is flagged yet (fresh
@@ -5585,6 +6111,19 @@ function pactChatEnsurePrime() {
   if (!PACT_CHAT || !PACT_CHAT.tabs.length) return;
   if (!PACT_CHAT.tabs.some((t) => t.prime)) PACT_CHAT.tabs[0].prime = true;
 }
+// ===== PACT TAB DISPLAY ORDER — pure helper (sliced for lib/pactTabsDisplayOrder.test.mjs) =====
+// The tab BAR (desktop strip + mobile "Conversations" sheet) always shows the Master/prime conversation
+// first, regardless of creation order or which tab was most recently promoted (pactChatMakePrime flips
+// `prime` in place — it never moves the tab within PACT_CHAT.tabs, because that array's own order still
+// drives pactChatCloseTab's "which tab becomes active after a close" fallback). So this is a pure,
+// render-only reorder: sort a COPY, stable — everything after Master keeps its original relative order.
+function pactTabsDisplayOrder(tabs) {
+  const arr = Array.isArray(tabs) ? tabs : [];
+  const prime = [], rest = [];
+  for (const t of arr) { (t && t.prime ? prime : rest).push(t); }
+  return prime.concat(rest);
+}
+// ===== end PACT TAB DISPLAY ORDER pure helper =====
 function pactChatStop() {
   // Persist the live draft/layout NOW before tearing down — otherwise the clearTimeout below cancels a
   // pending debounced save and a prompt typed in the last 800ms is silently lost on the way out.
@@ -5592,6 +6131,8 @@ function pactChatStop() {
   PACT_STATE_READY = false; clearTimeout(PACT_STATE_TIMER);   // leaving Pact — stop persisting a torn-down layout
   clearInterval(PACT_STREAM_STALE_TIMER);   // the watchdog is per-stream — reopen re-arms it
   clearInterval(PACT_HEAL_TIMER);
+  clearInterval(PACT_TICK_TIMER);
+  document.getElementById("pact-sync-cue")?.remove();   // don't leave the sync banner orphaned after leaving Pact
   if (PACT_CHAT && PACT_CHAT.es) { try { PACT_CHAT.es.close(); } catch {} PACT_CHAT.es = null; }
 }
 function pactChatActive() { return PACT_CHAT && PACT_CHAT.tabs.find((t) => t.id === PACT_CHAT.activeId); }
@@ -5621,6 +6162,17 @@ function pactChatNewTab() {
   pactChatRender();
   pactStateSave();
 }
+// Promote a conversation to the Master (prime): it becomes always-open/undeletable, the previous Master is
+// demoted (gets its × back). Exactly one prime at all times. Persisted so it sticks across reloads/devices.
+function pactChatMakePrime(id) {
+  if (!PACT_CHAT) return;
+  const t = PACT_CHAT.tabs.find((x) => x.id === id);
+  if (!t || t.prime) return;
+  PACT_CHAT.tabs.forEach((x) => { x.prime = (x.id === id); });   // exactly one Master
+  pactChatRender();
+  pactStateSave();
+  if (typeof pactEdSaveStatus === "function") pactEdSaveStatus("★ Master is now “" + (t.name || "this chat") + "”", false);
+}
 function pactChatCloseTab(id) {
   const t = PACT_CHAT.tabs.find((x) => x.id === id);
   if (!t || t.prime) return;   // the prime conversation can never be closed — never a zero-chat state
@@ -5647,8 +6199,13 @@ function pactChatOpenStream() {
   // disconnected emitted its live events into a dead stream and is otherwise lost to the UI; the
   // resync re-fetches the now-persisted reply. Mirrors the Core cockpit's resyncOpenPanes() on `hello`.
   PACT_STREAM_LAST_MSG_AT = Date.now();   // a fresh stream isn't already stale
-  es.addEventListener("hello", () => { PACT_STREAM_LAST_MSG_AT = Date.now(); pactChatResyncAll(); pactOutboxFlush(); wsPost("control", { action: "usageLimits" }); });
-  es.onmessage = (e) => { PACT_STREAM_LAST_MSG_AT = Date.now(); let m; try { m = JSON.parse(e.data); } catch { return; } pactChatRoute(m); };
+  PACT_STREAM_ERR = false;
+  // Also ask for the MODEL CATALOG on every (re)connect. Pact previously never requested it — only Core's
+  // primeControls did — so on a Pact-only session the cached catalog could be empty and the new desktop
+  // model picker would have nothing but "Default" in it. Now Pact primes it itself.
+  es.addEventListener("hello", () => { PACT_STREAM_LAST_MSG_AT = Date.now(); PACT_STREAM_ERR = false; pactChatResyncAll(); pactOutboxFlush(); wsPost("control", { action: "usageLimits" }); wsPost("control", { action: "models" }); });
+  es.onmessage = (e) => { PACT_STREAM_LAST_MSG_AT = Date.now(); PACT_STREAM_ERR = false; let m; try { m = JSON.parse(e.data); } catch { return; } pactChatRoute(m); };
+  es.onerror = () => { PACT_STREAM_ERR = true; };   // EventSource auto-reconnects; flag it so the sync cue reads "reconnecting" until hello lands
   // Staleness watchdog — the fix for "desktop stuck on thinking while the phone shows the answer". Every
   // message AND the server's 25s heartbeat stamp PACT_STREAM_LAST_MSG_AT; if nothing arrives for
   // WS_STALE_MS the connection is a zombie (see the note where these vars are declared) — force-reconnect,
@@ -5693,6 +6250,16 @@ function pactChatRoute({ kind, sessionKey, data }) {
   // Account-wide plan usage limits (5h/7d) — NOT tied to a tab (the engine answers it from any live
   // session and echoes with the requesting key, which may be null), so handle it before the tab lookup.
   if (kind === "event" && data && data.kind === "usageLimits") { PACT_CHAT.usageLimits = data.limits; pactRenderUsageLimits(); return; }
+  // The MODEL CATALOG answer — cache it in the ONE shared place (cm_models) that both workspaces' pickers
+  // read, then refresh the visible selectors so a freshly-arrived catalog populates them without a reload.
+  if (kind === "state" && data && Array.isArray(data.models) && data.models.length) {
+    try { localStorage.setItem("cm_models", JSON.stringify(data.models)); } catch {}
+    OMNI_CATALOG = data.models.filter((m) => m && typeof m.value === "string" && m.value.startsWith("omni/"));
+    const sel = PACT_CHAT.host && PACT_CHAT.host.querySelector(".pc-model-sel");
+    if (sel && sel._fill) sel._fill();
+    if (typeof PACT_MOBILE_PAINT_CB === "function") PACT_MOBILE_PAINT_CB();   // mobile picker too
+    return;
+  }
   // The per-session history list (state frame, no sessionKey) — refresh the history panel.
   if (kind === "state" && data && Array.isArray(data.pactSessions)) { PACT_CHAT.sessions = data.pactSessions; pactChatRenderHistory(); if (typeof PACT_MOBILE_SESSIONS_CB === "function") PACT_MOBILE_SESSIONS_CB(); return; }
   // A saved chat's transcript arriving to rehydrate a Resume / Load-into-box tab. The frame is keyed
@@ -5735,7 +6302,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
   }
   const t = sessionKey ? pactChatByKey(sessionKey) : null;
   if (!t) return;
-  if (kind === "state") { if (data && data.session) { if (data.session.status) t.status = data.session.status; if (data.session.usage) t.usage = data.session.usage; pactChatMarkTurnBusy(t); pactChatPaint(t); } return; }
+  if (kind === "state") { if (data && data.session) { if (data.session.status) t.status = data.session.status; if (data.session.usage) t.usage = data.session.usage; pactAdoptServerClock(t, data.session); pactChatMarkTurnBusy(t); pactChatPaint(t); } return; }
   if (kind === "permission") { t.perm = { requestId: data.requestId, tool: data.tool || data.name || data.title || "a tool" }; t.status = "awaiting-permission"; pactChatPaint(t); return; }
   if (kind !== "event") return;
   const d = data || {};
@@ -5749,6 +6316,11 @@ function pactChatRoute({ kind, sessionKey, data }) {
     // live switch). Capture it so the header can SHOW it — never a chat bubble.
     case "init":
     case "model": if (d.model) { t.activeModel = d.model; pactUpdateModelNow(t); } return;
+    // Live subagent set (the engine's AUTHORITATIVE full list — see lib/backgroundTasks.mjs). Core already
+    // consumed this; Pact never did, so its model bar's swarm indicator had no data source. Live count, not
+    // cumulative: this is "who is working for me right now", which is the actionable signal when a turn
+    // stalls waiting on a fan-out.
+    case "background": t._background = Array.isArray(d.tasks) ? d.tasks : []; pactUpdateSwarm(t); return;
     // Reconnect catch-up reply (see pactChatResyncAll + `_resync` server-side): the server's
     // AUTHORITATIVE current state. REPLACE the tab's messages with the persisted transcript (never
     // the fresh-open concat — that assumes an empty tab and would DUPLICATE here), guarding on length
@@ -5765,6 +6337,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       pactChatSetLoading(t, false);   // a resync also satisfies an in-flight load — drop the loader
       if (d.usage) t.usage = d.usage;
       if (d.status) t.status = d.status;
+      pactAdoptServerClock(t, d);   // adopt the server's REAL turn start + last-activity so the timer/stall don't restart from zero
       pactChatMarkTurnBusy(t);   // restored mid-turn (e.g. after reload) → show the timer here too
       if (!dec.keepLive) t.live = "";
       if (d.sessionId && !t.resume) { const rid = pactResumeIdOk(d.sessionId, t.key); if (rid) t.resume = rid; }
@@ -5816,6 +6389,22 @@ function pactChatRoute({ kind, sessionKey, data }) {
       return;
     // Context-window usage answer for this tab's session — store + repaint the header indicator.
     case "contextUsage": t.contextUsage = d.usage; if (d.usage && d.usage.model) { t.activeModel = d.usage.model; pactUpdateModelNow(t); } pactUpdateUsageNow(t); return;
+    // Cold-load telemetry (see workspace.mjs): the engine is loading a large conversation's history on resume —
+    // show "Loading… (N MB)" (not "stuck") until it flips to done + normal output. Both drive pactChatTickTimer.
+    case "loadingHistory": coldLoadBegin(t, d.bytes, Date.now()); pactChatMarkTurnBusy(t); pactChatPaint(t); return;
+    case "loadingHistoryDone": if (coldLoadEnd(t, Date.now())) pactChatPaint(t); return;
+    // The engine RECEIVED the ■ Stop press (emitted before the up-to-6s interrupt await). Confirms the
+    // optimistic local flag set on click — so a press is visibly registered even when the interrupt is slow.
+    case "stopping": t._stopping = t._stopping || Date.now(); pactChatPaint(t); return;
+    // Compaction confirmation — the CLI actually ran `/compact`. Show it (with the token drop) and re-request
+    // context usage so the header badge reflects the smaller window immediately (proof it worked).
+    case "compacted": {
+      const k = (n) => (n == null ? null : Math.round(n / 1000) + "k");
+      const pre = k(d.preTokens), post = k(d.postTokens);
+      pactChatFlashNote("🗜 Context compacted" + (pre && post ? " — " + pre + " → " + post + " tokens" : ""));
+      if (t.key) wsPost("control", { action: "contextUsage", args: { sessionKey: t.key } });
+      return;
+    }
     // A prompt sent while this session was still finishing its current turn is refused with `busy`
     // (see lib/workspace.mjs's single-writer turn lock). Normally pactChatSend already queues a
     // mid-turn message rather than POSTing it, so this only fires on a genuine race — a turn started
@@ -5878,11 +6467,12 @@ function pactChatRoute({ kind, sessionKey, data }) {
     }
     case "status":
       t.status = d.status;
+      if (!pactChatBusy(t)) t._stopping = 0;   // the turn ended — drop the "stopping…" cue
       pactChatPaint(t);
       pactChatDrainQueue(t);   // e.g. status→idle after an interrupt: release any queued message
       return;
     case "interrupted":
-      t.status = "idle"; t.msgs.push({ kind: "note", text: "■ interrupted" });
+      t.status = "idle"; t._stopping = 0; t.msgs.push({ kind: "note", text: "■ interrupted" });
       pactChatPaint(t);
       pactChatDrainQueue(t);
       return;
@@ -6023,14 +6613,21 @@ function pactMergeQueued(items, imgCap) {
 // entry points inherit them.
 async function pactChatDispatch(t, text, images) {
   if (!PACT_CHAT || !t) return;
+  t._suggestDismissed = false;   // a new turn is starting — un-dismiss so the next idle suggestion shows
   images = images || [];
   let payload = text;
-  const firstMsg = !t.started;
-  if (firstMsg) { t.started = true; payload = PACT_CHAT_PREAMBLE + "\n\n" + text; }   // orient the agent on the first message
+  // A slash command (/compact, /clear, …) must reach the CLI RAW — never wrapped in the skill preamble or the
+  // discarded-messages note, or the CLI won't recognise it as a command (that's why Compact "did nothing").
+  // It also never counts as the orienting first turn, and must NOT force a fresh/blank start (fresh=firstMsg
+  // below): it should run against the tab's existing/resumed conversation.
+  const isSlash = /^\/[a-zA-Z]/.test(String(text).trim());
+  const firstMsg = !t.started && !isSlash;
+  if (firstMsg) payload = PACT_CHAT_PREAMBLE + "\n\n" + text;   // orient the agent on the first message
+  t.started = true;                                            // any dispatch marks the tab started (a turn is running)
   // If interrupted prompts sitting just above were DISCARDED, tell the agent to skip them — this is what
   // "the next prompt won't include it in its processing" means. Rides the PAYLOAD only, never the visible
   // bubble (userMsg.text below stays clean).
-  const _discarded = pactTrailingDiscarded(t);
+  const _discarded = isSlash ? [] : pactTrailingDiscarded(t);
   if (_discarded.length) {
     const snips = _discarded.map((m) => `“${(m.text || "").replace(/\s+/g, " ").slice(0, 70)}”`).join("; ");
     payload = `(Please DISREGARD my discarded message(s) above — do not act on ${_discarded.length > 1 ? "them" : "it"}: ${snips}. Act only on what follows.)\n\n` + payload;
@@ -6304,7 +6901,105 @@ function pactChatSend(t) {
     pactStateSave();
     return;
   }
+  t._autoCount = 0; t._autoCap = PACT_AUTO_CAP; t._suggestDismissed = false;   // a HUMAN prompt resets the auto-continue loop (+ ceiling) + un-dismisses
   pactChatDispatch(t, text, attachedImages);
+}
+// ===== Idle "suggested next prompt" chip (Claude-GUI-style follow-up) =====
+// When the active tab goes idle after a turn, offer a next-prompt derived from the agent's stated next step.
+// ↳ Use drops it in the compose box to edit; ▷ Send fires it; an optional Auto toggle auto-sends it after a
+// short countdown, BOUNDED to PACT_AUTO_CAP rounds — so an autonomous sweep continues without a human between
+// turns, but can't run away. Only shown when idle, not typing, and after at least one agent reply.
+const PACT_AUTO_CAP = 10, PACT_AUTO_DELAY_MS = 6000;
+function pactSuggestNext(t) {
+  if (!t || !Array.isArray(t.msgs)) return null;
+  const lastAsst = [...t.msgs].reverse().find((m) => m.role === "assistant" && m.text);
+  if (!lastAsst) return null;
+  const txt = String(lastAsst.text);
+  let m = txt.match(/next(?:\s+in\s+the\s+queue|\s+up)?\s*[:\-—]?\s*([A-Za-z][A-Za-z0-9_|>.\-]{1,40})/i);
+  if (m && /[A-Za-z]/.test(m[1])) return { text: "Continue with " + m[1] + "." };
+  m = txt.match(/continue\s+with\s+([A-Za-z][A-Za-z0-9_|>.\-]{1,40})/i);
+  if (m) return { text: "Continue with " + m[1] + "." };
+  return { text: "Continue where you left off." };
+}
+function pactAutoStop(t) { if (t && t._autoTimer) { clearInterval(t._autoTimer); t._autoTimer = null; } if (t) t._autoDeadline = 0; }
+function pactChatDispatchSuggest(t, text) {
+  if (!t || pactChatBusy(t)) return;
+  t._autoCount = (t._autoCount || 0) + 1;   // auto/suggest send counts toward the cap (a human send resets it)
+  pactChatDispatch(t, text, []);
+  t._forceBottom = true; pactChatPaint(t); pactStateSave();
+}
+function pactAutoStart(t, text) {
+  if (!t || t._autoTimer) return;
+  t._autoDeadline = Date.now() + PACT_AUTO_DELAY_MS;
+  const tick = () => {
+    const ta = PACT_CHAT && PACT_CHAT.host && PACT_CHAT.host.querySelector(".pc-input");
+    if (!t._autoContinue || pactChatBusy(t) || t._suggestDismissed || (ta && ta.value.trim())) { pactAutoStop(t); pactChatUpdateSuggest(t); return; }
+    const left = Math.max(0, Math.ceil((t._autoDeadline - Date.now()) / 1000));
+    const cd = PACT_CHAT && PACT_CHAT.host && PACT_CHAT.host.querySelector(".pc-suggest-count");
+    if (cd) cd.textContent = " · sending in " + left + "s";
+    if (Date.now() >= t._autoDeadline) { pactAutoStop(t); pactChatDispatchSuggest(t, text); }
+  };
+  tick(); t._autoTimer = setInterval(tick, 250);
+}
+function pactChatUpdateSuggest(t) {
+  if (!PACT_CHAT || !PACT_CHAT.host) return;
+  const box = PACT_CHAT.host.querySelector(".pc-suggest"); if (!box) return;
+  const active = pactChatActive();
+  if (!active || !t || active.id !== t.id) { box.hidden = true; box.replaceChildren(); box.classList.remove("--running"); pactAutoStop(t); return; }
+  const busy = pactChatBusy(t);
+  const ta = PACT_CHAT.host.querySelector(".pc-input");
+  const typing = !!(ta && ta.value.trim());
+  const hasReply = !!(Array.isArray(t.msgs) && t.msgs.some((m) => m.role === "assistant" && m.text));
+  const autoOn = !!t._autoContinue;
+  const autoCap = t._autoCap || PACT_AUTO_CAP;   // dynamic ceiling — a manual "continue" at the limit grants a fresh batch (10→20→30…)
+  const capReached = (t._autoCount || 0) >= autoCap;
+  // The Auto-continue control is ALWAYS on screen once there's been a reply — on OR off, idle OR mid-round — so
+  // its state is always visible and switchable. The suggestion (Use/Send/countdown) is the extra shown when idle.
+  if (!hasReply || typing) { box.hidden = true; box.replaceChildren(); box.classList.remove("--running"); pactAutoStop(t); return; }
+  box.hidden = false;
+  box.classList.toggle("--running", busy && autoOn);
+  const mob = pactIsMobile();   // on mobile this bar shares a compact row with the worktree pill (pc-toolrow)
+  // The always-present Auto toggle — works idle OR mid-round; unchecking stops the countdown AND future rounds.
+  const autoCb = el("input", { type: "checkbox" }); autoCb.checked = autoOn;
+  autoCb.addEventListener("change", () => {
+    t._autoContinue = autoCb.checked;
+    if (autoCb.checked && (t._autoCount || 0) >= autoCap) t._autoCap = (t._autoCount || 0) + PACT_AUTO_CAP;   // turning it back on at the limit grants the next batch
+    if (!autoCb.checked) pactAutoStop(t);
+    pactChatUpdateSuggest(t); pactStateSave();
+  });
+  const autoLbl = el("label", { class: "pc-suggest-auto" + (autoOn ? " --on" : ""),
+    title: "Auto-continue: automatically send the next prompt when idle (up to " + PACT_AUTO_CAP + " rounds). Toggle any time — including WHILE a round is running." },
+    [autoCb, document.createTextNode(" " + (mob ? "Auto" : "Auto-continue") + ((t._autoCount || 0) ? " (" + t._autoCount + "/" + autoCap + ")" : ""))]);
+  const sugText = ((pactSuggestNext(t) || {}).text) || "Continue where you left off.";   // for the auto-send + the idle suggestion
+  if (busy) {
+    // Mid-round: state + the toggle. On → offer Stop; off → the toggle lets you turn it on right now.
+    pactAutoStop(t);
+    const parts = mob ? [autoLbl] : [el("span", { class: "pc-suggest-lbl" }, autoOn ? ["🔁 ", el("b", {}, ["Auto-continue on"]), el("span", { class: "pc-suggest-sub" }, [" — a round is running…"])] : ["🔁 Auto-continue"]), autoLbl];
+    if (autoOn) { const stop = el("button", { class: "pc-suggest-btn pc-suggest-stopauto", type: "button", title: "Turn auto-continue off now (the running round still finishes)" }, [mob ? "■" : "■ Stop auto"]); stop.addEventListener("click", () => { t._autoContinue = false; pactAutoStop(t); pactChatUpdateSuggest(t); pactStateSave(); }); parts.push(stop); }
+    box.replaceChildren(...parts);
+    return;
+  }
+  // Idle: the suggestion (unless dismissed) + the persistent Auto toggle.
+  const sug = t._suggestDismissed ? null : pactSuggestNext(t);
+  const cd = el("span", { class: "pc-suggest-count" }, []);
+  const parts = [];
+  if (sug) {
+    const sendBtn = el("button", { class: "pc-suggest-btn pc-suggest-send", type: "button", title: capReached ? "Continue and grant the next " + PACT_AUTO_CAP + " auto rounds: " + sug.text : "Send: " + sug.text }, [capReached ? "▷ Continue (+" + PACT_AUTO_CAP + ")" : "▷ Send"]);
+    sendBtn.addEventListener("click", () => { if ((t._autoCount || 0) >= autoCap) t._autoCap = (t._autoCount || 0) + PACT_AUTO_CAP; pactAutoStop(t); pactChatDispatchSuggest(t, sug.text); });
+    const dismiss = el("button", { class: "pc-suggest-x", type: "button", title: "Dismiss the suggestion (Auto-continue stays)" }, ["✕"]);
+    dismiss.addEventListener("click", () => { t._suggestDismissed = true; pactChatUpdateSuggest(t); });
+    if (mob) {
+      parts.push(autoLbl, cd, sendBtn, dismiss);   // compact: drop the verbose "Suggested next: …" text + Use
+    } else {
+      const useBtn = el("button", { class: "pc-suggest-btn", type: "button", title: "Put it in the compose box to edit" }, ["↳ Use"]);
+      useBtn.addEventListener("click", () => { if (ta) { ta.value = sug.text; pactChatAutosize(ta); ta.focus(); } pactAutoStop(t); pactChatUpdateSuggest(t); });
+      parts.push(el("span", { class: "pc-suggest-lbl" }, [capReached ? "Auto limit reached — " : "Suggested next: ", el("b", {}, [sug.text])]), useBtn, sendBtn, autoLbl, cd, dismiss);
+    }
+  } else {
+    parts.push(...(mob ? [autoLbl] : [el("span", { class: "pc-suggest-lbl" }, ["🔁 Auto-continue"]), autoLbl]));
+  }
+  box.replaceChildren(...parts);
+  if (autoOn && !capReached) pactAutoStart(t, sugText); else pactAutoStop(t);
 }
 // The moment the tab genuinely stops being busy (its turn-end `result`, or any other idle transition),
 // release whatever queued while it was working — MERGED into ONE prompt (Core drainQueue parity), not
@@ -6702,21 +7397,40 @@ function pactChatPaint(t) {
   // `work-pulse` ring, and the Stop button shown only while busy. Send stays enabled while busy so a
   // mid-turn send still queues (v1.2.4).
   if (compose) {
-    const send = compose.querySelector(".pc-send");
-    const stop = compose.querySelector(".pc-stop");
+    // Scope the lookup to the HOST, not the compose: on desktop Send/Stop now live in .pc-actionbar
+    // BELOW the type box, so a compose-scoped query would silently find nothing and the buttons would
+    // never update. Mobile still has them inside the compose — host covers both.
+    const scopeEl = (PACT_CHAT && PACT_CHAT.host) || compose;
+    const send = scopeEl.querySelector(".pc-send");
+    const stop = scopeEl.querySelector(".pc-stop");
     const busy = pactChatBusy(t);
     const deep = t.status === "deepwork";
+    // A press of ■ Stop is acknowledged instantly and stays acknowledged: while `_stopping` is set the Send
+    // label reads "Stopping…" and the Stop button goes disabled+dimmed, so the click is never ambiguous even
+    // though the engine's interrupt can take seconds. Cleared when the turn actually ends (status/interrupted).
+    if (!busy) t._stopping = 0;   // safety net: any non-busy repaint drops a stale cue
+    const stopping = !!t._stopping;
     if (send) {
       send.disabled = false;
       send.classList.toggle("busy", busy);
-      send.classList.toggle("deepwork", deep);
-      send.classList.toggle("work-pulse", busy);
-      send.textContent = deep ? "Deep Work…" : busy ? "Working…" : "Send";
+      send.classList.toggle("deepwork", deep && !stopping);
+      send.classList.toggle("work-pulse", busy && !stopping);
+      send.textContent = stopping ? "Stopping…" : deep ? "Deep Work…" : busy ? "Working…" : "Send";
     }
-    if (stop) stop.hidden = !busy;
+    if (stop) {
+      // Desktop: Stop ALWAYS occupies its slot and switches enabled/disabled, so the row never reflows
+      // when a turn starts or ends (Send would otherwise jump sideways under the cursor). Mobile keeps the
+      // hide-when-idle behavior, where horizontal space is the binding constraint.
+      const inBar = !!stop.closest(".pc-actionbar");
+      stop.hidden = inBar ? false : !busy;
+      stop.disabled = inBar ? (!busy || stopping) : stopping;
+      stop.classList.toggle("pc-stop--pending", stopping);
+      stop.textContent = stopping ? "■ Stopping…" : "■ Stop";
+    }
   }
   // Sync the mobile control bar's send/stop + chat count to this tab (no-op on desktop).
   if (typeof PACT_MOBILE_PAINT_CB === "function") PACT_MOBILE_PAINT_CB();
+  pactChatUpdateSuggest(pactChatActive());   // refresh the idle suggestion chip on every event (status changes, new reply, etc.)
 }
 function pactChatPaintLive(t) {
   if (!PACT_CHAT || t.id !== PACT_CHAT.activeId) return;
@@ -6741,20 +7455,185 @@ function prettyModel(m) {
   if (!m) return "";
   return String(m).replace(/^claude-/, "").replace(/-\d{6,}$/, "");
 }
-function chatModelLabel(model, activeModel) {
+// When a session is routed through OmniRoute, `selModel` is the picked "omni/<id>" — derive WHICH connected
+// account served it from the id prefix (mirrors lib/omniRoute.mjs omniProviderOf; `auto/*` is dynamic so we
+// just say "Auto"). Returns "" for a direct-Claude session. Your 5 accounts: Claude/Cursor/Groq/Kimi/OpenRouter.
+function omniProviderTag(selModel) {
+  const s = String(selModel || "");
+  if (!s.startsWith("omni/")) return "";
+  const id = s.replace(/^omni\//, "");
+  if (/^auto(\/|$)/.test(id)) return "OmniRoute · Auto";
+  if (/^cc\/claude-/.test(id)) return "OmniRoute · Claude (bica.mihai.g)";
+  if (/^groq\//.test(id)) return "OmniRoute · Groq";
+  if (/^cursor\//.test(id)) return "OmniRoute · Cursor";
+  if (/^(kimi|moonshot|km)\//.test(id)) return "OmniRoute · Kimi";
+  if (/:free$/.test(id) || /^openrouter\//.test(id)) return "OmniRoute · OpenRouter";
+  return "OmniRoute";
+}
+function chatModelLabel(model, activeModel, selModel) {
   const m = model || activeModel;
-  return m ? prettyModel(m) : "";
+  const base = m ? prettyModel(m) : "";
+  const tag = omniProviderTag(selModel);
+  if (tag) return (base ? base + " · " : "") + "via " + tag;
+  return base;
 }
 // ===== end CHAT MODEL LABEL pure helper =====
+// ===== MODEL OPTION GROUPS — pure helper (sliced for lib/modelOptionGroups.test.mjs) =====
+// Shapes a flat model-catalog list into the selector's option groups, shared by the Core desktop selector
+// (fillModelSelect) and the mobile/Pact-desktop selector (buildMobileModelSelect) so the two can't drift.
+//
+// Two asks drove this: (1) Anthropic-key models and OmniRoute models must be visually separate, never a flat
+// list you decode by reading an id prefix; (2) OmniRoute's default view must show only the curated Auto
+// combos (self-healing "just works" picks) — NOT every individual model from every connected account, which
+// (once keepOmniId in lib/omniRoute.mjs stopped silently dropping Cursor/Kimi/OpenRouter) can run into the
+// hundreds (one Cursor account alone exposes ~220). Those individual models still need to be reachable — for
+// testing what OmniRoute actually exposes and what works — behind an explicit "▸ More models (N)…" row so
+// they never bury the combos in normal use. `showAll` toggles that expansion; when open, individuals are
+// grouped by provider (Claude via OmniRoute / Groq / Cursor / Kimi / OpenRouter) and a "▾ Fewer models" row
+// collapses back. Pure over plain data — no DOM — so the split logic itself is unit-tested.
+const OMNI_MORE_VALUE = "__omni_more__";
+const OMNI_LESS_VALUE = "__omni_less__";
+function modelOptionGroups(list) {
+  const items = Array.isArray(list) ? list.filter((m) => m && typeof m.value === "string") : [];
+  const isOmni = (m) => m.value.startsWith("omni/");
+  const anthropic = items.filter((m) => !isOmni(m)).map((m) => ({ value: m.value, label: m.displayName || m.value }));
+  const omni = items.filter(isOmni);
+  const combos = omni.filter((m) => m.combo).map((m) => ({ value: m.value, label: m.displayName || m.value }));
+  const individual = omni.filter((m) => !m.combo);
+  const byProvider = new Map();
+  for (const m of individual) {
+    const k = m.providerLabel || "Other";
+    if (!byProvider.has(k)) byProvider.set(k, []);
+    byProvider.get(k).push({ value: m.value, label: m.displayName || m.value });
+  }
+  const individualGroups = [...byProvider.entries()].map(([label, opts]) => ({ label: "OmniRoute · " + label, options: opts }));
+  return {
+    anthropic,
+    combos,
+    moreOption: individual.length ? { value: OMNI_MORE_VALUE, label: "▸ More models (" + individual.length + ")…" } : null,
+    individualGroups,
+    lessOption: individual.length ? { value: OMNI_LESS_VALUE, label: "▾ Fewer models" } : null,
+  };
+}
+// ===== end MODEL OPTION GROUPS pure helper =====
+// Shared MOBILE model picker for BOTH workspaces (Core + Pact). Desktop has per-pane selectors; mobile had
+// none. Reads the ONE global cached catalog (cm_models — refreshed whenever any session answers "models",
+// mirrors the server cross-session cache) and applies the pick to the LIVE session immediately via the same
+// `setModel` control action the desktop Core selector uses; the choice also rides the next prompt's body, so
+// it still takes effect if no session is live yet. NOTE: switching ACROSS lanes (Direct-Claude ⇄ OmniRoute)
+// only re-routes on the next fresh session — the base URL is fixed at spawn (see lib/claudeSession.mjs). Hooks:
+// { model():string|null, active():string, sessionKey():string|null, set(model) }. Call sel._fill() to refresh.
+function buildMobileModelSelect(hooks) {
+  const sel = el("select", { class: "wsel wsel-sm cm-mmodel", title: "Model for this conversation (applies live; cross-lane switch takes effect next session)" }, []);
+  sel._fill = () => {
+    const value = hooks.model() || "";
+    const active = hooks.active ? hooks.active() : "";
+    // No synthetic "Default" entry (see fillModelSelect for the desktop rationale) — with no explicit pick,
+    // show/select the REAL model actually running, grouped Anthropic vs OmniRoute (combos only by default).
+    const list = readCachedModels().filter((m) => m && typeof m.value === "string" && (routingOmniVisible() || !m.value.startsWith("omni/")));
+    const g = modelOptionGroups(list);
+    const mkOpt = (o) => el("option", { value: o.value }, [o.label]);
+    const groups = [];
+    if (g.anthropic.length) groups.push(el("optgroup", { label: "Anthropic" }, g.anthropic.map(mkOpt)));
+    if (g.combos.length) groups.push(el("optgroup", { label: "OmniRoute" }, g.combos.map(mkOpt)));
+    if (sel._omniShowAll && g.individualGroups.length) {
+      for (const grp of g.individualGroups) groups.push(el("optgroup", { label: grp.label }, grp.options.map(mkOpt)));
+      if (g.lessOption) groups.push(el("optgroup", { label: "OmniRoute" }, [mkOpt(g.lessOption)]));
+    } else if (g.moreOption) {
+      groups.push(el("optgroup", { label: "OmniRoute" }, [mkOpt(g.moreOption)]));
+    }
+    const shown = value || active || "";
+    if (shown && !list.some((m) => m.value === shown)) groups.push(el("option", { value: shown }, [shown]));   // keep an already-picked (or uncataloged active) model visible
+    sel.replaceChildren(...groups);
+    sel.value = shown;
+  };
+  sel._fill();
+  sel.addEventListener("change", () => {
+    // "More models…" / "Fewer models" are in-list rows, not a real pick — toggle the expansion and rebuild.
+    if (sel.value === OMNI_MORE_VALUE || sel.value === OMNI_LESS_VALUE) { sel._omniShowAll = sel.value === OMNI_MORE_VALUE; sel._fill(); return; }
+    hooks.set(sel.value || null);
+  });
+  return sel;
+}
 // Update the Pact header's "· <model>" readout in place (no full re-render, which would rebuild .pc-scroll
 // and re-home the Live/Held bulb). Only reflects the currently-visible tab.
 function pactUpdateModelNow(t) {
   if (!PACT_CHAT || !PACT_CHAT.host) return;
   if (t && t.id !== PACT_CHAT.activeId) return;
   const span = PACT_CHAT.host.querySelector(".pc-model-now");
-  const lbl = t ? chatModelLabel(null, t.activeModel) : "";
+  const lbl = t ? chatModelLabel(null, t.activeModel, t.model) : "";
   if (span) span.textContent = lbl ? "· " + lbl : "";
 }
+/** Model-bar swarm indicator: one small figure per LIVE subagent, lit while it works. In-place like
+ *  pactUpdateModelNow — never repaints the transcript. Renders nothing at all when no subagents are
+ *  running, so a plain single-agent turn shows an empty (not misleadingly "0 of N") strip. */
+function pactUpdateSwarm(t) {
+  if (!PACT_CHAT || !PACT_CHAT.host) return;
+  if (t && t.id !== PACT_CHAT.activeId) return;
+  paintSwarm(PACT_CHAT.host.querySelector(".pc-swarm"), (t && t._background) || []);
+}
+/** ONE swarm renderer shared by Core and Pact — the unified chat box means one implementation, not two
+ *  that drift. `tasks` is the engine's live background set; entries marked "removed" are finished and are
+ *  filtered out, so this shows who is working RIGHT NOW rather than a cumulative total. Draws nothing when
+ *  idle (an empty strip, not a misleading "0"). */
+function paintSwarm(box, tasks) {
+  if (!box) return;
+  const s = swarmState(tasks);
+  if (!s.count) { box.replaceChildren(); box.title = s.title; return; }
+  const figs = Array.from({ length: s.shown }, () => el("span", { class: "pc-swarm-fig --on" }, []));
+  box.replaceChildren(...figs, el("span", { class: "pc-swarm-n" }, [String(s.count)]));
+  box.title = s.title;
+}
+// ===== COLD-LOAD STATUS — pure helper (sliced by lib/coldLoadStatus.test.mjs; keep the markers) =====
+// Opening a big conversation triggers a cold-load: the SDK streams the whole session file in, which can take
+// seconds-to-minutes. While that runs we force the tab's status to "thinking" so the composer reads busy and
+// nothing is sent into a half-loaded tab. That synthetic busy MUST be undone when the load ends — the bug that
+// stranded a tab as "Working…" forever (● thinking… timer climbing, Stop+Send both live, auto-continue blocked,
+// "the workspace is dead") was loadingHistoryDone clearing the loader spinner but NEVER restoring the status.
+//
+// We only ever undo OUR OWN flip. A conversation reopened WITH a genuine turn in flight is already "thinking"
+// when the load starts, so the `=== "idle"` guard below never fires and `_coldLoadSynth` is never set — its real
+// busy state is left untouched. And a human/auto send can't start a turn DURING the load (the composer is busy),
+// so a synthetic "thinking" can never be silently promoted into a real one behind our back.
+const COLD_LOAD_STALE_MS = 180000;   // a DROPPED loadingHistoryDone must not strand a tab past ~3 min — see watchdog
+function coldLoadBegin(tab, bytes, now) {
+  now = now || Date.now();
+  tab._coldLoad = { bytes: bytes || 0, at: now };
+  tab._coldLoadDoneAt = 0;
+  if (tab.status === "idle") { tab.status = "thinking"; tab._coldLoadSynth = true; }   // tag OUR flip so only we revert it
+  return tab;
+}
+function coldLoadEnd(tab, now) {
+  if (!tab || !tab._coldLoad) return false;   // nothing loading (or already ended) — idempotent, safe from a dup/late done
+  tab._coldLoad = null;
+  tab._coldLoadDoneAt = now || Date.now();
+  if (tab._coldLoadSynth && tab.status === "thinking") { tab.status = "idle"; tab._turnStartedAt = null; }   // revert exactly our flip
+  tab._coldLoadSynth = false;
+  return true;
+}
+function coldLoadStale(tab, now) {
+  now = now || Date.now();
+  return !!(tab && tab._coldLoad && typeof tab._coldLoad.at === "number" && (now - tab._coldLoad.at) > COLD_LOAD_STALE_MS);
+}
+// ===== end COLD-LOAD STATUS pure helper =====
+// ===== SWARM STATE — pure helper (sliced by lib/swarmState.test.mjs; keep the markers) =====
+/** Decide what the swarm indicator shows from the engine's background-task set. Pure so the counting
+ *  rules are testable without a DOM. Entries whose status is "removed" are FINISHED — lib/backgroundTasks.mjs
+ *  marks them rather than dropping them, so counting raw length would keep dead subagents lit forever. */
+function swarmState(tasks) {
+  const live = (Array.isArray(tasks) ? tasks : []).filter((x) => x && x.status !== "removed");
+  const count = live.length;
+  return {
+    count,
+    // Cap the DRAWN figures so a large fan-out can't overflow the bar; the numeric badge still carries
+    // the true count, so 40 subagents reads "12 figures + 40" rather than silently looking like 12.
+    shown: Math.min(count, 12),
+    title: !count ? "Subagents working right now"
+      : count === 1 ? "1 subagent working"
+      : count + " subagents working",
+  };
+}
+// ===== end SWARM STATE pure helper =====
 // Update ONLY the header token/context badge in place — NEVER repaint the transcript. A contextUsage answer
 // changes no messages, so calling pactChatPaint for it would replaceChildren the scroll and (on the ~20s
 // self-heal resync) nudge a Held reader's position. This keeps Held actually held.
@@ -6785,17 +7664,24 @@ function pactChatRender() {
   const _keepFocus = !!_prevInput && document.activeElement === _prevInput;
   const _selStart = _keepFocus ? _prevInput.selectionStart : null;
   const _selEnd = _keepFocus ? _prevInput.selectionEnd : null;
-  const tabs = PACT_CHAT.tabs.map((t) => {
+  const tabs = pactTabsDisplayOrder(PACT_CHAT.tabs).map((t) => {
     const dot = el("span", { class: "pc-tab-dot" + (t.status === "thinking" || t.status === "deepwork" ? " busy" : "") });
     const label = (t.key && PACT_CHAT_NAMES[t.key]) || t.name;
     const nameEl = el("span", { class: "pc-tab-name", title: "Double-click to rename this chat" }, [label]);
     nameEl.addEventListener("dblclick", (e) => { e.stopPropagation(); pactChatRenameTab(t); });
     // A small worktree marker so parallel conversations on different checkouts are distinguishable at a glance.
     const wtMark = t.worktree ? el("span", { class: "pc-tab-wt", title: "Runs in worktree: " + t.worktree }, ["⌥" + t.worktree]) : "";
-    // The prime conversation can't be closed — show a ★ marker instead of the × close.
+    // The prime (Master) conversation can't be closed — show a ★ marker instead of the × close. A non-prime tab
+    // gets a ☆ "make Master" control (promotes it, demoting the current Master) plus the × close.
     let tail;
-    if (t.prime) { tail = el("span", { class: "pc-tab-prime", title: "Prime conversation — always open, can't be closed" }, ["★"]); }
-    else { tail = el("span", { class: "pc-tab-x", title: "Close chat" }, ["×"]); tail.addEventListener("click", (e) => { e.stopPropagation(); pactChatCloseTab(t.id); }); }
+    if (t.prime) { tail = el("span", { class: "pc-tab-prime", title: "Master conversation — always open, can't be closed" }, ["★"]); }
+    else {
+      const mk = el("span", { class: "pc-tab-mkprime", title: "Make this the Master conversation" }, ["☆"]);
+      mk.addEventListener("click", (e) => { e.stopPropagation(); pactChatMakePrime(t.id); });
+      const x = el("span", { class: "pc-tab-x", title: "Close chat" }, ["×"]);
+      x.addEventListener("click", (e) => { e.stopPropagation(); pactChatCloseTab(t.id); });
+      tail = el("span", { class: "pc-tab-tail" }, [mk, x]);
+    }
     const tab = el("div", { class: "pc-tab" + (t.id === PACT_CHAT.activeId ? " --active" : "") + (t.prime ? " --prime" : "") + (t.worktree ? " --wt" : "") }, [dot, nameEl, wtMark, tail]);
     tab.addEventListener("click", () => { if (t.id === PACT_CHAT.activeId) return; pactChatSaveDraft(); PACT_CHAT.activeId = t.id; t._forceBottom = true; pactChatRender(); pactStateSave(); pactChatCatchUp(t); });
     return tab;
@@ -6842,9 +7728,46 @@ function pactChatRender() {
   // Live readout of the model THIS conversation actually runs (captured from the agent's `init`/`model`
   // events — see the `case "init"` in pactChatRoute). "Default" no longer hides which model that is.
   const modelNow = el("span", { class: "pc-model-now", title: "The model this conversation is actually running" }, []);
-  { const _a = PACT_CHAT.tabs.find((x) => x.id === PACT_CHAT.activeId); const _lbl = _a ? chatModelLabel(null, _a.activeModel) : ""; if (_lbl) modelNow.textContent = "· " + _lbl; }
-  const headKids = [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, compactBtn, bmWrap, el("span", { class: "ws-spacer" }, []), headBulb, modelNow, usageEl, modeSel, chatCollapse];
+  { const _a = PACT_CHAT.tabs.find((x) => x.id === PACT_CHAT.activeId); const _lbl = _a ? chatModelLabel(null, _a.activeModel, _a.model) : ""; if (_lbl) modelNow.textContent = "· " + _lbl; }
+  // DESKTOP model picker for Pact. Pact only ever had the read-only `.pc-model-now` readout, so a Pact
+  // conversation was stuck on whatever it defaulted to (typically Sonnet) with no way to move it to Opus —
+  // Core had a selector, Pact didn't. Same catalog + same live `setModel` control action as Core/mobile, so
+  // all three stay in step. (Cross-lane Direct⇄OmniRoute switches still only re-route on the next session.)
+  const pactModelSel = buildMobileModelSelect({
+    model: () => { const a = pactChatActive(); return a ? a.model : null; },
+    active: () => { const a = pactChatActive(); return a ? a.activeModel : ""; },
+    set: (model) => {
+      const a = pactChatActive(); if (!a) return;
+      a.model = model || undefined;
+      if (a.key) wsPost("control", { action: "setModel", args: { sessionKey: a.key, model: a.model || null } });
+      pactUpdateModelNow(a);
+      pactStateSave();   // the pick must survive a reload, like every other per-conversation setting
+    },
+  });
+  pactModelSel.classList.add("pc-model-sel");
+  // ── Layout (desktop), top → bottom: the header carries ONLY conversation identity — tabs on the left,
+  // the three chat actions (+ / history / sync) right-aligned. Everything model- and session-related moved
+  // OUT of this row into its own model bar below the composer (see modelBar). The old single row carried 12
+  // children and overflowed; splitting by concern is what makes both rows readable.
+  // MOBILE keeps the original single-row header (space is the binding constraint there, not clarity) — the
+  // mobile pass is deliberately deferred, so `mob` still gets the old composition verbatim.
+  const mob = pactIsMobile();   // declared up-front: both the header split (headKids) and the model bar below read it
+  const headActions = el("div", { class: "pc-head-actions" }, [add, hist, sync]);
+  const headKids = mob
+    ? [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, compactBtn, bmWrap, el("span", { class: "ws-spacer" }, []), headBulb, modelNow, pactModelSel, usageEl, modeSel, chatCollapse]
+    : [el("div", { class: "pc-tabs" }, tabs), el("span", { class: "ws-spacer" }, []), headActions, chatCollapse];
   const head = el("div", { class: "pact-zone-hd pc-head" }, headKids);
+  // ── The model bar (desktop): every model/session control in one place, below the composer.
+  // Left → right: model selector · what's ACTUALLY running · context · agent swarm ··· Compact · Bypass.
+  // Readouts left, actions right. `modelNow` and `usageEl` are the SAME nodes the existing update paths
+  // (pactUpdateModelNow / pactUpdateUsageNow) already query by class, so re-parenting them here keeps every
+  // live update working without touching those functions.
+  const swarmEl = el("div", { class: "pc-swarm", title: "Subagents working right now" }, []);
+  const modelBar = mob ? null : el("div", { class: "pc-modelbar" }, [
+    pactModelSel, modelNow, usageEl, swarmEl,
+    el("span", { class: "ws-spacer" }, []),
+    headBulb, compactBtn, modeSel,
+  ]);
   const scroll = el("div", { class: "pc-scroll" }, []);
   const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (⌘/Ctrl+Enter to send)" });
   const send = el("button", { class: "pc-send" }, ["Send"]);
@@ -6854,7 +7777,9 @@ function pactChatRender() {
   // so a mid-turn send still queues (v1.2.4).
   const stop = el("button", { class: "pc-stop", title: "Stop the current response (keeps the conversation)" }, ["■ Stop"]);
   stop.hidden = true;
-  stop.addEventListener("click", () => { const a = pactChatActive(); if (a && a.key) wsPost("stop", { sessionKey: a.key }); });
+  // Flip to "stopping…" LOCALLY on click — never wait for the round-trip. The engine's interrupt can take
+  // seconds on a wedged turn, and an unchanged button reads as "the press did nothing".
+  stop.addEventListener("click", () => { const a = pactChatActive(); if (!a || !a.key) return; a._stopping = Date.now(); pactChatPaint(a); wsPost("stop", { sessionKey: a.key }); });
   const active = pactChatActive();
   if (active) input.value = active.draft || "";   // restore this tab's saved compose draft
   send.addEventListener("click", () => pactChatSend(active));
@@ -6888,7 +7813,13 @@ function pactChatRender() {
     title: "This conversation runs in this git worktree — click to bind, migrate, or merge back to main" },
     [(a0 && a0.worktree) ? "⌥ " + a0.worktree : "⌂ main", el("span", { class: "pc-wtpill-caret" }, ["▾"])]);
   wtPill.addEventListener("click", (e) => { e.stopPropagation(); const r = wtPill.getBoundingClientRect(); pactChatWorktreeMenu(pactChatActive(), r.left, r.top); });
-  const compose = el("div", { class: "pc-compose" }, [imgFileInput, wtPill, attach, input, stop, sendWrap]);
+  // DESKTOP: the composer is now just the textarea, full width. The controls that used to sit inline beside
+  // it move to a dedicated bar BELOW it (pc-actionbar): upload · worktree · repo/workspace · repo-history
+  // toggle · live/held on the left, and ■ Stop + Send right-aligned. Stop is ALWAYS present and toggles
+  // enabled/disabled rather than appearing and vanishing, so the row never reflows mid-turn.
+  const compose = mob
+    ? el("div", { class: "pc-compose" }, [imgFileInput, attach, input, stop, sendWrap])
+    : el("div", { class: "pc-compose --stacked" }, [imgFileInput, input]);
   compose.addEventListener("dragover", (e) => { e.preventDefault(); compose.classList.add("pc-drag"); });
   compose.addEventListener("dragleave", () => compose.classList.remove("pc-drag"));
   compose.addEventListener("drop", (e) => {
@@ -6897,7 +7828,28 @@ function pactChatRender() {
     pactAttachImageFiles(pactChatActive(), files);
   });
   const composeExtras = el("div", { class: "pc-compose-extras" }, [imgPreview, imgErr]);
-  host.replaceChildren(head, scroll, composeExtras, compose);
+  const suggest = el("div", { class: "pc-suggest" });   // idle "suggested next prompt" chip (populated by pactChatUpdateSuggest)
+  // MOBILE: bake the worktree pill + the Auto/suggest controls into ONE row (pc-toolrow) to save a whole row of
+  // vertical space. DESKTOP: worktree pill stays inline in the compose; the suggest bar sits on its own row.
+  // DESKTOP action bar — the line directly BENEATH the type box. Left: upload · worktree · repo/workspace ·
+  // repo-history toggle. Right: ■ Stop (always present; enabled only mid-turn) then Send. Stop keeps its slot
+  // whatever the turn state, so nothing shifts under the cursor when a turn starts or ends.
+  const actionBar = mob ? null : el("div", { class: "pc-actionbar" }, [
+    attach, wtPill, el("span", { class: "pc-repo-lbl", title: PACT_REPO }, [PACT_REPO.split("/").pop()]),
+    el("span", { class: "ws-spacer" }, []),
+    stop, sendWrap,
+  ]);
+  // DESKTOP order, top → bottom: header (tabs + actions) · transcript · pasted-image strip · continuation
+  // line (suggest + ★ bookmark) · type box · action bar (upload/repo/worktree ··· Stop · Send) · model bar.
+  // Mobile keeps its existing compact composition untouched — that pass comes after this one is confirmed.
+  if (mob) host.replaceChildren(head, scroll, composeExtras, el("div", { class: "pc-toolrow" }, [suggest, wtPill]), compose);
+  else {
+    // ★ Bookmark moves onto the continuation line, beside the suggested-next chip.
+    const contLine = el("div", { class: "pc-contline" }, [suggest, bmWrap]);
+    host.replaceChildren(head, scroll, composeExtras, contLine, compose, actionBar, modelBar);
+  }
+  pactChatUpdateSuggest(pactChatActive());
+  pactUpdateSwarm(pactChatActive());   // a rebuild mints a fresh .pc-swarm — repaint from the tab's live set
   // Re-focus the freshly-mounted compose + restore the caret if the user was typing when this rebuild ran
   // (see the capture at the top) — so a background rebuild never interrupts typing. `input` IS the new node.
   if (_keepFocus && input) { input.focus(); try { input.setSelectionRange(_selStart == null ? input.value.length : _selStart, _selEnd == null ? input.value.length : _selEnd); } catch { /* detached/unsupported — ignore */ } }
@@ -7258,7 +8210,7 @@ function viewPactMobile() {
       openSheet("★ Bookmarked responses", body);
     });
     const syncB = tbtn("↻", "Sync now — re-fetch the latest state (no page reload)", () => pactChatForceResync(syncB));
-    const stopB = tbtn("■", "Stop", () => { const a = pactChatActive(); if (a && a.key) wsPost("stop", { sessionKey: a.key }); }, "pactm-cbtn-stop");
+    const stopB = tbtn("■", "Stop", () => { const a = pactChatActive(); if (!a || !a.key) return; a._stopping = Date.now(); pactChatPaint(a); wsPost("stop", { sessionKey: a.key }); }, "pactm-cbtn-stop");
     stopB.hidden = true;
     const sendB = tbtn("➤", "Send", () => pactChatSend(pactChatActive()), "pactm-cbtn-send");
     const spacer = el("span", { class: "ws-spacer" }, []);
@@ -7270,7 +8222,17 @@ function viewPactMobile() {
     // Live/Held scroll-mode bulb centered BETWEEN them — so the indicator no longer sits over the prompt text.
     // Bottom controls row is just the two corner tabs now — Conversations (left) + Bookmarks (right); the
     // Live/Held bulb moved UP into the chat header (.pc-head-bulb).
-    const modeBar = el("div", { class: "pactm-modebar" }, [chatsBar, bmBar]);
+    const modelSel = buildMobileModelSelect({
+      model: () => { const a = pactChatActive(); return a ? a.model : null; },
+      active: () => { const a = pactChatActive(); return a ? a.activeModel : ""; },
+      set: (model) => {
+        const a = pactChatActive(); if (!a) return;
+        a.model = model || undefined;
+        if (a.key) wsPost("control", { action: "setModel", args: { sessionKey: a.key, model: a.model || null } });
+        pactUpdateModelNow(a);
+      },
+    });
+    const modeBar = el("div", { class: "pactm-modebar" }, [chatsBar, modelSel, bmBar]);
     // Dock the ONE Live/Held bulb into the HEADER host. pactChatRender rebuilds .pc-scroll (fresh controller +
     // fresh floating bulb) and .pc-head (fresh host) on every render, so re-home the current controller's bulb
     // into the current header host every paint — CLEAR it first so a stale bulb can't linger beside it.
@@ -7292,11 +8254,16 @@ function viewPactMobile() {
     // Keep send/stop + the chat count in step with the active tab's live state — pactChatPaint fires this.
     PACT_MOBILE_PAINT_CB = () => {
       const a = pactChatActive(); const busy = !!(a && pactChatBusy(a)); const deep = !!(a && a.status === "deepwork");
-      sendB.textContent = deep ? "🔴" : busy ? "…" : "➤";
+      const stopping = !!(a && a._stopping && busy);
+      sendB.textContent = stopping ? "◌" : deep ? "🔴" : busy ? "…" : "➤";
       sendB.classList.toggle("busy", busy);
       stopB.hidden = !busy;
+      stopB.disabled = stopping;                                  // pressed → visibly dead, not "did nothing"
+      stopB.classList.toggle("pactm-cbtn-stop--pending", stopping);
+      stopB.title = stopping ? "Stopping…" : "Stop";
       const nchat = (PACT_CHAT && PACT_CHAT.tabs.length) || 0;
       chatsBar._n.textContent = "[" + nchat + "]"; chatsBar._n.hidden = nchat < 1;
+      modelSel._fill();   // keep the picker in step with the active tab (switching tabs / catalog refresh)
       dockModeBulb();   // ALWAYS re-home the single current bulb here — a fresh pactChatRender leaves a stale one otherwise
     };
     PACT_MOBILE_PAINT_CB();
@@ -7313,7 +8280,7 @@ function viewPactMobile() {
       const add = el("div", { class: "pactm-frow pactm-frow-new" }, [el("span", { class: "pactm-frow-name" }, ["＋ New conversation"])]);
       onTap(add, () => { pactChatNewTab(); closeSheet(); renderStage(); });
       rows.push(add);
-      (PACT_CHAT.tabs || []).forEach((t) => {
+      pactTabsDisplayOrder(PACT_CHAT.tabs).forEach((t) => {
         const label = (t.key && PACT_CHAT_NAMES[t.key]) || t.name;
         // A live, non-interactive status light mirroring the send button's colour — see it at a glance:
         // idle (ready for a prompt), working, or deep work. Kept current by pactChatSyncConvoDots.
@@ -7322,12 +8289,16 @@ function viewPactMobile() {
         const name = el("span", { class: "pactm-frow-name" }, [label]);
         // The prime conversation can't be closed — a ★ marker replaces the × close button.
         let tail;
-        if (t.prime) { tail = el("span", { class: "pactm-frow-prime", title: "Prime conversation" }, ["★"]); }
+        if (t.prime) { tail = el("span", { class: "pactm-frow-prime", title: "Master conversation" }, ["★"]); }
         else {
-          tail = el("button", { class: "pactm-frow-x", type: "button", "aria-label": "Close conversation" }, ["×"]);
+          const mk = el("button", { class: "pactm-frow-mkprime", type: "button", "aria-label": "Make this the Master" }, ["☆"]);
+          const mkFn = (e) => { e.stopPropagation(); pactChatMakePrime(t.id); rebuild(); };
+          mk.addEventListener("click", mkFn); mk.addEventListener("touchend", (e) => { e.preventDefault(); mkFn(e); });
+          const x = el("button", { class: "pactm-frow-x", type: "button", "aria-label": "Close conversation" }, ["×"]);
           const closeConv = (e) => { e.stopPropagation(); pactChatCloseTab(t.id); rebuild(); };   // pactChatCloseTab re-renders the chat + saves
-          tail.addEventListener("click", closeConv);
-          tail.addEventListener("touchend", (e) => { e.preventDefault(); closeConv(e); });
+          x.addEventListener("click", closeConv);
+          x.addEventListener("touchend", (e) => { e.preventDefault(); closeConv(e); });
+          tail = el("span", { class: "pactm-frow-tail" }, [mk, x]);
         }
         const row = el("div", { class: "pactm-frow" + (t.id === PACT_CHAT.activeId ? " --active" : "") + (t.prime ? " --prime" : "") }, [state, name, tail]);
         onTap(row, () => { if (t.id !== PACT_CHAT.activeId) { pactChatSaveDraft(); PACT_CHAT.activeId = t.id; pactChatRender(); pactStateSave(); pactChatCatchUp(t); } closeSheet(); renderStage(); });
@@ -7349,11 +8320,28 @@ function viewPactMobile() {
   function openChatHistory() {
     if (!PACT_CHAT) return;
     const list = el("div", { class: "pactm-sheet-list" }, []);
+    // Same Open/Retired split as the desktop history panel (see pactHistIsOpen) — a long-running repo's
+    // history otherwise buries the handful of chats you actually have open under months of finished ones.
+    const tabsBar = el("div", { class: "pc-hist-tabs" }, []);
     const rebuild = () => {
       const rows = (PACT_CHAT && PACT_CHAT.sessions) || null;
-      if (!rows) { list.replaceChildren(el("div", { class: "pactm-empty" }, ["Loading saved conversations…"])); return; }
-      if (!rows.length) { list.replaceChildren(el("div", { class: "pactm-empty" }, ["No saved conversations."])); return; }
-      list.replaceChildren(...rows.map((r) => {
+      if (!rows) { tabsBar.replaceChildren(); list.replaceChildren(el("div", { class: "pactm-empty" }, ["Loading saved conversations…"])); return; }
+      const tabs = PACT_CHAT.tabs || [];
+      const openRows = rows.filter((r) => pactHistIsOpen(r, tabs));
+      const retiredRows = rows.filter((r) => !pactHistIsOpen(r, tabs));
+      if (PACT_HIST_TAB !== "open" && PACT_HIST_TAB !== "retired") PACT_HIST_TAB = "open";
+      const mkTabBtn = (key, label, n) => {
+        const b = el("button", { class: "pc-hist-tabbtn" + (PACT_HIST_TAB === key ? " --active" : ""), type: "button" }, [label + " (" + n + ")"]);
+        onTap(b, () => { if (PACT_HIST_TAB !== key) { PACT_HIST_TAB = key; rebuild(); } });
+        return b;
+      };
+      tabsBar.replaceChildren(mkTabBtn("open", "Open", openRows.length), mkTabBtn("retired", "Retired", retiredRows.length));
+      const shown = PACT_HIST_TAB === "retired" ? retiredRows : openRows;
+      if (!shown.length) {
+        list.replaceChildren(el("div", { class: "pactm-empty" }, [PACT_HIST_TAB === "retired" ? "No retired chats — a chat lands here once you close its tab." : "No saved conversations open right now."]));
+        return;
+      }
+      list.replaceChildren(...shown.map((r) => {
         const name = el("div", { class: "pactm-hrow-name" }, [pactIsPrimeRow(r) ? el("span", { class: "pc-tab-prime" }, ["★ "]) : "", pactHistName(r)]);
         const meta = el("div", { class: "pactm-hrow-meta" }, [pactChatMsgLabel(r.turns) + (r.updatedAt ? " · " + pactAgo(r.updatedAt) : "") + (r.realSessionId ? "" : " · no resume")]);
         const first = el("div", { class: "pactm-hrow-first" }, [r.firstPrompt || "(no prompt)"]);
@@ -7362,7 +8350,7 @@ function viewPactMobile() {
         return row;
       }));
     };
-    openSheet("Chat history", list);
+    openSheet("Chat history", el("div", {}, [tabsBar, list]));
     rebuild();
     PACT_MOBILE_SESSIONS_CB = () => { if (sheetEl) rebuild(); };   // re-render when the sessions frame lands
     // If the sheet is dismissed, drop the callback so a later fetch doesn't touch a gone sheet.
@@ -7448,7 +8436,7 @@ function viewWorkspace() {
 
   // ---- view state ----------------------------------------------------------------
   const st = {
-    repos: [], tree: null, defaultMode: "default", hasToken: true,
+    repos: [], tree: null, defaultMode: routingDefaultPermMode(), hasToken: true,   // NEW panes start in the GLOBAL default permission mode (Admin → Model routing) — applies on every device incl. mobile
     sidebarMode: "tree",           // tree | repos — tree is the default (Windows-style, collapsible)
     treeExpanded: new Set(),       // folder paths currently expanded
     cols: 1, rows: 1,              // pane grid — up to WS_MAX_COLS × WS_MAX_ROWS
@@ -7554,14 +8542,23 @@ function viewWorkspace() {
     if (!s || s.v !== 1 || !Array.isArray(s.panes) || !s.panes.length) return false;
     st.cols = clampInt(s.cols, 1, WS_MAX_COLS); st.rows = clampInt(s.rows, 1, WS_MAX_ROWS);
     if (s.sidebarMode === "repos" || s.sidebarMode === "tree") st.sidebarMode = s.sidebarMode;
-    if (WS_MODE_IDS.has(s.defaultMode)) st.defaultMode = s.defaultMode;
-    st.panes = s.panes.slice(0, st.cols * st.rows).map((p) => ({
+    // NOTE: defaultMode is deliberately NOT restored from the per-device layout anymore — it now comes from the
+    // GLOBAL routing setting (routingDefaultPermMode) so an admin change to the default permission mode takes
+    // effect everywhere (incl. this phone) instead of being pinned to whatever this device last saved.
+    // Restore ALL saved panes (bounded only by the absolute cap), NOT just cols*rows. On desktop panes.length
+    // always equals cols*rows so this is a no-op; on MOBILE the layout is a flat 1×N list whose N routinely
+    // exceeds the desktop 2-row grid — clamping to cols*rows here is exactly what was silently dropping every
+    // chat box past the second on every refresh.
+    st.panes = s.panes.slice(0, WS_MAX_PANES).map((p) => ({
       ...newPane(),
       id: p.id || wsUuid(), sessionKey: p.sessionKey || wsUuid(), repo: p.repo || "", worktree: p.worktree || "main",
       mode: WS_MODE_IDS.has(p.mode) ? p.mode : st.defaultMode, draft: typeof p.draft === "string" ? p.draft : "",
       promptStates: (p.promptStates && typeof p.promptStates === "object" && !Array.isArray(p.promptStates)) ? p.promptStates : {},
       bookmarks: Array.isArray(p.bookmarks) ? p.bookmarks.filter((x) => typeof x === "number") : [],
     }));
+    // If the saved grid can't hold all the panes (a mobile flat list), fall back to the flat 1×N shape that
+    // addPaneMobile builds live, so no restored pane is orphaned. Otherwise pad an under-filled desktop grid.
+    if (st.cols * st.rows < st.panes.length) { st.cols = 1; st.rows = st.panes.length; }
     while (st.panes.length < st.cols * st.rows) st.panes.push(newPane());
     st.activeId = st.panes.some((p) => p.id === s.activeId) ? s.activeId : st.panes[0].id;
     return true;
@@ -7600,22 +8597,28 @@ function viewWorkspace() {
       }
     }
   }
-  /** Re-attach restored panes to their saved threads — but only for keys history actually
-   *  knows, so a pane that never got a prompt doesn't trigger a "could not be opened" error. */
+  /** Re-attach restored panes to their saved threads. Any pane bound to a repo (real workspaceId) with an
+   *  empty transcript is reattached — NOT only keys already in the saved history index. A brand-new
+   *  conversation (created, maybe still live, not yet flushed into `st.history`) used to be skipped by the
+   *  old history gate and came back EMPTY on refresh — the "my stoa-explorer conversation disappeared" bug.
+   *  A restore-mode `open` that finds nothing on disk resolves silently (see the timeout + error paths),
+   *  so trying the open for a never-prompted box is harmless — it just stays empty and ready. */
   function restorePanes() {
-    // `st.history` now holds one row per WORKSPACE (`workspaceId`), not one per past session —
-    // a restored pane's own `sessionKey` is that same workspace id once a repo is assigned
-    // (see `assignKey`), so this still finds it.
+    // Both saved history AND currently-live sessions count as "reattachable" — but we no longer REQUIRE
+    // membership, since a fresh conversation can be in neither set for a beat after boot.
     const known = new Set(st.history.map((h) => h.workspaceId));
+    const live = activeWorkspaceIds();
     let n = 0;
+    wsDiag("restorePanes hist=" + known.size + " live=" + live.size + " panes=" + st.panes.length);
     for (const p of st.panes) {
-      if (!known.has(p.sessionKey) || p.transcript.length) continue;
+      if (p.transcript.length || !p.repo || !p.sessionKey) { wsDiag("  skip " + (shortRepo(p.repo) || "∅") + " tx=" + p.transcript.length + " repo=" + !!p.repo); continue; }   // has content already, or a blank "New chat" box → nothing to reattach
+      wsDiag("  reopen " + (shortRepo(p.repo) || "∅") + " sk=" + String(p.sessionKey).slice(-20) + " known=" + known.has(p.sessionKey) + " live=" + live.has(p.sessionKey));
       // Two panes sharing one sessionKey (a real, designed-for state — see assignKey/
       // wsWorkspaceId) both need to be reattached; beginPendingOpen tracks each pane's own
       // request independently under the shared key instead of one clobbering the other's.
       beginPendingOpen(p.sessionKey, p, "restore");
       wsPost("control", { action: "open", args: { sessionKey: p.sessionKey } });
-      n++;
+      if (known.has(p.sessionKey) || live.has(p.sessionKey)) n++;   // count only the ones we KNOW have content, for the note
     }
     if (n) note(`Reattached ${n} pane(s) to their conversations — your next message continues where you left off.`);
   }
@@ -7654,7 +8657,7 @@ function viewWorkspace() {
       if (!b || b.get(p.id) !== entry) return;   // already resolved or superseded
       b.delete(p.id);
       if (!b.size) st.pendingOpens.delete(sessionKey);
-      note("Could not open — local bridge may be disconnected.");
+      if (mode !== "restore") note("Could not open — local bridge may be disconnected.");   // a silent boot reattach that times out shouldn't nag
     }, WS_OPEN_TIMEOUT_MS);
     bucket.set(p.id, entry);
   }
@@ -7763,19 +8766,28 @@ function viewWorkspace() {
   // pane's selector reads from the same list once any session anywhere has answered it.
   function modelInfoFor(value) { return st.models.find((m) => m.value === value) || null; }
   function fillModelSelect(sel, value, activeModel) {
-    // On "Default" (no explicit pick) show what it ACTUALLY resolved to, e.g. "Default · opus-4-1", so the
-    // selector finally answers "what model is this?" instead of a bare, uninformative "Default".
-    const resolved = value ? "" : chatModelLabel(null, activeModel);
-    const defLabel = resolved ? "Default · " + resolved : "Default";
-    // Hide the OmniRoute models when that path is disabled in the routing panel — Direct Claude is untouched.
+    // No synthetic "Default" entry — it hid which model was ACTUALLY running behind a vague label. With no
+    // explicit pick, the dropdown instead shows/selects the REAL model currently active (resolved by id
+    // against the catalog below), same as Claude Code's own picker always naming the concrete model.
+    // Grouped Anthropic-key vs OmniRoute (combos only, by default) — see modelOptionGroups.
     const list = st.models.filter((m) => routingOmniVisible() || !(m && typeof m.value === "string" && m.value.startsWith("omni/")));
-    const opts = [el("option", { value: "" }, [defLabel]), ...list.map((m) => el("option", { value: m.value }, [m.displayName]))];
-    // A pane's already-chosen model may not (yet) be in a freshly-(re)fetched catalog — inject an option so
-    // the dropdown still shows it rather than silently reverting to "Default". (Previously this pushed to the
-    // array AFTER replaceChildren, so it never reached the DOM and the value silently reverted — fixed.)
-    if (value && !list.some((m) => m.value === value)) opts.push(el("option", { value }, [value]));
-    sel.replaceChildren(...opts);
-    sel.value = value || "";
+    const g = modelOptionGroups(list);
+    const mkOpt = (o) => el("option", { value: o.value }, [o.label]);
+    const groups = [];
+    if (g.anthropic.length) groups.push(el("optgroup", { label: "Anthropic" }, g.anthropic.map(mkOpt)));
+    if (g.combos.length) groups.push(el("optgroup", { label: "OmniRoute" }, g.combos.map(mkOpt)));
+    if (sel._omniShowAll && g.individualGroups.length) {
+      for (const grp of g.individualGroups) groups.push(el("optgroup", { label: grp.label }, grp.options.map(mkOpt)));
+      if (g.lessOption) groups.push(el("optgroup", { label: "OmniRoute" }, [mkOpt(g.lessOption)]));
+    } else if (g.moreOption) {
+      groups.push(el("optgroup", { label: "OmniRoute" }, [mkOpt(g.moreOption)]));
+    }
+    const shown = value || activeModel || "";
+    // A pane's already-chosen (or currently-active-but-uncataloged) model may not be in a freshly-(re)fetched
+    // catalog — inject a plain option so the dropdown still shows it rather than silently showing nothing.
+    if (shown && !list.some((m) => m.value === shown)) groups.push(el("option", { value: shown }, [shown]));
+    sel.replaceChildren(...groups);
+    sel.value = shown;
   }
   // Effort options depend on the CURRENTLY selected model — rebuilt every paint, not just on
   // model change, since st.models itself can arrive/refresh asynchronously after the pane exists.
@@ -8014,7 +9026,7 @@ function viewWorkspace() {
     if (ui && ui._bmPop) wsRenderBookmarkList(p);   // keep an open list in sync
   }
   function wsScrollToResponse(p, at) {
-    p._showAllTurns = true;   // the target may be behind "show earlier" — reveal everything first
+    p._revealAll = true;   // the target may be behind "show earlier" — reveal everything first
     paintPane(p);
     const m = p.transcript.find((x) => x && (x.role === "assistant" || x.kind === "assistant") && x.at === at);
     if (m && m._node) {
@@ -8204,7 +9216,7 @@ function viewWorkspace() {
   }
   // Incrementally reconcile a pane's transcript DOM. Two things bound the work:
   //  • CAP: only the most recent WS_TURN_RENDER_CAP turns are in the DOM; older ones hide behind a
-  //    "show earlier" button (p._showAllTurns lifts the cap). This keeps the standing DOM small so
+  //    "show earlier" button (p._revealTurns grows the window a chunk at a time). This keeps the standing DOM small so
   //    a weak/software-rendering browser never lays out/paints thousands of nodes at once.
   //  • INCREMENTAL: among the visible turns, FINALIZED ones (all but the last) are immutable
   //    (append-only transcript) so their rendered container nodes are cached and the unchanged
@@ -8218,8 +9230,10 @@ function viewWorkspace() {
     wsMarkInterrupt(p);  // recognise/paint interrupted (dark blue) + discarded (red) prompts + their buttons
     wsMarkBookmarks(p);  // stamp which responses are starred (+ each message's pane id, for jump-to)
     const allTurns = splitTurns(p.transcript);
-    const showAll = !!p._showAllTurns;
-    const turns = showAll ? allTurns : allTurns.slice(-WS_TURN_RENDER_CAP);
+    // _revealAll (a bookmark jump to an old response) renders everything loaded; otherwise show only the last
+    // _revealTurns turns, grown one chunk at a time by "Show earlier". Never the whole history unless asked.
+    const reveal = p._revealAll ? allTurns.length : (p._revealTurns || WS_TURN_RENDER_CAP);
+    const turns = allTurns.slice(-reveal);
     const hidden = allTurns.length - turns.length;
     // Beyond the locally-hidden turns, the server may be holding OLDER history it didn't ship: a resync/open
     // sends only the tail (see WS_RESYNC_MSG_CAP) so a big conversation appears instantly on mobile. When it's
@@ -8234,18 +9248,30 @@ function viewWorkspace() {
     // The show-earlier button — cached and reused across paints (stable node ⇒ the fast path can
     // keep it in place), rebuilt only when the hidden-count changes so its label stays accurate.
     if (hidden > 0 || moreOnServer) {
-      if (!ui._showEarlierNode || ui._showEarlierHidden !== hidden || ui._showEarlierMore !== moreOnServer) {
-        const label = hidden > 0 ? `▲ Show ${hidden} earlier message${hidden === 1 ? "" : "s"}` : "▲ Show earlier messages";
+      const loading = !!p._loadingMore;
+      if (!ui._showEarlierNode || ui._showEarlierHidden !== hidden || ui._showEarlierMore !== moreOnServer || ui._showEarlierLoading !== loading) {
+        const label = loading
+          ? "⟳ Loading earlier messages…"
+          : (hidden > 0 ? `▲ Show ${Math.min(WS_TURN_REVEAL_STEP, hidden)} earlier` + (hidden > WS_TURN_REVEAL_STEP ? `  ·  ${hidden} older loaded` : (moreOnServer ? "  ·  more on server" : "")) : "▲ Show earlier messages");
         const btn = el("button", { class: "ws-show-earlier" }, [label]);
+        if (loading) btn.disabled = true;
         btn.addEventListener("click", () => {
-          p._showAllTurns = true;
-          if (p._transcriptTruncated && p.sessionKey) wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey, full: true } });
+          if (p._loadingMore) return;
+          // Reveal the next chunk of ALREADY-LOADED turns (cheap, client-side) — never the whole history at once.
+          p._revealTurns = (p._revealTurns || WS_TURN_RENDER_CAP) + WS_TURN_REVEAL_STEP;
+          // If that outruns what's loaded and the server holds older history, fetch just the NEXT window (one page
+          // more, not everything) with a loading state until it lands. p._loadWindow grows one page per fetch.
+          if (p._revealTurns >= splitTurns(p.transcript).length && p._transcriptTruncated && p.sessionKey) {
+            p._loadWindow = (p._loadWindow || WS_LOAD_WINDOW_STEP) + WS_LOAD_WINDOW_STEP;
+            p._loadingMore = true;
+            wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey, limit: p._loadWindow } });
+          }
           paintPane(p);
         });
-        ui._showEarlierNode = btn; ui._showEarlierHidden = hidden; ui._showEarlierMore = moreOnServer;
+        ui._showEarlierNode = btn; ui._showEarlierHidden = hidden; ui._showEarlierMore = moreOnServer; ui._showEarlierLoading = loading;
       }
       lead.push(ui._showEarlierNode);
-    } else { ui._showEarlierNode = null; ui._showEarlierHidden = 0; ui._showEarlierMore = false; }
+    } else { ui._showEarlierNode = null; ui._showEarlierHidden = 0; ui._showEarlierMore = false; ui._showEarlierLoading = false; }
     for (let i = 0; i < turns.length - 1; i++) {
       const turn = turns[i];
       // Keyed by global start index + item count — both stable for an append-only prefix, so a hit
@@ -8433,7 +9459,7 @@ function viewWorkspace() {
     // action, which the work machine turns into an SDK interrupt (see lib/workspace.mjs _stop).
     const stopBtn = el("button", { class: "ws-stop", title: "Stop the current response (keeps the conversation)" }, ["■ Stop"]);
     stopBtn.hidden = true;
-    stopBtn.addEventListener("click", () => { assignKey(p); wsPost("stop", { sessionKey: p.sessionKey }); logActivity(p, "■ Stopping…"); });
+    stopBtn.addEventListener("click", () => { assignKey(p); p._stopping = Date.now(); wsApplyStall(p); wsPost("stop", { sessionKey: p.sessionKey }); logActivity(p, "■ Stopping…"); });
     // Attach affordance: a file-picker button (hidden native <input type=file>) plus paste and
     // drag-drop straight onto the compose row — all three funnel into wsAttachImageFile, so they
     // end up in the exact same attached/preview state (see design's "functionally equivalent
@@ -8484,7 +9510,12 @@ function viewWorkspace() {
     // medallion"), where there's space, instead of the bottom controls row. Empty on desktop (docks above Send).
     const headBulb = el("div", { class: "ws-head-bulb" }, []);
     const topBar = el("div", { class: "ws-pane-hd" }, [dot, identityLabel, el("span", { class: "ws-spacer" }), headBulb, bgBadge, savedBadge, closeBtn]);
-    const controlsBar = el("div", { class: "ws-pane-controls" }, [repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, histBtn, compactBtn, el("span", { class: "ws-spacer" }), badge]);
+    // Unified with Pact: this is the MODEL BAR and it belongs at the BOTTOM of the box, under the composer
+    // — same controls, same order, same place, so Core and Pact stop diverging. Readouts and pickers left,
+    // Compact + the status badge right. (It kept its .ws-pane-controls class: the mobile sheet in
+    // wsOpenControlsSheet() re-homes this exact node by that selector, and renaming it would break that.)
+    const swarmEl = el("div", { class: "pc-swarm", title: "Subagents working right now" }, []);
+    const controlsBar = el("div", { class: "ws-pane-controls --modelbar" }, [repoSel, wtSel, modeSel, modelSel, effortSel, fastModeLabel, swarmEl, histBtn, el("span", { class: "ws-spacer" }), compactBtn, badge]);
     // The live "what's happening right now" feed — a single always-visible line (tap to expand
     // the full scrolling log) narrating every state transition: sending, thinking, streaming,
     // running a tool, waiting for permission, done, a connection hiccup — everything the orange
@@ -8493,7 +9524,8 @@ function viewWorkspace() {
     const activityLog = el("div", { class: "ws-activity-log" }, []);
     activityLog.hidden = true;
     activityLine.addEventListener("click", () => { activityLog.hidden = !activityLog.hidden; if (!activityLog.hidden) renderActivityLog(p); });
-    const paneRoot = el("div", { class: "ws-pane" }, [topBar, activityLine, activityLog, transcriptEl, controlsBar, composeExtras, composeRow]);
+    // Bottom-up order now matches Pact exactly: … transcript → attachments → type box → MODEL BAR.
+    const paneRoot = el("div", { class: "ws-pane" }, [topBar, activityLine, activityLog, transcriptEl, composeExtras, composeRow, controlsBar]);
 
     paneRoot.addEventListener("mousedown", () => setActive(p.id));
     // Repointing a pane to a different repo/worktree abandons its OLD identity — bump `_gen` so
@@ -8525,6 +9557,13 @@ function viewWorkspace() {
     // setFastMode no-op harmlessly server-side if there's no live session yet — the choice still
     // rides the NEXT prompt's own body either way, see dispatchPrompt).
     modelSel.addEventListener("change", () => {
+      // "More models…" / "Fewer models" are in-list rows, not real picks (see modelOptionGroups) — toggle the
+      // expansion locally and rebuild, without touching p.model or telling the server anything changed.
+      if (modelSel.value === OMNI_MORE_VALUE || modelSel.value === OMNI_LESS_VALUE) {
+        modelSel._omniShowAll = modelSel.value === OMNI_MORE_VALUE;
+        fillModelSelect(modelSel, p.model, p.activeModel);
+        return;
+      }
       p.model = modelSel.value || null;
       wsPost("control", { action: "setModel", args: { sessionKey: p.sessionKey, model: p.model } });
       paintPane(p); saveLayout();   // repaint: the effort/fast-mode controls depend on the new model
@@ -8539,7 +9578,23 @@ function viewWorkspace() {
       wsPost("control", { action: "setFastMode", args: { sessionKey: p.sessionKey, enabled: p.fastMode } });
       saveLayout();
     });
-    histBtn.addEventListener("click", (e) => { e.stopPropagation(); loadHistory(p.repo || null); });
+    // TOGGLE, not a one-way filter. Previously this only ever narrowed history to the pane's repo and there
+    // was no control anywhere to widen it back — the list stayed scoped for the rest of the session with no
+    // visible reason. Clicking again now clears the scope and reloads ALL history.
+    histBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const repo = p.repo || null;
+      const on = !!(st.historyRepo && repo && st.historyRepo === repo);
+      loadHistory(on ? null : repo);
+      syncHistBtn();
+    });
+    // Reflect the scope in the button itself — a filter you can't see is the reason this felt like a trap.
+    function syncHistBtn() {
+      const on = !!(st.historyRepo && p.repo && st.historyRepo === p.repo);
+      histBtn.classList.toggle("--on", on);
+      histBtn.title = on ? "Showing only this repo's history — click to show ALL history" : "History for this repo";
+    }
+    syncHistBtn();
     closeBtn.addEventListener("click", (e) => { e.stopPropagation(); clearPane(p); });
     sendBtn.addEventListener("click", () => send(p));
     promptEl.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(p); } });
@@ -8717,11 +9772,23 @@ function viewWorkspace() {
     // still cooking in the background."
     const bg = Array.isArray(p._background) ? p._background : [];
     const bgActive = bg.length > 0;
+    // Model-bar swarm figures — same component and same live-count semantics as Pact (see pactUpdateSwarm).
+    paintSwarm(ui.root && ui.root.querySelector(".pc-swarm"), bg);
     ui.sendBtn.classList.toggle("work-pulse", busy || bgActive);
-    ui.sendBtn.textContent = deep ? "Deep Work…" : busy ? "Working…" : "Send";
+    ui.sendBtn.textContent = (deep ? "Deep Work…" : busy ? "Working…" : "Send") + (busy ? wsBusyElapsedLabel(p) : "");
     // The Stop button appears only while the pane is actively working a turn (thinking / deep work /
     // awaiting permission) — it interrupts that turn without ending the conversation.
-    if (ui.stopBtn) ui.stopBtn.hidden = !busy || !!p.readonly;
+    // Unified with Pact: on desktop Stop keeps its slot and toggles enabled/disabled instead of appearing
+    // and vanishing, so Send never jumps sideways when a turn starts or ends. Mobile (and read-only panes)
+    // keep the hide behavior — there, horizontal space is the binding constraint.
+    if (ui.stopBtn) {
+      const keepSlot = !pactIsMobile() && !p.readonly;   // one shared media query for both workspaces
+      ui.stopBtn.hidden = keepSlot ? false : (!busy || !!p.readonly);
+      ui.stopBtn.disabled = keepSlot ? !busy : false;
+    }
+    if (!busy) p._stopping = 0;   // the turn ended — the "Stopping…" acknowledgement has served its purpose
+    if (busy) { if (!p._busyAt) p._busyAt = Date.now(); } else { p._busyAt = null; p._turnStartedAt = null; }   // "busy since" (local) — for the elapsed + stall cue; both clear when idle
+    wsApplyStall(p);   // label the Stop button with a stall warning past the thresholds (Core parity with Pact)
     const bgLine = bgActive ? `⚙ ${bg.length} background ${bg.length === 1 ? "task" : "tasks"} running` + (bg.some((t) => t.description) ? ": " + bg.map((t) => t.description).filter(Boolean).join(", ") : "") : "";
     ui.sendBtn.title = deep
       ? "Claude finished the visible turn but is still doing background work — more output is expected. Sending now will be held until it finishes."
@@ -8837,7 +9904,9 @@ function viewWorkspace() {
     });
     const addBtn = el("button", { class: "ws-mtab-add", title: "New chat box" }, ["＋"]);
     addBtn.addEventListener("click", addPaneMobile);
-    mobileTabs.replaceChildren(menuBtn, el("div", { class: "ws-mtabs-scroll" }, tabs), addBtn);
+    const diagBtn = el("button", { class: "ws-mtab-add", title: "Restore diagnostic log" }, ["🐞"]);
+    diagBtn.addEventListener("click", () => { window.alert("RESTORE LOG (newest last):\n\n" + wsDiagText()); });
+    mobileTabs.replaceChildren(menuBtn, el("div", { class: "ws-mtabs-scroll" }, tabs), addBtn, diagBtn);
   }
   // ---- mobile bottom sheets (Stage 2): a slide-up panel reused for the conversations switcher and the
   // active pane's settings. One sheet element; openSheet swaps its title + body. `_sheetReturn` restores
@@ -8880,7 +9949,11 @@ function viewWorkspace() {
     const controls = ui.root.querySelector(".ws-pane-controls"); if (!controls) return;
     const extras = ui.root.querySelector(".ws-compose-extras");
     openSheet("Pane settings", controls);
-    _sheetReturn = () => { if (extras && extras.parentNode === ui.root) ui.root.insertBefore(controls, extras); else ui.root.appendChild(controls); };
+    // The model bar is now the LAST child of the pane (it moved below the composer). Restoring it before
+    // .ws-compose-extras — its old position — would silently put it back above the type box and undo the
+    // unified layout the moment the mobile settings sheet was opened and closed once.
+    _sheetReturn = () => { ui.root.appendChild(controls); };
+    void extras;   // kept for the older ordering; no longer part of the restore path
   }
   // Build the mobile bottom control bar ONCE — its buttons act on whatever pane is active at click time.
   function buildMobileBar() {
@@ -8892,8 +9965,8 @@ function viewWorkspace() {
     const menuB = mb("☰", "Repositories & history", openDrawer);
     const setB = mb("⚙", "Pane settings — repo, worktree, model, effort, mode", openSettingsSheet);
     const attachB = mb("📎", "Attach image", () => { const ui = paneUI.get(st.activeId); if (ui && ui.attachBtn) ui.attachBtn.click(); });
-    const syncB = mb("↻", "Sync now — re-fetch the latest state (no page reload)", () => { const p = activePane(); if (p && p.sessionKey) wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey, full: !!p._showAllTurns } }); });
-    const stopB = mb("■", "Stop the current response (keeps the conversation)", () => { const p = activePane(); if (p && p.sessionKey) wsPost("stop", { sessionKey: p.sessionKey }); }, "ws-mcbtn-stop");
+    const syncB = mb("↻", "Sync now — re-fetch the latest state (no page reload)", () => { const p = activePane(); if (p && p.sessionKey) wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey, full: !!p._revealAll, limit: p._loadWindow } }); });
+    const stopB = mb("■", "Stop the current response (keeps the conversation)", () => { const p = activePane(); if (!p || !p.sessionKey) return; p._stopping = Date.now(); paintPane(p); wsPost("stop", { sessionKey: p.sessionKey }); }, "ws-mcbtn-stop");
     stopB.hidden = true;
     const sendB = mb("➤", "Send", () => send(activePane()), "ws-mcbtn-send");
     // Collapse/expand the compose box to one line (parity with the Pact mobile view, which the normal
@@ -8917,10 +9990,20 @@ function viewWorkspace() {
     };
     const chatsBar = mbar("💬 Conversations", "ws-mbtn-chats", () => openSheet("Conversations", convosSheetBody()));
     const bmBar = mbar("★ Bookmarks", "ws-mbtn-bm", () => wsOpenBookmarkSheet(activePane()));
-    wsMBar._sendB = sendB; wsMBar._stopB = stopB; wsMBar._chatsBar = chatsBar;
+    const modelSel = buildMobileModelSelect({
+      model: () => { const p = activePane(); return p ? p.model : null; },
+      active: () => { const p = activePane(); return p ? p.activeModel : ""; },
+      set: (model) => {
+        const p = activePane(); if (!p) return;
+        p.model = model || null;
+        if (p.sessionKey) wsPost("control", { action: "setModel", args: { sessionKey: p.sessionKey, model: p.model } });
+        paintPane(p); saveLayout();
+      },
+    });
+    wsMBar._sendB = sendB; wsMBar._stopB = stopB; wsMBar._chatsBar = chatsBar; wsMBar._modelSel = modelSel;
     wsMBar.replaceChildren(menuB, setB, attachB, collapseB, el("span", { class: "ws-spacer" }, []), syncB, stopB, sendB);
-    // Bottom controls row is just the two corner tabs; the Live/Held bulb moved UP into the pane header.
-    wsModeStrip.replaceChildren(chatsBar, bmBar);
+    // Bottom controls row: the two corner tabs flanking the model picker; the Live/Held bulb moved UP into the pane header.
+    wsModeStrip.replaceChildren(chatsBar, modelSel, bmBar);
   }
   // Keep the bottom bar's send/stop in step with the active pane, and home that pane's Live/Held bulb in
   // the mode strip (each pane owns its own bulb; only the visible pane's belongs in the shared strip).
@@ -8933,6 +10016,7 @@ function viewWorkspace() {
     wsMBar._sendB.classList.toggle("busy", busy);
     wsMBar._stopB.hidden = !busy;
     if (wsMBar._chatsBar) { const n = st.panes.length; wsMBar._chatsBar._n.textContent = "[" + n + "]"; wsMBar._chatsBar._n.hidden = n < 1; }
+    if (wsMBar._modelSel) wsMBar._modelSel._fill();   // keep the mobile model picker in step with the active pane
     // Home the ACTIVE pane's Live/Held bulb into ITS OWN header (by the pane identity), clearing that host
     // first so no stale bulb lingers. Each pane owns its bulb, so switching panes just re-homes the visible one.
     const headBulb = ui && ui.root && ui.root.querySelector(".ws-head-bulb");
@@ -8942,6 +10026,7 @@ function viewWorkspace() {
     }
   }
   function addPaneMobile() {
+    if (st.panes.length >= WS_MAX_PANES) { alert(`That's the maximum of ${WS_MAX_PANES} chat boxes. Close one to add another.`); return; }
     const p = newPane(); st.panes.push(p);
     st.cols = 1; st.rows = st.panes.length;   // on a phone the grid is a flat 1×N — one pane per "tab"
     st.activeId = p.id;
@@ -9002,6 +10087,43 @@ function viewWorkspace() {
   // auto-continuing with no new prompt sent (see claudeSession.mjs's re-arm-from-idle comment).
   // It counts as busy (blocks a same-pane send, keeps the turn-lock), but paints distinctly.
   const paneBusy = (p) => p.status === "thinking" || p.status === "awaiting-permission" || p.status === "deepwork";
+  // Core parity with the Pact stall cue: surface a wedged turn ON the Stop button (already shown while busy) —
+  // "stuck?" is judged by SILENCE (time since the last real streamed event, `_lastEventAt`), NOT by total busy
+  // duration: a long turn that's actively streaming keeps _lastEventAt fresh and must never be branded stuck.
+  // `_lastEventAt` is resync-immune here because the resync handler returns BEFORE the stamp (see kind==="resync"),
+  // so the ~20s self-heal can't mask a real stall. Driven by paintPane + wsSelfHeal.
+  const WS_STALL_SOFT_MS = 5 * 60_000, WS_STALL_HARD_MS = 12 * 60_000;
+  const wsFmtMin = (ms) => { const m = Math.floor(ms / 60000); return m < 60 ? m + "m" : Math.floor(m / 60) + "h" + (m % 60) + "m"; };
+  // The live "Working… M:SS" elapsed. Prefers the SERVER's authoritative turn start (`_turnStartedAt`, adopted on
+  // resync so it survives reload/re-entry) and falls back to the local "busy since" (`_busyAt`) before the first
+  // resync lands — so the counter is immediate on send AND correct (never restarts from zero) afterwards.
+  const wsBusyElapsedLabel = (p) => { const t0 = p._turnStartedAt || p._busyAt || 0; return t0 ? " " + pactFmtDuration(Date.now() - t0) : ""; };
+  function wsApplyStall(p) {
+    const ui = paneUI.get(p.id); if (!ui || !ui.stopBtn) return;
+    // A pressed Stop OWNS the button until the turn ends — this runs on every tick, so without this branch
+    // it would repaint "■ Stop" right over the acknowledgement and the press would look ignored again.
+    if (p._stopping && paneBusy(p)) {
+      ui.stopBtn.disabled = true;
+      ui.stopBtn.textContent = "■ Stopping…";
+      ui.stopBtn.style.color = "";
+      ui.stopBtn.title = "Stop sent — interrupting the turn. If it doesn't clear, reload the engine.";
+      return;
+    }
+    // Idle: leave `disabled`/`hidden` exactly as paintPane's busy-based logic set them (line ~9661) — this
+    // function's job is only the stall LABEL while genuinely busy, never re-enabling a resting Stop button.
+    // Without this guard, wsSelfHeal's 4s tick called this on every pane (busy or not) and the unconditional
+    // `disabled = false` below re-enabled Stop on an idle pane forever, a few seconds after paintPane correctly
+    // disabled it — Stop showing pressable while Send already read "Send" (contradiction, filed as a bug).
+    if (!paneBusy(p)) { ui.stopBtn.style.color = ""; return; }
+    ui.stopBtn.disabled = false;
+    const elapsed = p._lastEventAt ? Date.now() - p._lastEventAt : 0;
+    const hard = elapsed > WS_STALL_HARD_MS, soft = !hard && elapsed > WS_STALL_SOFT_MS;
+    ui.stopBtn.textContent = hard ? "⚠ Stop — likely stuck " + wsFmtMin(elapsed) : soft ? "■ Stop (stuck? " + wsFmtMin(elapsed) + ")" : "■ Stop";
+    ui.stopBtn.style.color = hard ? "var(--red,#f87171)" : soft ? "var(--amber,#fbbf24)" : "";
+    ui.stopBtn.title = (hard || soft)
+      ? "No output for " + wsFmtMin(elapsed) + " — the turn may be stuck. Click Stop; if it doesn't clear, reload the engine."
+      : "Stop the current response (keeps the conversation)";
+  }
 
   /** × on a pane: end its session and give the pane a clean key, so the next message starts a
    *  genuinely new conversation rather than appending to the one you just cleared. */
@@ -9134,8 +10256,17 @@ function viewWorkspace() {
   }
   function pickRepoForActive(localPath) {
     const p = activePane(); if (!p) return;
-    p.repo = localPath; p.readonly = false; p.resume = null;
-    paintPane(p); saveLayout(); note("Active pane → " + shortRepo(localPath));
+    // Mirror the desktop repoSel.change path — CRUCIALLY assignKey(p), which binds sessionKey to
+    // `repo@worktree`. Without it this (the mobile ☰-drawer / sidebar repo pick) left sessionKey as the
+    // random newPane() uuid, so saveLayout persisted a key that matched NO server session. dispatchPrompt
+    // fixes the key in memory on send but never persisted it, so a refresh reattached to the stale uuid →
+    // "could not open" → the conversation vanished (yet still showed in History under its real repo@worktree
+    // key, which is why reopening from there worked). THE root cause of "my stoa-explorer chat disappears".
+    p.repo = localPath; p.worktree = "main"; p.readonly = false; p.resume = null; p.status = "idle"; p._queue = null; p._gen = (p._gen || 0) + 1;
+    assignKey(p);
+    paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p);
+    if (p.repo) wsPost("control", { action: "worktrees", args: { repo: p.repo } });
+    note("Active pane → " + shortRepo(localPath));
   }
 
   // ---- per-repo history ----------------------------------------------------------
@@ -9425,13 +10556,14 @@ function viewWorkspace() {
       st.pendingOpens.delete(sessionKey);
       for (const req of bucket.values()) {
         clearTimeout(req.timer);
-        const p = st.panes.find((x) => x.id === req.paneId); if (!p) continue;   // its pane was trimmed away
-        if ((p._gen || 0) !== req.gen) continue;   // this pane has moved on since the request — discard, don't apply
+        const p = st.panes.find((x) => x.id === req.paneId); if (!p) { wsDiag("openReply " + String(sessionKey).slice(-20) + " NO-PANE"); continue; }   // its pane was trimmed away
+        if ((p._gen || 0) !== req.gen) { wsDiag("openReply " + String(sessionKey).slice(-20) + " GEN-MISMATCH"); continue; }   // this pane has moved on since the request — discard, don't apply
+        wsDiag("openReply " + String(sessionKey).slice(-20) + " tx=" + (data.transcript || []).length + " mode=" + req.mode);
         p.transcript = wsBackfillTurnWorkspace(data.transcript || [], data.workspaceId || wsWorkspaceId(data.repo || p.repo, data.worktree || p.worktree));
         p._transcriptTruncated = !!data.transcriptTruncated;   // server sent only the tail — more is fetchable via "Show earlier"
         p._promptOffset = data.promptOffset || 0; p._responseOffset = data.responseOffset || 0;   // absolute P#/R# numbering (counts the un-shipped ones)
         p._expandedGroups = new Set();   // a freshly-(re)opened transcript has no expand state yet
-        p._showAllTurns = false;         // a (re)opened conversation starts capped to recent turns
+        p._revealTurns = WS_TURN_RENDER_CAP; p._revealAll = false; p._loadWindow = undefined; p._loadingMore = false;   // a (re)opened conversation starts capped
         p._scrollBottomNext = true;      // …and lands at the bottom (latest), not scrolled up
         p.repo = data.repo || p.repo;
         // `repo` was already updated here but `worktree` never was — a pane resuming a conversation
@@ -9477,9 +10609,10 @@ function viewWorkspace() {
       // timeout in `beginPendingOpen` covers.
       if (data.kind === "error" && sessionKey && st.pendingOpens.has(sessionKey)) {
         const bucket = st.pendingOpens.get(sessionKey);
+        const interactive = [...bucket.values()].some((req) => req.mode !== "restore");   // a silent boot reattach that finds nothing shouldn't nag
         st.pendingOpens.delete(sessionKey);
         for (const req of bucket.values()) clearTimeout(req.timer);   // resolves every pane waiting on this key
-        note("Could not open — " + (data.message || "that conversation could not be opened."));
+        if (interactive) note("Could not open — " + (data.message || "that conversation could not be opened."));
       }
       // Workspace-level notices (create/remove/note/error) carry no sessionKey.
       if (!sessionKey && (data.kind === "created" || data.kind === "removed" || data.kind === "note" || data.kind === "error")) {
@@ -9530,11 +10663,21 @@ function viewWorkspace() {
           if (Array.isArray(data.transcript)) { p.transcript = wsBackfillTurnWorkspace(data.transcript, data.workspaceId || wsWorkspaceId(p.repo, p.worktree)); p._transcriptTruncated = !!data.transcriptTruncated; p._promptOffset = data.promptOffset || 0; p._responseOffset = data.responseOffset || 0;
             // Initial load (this pane was empty until now — the app-open path fills it via resync on `hello`,
             // AFTER the grid was built): land at the bottom (latest), not scrolled up at the top.
-            if (prevLen === 0 && p.transcript.length > 0) p._scrollBottomNext = true; }
+            if (prevLen === 0 && p.transcript.length > 0) p._scrollBottomNext = true;
+            p._loadingMore = false; }   // a windowed "Show earlier" fetch just landed — clear the loading cue
           if (data.status) p.status = data.status;
           if (data.usage) p.usage = data.usage;
           if (data.mode) p.mode = data.mode;
-          p._liveText = "";   // stale relative to whatever actually streamed before the reconnect
+          // Adopt the server's authoritative last-activity so the Stop-button stall cue reflects REAL silence after
+          // a reload / re-entry (the pane's local clock was lost). Resync-immune: it's the TRUE value, not "now" —
+          // a genuinely stuck turn keeps a stale stamp and still surfaces.
+          if (typeof data.lastActivityAt === "number") p._lastEventAt = Math.max(p._lastEventAt || 0, data.lastActivityAt);
+          if (typeof data.turnStartedAt === "number") p._turnStartedAt = data.turnStartedAt;   // authoritative turn start → the "Working… M:SS" elapsed survives reload/re-entry, never restarts from zero
+          // Keep the live streaming buffer if the turn is STILL running — a periodic self-heal resync fires
+          // mid-turn (~20s), and blanking the buffer there shrank the transcript, clamped scrollTop to the
+          // bottom, and yanked a Held reader to Live (and blinked the streaming text). Only clear it when the
+          // turn is genuinely done/idle, where the buffer really is stale. (Pact already does this via keepLive.)
+          if (data.status !== "thinking" && data.status !== "deepwork" && data.status !== "awaiting-permission") p._liveText = "";
           paintPane(p);
           // Pull the context-window usage NOW (on load/reconnect), not only after the next turn's result —
           // otherwise a reopened conversation shows no "% ctx" and no model until you send something. The
@@ -9557,6 +10700,13 @@ function viewWorkspace() {
         return;
       }
       // Context-window usage is per-conversation — stored on the requesting pane(s) only.
+      // Cold-load telemetry (workspace.mjs): the engine is loading a large conversation's history on resume — show
+      // "Loading… (N MB)" (not "stuck") until the first output flips it to done. Drives the WS_TICK_TIMER label.
+      if (data.kind === "loadingHistory") { for (const p of targets) { coldLoadBegin(p, data.bytes, Date.now()); paintPane(p); } return; }
+      if (data.kind === "loadingHistoryDone") { for (const p of targets) { if (coldLoadEnd(p, Date.now())) paintPane(p); } return; }
+      // The engine RECEIVED the ■ Stop press (emitted before the up-to-6s interrupt await) — confirms the
+      // optimistic flag the click already set, and covers a Stop pressed from another device/tab.
+      if (data.kind === "stopping") { for (const p of targets) { if (!p._stopping) p._stopping = Date.now(); wsApplyStall(p); } return; }
       if (data.kind === "contextUsage") {
         // Update the badge + model readout IN PLACE — never full paintPane (its replaceChildren yanks the
         // scroll, breaking Held; see the paintPane comment). A contextUsage answer changes no transcript.
@@ -9569,6 +10719,17 @@ function viewWorkspace() {
             if (ui.usageEl) { const usg = wsUsageLabel(p.usage, p.contextUsage); ui.usageEl.textContent = usg.text || "—"; ui.usageEl.title = usg.title; }
             if (ui.modelSel && p.activeModel !== prevModel) fillModelSelect(ui.modelSel, p.model, p.activeModel);
           }
+        }
+        return;
+      }
+      // Compaction confirmation — `/compact` actually ran. Log it (with the token drop) on the requesting
+      // pane(s) and re-request contextUsage so the badge shows the shrunk window (proof it worked).
+      if (data.kind === "compacted") {
+        const k = (n) => (n == null ? null : Math.round(n / 1000) + "k");
+        const pre = k(data.preTokens), post = k(data.postTokens);
+        for (const p of targets) {
+          logActivity(p, "🗜 Context compacted" + (pre && post ? " — " + pre + " → " + post + " tokens" : ""));
+          if (p.sessionKey && !p.readonly) wsPost("control", { action: "contextUsage", args: { sessionKey: p.sessionKey } });
         }
         return;
       }
@@ -9628,7 +10789,7 @@ function viewWorkspace() {
         // the chat turn, so it's NOT transcript content and must NOT be pushed as such. It's the
         // one signal that hidden work is happening even while the chat sits idle/free (see
         // claudeSession.mjs). `background` REPLACES the live set; taskStarted/taskDone just narrate.
-        if (data.kind === "interrupted") { logActivity(p, "■ Stopped — the response was interrupted; send another message anytime.", "ws-act-ok"); continue; }
+        if (data.kind === "interrupted") { p._stopping = 0; logActivity(p, "■ Stopped — the response was interrupted; send another message anytime.", "ws-act-ok"); continue; }
         if (data.kind === "background") { p._background = data.tasks || []; schedulePaint(p); continue; }
         if (data.kind === "taskStarted") { if (!data.skipTranscript) logActivity(p, "⚙ Background " + (data.workflowName ? `workflow “${data.workflowName}”` : "task") + " started" + (data.description ? " — " + data.description : ""), "ws-act-ok"); continue; }
         if (data.kind === "taskDone") { if (!data.skipTranscript) logActivity(p, (data.status === "completed" ? "✓" : "⚠") + " Background task " + data.status + (data.summary ? " — " + data.summary : ""), data.status === "completed" ? "ws-act-ok" : "ws-act-err"); continue; }
@@ -9689,7 +10850,11 @@ function viewWorkspace() {
     const now = Date.now();
     for (const p of st.panes) {
       if (!p.sessionKey || p.readonly) continue;
-      const args = { sessionKey: p.sessionKey, full: !!p._showAllTurns };
+      // Watchdog: a dropped loadingHistoryDone would strand the synthetic "thinking" (stuck "Working…" pane).
+      // Past any real load time, end it locally and resync so the server's true status wins. See coldLoadEnd.
+      if (coldLoadStale(p, now)) { coldLoadEnd(p, now); paintPane(p); wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey, full: !!p._revealAll, limit: p._loadWindow } }); continue; }
+      wsApplyStall(p);   // refresh the Stop-button stall cue as time passes (no repaint needed while stuck)
+      const args = { sessionKey: p.sessionKey, full: !!p._revealAll, limit: p._loadWindow };
       // Busy but silent: keep the longer 20s threshold — a pane legitimately mid-thought (before its first
       // token, or between tool calls) can be quiet for a bit, and we don't want to resync it every few seconds.
       if (paneBusy(p) && (now - (p._lastEventAt || 0)) > WS_HEAL_QUIET_MS && (now - (p._healAt || 0)) > WS_HEAL_QUIET_MS) {
@@ -9708,7 +10873,7 @@ function viewWorkspace() {
     // big conversation shows in a fraction of a second on mobile instead of transferring its whole history.
     // If this pane was already showing the full history ("Show earlier" was clicked), re-request it whole so
     // a reconnect doesn't silently drop the revealed older messages back off the top.
-    for (const p of st.panes) if (p.sessionKey && !p.readonly) wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey, full: !!p._showAllTurns } });
+    for (const p of st.panes) if (p.sessionKey && !p.readonly) wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey, full: !!p._revealAll, limit: p._loadWindow } });
   }
   function openStream() {
     try { WS_ES && WS_ES.close(); } catch {}
@@ -9716,6 +10881,25 @@ function viewWorkspace() {
     // stream goes quiet (no heartbeats). Re-armed per stream; cleared first so reopens don't stack timers.
     clearInterval(WS_HEAL_TIMER);
     WS_HEAL_TIMER = setInterval(wsSelfHeal, 4000);
+    // 1s live tick: update each busy pane's "Working… M:SS" elapsed + stall cue IN PLACE (no full repaint), so
+    // the counter is smooth and — because it reads the server-adopted _turnStartedAt/_lastEventAt — trustworthy
+    // and reset-proof across reload/re-entry. Pact parity (PACT_TICK_TIMER).
+    clearInterval(WS_TICK_TIMER);
+    WS_TICK_TIMER = setInterval(() => {
+      for (const p of st.panes) {
+        if (!WS_BUSY_STATUSES.has(p.status)) continue;
+        const ui = paneUI.get(p.id); if (!ui || !ui.sendBtn) continue;
+        if (p._coldLoad) {   // one-time cold-load of a large conversation — say "Loading (N MB)", not "stuck"
+          const mb = Math.round((p._coldLoad.bytes || 0) / 1048576);
+          ui.sendBtn.textContent = "⟳ Loading" + (mb ? " " + mb + "MB" : "") + "…" + wsBusyElapsedLabel(p);
+          if (ui.stopBtn) { ui.stopBtn.textContent = "■ Stop"; ui.stopBtn.style.color = ""; }   // suppress the stall cue while loading
+          continue;
+        }
+        if (p._coldLoadDoneAt && Date.now() - p._coldLoadDoneAt < 4000) { ui.sendBtn.textContent = "✓ loaded…"; continue; }   // brief "done" confirmation
+        ui.sendBtn.textContent = (p.status === "deepwork" ? "Deep Work…" : "Working…") + wsBusyElapsedLabel(p);
+        wsApplyStall(p);
+      }
+    }, 1000);
     // Identify this terminal so the server's presence roster can name it.
     const q = "?conn=" + encodeURIComponent(CONN.id) + "&label=" + encodeURIComponent(CONN.label);
     WS_ES = new EventSource("/api/workspace/stream" + q);
@@ -9774,7 +10958,9 @@ function viewWorkspace() {
   // Split out of send() so a queued item (drainQueue, below) can be dispatched identically once
   // the pane goes idle, not just a prompt typed while already idle.
   async function dispatchPrompt(p, text, images) {
+    const _keyBefore = p.sessionKey;
     assignKey(p);
+    if (p.sessionKey !== _keyBefore) saveLayout();   // assignKey corrected a stale key (e.g. a repo picked without binding) → PERSIST it, else a refresh reattaches to the wrong/old key and the conversation "disappears"
     // Discarded interrupted prompts sitting just above → instruct the agent to skip them ("the next prompt
     // won't include it in its processing"). Core echoes the sent text, so — unlike the Pact chat, where this
     // rides a hidden payload — this note is visible in the next prompt bubble, which also makes the skip explicit.
@@ -9931,7 +11117,10 @@ function viewWorkspace() {
   newRepoBtn.addEventListener("click", doNewRepo);
 
   // ---- boot ----------------------------------------------------------------------
-  if (!loadLayout()) { st.panes = [newPane()]; st.activeId = st.panes[0].id; }
+  wsDiag("──── WS mount hash=" + location.hash + " raw=" + (() => { try { const r = localStorage.getItem(WS_STORE_KEY); return r ? r.length + "b" : "NULL"; } catch { return "ERR"; } })());
+  const _loadedLayout = loadLayout();
+  if (!_loadedLayout) { st.panes = [newPane()]; st.activeId = st.panes[0].id; }
+  wsDiag("loadLayout=" + _loadedLayout + " panes=[" + st.panes.map((p) => (shortRepo(p.repo) || "∅") + "#" + String(p.id || "").slice(0, 4)).join(",") + "] active#" + String(st.activeId || "").slice(0, 4));
   // Restore any queue stranded by the last reload BEFORE the stream opens, so the orange bubble is already
   // in place when resyncOpenPanes' resync reply fires drainQueue() and auto-sends it once the turn ends.
   wsQueueRestore();
@@ -9939,7 +11128,16 @@ function viewWorkspace() {
   // dumping it into the draft box (where it silently vanished from the conversation). It comes back as the
   // same orange bubble on reload and auto-sends when the running turn finishes — matching the Pact outbox.
   WS_PAGEHIDE_FN = () => { wsQueueSave(); saveLayout(); };
-  if (!WS_PAGEHIDE_HOOKED) { WS_PAGEHIDE_HOOKED = true; window.addEventListener("pagehide", (e) => { if (!e.persisted && typeof WS_PAGEHIDE_FN === "function") { try { WS_PAGEHIDE_FN(); } catch {} } }); }
+  if (!WS_PAGEHIDE_HOOKED) {
+    WS_PAGEHIDE_HOOKED = true;
+    // Save the queued (orange) messages + layout on ANY unload — including a bfcache pagehide and a
+    // visibilitychange→hidden — not just `!e.persisted`. Same fix as the Pact outbox: the old guard dropped
+    // the queue on a mobile back/forward or backgrounded reload. wsQueueSave/saveLayout are idempotent, so
+    // running them on a bfcache save that later restores is harmless.
+    const persist = () => { if (typeof WS_PAGEHIDE_FN === "function") { try { WS_PAGEHIDE_FN(); } catch {} } };
+    window.addEventListener("pagehide", persist);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") persist(); });
+  }
   defaultModeSel.value = st.defaultMode;   // the picker was built before the saved layout loaded
   renderLayoutPicker(); renderModeToggle(); rebuildGrid(); renderSidebar(); renderHistory(); setUsageTotal();
   wsBmLoad();      // pull the cross-device bookmark store and reconcile it into every open pane

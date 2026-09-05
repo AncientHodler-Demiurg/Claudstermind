@@ -188,13 +188,15 @@ export function createBridge(opts = {}) {
   // startSelfRestart/RESTART.subs mirror its startDeploy/DEPLOY.subs one for one; see
   // docs/work/dashboard-self-restart-safety/design.md's Wave 2 note for why this reuses the
   // deploy mechanism rather than a second auth/forwarding path).
-  function runRemoteRestart() {
+  // `frameOpts` carries the reload dialog's { forceDaemon } tick from the live site through to
+  // startSelfRestart — remote reloads are the case where the user has no terminal to run systemctl in.
+  function runRemoteRestart(frameOpts) {
     const rst = opts.restart;
     const unsub = rst.subscribe((line) => {
       if (line === "__DONE_OK__" || line === "__DONE_FAIL__") { wsSend("restart-done", null, { ok: line === "__DONE_OK__" }); unsub(); return; }
       wsSend("restart-log", null, { line });
     });
-    let r; try { r = rst.start(); } catch (e) { r = { ok: false, message: String(e && e.message || e) }; }
+    let r; try { r = rst.start(frameOpts || {}); } catch (e) { r = { ok: false, message: String(e && e.message || e) }; }
     wsSend("restart-log", null, { line: r.ok ? "▶ self-restart pre-flight started" : `⚠ ${r.message || r.reason}` });
     if (!r.ok && r.reason !== "already-running") { wsSend("restart-done", null, { ok: false }); unsub(); }
   }
@@ -281,6 +283,16 @@ export function createBridge(opts = {}) {
     if (frame.cmd.type === "pactWorktree") {
       const a = frame.cmd.args || {};
       const result = pactWorktreeAction(paths.root, a.action || "", a.name || "");
+      if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
+      return;
+    }
+    // Deploy → "Running locally": the live process list (web + sessiond + aggregator apps) read from THIS
+    // machine. Forwarded down the tunnel so REMOTE matches LOCAL — without it the browser's plain fetch to
+    // /api/admin/processes has no relay route, 404s, and the tab shows "Process list unavailable."
+    if (frame.cmd.type === "deployProcesses") {
+      let result;
+      try { result = opts.processes ? await opts.processes() : { ok: false, message: "not wired" }; }
+      catch (e) { result = { ok: false, message: String(e && e.message || e), processes: [] }; }
       if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
       return;
     }
@@ -442,7 +454,7 @@ export function createBridge(opts = {}) {
       if (frame.kind === "deploy" && opts.deploy) { runRemoteDeploy(); return; }
       // A remote self-restart trigger (from the live site) runs the local sandboxed pre-flight +
       // real restart pipeline and streams its log back up the tunnel — same mechanism as deploy.
-      if (frame.kind === "restart" && opts.restart) { runRemoteRestart(); return; }
+      if (frame.kind === "restart" && opts.restart) { runRemoteRestart(frame.data || frame.opts || {}); return; }
       // The relay reporting ITS browsers (it is a sensor). Hand them to the work machine, which
       // merges them with its own localhost terminals into the one authoritative presence list.
       if (frame.kind === "presence") { const conns = frame.data?.connections || []; remoteBrowsers = conns.length; try { opts.onRemotePresence?.(conns); } catch (e) { log("presence error:", e.message); } return; }

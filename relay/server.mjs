@@ -528,6 +528,14 @@ export function createRelay(opts = {}) {
         return sendJSON(res, r?.reason === "timeout" ? 504 : 200, r || { ok: false, message: "no response from the work machine" });
       }
 
+      // ---- remote process list (Deploy → "Running locally"): read-only, forwarded down the tunnel.
+      // Gated read-only-safe but ancient-only for parity with the local route, which requires canExecute. ----
+      if (path === "/api/admin/processes" && req.method === "POST") {
+        if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "The ancient role is required to view deploy processes." });
+        if (!link.connected) return sendJSON(res, 503, { ok: false, message: "The work machine isn't connected.", processes: [] });
+        const r = await link.relay("deployProcesses", {}, 15_000);
+        return sendJSON(res, 200, r || { ok: false, message: "no reply from the work machine", processes: [] });
+      }
       // ---- remote deploy trigger: forward down the tunnel; the bridge runs it + streams the log ----
       if (path === "/api/deploy") {
         if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Deploy is ancient-only." });
@@ -541,7 +549,10 @@ export function createRelay(opts = {}) {
       if (path === "/api/dashboard/restart") {
         if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Restart is ancient-only." });
         if (!link.connected) return sendJSON(res, 503, { ok: false, reason: "local-not-connected", message: "The work machine isn't connected." });
-        const r = link.sendWsIn("restart", null, {});
+        // Forward the reload dialog's { forceDaemon } tick down the tunnel. Dropping it here would make the
+        // tick a no-op for REMOTE reloads — the one case it's actually for, since the hub has no host terminal
+        // to run `systemctl restart` in. Nothing else in the body is forwarded or trusted.
+        const r = link.sendWsIn("restart", null, { forceDaemon: !!(body && body.forceDaemon) });
         return sendJSON(res, r.ok ? 200 : (r.reason === "local-not-connected" ? 503 : 502), { ok: r.ok, started: r.ok, remote: true });
       }
 

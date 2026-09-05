@@ -84,6 +84,31 @@ Never add a second axios/fetch path to the chain node. If `AccountsService` or a
 
 Don't drop it without verifying the build. React 19 + Tailwind v4 + the current rolldown-vite version is the working combo. The stock Vite fallback may work but hasn't been tested recently.
 
+## Verifying a deploy actually shipped
+
+Don't trust a `deploy.sh` exit code, a "container healthy" status, or an agent's self-report as proof a feature
+is live — verify independently by grepping the RUNNING container's shipped bundle for a feature-specific
+string. For a frontend feature:
+
+```bash
+docker exec explorer_frontend_prod grep -l "Legend" /usr/share/nginx/html/assets/*.js
+```
+
+(swap the container name for the target — `explorer_frontend_kadena_prod` etc. — and the string for something
+unique to the feature you just shipped). This is more reliable than either of the other two signals, and it's
+cheap enough to run after every deploy that matters.
+
+Two related gotchas already learned the hard way (full detail in LEARNINGS.md, 2026-08-26 DEPLOY GOTCHAS
+entry) — keep them in mind when picking what to grep for:
+
+- **Don't grep for a source COMMENT.** `nest build` (tsc `removeComments`) strips comments from prod output —
+  a correct, fully-deployed build shows 0 matches and looks "not deployed" when it isn't. Grep for compiled
+  CODE or a literal user-facing string instead.
+- **Confirm the box is actually on the commit you think it is** before trusting any deploy: `git push`
+  immediately followed by kicking `deploy.sh` can race deploy.sh's own internal `git pull`, building a commit
+  BEHIND the one you just pushed. Check `git rev-parse HEAD` on the deploy box == your target commit first,
+  then re-verify via the compiled-code/string grep above.
+
 ## Hard don'ts (project-specific)
 
 - **Don't add a second HTTP client to the node.** Use `KadenaService`.

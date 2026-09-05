@@ -52,3 +52,6 @@ dashboard/data/tokens.json
 # Relay bridge config (points at the online relay; recon-sensitive). Never commit.
 dashboard/data/relay.json
 cm-deploy.tgz
+
+# Per-installation routing preference (runtime-written by lib/routing.mjs). Local state, not source.
+dashboard/data/routing.json

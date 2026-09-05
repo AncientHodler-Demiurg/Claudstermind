@@ -2,6 +2,48 @@
 
 > Append-only. Non-obvious facts, corrections, tricks that came out of real sessions. Newest at the top. Each entry gets a date + one-line headline + the detail underneath.
 
+## 2026-09-05 — ★ Shared-component pattern: build/verify once against whichever frontend has local tooling, then replicate the exact diff
+
+The medallion-viewer files (`PactMedallionViewer.tsx`, `pact-medallion.css`, `lib/pact-medallion.ts`) are
+BYTE-IDENTICAL copies between `frontend-stoa` and `frontend-kadena` — deliberate, not accidental drift. The
+working pattern for this whole session's shared-component work (anything that lives in both frontends): pick
+ONE frontend as the build-verify target (whichever currently has a working local toolchain — see the entry
+below for why that's `frontend-stoa` in THEORY but not in practice right now; `frontend-kadena` has never had
+local `node_modules`, so it's verified via the Docker build gate instead —
+`docker/production/Dockerfile.frontend-kadena`), get the feature fully working + typechecked + built there,
+THEN replicate the exact same diff file-for-file into the other frontend rather than re-deriving or "porting"
+it by hand. Verify the replication with a byte-for-byte diff of the two copies afterward, not just eyeballing —
+that's what caught the medallion port being exact in the first place (see the STOICSYNTAX MEDALLION VIEWER
+entry). Reusable rule for the NEXT shared-component feature between the two frontends: same order of
+operations (build-verify target first, mechanical copy second, diff to confirm no drift third).
+
+## 2026-09-05 — ★ ENVIRONMENT GOTCHA: frontend-stoa's local node_modules is currently broken (pre-existing, not caused by this session)
+
+`frontend-stoa/node_modules` has a broken pre-existing rolldown native binding (wrong platform arch for this
+box), and a fresh `npm install` is separately blocked by an **npm 9.2.0 bug** parsing the `package.json`
+`overrides` field (the same `"vite": "npm:rolldown-vite@7.2.5"` override called out in CONVENTIONS.md).
+Reproduced IDENTICALLY on unmodified HEAD via `git stash` — confirms this is a pre-existing environment issue
+on this box, not something introduced by any of this session's edits. This CONTRADICTS the 2026-08-12 entry
+below ("frontend-stoa now HAS local node_modules, gate with `tsc -b`") — that was true then, isn't true now on
+this box; don't trust it without re-checking `node node_modules/typescript/bin/tsc -b` actually runs first.
+PRACTICAL IMPACT: until this is fixed (npm upgrade, or reinstalling node_modules on a matching-platform box),
+the Docker build remains the ONLY reliable build gate for BOTH frontends — same as frontend-kadena has always
+required. Don't waste time chasing a local `tsc`/`vite` failure here as if it were a real type error; check
+whether it reproduces on a clean stash first.
+
+## 2026-09-05 — ★ Highlighting search matches inside `dangerouslySetInnerHTML` content without corrupting nested spans
+
+Find-in-code search added to the medallion viewer (`60856a9`) had to solve a specific problem: the viewer
+renders each line's classified Pact code via `dangerouslySetInnerHTML` (nested `<span>`s for caps/medallions/
+foreign-black/bracket-depth), so a naive "wrap the match in `<mark>`" over the raw HTML string risks a `<mark>`
+tag straddling an existing tag boundary — corrupting the medallion span nesting (unbalanced tags, broken
+classifier output). FIX: build a decoded PLAIN-TEXT view of each line's HTML with an offset map back to the
+original HTML, split the HTML into alternating tag/text "runs", match search terms only against the plain-text
+view, then only ever wrap `<mark>` INSIDE a text run — never across a tag boundary. General rule for any future
+feature that needs to highlight/annotate inside pre-rendered classified/syntax-highlighted HTML: never
+string-search-and-wrap the raw HTML directly; decode a plain-text view with an offset map, match there, then
+splice the wrapper back in per-run.
+
 ## 2026-08-25 — ★ARCHITECTURE DIRECTION (owner): ONE common explorer engine for all chains; Kadena is the scale canary
 
 Owner set the strategic direction: build a COMMON ENGINE that serves Kadena, StoaChain, and Ouronet identically —
@@ -206,6 +248,30 @@ Page — a Contracts>"Code API" sub-view (SUB_VIEWS.contracts=[Browse,/modules; 
 (chain select from useChainHeights, namespace+name inputs → PactCodeViewer + copyable request URL). Verified live:
 kadena coin 19518 chars / fungible-v2 isInterface / stoa coin 77534 / missing-name→400; both frontends built in Docker.
 Ouronet has no ModulesPage → not applicable.
+
+★ STOICSYNTAX MEDALLION VIEWER (e8f3f3d kadena; df0a680 stoa) — read-only Pact module/interface viewer with the
+full-fidelity medallion colour scheme. PORTED (not reinvented) from the reference engine Claudstermind/dashboard/
+public/pact-medallion.js → TS module frontend-*/src/lib/pact-medallion.ts exporting pactMedallionHtml(code). Only the
+READ-ONLY renderer path was ported (angled metallic caps, padded medallions, per-type, foreign-black); the editable
+CodeMirror twin was dropped (no caret to keep safe). computeCaps is a WHOLE-DOC pre-pass over ;;{Gx}/;;{Cx} markers +
+cap body → bronze(true-body/only-composes-bronze, wins)/gold({C4} or GOV-in-{Gx})/silver. CSS ported verbatim (the
+read-only .pact-medallion-pre block only) → pact-medallion.css, imported in main.tsx. PactMedallionViewer.tsx splits
+the engine HTML on "\n" (engine never straddles a newline) into per-line rows: line-number gutter (--pml-lnw = digit
+count) + word-wrapping code column (white-space:pre-wrap + box-decoration-break:clone so long strings wrap not scroll;
+--wrapped flag set by a rAF-debounced ResizeObserver measuring cell height > 1.5 line-heights). Replaces PactCodeViewer
+in ModuleDetailPage + ModuleApiPage. ★ VERIFICATION TECHNIQUE (frontends have no local node_modules): transpiled the
+engine .ts with the BACKEND's tsc (`node backend/node_modules/typescript/bin/tsc engine.ts --outDir /tmp/eng --module
+commonjs`), then a plain-node script ran my engine AND the reference JS (eval'd — it assigns pactMedallionHtml to
+globalThis) on real modules and diffed: BYTE-IDENTICAL on coin (381,107 chars out) + DALOS (321,296) → port is exact
+(DALOS: 25 bronze/17 silver/39 gold caps, 393 per-type medallions, foreign-black, bracket-depth). DALOS lives at
+namespace `ouronet-ns`, name `DALOS` (has ;;{C1-4}/{G1-3}/{F0-8}/{P1-4} markers). Node 22.22 here can't strip TS types
+(ERR_NO_TYPESCRIPT) → use the backend tsc route.
+
+★ POLISH BATCH (710f47b, deployed 2026-09-04, kadena+stoa+backends): (a) medallion viewer now renders TRANSACTION
+Pact code too (TransactionDetailPage swap PactCodeViewer→PactMedallionViewer) — engine is prefix-based + reads live,
+so rehaul-safe; (b) "Code API" link button on ModulesPage header → /modules/api; (c) CORS fix in main.ts — credentials
+now `corsOrigin !== '*'` (was unconditional `true`; Allow-Credentials:true + Allow-Origin:* is invalid & this is a
+public no-auth API). Verified: CORS response now only `access-control-allow-origin: *`, both frontends built+swapped.
 
 ★★ CRITICAL PLANNER LESSON (f1d06f5): the ASC index existing is NOT enough. With `ORDER BY height ASC` alone the
 planner STILL satisfies the sort from the plain height index and filter-scans ~19M pages (15s) — verified live: after

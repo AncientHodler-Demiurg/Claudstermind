@@ -4,6 +4,712 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.84] - 2026-09-05
+### Fixed
+- **OmniRoute was silently dropping entire connected accounts from the model catalog.** `keepOmniId` (added
+  when OmniRoute first shipped) only ever allowed through the curated `auto/*` combos, `cc/claude-*`, and
+  `groq/*` — despite the file's own header comment listing 5 connected accounts (Claude/Cursor/Groq/Kimi/
+  OpenRouter). Cursor (reported: ~220 models exposed) and Kimi had **no branch at all** and were dropped
+  entirely; OpenRouter's `:free` tail was dropped on purpose. Now every connected account's individual
+  models pass through — this is what made "does OmniRoute actually work for other models?" untestable:
+  the models in question weren't in the list to test. Raised the live-catalog fetch cap 200 → 500 to fit
+  a single account's full catalog. Regression-tested (`lib/omniRoute.test.mjs`, extended).
+### Changed
+- **Model selector: no more ambiguous "Default" entry, and OmniRoute no longer floods the default view.**
+  Both the Core desktop selector and the shared mobile/Pact-desktop selector:
+  - With no explicit pick, the dropdown now shows/selects the REAL model actually running (resolved by id
+    against the live catalog), instead of a synthetic `Default` / `Default · sonnet-5` stand-in.
+  - Anthropic-key models and OmniRoute models are grouped separately (`<optgroup>`), never one flat list.
+  - OmniRoute's default view shows only the curated Auto combos — not the (now much larger, post-fix)
+    individual-model catalog. A `▸ More models (N)…` row expands it, grouped by provider (Claude via
+    OmniRoute / Groq / Cursor / Kimi / OpenRouter); a `▾ Fewer models` row collapses back. Neither row is a
+    real pick — selecting one just toggles the expansion locally, no server round-trip, no pin change.
+  - New pure helper `modelOptionGroups` (`lib/modelOptionGroups.test.mjs`, 6 tests) drives the split so
+    Core and Pact/mobile can't drift from each other.
+- **Pact chat history panel: Open vs Retired.** The history panel (desktop) and the mobile "Chat history"
+  sheet used to list every saved conversation in one flat pile, so a long-running repo's history buried the
+  handful of chats you actually have open under months of finished ones. Both now split into two tabs:
+  **Open** (a saved chat whose tab is currently loaded) and **Retired** (everything else — closed tabs,
+  or never (re)opened this session). Nothing new is deleted or moved on disk; this is purely a view filter.
+
+## [1.5.83] - 2026-09-05
+### Changed
+- **Model selector: no more ambiguous "Default" entry.** Both the Core desktop selector
+  (`fillModelSelect`) and the shared mobile/Pact-desktop selector (`buildMobileModelSelect`) used to show
+  a synthetic `Default` (or, when it could resolve one, `Default · sonnet-5`) option for "no explicit
+  pick" — a wrapper name that wasn't how the model actually appeared anywhere else, and stayed a bare,
+  uninformative `Default` whenever resolution failed. With no explicit pick, the dropdown now selects the
+  REAL model actually running (matched by id against the live catalog) directly, by its real name — same
+  as Claude Code's own picker never inventing a stand-in label. Explicitly picking a different option still
+  pins it exactly as before; nothing changes there.
+- **Model selector: Anthropic-key models and OmniRoute models are now visually grouped**, via native
+  `<optgroup label="Anthropic">` / `<optgroup label="OmniRoute">`, instead of one flat list where an
+  OmniRoute entry (`omni/...`) could only be told apart by reading its id.
+
+## [1.5.82] - 2026-09-05
+### Fixed
+- **Core cockpit: Stop button stayed enabled on an idle pane while Send already read "Send"** — the two
+  controls visibly contradicted each other. Root cause: `wsApplyStall()` unconditionally set
+  `stopBtn.disabled = false` for any pane not in the brief post-click "Stopping…" state, with no check for
+  whether the pane was actually busy. `wsSelfHeal()`'s 4-second tick calls `wsApplyStall()` for every open
+  pane (busy or not), so within a few seconds of a turn finishing, this re-enabled Stop right over the
+  correct `disabled = !busy` that `paintPane()` had just set — permanently, on every tick. Guarded the
+  function to leave `disabled`/`hidden` untouched when the pane isn't busy (mirrors Pact's own stall-cue
+  timer, which already returns early on `!pactChatBusy(t)`); it now only manages the stall label/coloring
+  while a turn is genuinely in flight.
+
+## [1.5.81] - 2026-09-05
+### Fixed
+- **Pact workspace crashes to "This view couldn't load — Cannot access 'mob' before initialization".** The
+  desktop header/model-bar split introduced a temporal-dead-zone bug in `pactChatRender()`: `mob` was read in
+  `headKids` (header composition) and `modelBar` while its `const mob = pactIsMobile()` declaration still sat
+  ~60 lines *below*, at the composer. A `const` used above its own declaration throws on every render, so the
+  whole Pact view failed to mount. Hoisted the single declaration above its first use and removed the now-dead
+  duplicate — one `const mob` per function, no TDZ. `node --check` clean.
+
+## [1.5.80] - 2026-09-05
+### Fixed
+- **Stuck "Working…" after opening a big conversation — "the pact workspace is dead", auto-continue never
+  fires, Stop+Send both live with no turn running.** One root cause behind all three symptoms, in **both**
+  Core and Pact. Opening a large conversation triggers a *cold-load* (the SDK streams the whole session file
+  in); while it runs we force the tab's status to `"thinking"` so nothing is sent into a half-loaded tab.
+  `loadingHistoryDone` cleared the loader spinner but **never restored the status** — so the tab stayed busy
+  forever: `● thinking…` timer climbing, composer reading "Working…", and auto-continue permanently gated
+  (it only arms when `!busy`). This is why "it worked before" — the cold-load mechanism is recent; before it,
+  opening a conversation never forced busy.
+- The flip is now **tagged synthetic** and reverted on load end — and *only* our own flip: a conversation
+  reopened with a genuine turn in flight is already `"thinking"` when the load starts, so its real busy state
+  is untouched. Idempotent against a duplicate/late `done`.
+### Added
+- **Cold-load watchdog** (both self-heal loops, ~4s): if a `loadingHistoryDone` is ever *dropped*, a load
+  stale past ~3 min is ended locally and reconciled with a resync so the server's authoritative status wins —
+  the tab can no longer be stranded by a lost event. This is the "account for it so it can't happen again".
+- Regression coverage: `lib/coldLoadStatus.test.mjs` — the cold-load lifecycle was extracted to a pure,
+  sentinel-marked helper (`coldLoadBegin`/`coldLoadEnd`/`coldLoadStale`) and now has 6 tests. The feature
+  had **zero** coverage, which is why it regressed silently; the suite fails if the restore is ever removed.
+### Notes
+- Suite: 816 lib tests, 813 pass (+6 new, all green). Same 3 pre-existing failures (OmniRoute lane-switch,
+  static diff highlighter, model-catalog cache) — unrelated to this work, none touch cold-load.
+
+## [1.5.79] - 2026-09-05
+### Changed
+- **Unified chat box — one layout for Core and Pact (desktop).** The Pact header carried **12 controls on one
+  row** and overflowed; Core put its controls ABOVE the composer while Pact put them inline. Both are now the
+  same composition, bottom-up:
+  1. **Model bar** (bottom) — model selector · running model · context · agent swarm ··· Compact · Bypass.
+     Readouts left, actions right. Core's `.ws-pane-controls` moved from above the composer to the bottom and
+     gained `--modelbar`; Pact gained `.pc-modelbar`.
+  2. **Action bar** (directly under the type box) — upload · worktree · repo · left; **■ Stop · Send** right.
+  3. **Type box** — full width, its own row.
+  4. **Continuation line** — suggested-next chip + ★ bookmark (bookmark moved off the header).
+  5. **Header** — conversation identity only: tabs left, `+` / history / sync right-aligned.
+- **■ Stop is now always visible on desktop**, switching enabled/disabled instead of appearing and vanishing,
+  so the row never reflows mid-turn and Send never jumps sideways under the cursor. Mobile and read-only panes
+  keep the hide-when-idle behavior (there, horizontal space is the binding constraint).
+### Added
+- **Agent swarm indicator in the model bar.** One figure per LIVE subagent, lit while it works, with a numeric
+  badge. Pact never consumed the engine's `background` event at all (Core did), so it had no data source; Pact
+  now handles it. **One shared renderer** (`paintSwarm`/`swarmState`) serves both workspaces — the point of
+  unifying is one implementation, not two that drift.
+### Fixed
+- **"History for this repo" was a one-way trap.** It set `st.historyRepo` and no control anywhere cleared it,
+  so the tree stayed scoped for the rest of the session with no visible reason. It's now a real toggle
+  (click again → all history) and the button renders `--on` while a scope is active — a filter you cannot see
+  is the reason this felt broken.
+- **Mobile settings sheet would have silently undone the new layout.** It re-homes the live
+  `.ws-pane-controls` node and restored it *before* `.ws-compose-extras` — the bar's OLD position. After one
+  open/close the model bar would have jumped back above the type box. It now appends to the pane end.
+### Notes
+- `paintPane`/`pactChatPaint` looked up Send/Stop with `compose.querySelector(...)`. With those buttons moved
+  into the action bar that query would have found nothing and the buttons would have silently stopped
+  updating — both lookups are now host-scoped, which covers desktop and mobile.
+- `swarmState` counts only entries whose status is not `"removed"`: `lib/backgroundTasks.mjs` MARKS finished
+  tasks rather than dropping them, so counting raw length would leave dead subagents lit forever after a
+  fan-out. Verified by mutation — relaxing that filter fails the new suite.
+- Suite: 874 tests, 871 pass (+5 new, all green). Same 3 pre-existing failures as 1.5.78, unrelated to this work.
+- **Mobile is deliberately untouched** in this pass — it keeps its existing compact composition until the
+  desktop layout is confirmed.
+
+## [1.5.78] - 2026-09-05
+### Added
+- **Reload → "Also restart the session engine" tick.** Reload decides whether to restart `claudstermind-sessiond`
+  from `deployChangedFiles()`, which only sees **git-tracked** changes. Bumping the bundled Claude CLI
+  (`node_modules/@anthropic-ai/claude-agent-sdk`) changes zero tracked files, so `daemonAffected` came back false,
+  Reload skipped the engine, and sessiond kept running the OLD binary in memory — the "I reloaded but the engine
+  kept running old code" case `deployProcesses.mjs` already warned about. The only fix was SSH'ing to AncientIntel
+  (in practice: hub → terminal → paste `systemctl restart`), which is not available mid-session.
+  - The reload dialog now offers an explicit opt-in tick, shown **only when git did NOT already detect an engine
+    change** (when it did, the engine restarts anyway and a tick would imply a choice that doesn't exist).
+  - `forceDaemon` only ever **adds** the engine restart — it can never suppress an auto-detected one.
+  - Threaded through all four layers so it works **remotely as well as locally**: client → `/api/dashboard/restart`
+    → relay `sendWsIn("restart", …, { forceDaemon })` → `agent.mjs` `runRemoteRestart(frame.data)` →
+    `startSelfRestart({ forceDaemon })`. The relay previously sent a hard-coded `{}`, which would have made the tick
+    a silent no-op over the tunnel — the exact case it exists for.
+  - `showModal` grew an optional `checkbox` param. With it the promise resolves `{ ok, checked }` instead of a bare
+    boolean; without it every existing caller keeps its current true/false/"third"/null contract untouched.
+### Fixed
+- **Deploy → "Running locally" showed "Process list unavailable." over the tunnel.** The backend was fine — the
+  client fetched `/api/admin/processes` with a plain **GET**, and the relay has no GET route for it, so remotely it
+  404'd → `ok:false` → the misleading message. Added a relay POST forwarder (ancient-only, connection-required)
+  that relays a `deployProcesses` cmd to the bridge, an `agent.mjs` handler, and a `processes` provider on
+  `createBridge` (reusing the now-exported `gatherDeployProcesses`). All four client call sites go through one
+  `fetchProcesses()` helper that picks GET-local vs POST-remote, so local and remote render identically.
+### Notes
+- The `forceDaemon` test needed a `daemonAffectedFn` injection seam. Without it the test passed **even with the
+  feature deleted** — any working tree with uncommitted engine edits reports `daemonAffected: true` on its own,
+  masking the flag entirely. Verified by mutation: removing `if (forceDaemon) restartDaemon = true;` now fails the
+  suite (it did not before the seam). A test that cannot fail is not a test.
+- Suite: 869 tests, 866 pass. The 3 failures are **pre-existing** — an identical 3 fail with every change here
+  stashed (verified), and the relay integration one reproduces consistently across runs, so it is a real
+  pre-existing defect rather than flake. Net +3 tests, all green.
+
+## [1.5.77] - 2026-09-05
+### Fixed
+- **Model list was four months stale — Opus 5 and Fable 5.1 were invisible to the engine.** The engine spawns the
+  CLI bundled inside `@anthropic-ai/claude-agent-sdk`, which was pinned at **0.3.216 (binary dated Jul 23)**. That
+  build's newest Opus was `claude-opus-4-8`; `claude-opus-5` and `claude-fable-5-1` did not exist in its catalog at
+  all. Meanwhile the OmniRoute gateway (whose catalog is fetched **live**) correctly served `cc/claude-opus-5`, and
+  the desktop Claude Code GUI listed Opus 5 / Fable 5.1 — so the model a user picked and the model the engine could
+  actually resolve had drifted apart. Symptom: picking Opus 5 showed a `sonnet-5` header readout, and Core sessions
+  reported a 200k context window instead of 1M.
+  - Bumped `@anthropic-ai/claude-agent-sdk` **0.3.216 → 0.3.261**. The new bundled CLI knows `claude-opus-5`
+    (`context: {window: 1e6, native_1m: true}`, knowledge cutoff May 2026), `claude-opus-5[1m]`, `claude-fable-5-1`,
+    `claude-mythos-5-1`, and `claude-opus-4-8[1m]`.
+  - Updated the standalone CLI on AncientIntel **2.1.143 → 2.1.261** via `claude update` (it is a versioned binary
+    under `~/.local/share/claude/versions/`, NOT an npm global — `npm i -g @anthropic-ai/claude-code` fails on
+    permissions and is the wrong tool here).
+### Notes
+- **The 1M-context gate is data-driven, not a hardcoded model list.** `rGc()` resolves it in this order: an explicit
+  `[1m]` suffix in the model id → the 1M beta header on an eligible model → the model's own catalog entry carrying
+  `context.native_1m` → otherwise the 200,000 default. Any model whose catalog entry has `native_1m: true` gets 1M:
+  Opus 5, 4.8, 4.7, 4.6, Sonnet 5, Sonnet 4.6, Fable 5. There is no special-cased single model id.
+- **`CLAUDE_CODE_DISABLE_1M_CONTEXT` is a global kill switch.** When set, every one of those branches short-circuits
+  and EVERY model silently reports 200k. Check this first if a known-1M model ever reads 200k again.
+- Two pre-existing test failures are unrelated to this bump (it touched only `node_modules` + `package.json`):
+  both reproduce with `lib/`+`dashboard/` stashed and stem from earlier uncommitted work.
+
+## [1.5.76] - 2026-09-05
+### Fixed
+- **■ Stop looked like it did nothing.** `_stop` awaited the SDK interrupt (up to a 6s timeout on a wedged turn)
+  and only emitted state AFTER it — so for those seconds the UI still read "Working…" with an unchanged button,
+  and the turn appeared to stop "at some point" later, unprompted. The engine now emits a **`stopping` receipt
+  immediately**, before the interrupt is awaited, and the client ALSO flips locally on click (never waiting for
+  the round-trip): Send reads "Stopping…" and the Stop button goes disabled+dimmed, cleared when the turn truly
+  ends. Fixed in **both** workspaces — Core and Pact, desktop and mobile. Regression-tested (the receipt must
+  precede a deliberately slow interrupt).
+  - In Core, the fix had to live in `wsApplyStall` — it repaints the Stop label every tick and would otherwise
+    have overwritten the acknowledgement right back to "■ Stop".
+
+### Added
+- **Model selector for Pact (desktop).** Pact only ever had the read-only `· model` readout, so a Pact chat was
+  stuck on whatever it defaulted to (typically Sonnet) with **no way to move it to Opus** — Core had a selector,
+  Pact didn't. The header now has a real picker using the same catalog and the same live `setModel` control action
+  as Core and Pact-mobile, so all three stay in step.
+  - Pact now **requests the model catalog itself** on stream (re)connect and caches it to the shared `cm_models`.
+    Previously only Core's `primeControls` ever asked — so on a Pact-only session the picker would have listed
+    nothing but "Default".
+  - The per-conversation model override is now **persisted** (snapshot + restore), so a chat you deliberately
+    moved to Opus doesn't silently fall back to the default on the next reload.
+
+## [1.5.75] - 2026-09-05
+
+### Fixed
+- **Auto-roll would have leaked archived segments into the Pact conversation list.** The roll archived head segments
+  to `<transcriptDir>/_segments/`, but `eachSession` treats every subdir of `transcriptDir` as a workspace — so each
+  archived segment would have shown up as a bogus conversation. Now archived under the workspace's OWN dir
+  (`…/<workspace-slug>/_segments/`), which `eachSession` skips. So a rolling conversation stays **one** conversation
+  in the list — no "wrapped conversation" clutter, ever. (No segments existed yet, so nothing to clean up.)
+
+### Added
+- **"Make Master" (☆) control on Pact conversations** — a non-prime tab (desktop) and each row in the mobile
+  Conversations sheet now have a ☆ that promotes it to the Master (prime/undeletable), demoting the previous one.
+  Exactly one Master at all times; persisted across reloads/devices. (`pactChatMakePrime`.)
+
+## [1.5.74] - 2026-09-05
+
+### Added (Agentic Chat Engine — cold-load progress cue)
+- **A first prompt into a big, not-running conversation now shows it's LOADING, not stuck** — with the size and a
+  "done" flash. When the engine cold-loads a large SDK session file on resume (a one-time multi-minute grind until
+  the auto-roll trims it), the server emits `loadingHistory` (with the file's byte size, globbed by session id) and,
+  on the first real output, `loadingHistoryDone`. Both Pact and Core render:
+  - **"⟳ Loading a large conversation (164 MB) — one-time, fast after this…"** during the load, and it **suppresses
+    the false "likely stuck"** cue while loading;
+  - a brief **"✓ loaded, continuing"** the moment output starts, then the normal timer.
+- Note: opening/viewing a conversation does NOT cold-load (that just reads the display store); only the first
+  *prompt* into a not-live session spawns `--resume`. `lib/workspace.mjs` is a DAEMON_PATH → **engine restart**;
+  the client cue ships with a **deploy**.
+
+## [1.5.73] - 2026-09-05
+
+### Added (Agentic Chat Engine — auto-roll: conversations are now effectively immortal)
+- **A conversation automatically rolls onto a fresh, tiny SDK session once it gets big** (past 400 turns / 25 MB
+  since the last roll), so `--resume` cold-loads fast **forever**, however long the overall conversation grows —
+  the fix for the "thinking… 13:33" grind on resuming a huge thread. How it works, safely:
+  - `ClaudeSession.roll(seedText)` respawns onto a brand-new session (resume cleared), seeded with the
+    carry-forward (summary + last 40 turns verbatim) so the model keeps context; the lane-switch respawn path is
+    untouched. Mock-tested (fresh session id adopted, old session NOT resumed, seed delivered).
+  - `WorkspaceManager._maybeRoll` fires at turn-end: it archives the head to `_segments/` (via
+    `conversationArchive`, for recall), emits the `⟳ rolling` cue, and rolls — measured SINCE the last roll so it
+    fires once per window, never every turn. Integration-tested.
+  - **Display is never broken:** the transcript store is keyed by the stable conversation key (not the SDK session
+    id), so the full history stays visible; each turn stamps the new session id, so resume uses the small session.
+    The seed is queued directly (bypasses the prompt path), so it never shows as a user message.
+- These are engine files (`lib/workspace.mjs`, `lib/claudeSession.mjs` — DAEMON_PATHS) → **need an engine restart**
+  to take effect. After the reload, the current heavy Ouronet Pact thread will resume fast on its next turn.
+
+## [1.5.72] - 2026-09-05
+
+### Added (Agentic Chat Engine — Phase 1 server foundations, cont.)
+- Two more tested engine modules: **`lib/conversationArchive.mjs`** (archive a rolled-off head segment + an index
+  + `recallByNumber`/`recallByQuery` over the archive — 6 tests) and **`lib/backgroundTasks.mjs`** (reduce the SDK
+  task events into a "▶ N agents working" panel model — 9 tests). Six engine modules now total 64 passing tests.
+- **Context breakdown forwarded** — the `contextUsage` event now carries `contextBreakdown` (the SDK's full
+  category/grid/memory/mcp/system/free split, shaped via `contextUsage.mjs`) so the client can render the
+  Claude-GUI context popover. `usage` kept for the compact badge.
+- **DMP contract** written: `HANDOFF-DMP-CHAT-ENGINE.md` — the locked engine contract translated to DMP's
+  per-request `ai/agent.mjs` architecture (lifetime/roll, storage, windowed nav, telemetry, recall), for the DMP
+  agent to implement.
+
+### Note
+- Finding: Claudstermind's own store already externalizes images (`saveImage` → `{path}` refs; store ~5.7 MB) — the
+  164 MB is the SDK's own session log, so the real cure is the auto-roll (fresh small session), not a persist-path
+  image rewrite. Image work refocused onto the roll seed (`buildSeedText` already drops image bytes).
+- These are engine files (`lib/workspace.mjs` is a DAEMON_PATH) → **need an engine restart** to take effect.
+
+## [1.5.71] - 2026-09-05
+
+### Added (Agentic Chat Engine — Phase 1 foundations)
+- Four new, unit-tested engine modules (built in parallel; see `docs/AGENTIC-CHAT-ENGINE.md`):
+  **`lib/conversationWindow.mjs`** (windowTail/windowAround/index-of-# — 15 tests),
+  **`lib/imageStore.mjs`** (content-addressed image externalization + backfill — 9 tests),
+  **`lib/conversationRoll.mjs`** (roll thresholds 400t/25MB + seed assembly — 14 tests),
+  **`lib/contextUsage.mjs`** (shapes the SDK's full context breakdown for the Claude-GUI popover — 11 tests).
+- **Integrated `conversationWindow` into the engine:** `capTranscript` now delegates to the shared module and
+  supports a server-side **jump (`around` index → a band around a turn)**, plumbed through resync/open — the
+  foundation for jump-to-#N and paging shared by Core + Pact (+ later DMP). `windowStart`/`windowEnd` returned.
+- Exocortex research completed (`docs/EXOCORTEX-LEARNINGS.md`): Hermes-agent + 3 code-graph repos studied; the
+  brain rides on this engine (segment-archival = ingest trigger; `recall` queries the archive index + FTS).
+
+## [1.5.70] - 2026-09-04
+
+### Added
+- **Markdown preview now renders inline colored text + tables** (`md-mini.js`). The Ouronet worksheets use
+  `<span style="color:#…">` and pipe tables; the preview previously escaped both, showing raw tags and `| … |`
+  lines. Now: a SAFE inline subset — only `<span style="color:…">…</span>` (hex / rgb() / bare color word) — is
+  un-escaped and rendered; every other tag (script, other attributes, img) stays escaped, so there's no injection
+  path. Added GitHub-style **table** rendering (`<table class="md-table">`, colored cells), styled for screen and
+  print. Regression + safety tests added.
+
+### Fixed
+- **Pact print of a `.md` no longer hangs at "Loading preview…".** It was hitting Ctrl+P, which tried to print the
+  entire full-screen cockpit (152 KB doc as thousands of wrapped source lines → frozen preview). The 🖨 export
+  button is now shown for `.md` too and routes to a **rendered** print: the markdown (colors + tables) laid out on
+  **white** with dark text — light to paginate, and it prints the colors even with "Background graphics" off
+  (inline text color isn't a background graphic). `.pact`/`.repl` keep the medallion (source) print.
+
+## [1.5.69] - 2026-09-04
+
+### Fixed
+- **Core "Show earlier" loaded the ENTIRE conversation at once — froze the page on a long thread.** One click set
+  `_showAllTurns=true`, which rendered every loaded turn AND made resyncs fetch `full:true` (the whole 5000-prompt
+  history), stalling the UI until a manual reload. Replaced with true incremental paging:
+  - **Client (`renderTranscriptInto`)**: the render window is now `_revealTurns` (starts at `WS_TURN_RENDER_CAP`,
+    grows `WS_TURN_REVEAL_STEP=30` per click) instead of all-or-nothing — revealing already-loaded turns is cheap
+    and never dumps the whole history into the DOM.
+  - **Server (`capTranscript` + resync/open plumbing)**: added a `limit` param. When the reveal outruns what was
+    shipped, the client requests the **next window** (`_loadWindow += 250`), not the whole thing — so the server
+    pages the history out incrementally.
+  - **Loading cue**: the button shows **"⟳ Loading earlier messages…"** (disabled) while a window is in flight,
+    and all periodic/reconnect resyncs preserve the reader's expanded window (`limit: _loadWindow`) instead of
+    snapping back to the tail. Bookmark-jump keeps its explicit reveal-all path (`_revealAll`).
+
+  Note: the client incremental reveal ships with a deploy, but the **windowed server fetch needs the engine
+  restart** (`capTranscript` lives in sessiond / `lib/workspace.mjs`, a DAEMON_PATH).
+
+## [1.5.68] - 2026-09-04
+
+### Fixed
+- **Preemptive sweep for the "failed load → save the emptiness over the truth" class of bug** (the same shape as
+  the Pact ide-state clobber). A codebase audit found and hardened the real instances:
+  - **Model routing (HIGH — global, cross-device config).** `saveRouting` sends the FULL config, and the boot
+    `GET /api/routing` swallowed failures into a hardcoded default with no gate — so a flaky-boot admin save could
+    overwrite the real global routing/omni/permission-mode settings for every device. Now: the boot fetch
+    **retries**, a `ROUTING_LOADED` flag gates `saveRouting` (refuses until a confirmed read), and the Model-routing
+    panel shows a **"couldn't load — saving disabled, Retry"** banner that auto-recovers.
+  - **Core bookmarks / routing.json / relay.json (server-side read-merge).** A *corrupt* (present-but-unparseable)
+    file used to read as empty/DEFAULTS, so the next partial write silently dropped the other workspaces' bookmarks
+    (or reset untouched config fields). Now the writers distinguish **missing (fresh — fine)** from **corrupt
+    (back up + refuse the write)**: `setCoreBookmarks` returns `{ok:false, corrupt:true}`; `writeRoutingConfig` /
+    `writeRelayConfig` throw and their route handlers return a clean error instead of clobbering. Regression tests
+    added for all three.
+- The audit also confirmed the already-safe stores (model cache, workspace queue, conn id, client bookmarks,
+  token/key readers, and all read-only display fetches) don't have this footgun.
+
+## [1.5.67] - 2026-09-04
+
+### Fixed
+- **Pact conversations silently failed to restore on a flaky link — and a save could then overwrite them.** The
+  boot restore fetches your saved tabs from the server (`/api/pact/ide-state`); a single failed fetch fell into a
+  bare `catch {}` → you got a fresh empty "Chat 1" (showing "Conversations [1]" when you had 2), with no loading
+  or error cue. Worse, it still set `PACT_STATE_READY = true`, so the next layout change PUT the empty state back
+  and **overwrote your real conversations** (data loss). Now `pactRestoreState`:
+  - **Retries** the fetch (4 attempts, backoff) before giving up.
+  - On ultimate failure, **does NOT arm saving** (`PACT_STATE_READY` stays false) so your server-side state is
+    never clobbered by this device's empty view.
+  - Surfaces the restore state via the sync cue: **"⟳ Loading your conversations…"** while fetching, and a
+    tappable **"⚠ Couldn't load your conversations — tap to retry"** (`pactRetryRestore`) on failure — instead of
+    masquerading as an empty workspace.
+
+## [1.5.66] - 2026-09-04
+
+### Fixed
+- **Admin section tabs were clipped on mobile** — the nav was a horizontal `overflow-x:auto` strip whose pills
+  could shrink/wrap, so "Model routing" split across two lines and "Tokens" scrolled off-screen as "To" with no
+  scroll affordance. On narrow screens the pills now **wrap onto multiple rows** (every tab always visible) and
+  each label stays on one line (`flex:0 0 auto; white-space:nowrap`). `styles.css` only.
+
+## [1.5.65] - 2026-09-04
+
+### Added
+- **Pact: a visible "Syncing… / Reconnecting…" cue so a stale display can't masquerade as a finished turn.** On a
+  flaky mobile link the SSE stream silently drops events (or whole ~25s heartbeats), so a turn that's genuinely
+  running on the server looks finished and a queued message won't drain — with the green "Live" badge (which only
+  means "socket open") giving no hint. A fixed banner now appears whenever the stream has gone quiet past the
+  heartbeat window: **amber "⟳ Syncing… catching up"** after a missed heartbeat (>32s), **red "⟳ Reconnecting… your
+  display may be behind"** on a socket error or past the ~65s zombie-stream window. It also **proactively fires a
+  catch-up resync** (throttled to every 12s) so the latest actually arrives instead of waiting out the 65s
+  watchdog. Cleared on any real message/hello and removed on leaving Pact. (`pactSyncCue`, driven by the 1s tick;
+  `PACT_STREAM_ERR` set from the new `es.onerror`.)
+
+## [1.5.64] - 2026-09-04
+
+### Fixed
+- **"Reload engine" restarted the web but NOT sessiond when the engine change was uncommitted — so server-side
+  fixes silently never went live.** `changedFilesFromGit` returned early on a non-null `diffOut`, and
+  `deployChangedFiles` passes `""` (empty string, not null) for an empty committed diff (`liveSha..HEAD`) — the
+  normal case when engine edits are in the working tree, uncommitted. Result: the working-tree (`git status
+  --porcelain`) branch was unreachable, `daemonAffected` came out `false`, and the reload skipped the sessiond
+  restart. This is why the 1.5.62 turn-clock fix appeared dead: the client had it, but the 4-day-old engine never
+  sent the timestamps. Now `changedFilesFromGit` **unions** the committed diff AND the working-tree changes (what a
+  reload actually loads from disk), so an uncommitted edit to `lib/workspace.mjs` / `lib/claudeSession.mjs` (or any
+  `DAEMON_PATHS` entry) correctly triggers the engine restart. Regression tests added.
+
+## [1.5.63] - 2026-09-04
+
+### Added
+- **Core workspace now shows a live, server-backed "Working… M:SS" elapsed — full parity with Pact.** The Send
+  button's busy label ("Working…" / "Deep Work…") now carries a running elapsed, ticked once a second
+  (`WS_TICK_TIMER`) and read from the server-authoritative `turnStartedAt` adopted on resync — so it shows TRUE
+  time-in-turn and, like Pact, never restarts from zero across reload/re-entry. The stall cue continues to key off
+  server `lastActivityAt` (silence). Falls back to the local "busy since" only until the first resync lands.
+
+## [1.5.62] - 2026-09-04
+
+### Fixed
+- **The "thinking" counter restarted from zero when you left the Pact workspace and came back** (and on reload) —
+  proof the readout couldn't be trusted. Root cause: the turn clock and busy state were **entirely client-local**,
+  so a rebuilt tab had no idea when the turn actually started and stamped "now". Fixed by making the **server the
+  source of truth**:
+  - `claudeSession` now tracks `turnStartedAt` (when the current busy phase began; cleared on `result`) and
+    `lastActivityAt` (bumped every time the subprocess emits output — the honest liveness heartbeat). Locked with a
+    new regression test.
+  - `workspace.mjs` ships both in every `sessionSummary` and resync/live-snapshot payload.
+  - The client (**Pact** `pactAdoptServerClock` on `state`/`resync`, **Core** on `resync`) adopts the server's real
+    `turnStartedAt`/`lastActivityAt` — so the elapsed counter shows TRUE time-in-turn and the stall cue reflects
+    TRUE silence after any navigation/reload, instead of restarting. `turnStartedAt` is adopted only when a turn is
+    actually running, so an idle session never shows a phantom elapsed.
+
+  Net: the counter is now a trustworthy answer to "is it *really* thinking, and for how long" — backed by the
+  daemon, not a per-tab guess.
+
+## [1.5.61] - 2026-09-04
+
+### Fixed
+- **False "⚠ likely stuck" on long but healthy turns (Pact AND Core).** The stall cue measured time since the
+  turn *started*, so any opus deep-work turn that legitimately streams for 12+ minutes got branded "likely stuck"
+  **mid-stream** — while output was actively filling in (caught on a live screenshot: a turn streaming a coherent
+  answer with a red "13:42 ⚠ likely stuck" under it). "Stuck?" is now judged by **silence** — time since the last
+  *real* streamed event — not total duration:
+  - **Pact** (`pactChatTickTimer`): keys off `_lastActiveAt` (bumped by every delta/tool event but NOT by the
+    ~20s self-heal resync, so it can't be masked), using `max(_lastActiveAt, _turnStartedAt)` so a send after a
+    long idle gap doesn't instantly read as stuck. The visible elapsed timer still shows total turn time.
+  - **Core** (`wsApplyStall`): keys off `_lastEventAt` (already resync-immune — the resync handler returns before
+    the stamp) instead of `_busyAt`, which also makes its "No output for Xm" tooltip finally accurate.
+  A turn that's genuinely wedged (no output for 5/12 min) still surfaces exactly as before.
+
+## [1.5.60] - 2026-09-04
+
+### Fixed
+- **Core workspace on mobile: chat boxes past the 2nd vanished on refresh.** Mobile lays panes out as a flat
+  1×N list (`addPaneMobile` sets `rows = panes.length`), but `loadLayout` re-clamped `rows` to the desktop
+  grid's `WS_MAX_ROWS` (2) and then sliced the restored panes to `cols*rows` — so a 3rd/4th/… chat box was
+  silently dropped on every reload. Restore now honors the persisted pane **count** (the real source of truth):
+  it keeps all saved panes up to a new absolute `WS_MAX_PANES` cap and, when the saved grid can't hold them,
+  falls back to the same flat 1×N shape mobile builds live. `addPaneMobile` now enforces the same cap so live
+  behavior and persistence agree. Desktop is unaffected (it already keeps `panes.length === cols*rows`).
+
+## [1.5.59] - 2026-09-04
+
+### Added
+- **DMP portless reverse tunnel (Step 2 of the DMP build).** New `lib/reverseTunnel.mjs` — a generic, app-agnostic
+  reverse HTTP tunnel over ONE WebSocket, same mechanism as Claudstermind's brain relay: the NAT'd side **dials
+  out**, so nothing inbound is opened on AncientIntel and **no extra port / ufw rule** is needed on the DMP VPS.
+  - `attachReverseTunnel(server, { path:"/dmp-agent", secret })` → `{ isBridgeConnected(), forward(req,res) }` runs
+    inside `dmp-remote` (VPS). `forward()` streams a request through the live WS to the bridge's target and resolves
+    `true` if relayed, `false` if no bridge — so the caller falls back to its read-only replica.
+  - `startReverseTunnelBridge({ url, secret, targetOrigin })` → `{ stop() }` runs on AncientIntel, auto-reconnects.
+  - Protocol: JSON control frames (`req`/`req-end`/`abort`/`res`/`res-end`/`res-err`) + binary `[4-byte id][chunk]`
+    body frames, multiplexed by request id; hop-by-hop headers stripped both ways; WS upgrade authed by a shared
+    secret (`Bearer`, constant-time compare); single bridge (newest wins).
+  - **Proven end-to-end** — `lib/reverseTunnel.test.mjs` (5/5): no-bridge fallback, wrong-secret rejection, GET
+    relay with header pass-through, POST body round-trip, and drop→fallback.
+- **Bridge runner + deploy artifacts (AncientIntel side).** `agent/dmp-tunnel.mjs` (reads `DMP_TUNNEL_URL` /
+  `DMP_TUNNEL_SECRET` / `DMP_TUNNEL_TARGET`), plus `deploy/dmp-tunnel.service`, `deploy/dmp-tunnel.env.example`,
+  and `deploy/DMP-TUNNEL.md`. Replaces the earlier **autossh** sketch (retired) — WebSocket, not SSH.
+
+### Changed
+- **DMP control tab blurb** now describes the `dmp-tunnel` unit as the portless WebSocket bridge (no more autossh /
+  `DMP_MAIN_URL` language) in `lib/dmpControlPlane.mjs`.
+
+## [1.5.58] - 2026-09-04
+
+### Fixed
+- **Pact PDF export no longer hangs at "generating preview."** The first cut printed a hidden **1px-wide iframe**,
+  so `pre-wrap` wrapped every character into (effectively) billions of lines and the print preview never
+  finished. Reworked to print the **main window** with an isolated print container (a print-only stylesheet
+  hides everything except the code and lets `@page` set a sane width) — no iframe, no popup/permission, content
+  wraps at the page width and paginates normally.
+
+## [1.5.57] - 2026-09-04
+
+### Added
+- **Core workspace stall cue (parity with Pact).** A wedged turn in the normal workspace now surfaces on the
+  **Stop button** (already shown while a pane is busy): past ~5 min it reads "■ Stop (stuck? Xm)" in amber, past
+  ~12 min "⚠ Stop — likely stuck Xm" in red, with a tooltip pointing to Stop / reload-engine. Keyed off a
+  `_busyAt` "busy since" stamp (which the self-heal resync can't reset, unlike `_lastEventAt`) and refreshed on
+  the existing 4s self-heal tick — so you're never again staring at a silent "Working…" unsure if it's dead.
+  This completes the both-workspaces parity: reliable ■ Stop (shared), queued-message persistence (both), and
+  now the stall cue (both).
+
+## [1.5.56] - 2026-09-04
+
+### Added
+- **Export a Pact file's read-only view as a paginated PDF.** Each `.pact`/`.repl` box gets a **🖨** button that
+  renders the *whole* file (every line, coloured medallions + gutter, matching the read-only view) into a
+  standalone print document in a hidden iframe and opens the print dialog → **Save as PDF**. Because it prints a
+  dedicated document (not the live page), it captures **only the code, the entire file** — not the app chrome,
+  and not just the scroll viewport — and the browser paginates it, so a 7,000-line file just becomes a
+  multi-page PDF. Long lines wrap at the page width; `print-color-adjust:exact` keeps the colours + dark
+  background; each `.pml-row` avoids splitting across a page break. Zero new dependencies.
+
+## [1.5.55] - 2026-09-04
+
+### Fixed
+- **A stuck Pact turn can no longer trap you — ■ Stop always works, and a stall is now obvious.** A wedged turn
+  (a stalled model stream that never returns) used to leave the tab "thinking…" forever, and the old
+  `await s.interrupt()` in the server Stop could itself hang, so the ■ Stop button never returned. Now `_stop`
+  **races the interrupt against a timeout and force-flips the session to idle**, so Stop always returns and
+  un-sticks the UI (the guaranteed hard kill for a truly-wedged subprocess remains the engine reload). The Pact
+  timer also **surfaces the stall**: past ~5 min → "· ■ Stop if stuck" (amber); past ~12 min → "⚠ likely stuck
+  — ■ Stop or ↻ Reload engine" (red), keyed off elapsed time (the self-heal resync can't mask it).
+- **Queued (orange) chat messages persist across a refresh — no more vanishing, in BOTH workspaces.** The
+  save-on-unload now runs on **every** unload (including a bfcache `pagehide` and a `visibilitychange → hidden`),
+  not just `!e.persisted` — for the **Pact** outbox *and* the **Core** workspace queue — so a message queued
+  mid-turn is always persisted and sent when the tab next goes idle, instead of being silently dropped on a
+  mobile back/forward or backgrounded reload.
+- **Reliable ■ Stop applies to both workspaces** — the non-hanging `_stop` fix lives in the shared
+  `WorkspaceManager`, so Core panes get it too. (The stall-timer cue is currently Pact-only; the Core
+  equivalent is queued as a follow-up.)
+
+### Known / pre-existing (not from this change)
+- One `lib/workspace.test.mjs` case ("control models … real catalog is cached … even after it ends") fails
+  independently of this change (verified by stashing) — a separate model-catalog-cache issue, tracked separately.
+
+### Added
+- **Default permission mode is now a global setting (Admin → Model routing) — and defaults to Bypass.** New
+  chats in the Core workspace previously always started in "Manual" (ask before every tool), which on a flaky
+  mobile link could strand a turn on an unanswered prompt. There's now a **"Default permission mode for a NEW
+  chat"** selector in the Admin routing panel, stored in the global `routing.json` (`defaultPermissionMode`), so
+  it applies on **every device including mobile** — not just per-browser like the workspace's "New panes:"
+  dropdown. Shipped set to **Bypass** (no per-tool prompts, best for long autonomous runs); each chat can still
+  be switched from its own mode selector, and existing chats keep their mode. The Core default now reads this
+  global value on load instead of the per-device saved one, so an admin change propagates.
+
+## [1.5.53] - 2026-09-03
+
+### Fixed
+- **A turn blocked awaiting permission no longer hangs forever after a reload.** When a session in ask-mode
+  ("Default") calls a tool, the SDK blocks inside `canUseTool` until the browser answers the Approve/Deny
+  prompt. That prompt (`_ask` → `permission` event) was sent **once**; if the browser reloaded / the PWA
+  reopened / the relay flapped before answering, the prompt was gone but the SDK stayed blocked — the turn sat
+  "stuck for hours, reload is the same," with the partial reply held live and never persisted. Now the server
+  **re-sends every still-pending permission prompt when a client (re)attaches** (`open` and `resync`), so the
+  Approve/Deny UI comes back and the turn can be unblocked. `_ask` now also keeps the tool+input with the
+  pending resolver so the re-sent prompt is complete. (Immediate unstick for an already-hung turn: tap the red
+  ■ Stop, which settles the pending permission and ends the turn, or switch the pane to Bypass and send.)
+
+## [1.5.52] - 2026-09-03
+
+### Fixed
+- **THE root cause: a mobile-picked repo saved the wrong session key, so the conversation vanished on refresh.**
+  Binding a repo from the **☰ drawer / sidebar** (`pickRepoForActive` — the mobile path) set the pane's `repo`
+  but never called `assignKey()`, so its `sessionKey` stayed the random `newPane()` uuid instead of
+  `repo@worktree`. `dispatchPrompt` fixed the key in memory on send but never persisted it — so `saveLayout`
+  stored a `sessionKey` that matched **no server session**. On refresh, `restorePanes` reattached to that dead
+  uuid → "could not open" → an empty box ("disappeared"), even though the real conversation was alive under
+  `repo@worktree` and still openable from **History** (which is exactly why reopening from there worked). The
+  desktop `<select>` path always called `assignKey`, so this only ever bit the phone. Fixed by making
+  `pickRepoForActive` bind the key (and reset worktree/status like the desktop path), plus a belt-and-braces
+  `saveLayout()` in `dispatchPrompt` whenever `assignKey` corrects a stale key. This is the actual fix behind
+  1.5.49/1.5.50's symptoms; the 🐞 restore log from 1.5.51 will now show `reopen … known=true` and a non-zero
+  `openReply … tx=`.
+
+## [1.5.51] - 2026-09-03
+
+### Added
+- **Restore diagnostic (temporary).** A `localStorage` ring buffer records the Core-workspace boot/restore path
+  (route gate pass/park, `loadLayout` result + saved-panes summary, per-pane reattach decisions, `open` reply
+  transcript lengths) and **survives the reload**. Read it on mobile via the **🐞** button on the workspace tab
+  row (or `window.wsDiagDump()` in a console). Added to pin down the "conversation disappears on refresh" report
+  with ground truth instead of inference; will be removed once the cause is confirmed.
+
+## [1.5.50] - 2026-09-03
+
+### Fixed
+- **A brand-new Core conversation no longer comes back empty on refresh.** On boot, `restorePanes` only
+  reattached panes whose `sessionKey` was already in the saved **history index** (`known`). A freshly-created
+  conversation (e.g. a new "stoa explorer" chat — still live, or not yet flushed into that index) was in
+  neither history nor the live-session map for a beat, so its pane was **skipped and came back empty** — which
+  reads as "the chat box closed / disappeared." Reattach now fires for **any repo-bound pane with an empty
+  transcript**, not just indexed ones; the server returns the transcript if the session exists on disk and
+  resolves silently if it doesn't (restore-mode `open` timeouts/errors no longer nag), so a never-prompted box
+  just stays empty and ready. Combined with the 1.5.49 route fix, a reopened conversation now both *lands on
+  the right view* and *rehydrates its messages*.
+
+## [1.5.49] - 2026-09-03
+
+### Fixed
+- **Workspace chat no longer "closes" on refresh / PWA reopen (mobile).** The app's `start_url` is `#workspace`,
+  but that section is gated behind the live connection. On a cold load the relay + work machine take a beat to
+  connect, so the gate briefly fails — and the old code responded with `location.replace("#overview")`, which
+  **destroyed the hash** and stranded you on Overview even after the connection landed (you had to re-open your
+  chat by hand). Now a gated deep-link is *parked* (hash kept intact, Overview shown as a transient fallback)
+  and re-applied the instant the gate passes — a fast recovery poll bounces you back to your chat within ~1s of
+  the connection coming up, so a reopened conversation stays open.
+- **Auto-continue is now a rolling ceiling, not a hard wall.** The round counter used a fixed cap of 10, so a
+  manual "continue" at the limit read a nonsensical **11/10** and auto stayed stopped. The cap is now a dynamic
+  ceiling: continuing at the limit (the **▷ Continue (+10)** button, or re-ticking Auto) grants the next batch —
+  `10/10 → 11/20 → …` — and auto resumes for that batch, pausing again at each boundary so it still can't run
+  away. The ceiling persists across reloads and resets to 10 on any human message.
+
+## [1.5.48] - 2026-09-03
+
+### Added
+- **Auto-continue control is always visible + persists.** The Pact-chat suggestion bar now shows the
+  Auto-continue toggle at all times once a conversation has a reply — on/off, idle *or* mid-round — with an
+  **■ Stop auto** while a round runs, so you can see and change the state at any moment (not only between
+  rounds). The Auto state + round count now survive reloads. On **mobile**, the Auto controls fold onto the
+  same row as the worktree (`⌂ main`) pill (`pc-toolrow`), compactly, to save a vertical row.
+
+## [1.5.47] - 2026-09-03
+
+### Added
+- **StoicSyntax medallion Pact viewer.** `.pact`/`.repl` files render a read-only medallion view by default
+  (`pact-medallion.js`), with a per-box **✎ Edit / 👁 Read-only** ticker to switch to the editable
+  caret-safe medallion editor. Read-only view has a line-number gutter (fixed width, scales to the file's
+  line count) and **word-wraps** long lines (no horizontal scroll), flagging wrapped lines. Read-only **search**
+  scrolls the `<pre>` to the match. Pact text size default + minimum is now 11.
+- **Idle "suggested next prompt" chip + bounded Auto-continue** in the Pact chat: when idle it offers the
+  agent's next step with ↳ Use / ▷ Send; an **Auto** toggle auto-sends when idle (capped at 10 rounds). The
+  Auto control is **always visible while running** (with a ■ Stop auto), and its state now **persists across
+  reloads** (the loop re-arms and stays controllable).
+
+### Fixed
+- **Held scroll is now bulletproof.** A `MutationObserver` re-asserts a Held reader's exact position after any
+  DOM change (streaming, full rebuilds, resync, cross-pane), so no paint path can yank you down. Added an
+  opt-in scroll-movement logger (`window.scrollDebug(true)` → `window.dumpScrollLog()`).
+- **Cursor auto-reveal no longer fires in read-only** (guards for read-only/detached CMs + cancel on read-only render).
+- **Cap-colouring classifier** (`pact-medallion.js` + previews, aligned to `StoicSyntax-Prefixes.md`): trivial
+  `true` caps (metadata-ignored) and compose-of-bronze stay **bronze**, winning over placement; a non-trivial
+  **`GOV`-named cap in the GOVERNANCE region → gold**; `CT_` folds into Construct (`UDCc`) colour; a scope
+  prefix like `P|UR_` colours by its real prefix (`UR_`→read), and a **bare prefix** (`P|UR`, `UEV`) colours by
+  its class too.
+
+## [1.5.46] - 2026-08-31
+
+### Added
+- **Seamless mid-conversation model switching across lanes (native Claude ⇄ OmniRoute), like Cursor.** The
+  routing endpoint (`ANTHROPIC_BASE_URL`) is fixed when a session's subprocess spawns, so switching between Direct
+  Claude and an OmniRoute model used to only take effect on a *new* conversation. Now `ClaudeSession` re-spawns
+  the query on the new lane **resuming the same conversation** (`resume: <sessionId>`) — full context and
+  transcript preserved, no interruption. The switch is deferred to the next prompt (any in-flight turn finishes
+  undisturbed on the old lane), the queued prompt is handed to the fresh generation via a spawn-generation guard,
+  and the session is never ended/errored in between. Switching *among* OmniRoute models (or among Claude models)
+  stays a live `setModel` — same gateway lane, no re-spawn — and now passes the lane-native id (drops the
+  `omni/` prefix so the gateway recognises it). Covered by new `claudeSession.test.mjs` cases.
+- **Mobile model selector for BOTH workspaces.** Core and Pact mobile views had no way to change the model;
+  added a shared picker (`buildMobileModelSelect`) docked in each mobile mode strip, flanked by the
+  Conversations/Bookmarks bars. It reads the same global catalog the desktop selectors use and applies the pick
+  to the live session immediately via the `setModel` control action (and rides the next prompt otherwise). Stays
+  in step with the active tab/pane on every paint.
+- **OmniRoute readout shows WHICH account served a model.** The header readout now appends the routing origin for
+  OmniRoute sessions — e.g. `opus-4-8 · via OmniRoute · Claude (bica.mihai.g)`, `· via OmniRoute · Groq`,
+  `· via OmniRoute · Auto` for combos — derived from the picked `omni/<id>` prefix (mirrors the 5 connected
+  accounts: Claude/Cursor/Groq/Kimi/OpenRouter). Direct-Claude readouts are unchanged.
+
+### Changed
+- **Curated the OmniRoute model catalog to what actually works, labelled by provider.** The selector no longer
+  dumps a long list: it now shows the built-in **`auto/*` combos** first (self-healing — route to the best
+  connected provider healthy *right now*: best-coding/reasoning/chat/fast/vision/free, cheap, smart,
+  Claude-opus/sonnet), then **Claude** base models, then **Groq** chat models — each labelled `Provider · model`
+  (e.g. `Auto · best coding`, `Claude · opus-4-8`). Dropped the churny `:free` tail (use `auto/best-free`),
+  Claude effort-tier duplicates (`-high/-low/…` — Claudstermind owns effort), and Groq audio/moderation models.
+  Entries now carry `provider`/`providerLabel`/`account` metadata for the readout.
+
+### Added
+- **Open OmniRoute's admin from anywhere (no new tunnel).** OmniRoute is already registered in
+  `LocalHost/registry.json` (port 20128), so it's in the bridge's `mirrorablePorts` and the relay's mirror
+  already proxies it — meaning `/mirror/20128/` serves OmniRoute's own dashboard/login **identically from the
+  local dashboard and from the relay** (behind the ancient gate), with OmniRoute never leaving loopback. Added a
+  one-click **"Open admin ↗"** link in the routing panel's OmniRoute row pointing at `/mirror/20128/`, so you can
+  attach accounts / pick combos while away from home. (Also already reachable from the 🪞 Mirror view.)
+
+### Changed
+- **The Pact file viewer now runs on the published `stoicsyntax-pact` package.** The read-only highlighter
+  (`window.pactHighlight`), the editable CodeMirror mode's classifier (`window.pactClassifyWord`), and the band
+  legend (`window.pactBandLegend`) are all generated from `packages/stoicsyntax-pact` — the package is the single
+  source of truth. `dashboard/public/pact-highlight.js` is now a **generated** browser build (run
+  `npm run highlight:vendor` after changing the tokenizer, never hand-edit it). Aligned the viewer + legend band
+  colours to the package palette (compute teal, read cyan, ctor yellow, enforce amber, cap gold, client green,
+  orch orange, admin salmon, write red) so the web viewer matches VS Code/Cursor and the explorer. Also
+  re-synced the **editable editor** palette (`.CodeMirror .cm-pk-*`), which had silently drifted to an older
+  scheme (pastel-blue compute, magenta write, purple orch) despite a comment claiming it matched — the editor
+  now renders the same locked palette as the read-only viewer. Tests: 6/6 `pactHighlight` + 4/4 package tokenizer.
+
+### Fixed
+- **Held is now absolute — nothing but you moves the scroll.** While scrolled up (Held), the transcript kept
+  yanking back to the bottom (Live), especially mid-stream. **Root cause:** the stick-to-bottom controller's
+  `sample()` re-derived Live/Held from the scroll position (`pinned = atBottom()`) on *every paint* — so as output
+  streamed in and the content grew/clamped near the tail, a repaint read "at bottom" and flipped you to Live.
+  Fixed by making `pinned` **owned solely by the user** (the scroll listener sets it); a paint only *reads* it and
+  never re-derives it. Also: the controller records the scrollTop each paint leaves and **ignores scroll events
+  that land there** (so a reflow/clamp/anchor-restore can't flip the mode), and the Core resync **keeps the live
+  streaming buffer while a turn is still running** so a mid-turn heal doesn't blank + shrink the transcript.
+- **The "New output" pill stops blinking.** It now appears **only when the content actually grew** (real unseen
+  output) rather than on every repaint, and once you scroll to the bottom it's cleared for good — it won't
+  re-appear unless *more* new output arrives.
+- **Compact now actually works (and confirms itself).** In the Pact workspace, `/compact` was being wrapped in
+  the skill preamble / discarded-messages note on any tab whose `started` flag had reset (optimistic-retract
+  paths, resume-not-yet-messaged), so the CLI never saw it as a command — it read as plain text and nothing
+  compacted. Slash commands are now sent **raw** (no preamble, no wrap, `fresh:false` so they run against the
+  existing/resumed conversation). Added a **compaction confirmation**: `toEvent` surfaces the SDK's
+  `compact_boundary` system message as a `compacted` event, so both workspaces show **"🗜 Context compacted —
+  N→M tokens"** and immediately re-request `contextUsage` (the header badge visibly drops — proof it ran).
+  Previously a compact that *did* run looked like it did nothing (the transcript is unchanged; only the hidden
+  context window shrinks).
+
+
+
 ## [1.5.45] - 2026-08-31
 
 ### Added

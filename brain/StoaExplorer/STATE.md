@@ -23,6 +23,53 @@ checkout: **`/opt/stoa-explorer`** (branch `feature/kadena-explorer`), node 20 /
 > done in Windows/Claude-Desktop sessions. Granular per-session narrative lives in `LOG.md`; this
 > file is the "where things stand right now" view.
 
+## ✅ EXPLORER FEATURE STREAK — PUSHED + DEPLOYED (2026-08-11 → 2026-09-05)
+
+**KB gap note:** this section + the LOG.md entry dated 2026-09-05 are a write-back for ~4 weeks of work that
+shipped without a STATE/LOG roll-up (same Rule Zero pattern as the 2026-08-10 reconciliation above). Unlike
+that gap, LEARNINGS.md was NOT silent this time — it has dense dated ★ entries for almost all of this stretch
+(the account-pagination/common-engine work through 2026-08-26, the medallion viewer + its 2026-09-04 polish
+batch); only this summary and the LOG narrative were missing. All 7 items below are on `feature/kadena-explorer`,
+**DEPLOYED + independently verified live** on both explorer.stoachain.com (stoa) and the Kadena explorer
+(denascan-style deployment) — verification done by grepping the running container's shipped JS bundle for a
+feature-specific string, not by trusting deploy-script exit codes (see CONVENTIONS.md).
+
+1. **Whale-index / account pagination fix + O(1) gas aggregate + WS live-tail.** Account pages no longer hang
+   on a whale (mega-account) page; a maintained `gas_usage_stats` table gives an O(1) gas endpoint instead of a
+   full-table scan; the account page now gets a WebSocket push for new transfers instead of polling. Full
+   derivation (the "common engine" project — SchemaIndexService, account_tx_counts, ASC composite indexes, the
+   planner gotchas that took several iterations to nail) is in LEARNINGS.md under 2026-08-25/08-26.
+2. **Feed pagination.** Numbered 250/page + jump-to-page `<Paginator>` on blocks/transactions/cross-chain/pacts
+   feeds, both frontends, backed by new backend numbered-pagination endpoints. Includes a fix so a page always
+   fetches a FULL page rather than clamping the fetch by a cold/estimated total (was returning empty pages).
+3. **Public Contract Code API + playground page.** `GET /api/v1/modules/code?chain&namespace&name`, reused by a
+   new "Code API" sub-view under Contracts on both frontends. Reads code live via `(describe-module ...)` so it
+   can never go stale across a Pact rehaul.
+4. **StoicSyntax "medallion" Pact colour-scheme read-only code viewer.** Ported a reference JS colour-classifier
+   engine (`pact-medallion.js`, sourced from `../Claudstermind/dashboard/public/`) to a framework-agnostic TS
+   module `lib/pact-medallion.ts` (`pactMedallionHtml(code)`), verified BYTE-FOR-BYTE identical against the
+   reference on real modules (`coin`: 381,107 chars; `ouronet-ns.DALOS`: 321,296 chars — 25 bronze/17 silver/39
+   gold caps, 393 per-type medallions, foreign-black refs, bracket-depth spans). New `PactMedallionViewer.tsx`
+   (line-number gutter + word-wrapping code column) replaces `PactCodeViewer` on ModuleDetailPage, the Code API
+   playground page, and TransactionDetailPage — both frontends. `pact-medallion.css` ported verbatim.
+5. **CORS cleanup.** Dropped `access-control-allow-credentials: true`, which is invalid alongside `origin: '*'`
+   — was harmless/cosmetic, now spec-correct.
+6. **Medallion colour legend** (`635afda`) — a collapsible swatch key (cap bands, function-prefix colour
+   families, per-type value medallions with example chips, structural forms, foreign-black, bracket-depth) on
+   all 3 pages that use the viewer, both frontends. Colours are pulled LIVE from the real CSS classes (not
+   hardcoded), so the legend can't drift from the renderer.
+7. **Find-in-code search inside the medallion viewer** (`60856a9`) — search bar (input + prev/next + N/M count),
+   case-insensitive, Enter/Shift+Enter to navigate, Escape to clear, scrolls to + highlights the match.
+   Implementation note (also filed as a LEARNING candidate, kept here since it's specific to this feature): the
+   viewer injects classified HTML per line via `dangerouslySetInnerHTML`, so highlighting had to split each line
+   into alternating tag/text "runs" and only wrap `<mark>` inside a text run — matching against a decoded
+   plain-text view with an offset map back to the original HTML — to avoid corrupting the medallion span nesting.
+
+Both frontends' medallion-related files (`PactMedallionViewer.tsx`, `pact-medallion.css`, `pact-medallion.ts`)
+are byte-identical copies between `frontend-stoa` and `frontend-kadena` — see the new LEARNINGS.md entries
+(2026-09-05) for the reusable build/verify/replicate pattern this whole session used, and for the
+frontend-stoa broken-local-node_modules environment gotcha.
+
 ## ⚡ INDEXER BACKFILL SPEEDUP — PUSHED (2026-08-17)
 
 Kadena mainnet backfill was ETA ~55 days at ~64k blk/hr (39.4M/124M blocks). Diagnosed: the
@@ -187,6 +234,13 @@ caught — but noisy over days of dead mode; downgrade to debug). Full deploy de
 - **Branch:** `feature/ouronet-explorer` (NOT `master` — all Ouronet + seer-migration work lives here; never merged to master yet).
 - **HEAD:** `dae360a` "feat(deploy): one deploy button; build everything, swap what changed" (2026-08-10).
 - **Backend suite:** last recorded green at `81d809d` = **522 passing / 0 failing**; 76 `*.spec.ts` files now.
+- **UPDATE (2026-09-05):** the active working branch since is `feature/kadena-explorer`, forked off
+  `feature/ouronet-explorer` exactly at the `dae360a` HEAD recorded above (confirmed via
+  `git merge-base feature/kadena-explorer feature/ouronet-explorer` = `dae360a`) — so the line above is not
+  wrong, just superseded as the tip of active work. Current repo-wide **HEAD is `60856a9`** "feat(modules):
+  find-in-code search in Pact medallion viewer" (2026-09-05), confirmed via `git log -1 --format='%H %s'` on
+  `feature/kadena-explorer`, still not merged to master. See the new "✅ EXPLORER FEATURE STREAK" section above
+  for everything that shipped between the two HEADs.
 
 ## Working-tree state (important, mostly noise)
 

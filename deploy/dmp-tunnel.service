@@ -1,0 +1,22 @@
+[Unit]
+Description=DMP reverse tunnel (portless WebSocket bridge: AncientIntel dials OUT to the DMP VPS so dmp-remote can relay to dmp-main :4002)
+Documentation=file:///home/ancientbox/ClaudeWS/Claudstermind/deploy/DMP-TUNNEL.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ancientbox
+WorkingDirectory=/home/ancientbox/ClaudeWS/Claudstermind
+# Operator-created secret file: DMP_TUNNEL_URL + DMP_TUNNEL_SECRET (+ optional DMP_TUNNEL_TARGET).
+# Copy deploy/dmp-tunnel.env.example → .secrets/dmp-tunnel.env and fill it in. Leading `-` = optional
+# (the unit still starts if absent, but the bridge exits 1 until the two required vars are present).
+EnvironmentFile=-/home/ancientbox/ClaudeWS/.secrets/dmp-tunnel.env
+# The Claudstermind-owned WS bridge. Portless: dials OUT, opens no inbound port on AncientIntel and needs
+# no ufw change on the VPS. Auto-reconnects. Resolves node_modules/ws from this WorkingDirectory.
+ExecStart=/usr/bin/node agent/dmp-tunnel.mjs
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
