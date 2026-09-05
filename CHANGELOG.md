@@ -4,6 +4,31 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.104] - 2026-09-06
+### Fixed
+- **The expand toggle disappeared exactly when you needed it.** It lived in the model row, which is
+  collapse step 1 — so a long prompt collapsed the row and took the control for un-collapsing it with
+  it. Moved into the never-collapsing action row and added to the invariant set alongside Stop/Send
+  (`expandVisible`), with a test across every state. General rule now recorded: **anything needed to
+  ESCAPE a state must not be hidden BY that state.**
+### Added (lab)
+- **The context medallion opens a real breakdown** — per-category tokens summed so the parts account
+  for 100.0% of what is used, with free space listed as its own row rather than folded in.
+- **The one-line advice text is replaced by a ROLLUP BAR** carrying the ceilings that actually drive a
+  wrap: a fill meter, `used / ceiling · %`, prompt count, response count, image count, total characters,
+  a wraps-so-far chip, an **auto-wrap tick (on by default)** and a **Wrap now** button.
+- **Manual wrap is refused while the conversation is light** (<60% of ceiling) and the tooltip explains
+  *why* — wrapping discards a warm prompt cache for no gain — rather than just being dead. Automatic
+  wrap fires at 85%.
+- **Wrap preview popup**: states exactly what is being wrapped (context tokens, prompts, responses,
+  images, characters in prompts, characters in responses) **before** you commit, and says plainly that
+  nothing is deleted and numbering CONTINUES (`next is P#139 / R#220`).
+- Context-fill slider so the whole wrap flow can be driven from empty to full.
+### Verified
+- **A wrap does not renumber anything.** Checked against the engine, not assumed: `workspace.mjs` only
+  advances `_rolledThrough` and never splices the transcript, and turn numbers are derived from the
+  whole array — so R#219 stays R#219. The wrap is virtual; the conversation just continues.
+
 ## [1.5.103] - 2026-09-06
 ### Fixed
 - **Chat Shell Lab: overlapping text in the type box.** Two independent bugs in the same spot.

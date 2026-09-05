@@ -40,6 +40,23 @@ body.showbounds .rg-core{outline:1px dashed #3ddc9755;outline-offset:-2px}
 .chip.--ok{color:var(--ok);border-color:#3ddc9744}
 .chip.--acc{color:var(--acc);border-color:#c77dff44}
 .spacer{flex:1}
+.roll{display:flex;align-items:center;gap:8px;margin:0 9px 6px;padding:5px 9px;border-radius:7px;background:#141c30;border:1px solid var(--line);font-size:11px;flex-wrap:wrap}
+.roll.--warn{border-color:#ffb45455;background:#1e1a10}
+.roll.--err{border-color:#ff6b8155;background:#1e1116}
+.roll .m{color:var(--dim);white-space:nowrap}
+.roll .m b{color:var(--ink)}
+.roll .bar{flex:1;min-width:70px;height:6px;border-radius:3px;background:#0a1020;overflow:hidden;border:1px solid var(--line)}
+.roll .bar i{display:block;height:100%;background:var(--ok)}
+.roll.--warn .bar i{background:var(--warn)} .roll.--err .bar i{background:var(--err)}
+button:disabled{opacity:.4;cursor:not-allowed}
+.pop{position:fixed;inset:0;background:#000a;display:none;align-items:center;justify-content:center;z-index:60}
+.pop.--open{display:flex}
+.popbox{width:460px;max-height:76vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.pophd{padding:9px 12px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center;font-weight:600}
+.popbody{padding:10px 12px;display:flex;flex-direction:column;gap:7px}
+.kv{display:flex;gap:8px;font-size:12px}.kv .k{color:var(--dim);flex:1}.kv .v{font-weight:600}
+.ctxrow{display:flex;align-items:center;gap:7px;font-size:12px}
+.ctxsw{width:11px;height:11px;border-radius:3px;flex:0 0 auto}
 .cue{margin:0 9px 6px;padding:6px 9px;border-radius:7px;background:#1b1330;border:1px solid #c77dff44;font-size:11.5px;color:#e3d3ff}
 /* core innards */
 .msg{padding:7px 10px;border-radius:8px;font-size:12.5px;max-width:88%}
@@ -109,12 +126,24 @@ body.showbounds .rg-core{outline:1px dashed #3ddc9755;outline-offset:-2px}
     <div class="row"><button id="addConv">+ conversation</button><button id="addTurns">+ 6 turns</button><button id="clearTurns">clear</button></div>
     <div class="row"><button id="agents">▸ agents running</button><button id="recon">↻ reconnected</button><button id="cue">cue strip</button></div>
     <div class="row"><button id="imgs">+ image strip</button><button id="histBtn">🕐 history popup</button></div>
+    <div class="row"><span class="sub">Context fill (drives the wrap bar)</span></div>
+    <input type="range" id="ctxr" min="1" max="99" value="66">
   </div>
 
   <div class="grp"><b>Live geometry</b><div id="metrics"></div></div>
 </div>
 
 <div id="stage"><div id="shell"></div></div>
+
+<div id="ctxpop" class="pop"><div class="popbox">
+  <div class="pophd"><span>◐ Context breakdown</span><span class="spacer"></span><button onclick="document.getElementById('ctxpop').classList.remove('--open')">×</button></div>
+  <div class="popbody" id="ctxbody"></div>
+</div></div>
+
+<div id="wrappop" class="pop"><div class="popbox">
+  <div class="pophd"><span>⟳ Wrap conversation</span><span class="spacer"></span><button onclick="document.getElementById('wrappop').classList.remove('--open')">×</button></div>
+  <div class="popbody" id="wrapbody"></div>
+</div></div>
 
 <div id="hist"><div class="histbox">
   <div class="histhd"><span>🕐 Conversation history</span><span class="spacer"></span><span class="chip" id="histRepo"></span><button id="histX">×</button></div>
@@ -130,7 +159,9 @@ var S = {
   turns: 8, convs: [{ n: "Master", act: true }], agents: 0, recon: false, cue: true, imgs: 0,
   repo: "Claudstermind", model: "Opus 4.5", auto: true, autoN: 4,
   ctxTok: 93016, ctxMax: 1000000,
-  suggest: "Continue with the next item on the list."
+  suggest: "Continue with the next item on the list.",
+  autoWrap: true, wraps: 0,
+  prompts: 138, responses: 219, images: 12, pChars: 412000, rChars: 3860000
 };
 var $ = function (s, r) { return (r || document).querySelector(s); };
 function el(t, a, k) { var e = document.createElement(t); for (var x in (a || {})) { if (x === "class") e.className = a[x]; else if (x === "html") e.innerHTML = a[x]; else e.setAttribute(x, a[x]); } (k || []).forEach(function (c) { e.appendChild(typeof c === "string" ? document.createTextNode(c) : c); }); return e; }
@@ -165,7 +196,28 @@ function build() {
   r2.appendChild(el("button", {}, ["Go"]));
   r2.appendChild(el("button", {}, ["⌕ Recall"]));
   hdr.appendChild(r2);
-  if (S.cue) hdr.appendChild(el("div", { class: "cue" }, ["Getting full · 66% — finish this thread, then roll to a fresh window at a natural break."]));
+  // ROLLUP BAR — replaces the old one-line advice text. Same row, far more information: the ceilings
+  // that actually drive a wrap, plus the auto tick and a manual wrap button.
+  if (S.cue) {
+    var wr = CS.wrapReadiness({ tokens: S.ctxTok, ceiling: S.ctxMax });
+    var bar = el("div", { class: "roll --" + wr.tone });
+    var awCb = el("input", { type: "checkbox", title: "Automatically wrap to a fresh window at " + Math.round(wr.autoAt * 100) + "%" });
+    awCb.checked = S.autoWrap;
+    awCb.onchange = function () { S.autoWrap = this.checked; render(); };
+    bar.appendChild(el("label", { class: "autolbl" }, [awCb, "auto-wrap"]));
+    var fill = el("i"); fill.style.width = Math.min(100, wr.pct) + "%";
+    bar.appendChild(el("span", { class: "bar" }, [fill]));
+    bar.appendChild(el("span", { class: "m" }, [el("b", {}, [fmt(S.ctxTok)]), " / " + fmt(S.ctxMax) + " tok · ", el("b", {}, [wr.pct + "%"])]));
+    bar.appendChild(el("span", { class: "m" }, ["P ", el("b", {}, [fmt(S.prompts)]), " · R ", el("b", {}, [fmt(S.responses)]), " · \uD83D\uDDBC ", el("b", {}, [fmt(S.images)])]));
+    bar.appendChild(el("span", { class: "m" }, [fmt(S.pChars + S.rChars) + " chars"]));
+    if (S.wraps) bar.appendChild(el("span", { class: "chip" }, ["\u27f3 " + S.wraps + " wrapped"]));
+    bar.appendChild(el("span", { class: "spacer" }));
+    var wbtn = el("button", { title: wr.reason }, ["\u27f3 Wrap now"]);
+    wbtn.disabled = !wr.canWrapManually;
+    wbtn.onclick = openWrap;
+    bar.appendChild(wbtn);
+    hdr.appendChild(bar);
+  }
   shell.appendChild(hdr);
 
   /* ================= CORE — the only flexing region ============================================ */
@@ -214,6 +266,10 @@ function build() {
   act.appendChild(imgChip);
   act.appendChild(el("button", { id: "f-hist", title: "Conversations in THIS repository" }, ["\uD83D\uDD50"]));
   act.appendChild(el("span", { class: "chip --gone", id: "f-modelchip2" }, [S.model]));
+  // The EXPAND toggle lives HERE, in the never-collapsing action row — not in the model row, which is
+  // collapse step 1. It used to vanish exactly when a long prompt made you want it.
+  act.appendChild(el("button", { id: "f-expand", title: "How much of the conversation the type box may take" },
+    [S.expanded ? "\u21d5 40%" : "\u21d5 Full"]));
   act.appendChild(el("span", { class: "spacer" }));
 
   var autoCb = el("input", { type: "checkbox", id: "f-autocb" });
@@ -242,8 +298,6 @@ function build() {
   var pct = Math.round(S.ctxTok / S.ctxMax * 100);
   mb.appendChild(el("span", { class: "chip --acc", id: "f-ctx", title: "Context window: " + S.ctxTok.toLocaleString() + " of " + S.ctxMax.toLocaleString() + " tokens used" },
     [S.ctxTok.toLocaleString() + " / " + (S.ctxMax / 1000) + "k tok \u00b7 " + pct + "%"]));
-  mb.appendChild(el("span", { class: "spacer" }));
-  mb.appendChild(el("button", { id: "f-expand" }, [S.expanded ? "\u21d5 Collapse (full \u2192 40%)" : "\u21d5 Expand (40% \u2192 full)"]));
   ftr.appendChild(mb);
   shell.appendChild(ftr);
 
@@ -351,6 +405,54 @@ function openHist() {
   $("#hist").classList.add("--open");
 }
 
+function fmt(n) { return Number(n || 0).toLocaleString(); }
+
+/* Context breakdown — what the ctx medallion opens. Percentages are summed from the parts so the
+   slices genuinely account for the whole; "free" is shown as its own row, never implied. */
+function openCtx() {
+  var parts = [
+    { n: "Messages", t: Math.round(S.ctxTok * 0.72), c: "#c77dff" },
+    { n: "System prompt", t: Math.round(S.ctxTok * 0.06), c: "#5aa8f0" },
+    { n: "Tools", t: Math.round(S.ctxTok * 0.14), c: "#3ddc97" },
+    { n: "Memory files", t: Math.round(S.ctxTok * 0.08), c: "#ffb454" }
+  ];
+  var body = $("#ctxbody"); body.replaceChildren();
+  body.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Window"]), el("span", { class: "v" }, [fmt(S.ctxMax) + " tok"])]));
+  body.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Used"]), el("span", { class: "v" }, [fmt(S.ctxTok) + " tok · " + Math.round(S.ctxTok / S.ctxMax * 100) + "%"])]));
+  parts.forEach(function (p) {
+    var sw = el("span", { class: "ctxsw" }); sw.style.background = p.c;
+    body.appendChild(el("div", { class: "ctxrow" }, [sw, el("span", { class: "k", style: "flex:1;color:var(--dim)" }, [p.n]),
+      el("span", { class: "v" }, [fmt(p.t) + " tok · " + (Math.round(p.t / S.ctxTok * 1000) / 10) + "%"])]));
+  });
+  var free = S.ctxMax - S.ctxTok;
+  var fsw = el("span", { class: "ctxsw" }); fsw.style.background = "#2a3350";
+  body.appendChild(el("div", { class: "ctxrow" }, [fsw, el("span", { class: "k", style: "flex:1;color:var(--dim)" }, ["Free"]), el("span", { class: "v" }, [fmt(free) + " tok"])]));
+  body.appendChild(el("div", { class: "chip" }, ["Parts account for 100.0% of what is used — free space is listed separately, never folded in."]));
+  $("#ctxpop").classList.add("--open");
+}
+
+/* Wrap popup — states exactly WHAT is being wrapped before you commit, and is explicit that nothing
+   is deleted and nothing is renumbered (verified against the engine: a roll only advances a marker). */
+function openWrap() {
+  var wr = CS.wrapReadiness({ tokens: S.ctxTok, ceiling: S.ctxMax });
+  var b = $("#wrapbody"); b.replaceChildren();
+  var rows = [
+    ["Context being wrapped", fmt(S.ctxTok) + " tok · " + wr.pct + "% of " + fmt(S.ctxMax)],
+    ["Prompts", fmt(S.prompts)], ["Responses", fmt(S.responses)], ["Images", fmt(S.images)],
+    ["Characters in prompts", fmt(S.pChars)], ["Characters in responses", fmt(S.rChars)],
+    ["Turn numbering after wrap", "CONTINUES — next is P#" + fmt(S.prompts + 1) + " / R#" + fmt(S.responses + 1)]
+  ];
+  rows.forEach(function (r) { b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, [r[0]]), el("span", { class: "v" }, [r[1]])])); });
+  b.appendChild(el("div", { class: "chip" }, ["Nothing is deleted. The wrap starts a fresh context window; the wrapped turns stay searchable in the archive and keep their original numbers."]));
+  var go = el("button", { class: "btn-send" }, ["\u27f3 Wrap now"]);
+  go.onclick = function () {
+    S.wraps++; S.ctxTok = Math.round(S.ctxTok * 0.12);   // a fresh window keeps only a carried summary
+    $("#wrappop").classList.remove("--open"); render();
+  };
+  b.appendChild(el("div", { class: "row" }, [el("span", { class: "spacer" }), go]));
+  $("#wrappop").classList.add("--open");
+}
+
 function render() { build(); }
 
 /* ---- controls ---- */
@@ -380,6 +482,7 @@ $("#agents").onclick = function () { S.agents = S.agents ? 0 : 3; this.classList
 $("#recon").onclick = function () { S.recon = !S.recon; this.classList.toggle("on", S.recon); render(); };
 $("#cue").onclick = function () { S.cue = !S.cue; this.classList.toggle("on", S.cue); render(); };
 $("#imgs").onclick = function () { S.imgs = S.imgs ? 0 : 3; this.classList.toggle("on", !!S.imgs); render(); };
+$("#ctxr").oninput = function () { S.ctxTok = Math.round(S.ctxMax * this.value / 100); render(); };
 $("#histBtn").onclick = openHist;
 $("#histX").onclick = function () { $("#hist").classList.remove("--open"); };
 $("#hOpen").onclick = function () { this.classList.add("on"); $("#hRet").classList.remove("on"); openHist(); };

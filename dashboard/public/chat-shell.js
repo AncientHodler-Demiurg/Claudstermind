@@ -150,8 +150,12 @@
       // TRUE when a caller claimed to free more footer height than the footer contains.
       freedOverPromised: freedOverPromised,
       // Never hidden. Stated as data so a renderer cannot accidentally collapse them (spec I5).
+      // The EXPAND TOGGLE joins them: it lived in the model row, which is collapse step 1 — so it
+      // vanished at exactly the moment a long prompt makes you want it. Anything you need in order to
+      // ESCAPE a state must not be hidden BY that state.
       sendVisible: true,
       stopVisible: true,
+      expandVisible: true,
       capIsFloored: baseCap > minTypeH + (o.expanded ? SWALLOW_PCT_MAX : SWALLOW_PCT) * c0 + 0.5
     };
   }
@@ -200,10 +204,40 @@
     };
   }
 
+  /**
+   * WRAP (roll) readiness. A wrap starts a fresh context window WITHOUT deleting anything: the engine
+   * only advances a marker (`_rolledThrough`), never splices the transcript — so turn numbers CONTINUE
+   * (R#219 stays R#219). Nothing restarts at 1; the wrap is invisible to addressing and the rolled-off
+   * turns stay searchable in the archive.
+   *
+   *   manualAt — below this you may not wrap by hand: wrapping a light conversation throws away a warm
+   *              prompt cache for no benefit, so the button is disabled and SAYS WHY.
+   *   autoAt   — where automatic wrapping fires when the auto tick is on.
+   */
+  function wrapReadiness(o) {
+    o = o || {};
+    var ceiling = Math.max(1, num(o.ceiling, 1));
+    var tokens = Math.max(0, num(o.tokens, 0));
+    var manualAt = num(o.manualAt, 0.60), autoAt = num(o.autoAt, 0.85);
+    var frac = tokens / ceiling;
+    var pct = Math.round(frac * 1000) / 10;
+    var canWrapManually = frac >= manualAt;
+    var autoWouldFire = frac >= autoAt;
+    var tone = frac >= autoAt ? "err" : frac >= manualAt ? "warn" : "ok";
+    var reason = canWrapManually
+      ? (autoWouldFire ? "At " + pct + "% — automatic wrap fires at " + Math.round(autoAt * 100) + "%."
+                       : "At " + pct + "% — wrapping now is worthwhile.")
+      : "Too light to wrap (" + pct + "% of " + Math.round(manualAt * 100) + "%). Wrapping discards a warm prompt cache for no gain.";
+    return { pct: pct, frac: frac, canWrapManually: canWrapManually, autoWouldFire: autoWouldFire,
+             tone: tone, reason: reason, manualAt: manualAt, autoAt: autoAt,
+             // Stated as data so no UI can imply a wrap deletes anything.
+             deletesNothing: true, renumbers: false };
+  }
+
   var API = {
     SWALLOW_PCT: SWALLOW_PCT, SWALLOW_PCT_MAX: SWALLOW_PCT_MAX, FLOOR_ROWS: FLOOR_ROWS,
     COLLAPSE_STEPS: COLLAPSE_STEPS, HYSTERESIS: HYSTERESIS,
-    coreAtRest: coreAtRest, swallowCap: swallowCap, computeShell: computeShell, slotsFor: slotsFor
+    coreAtRest: coreAtRest, swallowCap: swallowCap, computeShell: computeShell, slotsFor: slotsFor, wrapReadiness: wrapReadiness
   };
   if (typeof module === "object" && module.exports) module.exports = API;
   root.ChatShell = API;
