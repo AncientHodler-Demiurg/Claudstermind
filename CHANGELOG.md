@@ -4,6 +4,29 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.107] - 2026-09-06
+### Fixed
+- **The wrap bar implied a cause that does not exist.** It drove everything off context %. Read from
+  `lib/conversationRoll.mjs`: the engine rolls when **`turns >= 400` OR `bytes >= 25 MB`** — context %
+  is what the *model* is squeezed by (and what drives SDK compaction) but it **does not fire our roll**.
+  All three ceilings are now shown with the **nearest one marked**, since that is the one that will
+  actually trigger. New `rollTriggers()`, with the constants asserted against `ROLL_DEFAULTS`.
+- **P#/R# tags now render exactly as production does** — the corner pill from `styles.css` `.ws-num`:
+  R# violet on the LEFT of an answer, P# blue on the RIGHT of a prompt, overlapping the bubble edge.
+  The lab had invented a different inline label.
+- **Header height parity.** Pact's header was taller than Core's (conversation tabs vs a single identity
+  chip), so switching workspaces shifted the whole layout. Both now reserve the same header row height.
+### Added
+- **Two themes, one structure.** Regions, sizes and behaviour are identical; only the palette changes.
+  **Core = "Midnight Violet"** (deep near-black chrome, violet accent — the cockpit).
+  **Pact = "Harbour Slate"** (visibly lighter slate surfaces, teal accent — the workshop).
+  **The P#/R# tag colours are declared OUTSIDE both themes on purpose**: they are an addressing scheme,
+  not decoration, so they must be learnable once and identical in both workspaces.
+- **Wrap summary in the requested form**: `R#1–R#179 [179]` / `P#1–P#98 [98]`, characters as
+  `1,086,080 + 362,560 = 1,448,640`, R before P, each in its own tag colour so the line is scannable
+  without reading the labels. Plus what is kept verbatim (the last 40 turns) and the nearest ceiling.
+- **Hover preview on image thumbnails** — a larger panel above the strip, keyboard-reachable via focus.
+
 ## [1.5.106] - 2026-09-06
 ### Fixed
 - **The three regions were not visible without the debug outline — because the tone step ran the WRONG

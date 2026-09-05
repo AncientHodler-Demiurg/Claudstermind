@@ -218,6 +218,48 @@
    *              prompt cache for no benefit, so the button is disabled and SAYS WHY.
    *   autoAt   — where automatic wrapping fires when the auto tick is on.
    */
+  // The REAL roll triggers, read from lib/conversationRoll.mjs — NOT the context percentage. The engine
+  // rolls when `turns >= 400 || bytes >= 25MB`. Context % is what the *model* is squeezed by (and what
+  // drives SDK compaction), but it is not what fires our roll. Showing only context % would have implied
+  // a cause that does not exist. All three are surfaced; whichever is nearest is the one that will fire.
+  var ROLL_MAX_TURNS = 400;
+  var ROLL_MAX_BYTES = 25 * 1024 * 1024;
+
+  /** Every ceiling that can trigger a wrap, with the nearest one identified. */
+  function rollTriggers(o) {
+    o = o || {};
+    var turns = Math.max(0, num(o.prompts, 0)) + Math.max(0, num(o.responses, 0));
+    var bytes = Math.max(0, num(o.bytes, 0));
+    var tokens = Math.max(0, num(o.tokens, 0));
+    var ceiling = Math.max(1, num(o.ceiling, 1));
+    var list = [
+      { id: "turns",   label: "turns",   now: turns,  max: num(o.maxTurns, ROLL_MAX_TURNS), unit: "" },
+      { id: "bytes",   label: "size",    now: bytes,  max: num(o.maxBytes, ROLL_MAX_BYTES), unit: "B" },
+      { id: "context", label: "context", now: tokens, max: ceiling, unit: "tok" }
+    ];
+    var nearest = null;
+    for (var i = 0; i < list.length; i++) {
+      list[i].frac = list[i].now / list[i].max;
+      list[i].pct = Math.round(list[i].frac * 1000) / 10;
+      if (!nearest || list[i].frac > nearest.frac) nearest = list[i];
+    }
+    return { list: list, nearest: nearest, willRollOn: nearest.id, frac: nearest.frac };
+  }
+
+  /** What a wrap would actually take: the R#/P# ranges, their counts, and the character split. */
+  function wrapSpan(o) {
+    o = o || {};
+    var rFrom = Math.max(1, Math.round(num(o.rFrom, 1))), rTo = Math.max(rFrom - 1, Math.round(num(o.rTo, 0)));
+    var pFrom = Math.max(1, Math.round(num(o.pFrom, 1))), pTo = Math.max(pFrom - 1, Math.round(num(o.pTo, 0)));
+    var rChars = Math.max(0, num(o.rChars, 0)), pChars = Math.max(0, num(o.pChars, 0));
+    return {
+      // R first, then P — responses are the bulk, so they lead.
+      r: { from: rFrom, to: rTo, count: Math.max(0, rTo - rFrom + 1), chars: rChars },
+      p: { from: pFrom, to: pTo, count: Math.max(0, pTo - pFrom + 1), chars: pChars },
+      chars: rChars + pChars
+    };
+  }
+
   function wrapReadiness(o) {
     o = o || {};
     var ceiling = Math.max(1, num(o.ceiling, 1));
@@ -241,7 +283,8 @@
   var API = {
     SWALLOW_PCT: SWALLOW_PCT, SWALLOW_PCT_MAX: SWALLOW_PCT_MAX, FLOOR_ROWS: FLOOR_ROWS,
     COLLAPSE_STEPS: COLLAPSE_STEPS, HYSTERESIS: HYSTERESIS,
-    coreAtRest: coreAtRest, swallowCap: swallowCap, computeShell: computeShell, slotsFor: slotsFor, wrapReadiness: wrapReadiness
+    coreAtRest: coreAtRest, swallowCap: swallowCap, computeShell: computeShell, slotsFor: slotsFor, wrapReadiness: wrapReadiness, rollTriggers: rollTriggers, wrapSpan: wrapSpan,
+    ROLL_MAX_TURNS: ROLL_MAX_TURNS, ROLL_MAX_BYTES: ROLL_MAX_BYTES
   };
   if (typeof module === "object" && module.exports) module.exports = API;
   root.ChatShell = API;

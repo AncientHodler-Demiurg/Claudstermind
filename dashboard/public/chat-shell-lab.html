@@ -10,7 +10,33 @@
      HEADER/FOOTER = chrome, clearly DARKER, so the eye reads "content" vs "controls" instantly
    plus a hard line and a 1px inner highlight at each seam, which is what actually makes an edge
    legible on a dark UI — a border alone disappears at low contrast. */
-:root{--bg:#05080f;--panel:#1a2440;--panel2:#0d1226;--line:#22304a;--ink:#e7ecff;--dim:#9aa6c7;--acc:#c77dff;--ok:#3ddc97;--warn:#ffb454;--err:#ff6b81;--hdr:#080c18;--ftr:#080c18;--seam:#33436b}
+/* ===== TWO THEMES, ONE STRUCTURE =================================================================
+   The regions, sizes and behaviour are identical; only the palette changes, so a workspace is
+   recognisable at a glance without being a different UI.
+
+   CORE  — "Midnight Violet": deep, cool, near-black chrome with a violet accent. The cockpit.
+   PACT  — "Harbour Slate":  visibly LIGHTER slate surfaces with a teal accent. The workshop.
+
+   INVARIANT: the P#/R# turn tags use the SAME two colours in both themes (blue P, violet R), because
+   they are an addressing scheme, not decoration — if R# changed colour per workspace you could not
+   learn it once. They are declared OUTSIDE the theme blocks for exactly that reason. */
+:root{
+  --tag-p-bg:#1b4fc4; --tag-p-fg:#dbe6ff;      /* P# — blue, right corner  (matches production) */
+  --tag-r-bg:#c77dff; --tag-r-fg:#1a0a1e;      /* R# — violet, left corner (matches production) */
+  --ok:#3ddc97;--warn:#ffb454;--err:#ff6b81;
+}
+body[data-theme="core"]{
+  --bg:#05080f;--panel:#1a2440;--panel2:#0d1226;--line:#22304a;--ink:#e7ecff;--dim:#9aa6c7;
+  --acc:#c77dff;--hdr:#080c18;--ftr:#080c18;--seam:#33436b;
+  --bub-a:#121b30;--bub-a-line:#ffffff1a;--bub-u:#243059;--bub-u-line:#3a4a7a;--bub-u-fg:#eaf0ff;
+  --field:#131d33;--field-line:#3a4a75;--chip:#131d34;
+}
+body[data-theme="pact"]{
+  --bg:#0d1520;--panel:#25303f;--panel2:#18212e;--line:#3a4757;--ink:#eef4fa;--dim:#a8b6c6;
+  --acc:#4ecdc4;--hdr:#131b26;--ftr:#131b26;--seam:#4a5b6e;
+  --bub-a:#1d2735;--bub-a-line:#ffffff1f;--bub-u:#2b4152;--bub-u-line:#4a6a80;--bub-u-fg:#f2f8fc;
+  --field:#1e2937;--field-line:#4a5b6e;--chip:#1c2634;
+}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;display:flex;height:100vh;overflow:hidden}
 /* ---------- control rail ---------- */
@@ -61,9 +87,9 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
 /* header innards — MAX 3 rows, transient status is a CHIP not a row */
 .hrow{display:flex;align-items:center;gap:6px;padding:6px 9px;min-height:32px;flex-wrap:nowrap;overflow:hidden}
 .hrow+.hrow{border-top:1px solid #ffffff0d}
-.tab{padding:3px 9px;border-radius:14px;background:#16203a;border:1px solid var(--line);font-size:11.5px;white-space:nowrap}
+.tab{padding:3px 9px;border-radius:14px;background:var(--chip);border:1px solid var(--line);font-size:11.5px;white-space:nowrap}
 .tab.--act{border-color:var(--acc);color:#fff}
-.chip{padding:2px 8px;border-radius:11px;background:#131d34;border:1px solid var(--line);font-size:11px;color:var(--dim);white-space:nowrap}
+.chip{padding:2px 8px;border-radius:11px;background:var(--chip);border:1px solid var(--line);font-size:11px;color:var(--dim);white-space:nowrap}
 .chip.--ok{color:var(--ok);border-color:#3ddc9744}
 .chip.--acc{color:var(--acc);border-color:#c77dff44}
 /* Live / Held — whether the view is pinned to the newest turn or holding your scroll position. */
@@ -78,7 +104,7 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
 .msgacts button{padding:1px 6px;font-size:11px;line-height:1.4;background:#0f1730}
 .msgacts button.--on{color:var(--warn);border-color:var(--warn)}
 .spacer{flex:1}
-.roll{display:flex;align-items:center;gap:8px;margin:0 9px 6px;padding:5px 9px;border-radius:7px;background:#111a2e;border:1px solid var(--line);font-size:11px;flex-wrap:wrap}
+.roll{display:flex;align-items:center;gap:8px;margin:0 9px 6px;padding:5px 9px;border-radius:7px;background:var(--chip);border:1px solid var(--line);font-size:11px;flex-wrap:wrap}
 .roll.--warn{border-color:#ffb45455;background:#1e1a10}
 .roll.--err{border-color:#ff6b8155;background:#1e1116}
 .roll .m{color:var(--dim);white-space:nowrap}
@@ -98,9 +124,27 @@ button:disabled{opacity:.4;cursor:not-allowed}
 .cue{margin:0 9px 6px;padding:6px 9px;border-radius:7px;background:#1b1330;border:1px solid #c77dff44;font-size:11.5px;color:#e3d3ff}
 /* core innards */
 .msg{padding:7px 10px;border-radius:8px;font-size:12.5px;max-width:88%}
-.msg.--u{background:#243059;border:1px solid #3a4a7a;align-self:flex-end}
-.msg.--a{background:#121b30;border:1px solid #ffffff1a;align-self:flex-start}
-.tno{font-size:10px;color:var(--acc);font-weight:700;margin-bottom:2px}
+.msg.--u{background:var(--bub-u);border:1px solid var(--bub-u-line);color:var(--bub-u-fg);align-self:flex-end}
+.msg.--a{background:var(--bub-a);border:1px solid var(--bub-a-line);align-self:flex-start}
+/* P#/R# tags EXACTLY as production renders them (styles.css .ws-num / .pc-num): a corner pill that
+   overlaps the bubble's top edge — R on the LEFT of an answer, P on the RIGHT of a prompt. */
+.num{position:absolute;top:-10px;z-index:1;font:700 11.5px ui-monospace,Consolas,monospace;line-height:1.5;
+  padding:1px 7px;border-radius:8px;letter-spacing:.4px;pointer-events:none;white-space:nowrap;box-shadow:0 1px 3px #0006}
+.num-r{left:6px;background:var(--tag-r-bg);color:var(--tag-r-fg)}
+.num-p{right:6px;background:var(--tag-p-bg);color:var(--tag-p-fg);border:1px solid #ffffff4d}
+/* the wrap line reuses the SAME two colours so R/P read the same everywhere */
+.tR{color:var(--tag-r-bg);font-weight:700}
+.tP{color:#7aa2ff;font-weight:700}
+/* HEADER PARITY: both workspaces reserve the same header height, so switching cannot shift the layout.
+   Pact fills row 1 with conversation tabs; Core fills it with an identity chip. Same box either way. */
+.hrow.--r1{min-height:38px}
+/* image thumbs — hover to inspect without leaving the conversation */
+.imgthumb{position:relative;display:inline-flex}
+.imgthumb .big{position:absolute;bottom:calc(100% + 8px);left:0;display:none;z-index:70;
+  width:300px;height:190px;border-radius:10px;border:1px solid var(--seam);box-shadow:0 12px 40px #000b;
+  background:repeating-linear-gradient(45deg,#223,#223 10px,#2b2b3d 10px,#2b2b3d 20px);
+  align-items:center;justify-content:center;color:var(--dim);font-size:11px}
+.imgthumb:hover .big,.imgthumb:focus-within .big{display:flex}
 /* footer innards */
 .frow{display:flex;align-items:center;gap:6px;padding:5px 9px;min-height:30px}
 .frow+.frow{border-top:1px solid #ffffff0d}
@@ -114,12 +158,12 @@ button:disabled{opacity:.4;cursor:not-allowed}
 #ghost{position:absolute;inset:0;padding:7px 9px;font:inherit;font-size:12.5px;line-height:18px;color:#8290b5;pointer-events:none;white-space:pre-wrap;overflow:hidden}
 #ghost kbd{background:#1a2440;border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:10.5px;color:var(--dim)}
 /* Stop/Send + auto-continue live in ONE bordered group, per feedback */
-.sendgrp{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:9px;padding:3px 5px;background:#101a30}
+.sendgrp{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:9px;padding:3px 5px;background:var(--chip)}
 .sendgrp.--auto{border-color:#3ddc9755;background:#0c1a1c}
 .sendgrp .rounds{font-size:10.5px;color:var(--dim);white-space:nowrap}
 .autolbl{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--dim);white-space:nowrap;cursor:pointer}
 .autolbl input{margin:0}
-#typebox{width:100%;resize:none;background:#131d33;color:var(--ink);border:1px solid #3a4a75;border-radius:8px;box-shadow:inset 0 1px 3px #0007;padding:7px 9px;font:inherit;font-size:12.5px;line-height:18px;outline:none;display:block}
+#typebox{width:100%;resize:none;background:var(--field);color:var(--ink);border:1px solid var(--field-line);border-radius:8px;box-shadow:inset 0 1px 3px #0007;padding:7px 9px;font:inherit;font-size:12.5px;line-height:18px;outline:none;display:block}
 #typebox:focus{border-color:var(--acc);box-shadow:inset 0 1px 3px #0007,0 0 0 2px #c77dff22}
 .btn-send{background:var(--acc);color:#1a0b2e;font-weight:700;border-color:var(--acc)}
 .btn-stop{background:#3a1720;color:#ffb3c0;border-color:#7a2b3c}
@@ -213,7 +257,7 @@ function build() {
 
   /* ================= HEADER — fixed height, max 3 rows, transient status is a CHIP ============== */
   var hdr = el("div", { class: "rg-header", "data-rg": "HEADER" });
-  var r1 = el("div", { class: "hrow" });
+  var r1 = el("div", { class: "hrow --r1" });
   if (slots.header.tabs) {
     S.convs.forEach(function (c) { r1.appendChild(el("span", { class: "tab" + (c.act ? " --act" : "") }, [c.n])); });
     r1.appendChild(el("button", { title: "new conversation" }, ["+"]));
@@ -246,9 +290,21 @@ function build() {
     bar.appendChild(el("label", { class: "autolbl" }, [awCb, "auto-wrap"]));
     var fill = el("i"); fill.style.width = Math.min(100, wr.pct) + "%";
     bar.appendChild(el("span", { class: "bar" }, [fill]));
-    bar.appendChild(el("span", { class: "m" }, [el("b", {}, [fmt(S.ctxTok)]), " / " + fmt(S.ctxMax) + " tok · ", el("b", {}, [wr.pct + "%"])]));
-    bar.appendChild(el("span", { class: "m" }, ["P ", el("b", {}, [fmt(S.prompts)]), " · R ", el("b", {}, [fmt(S.responses)]), " · \uD83D\uDDBC ", el("b", {}, [fmt(S.images)])]));
-    bar.appendChild(el("span", { class: "m" }, [fmt(S.pChars + S.rChars) + " chars"]));
+    // ALL THREE real ceilings. The engine rolls on turns >= 400 OR bytes >= 25MB (lib/conversationRoll.mjs);
+    // context % is what the MODEL is squeezed by and drives SDK compaction, but it does NOT fire our roll.
+    // Showing only context % implied a cause that does not exist.
+    var tg = CS.rollTriggers({ prompts: S.prompts, responses: S.responses, bytes: S.pChars + S.rChars, tokens: S.ctxTok, ceiling: S.ctxMax });
+    tg.list.forEach(function (c) {
+      var near = c.id === tg.willRollOn;
+      var txt = c.id === "turns" ? fmt(c.now) + " / " + fmt(c.max) + " turns"
+              : c.id === "bytes" ? fmtChars(c.now) + " / " + fmtChars(c.max) + "B"
+              : fmt(c.now) + " / " + fmtChars(c.max) + " tok";
+      bar.appendChild(el("span", { class: "chip" + (near ? " --acc" : ""), title: (near ? "NEAREST ceiling — this is what will fire the wrap. " : "") + c.label + " at " + c.pct + "%" },
+        [(near ? "\u25b8 " : "") + txt + " \u00b7 " + c.pct + "%"]));
+    });
+    bar.appendChild(el("span", { class: "m", title: "What this conversation holds" },
+      [el("span", { class: "tR" }, ["R " + fmt(S.responses)]), " \u00b7 ", el("span", { class: "tP" }, ["P " + fmt(S.prompts)]),
+       " \u00b7 ", el("b", {}, [fmt(S.images)]), " images"]));
     if (S.wraps) bar.appendChild(el("span", { class: "chip" }, ["\u27f3 " + S.wraps + " wrapped"]));
     bar.appendChild(el("span", { class: "spacer" }));
     var wbtn = el("button", { title: wr.reason }, ["\u27f3 Wrap now"]);
@@ -262,9 +318,10 @@ function build() {
   /* ================= CORE — the only flexing region ============================================ */
   var core = el("div", { class: "rg-core" });
   for (var i = 0; i < S.turns; i++) {
-    core.appendChild(el("div", { class: "msg --u" }, ["Prompt #" + (i + 1) + " — a user turn."]));
+    var u = el("div", { class: "msg --u" }, [el("span", { class: "num num-p" }, ["P#" + (i + 1)]), "A user turn."]);
+    core.appendChild(u);
     var a = el("div", { class: "msg --a" });
-    a.appendChild(el("div", { class: "tno" }, ["R#" + (i + 1)]));
+    a.appendChild(el("span", { class: "num num-r" }, ["R#" + (i + 1)]));
     a.appendChild(el("div", {}, ["An assistant answer. ".repeat(3 + (i % 4) * 4)]));
     a.appendChild(mkMsgActs(i + 1));
     core.appendChild(a);
@@ -276,7 +333,12 @@ function build() {
   var ftr = el("div", { class: "rg-footer", "data-rg": "FOOTER" });
   if (S.imgs) {
     var ir = el("div", { class: "frow", id: "f-img" });
-    for (var j = 0; j < S.imgs; j++) ir.appendChild(el("span", { class: "chip" }, ["\uD83D\uDDBC shot-" + (j + 1) + ".png \u00d7"]));
+    for (var j = 0; j < S.imgs; j++) {
+      ir.appendChild(el("span", { class: "imgthumb", tabindex: "0" }, [
+        el("span", { class: "chip" }, ["\uD83D\uDDBC shot-" + (j + 1) + ".png \u00d7"]),
+        el("span", { class: "big" }, ["shot-" + (j + 1) + ".png \u2014 hover preview (full size on click)"])
+      ]));
+    }
     ftr.appendChild(ir);
   }
   // The pasted-image strip collapses to a single count chip rather than a whole row.
@@ -508,8 +570,10 @@ function openWrap() {
 function render() { build(); }
 
 /* ---- controls ---- */
-$("#wCore").onclick = function () { S.kind = "core"; this.classList.add("on"); $("#wPact").classList.remove("on"); note(); render(); };
-$("#wPact").onclick = function () { S.kind = "pact"; this.classList.add("on"); $("#wCore").classList.remove("on"); note(); render(); };
+$("#wCore").onclick = function () { S.kind = "core"; document.body.dataset.theme = "core"; this.classList.add("on"); $("#wPact").classList.remove("on"); document.body.dataset.theme = "core";
+note(); render(); };
+$("#wPact").onclick = function () { S.kind = "pact"; document.body.dataset.theme = "pact"; this.classList.add("on"); $("#wCore").classList.remove("on"); document.body.dataset.theme = "core";
+note(); render(); };
 function note() { $("#wNote").textContent = S.kind === "pact" ? "Pact: repo LOCKED, many tabs, continuation line on." : "Core: repo CHOSEN, one active conversation, no continuation line."; }
 $("#expandBtn").onclick = toggleExpand;
 $("#bounds").onchange = function () { document.body.classList.toggle("showbounds", this.checked); };
@@ -544,5 +608,6 @@ window.addEventListener("resize", function () { syncSlider(); $("#shell").style.
 syncSlider();
 /* OFF by default: what you see IS the shipping design, not a debug view of it. */
 $("#cue").classList.add("on");
+document.body.dataset.theme = "core";
 note(); render();
 </script>
