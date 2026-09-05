@@ -4,6 +4,33 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.97] - 2026-09-05
+### Fixed
+- **"parts.filter is not a function" — a red error that KILLED THE WHOLE TURN.** A message's
+  `content` is either a plain string OR an array of blocks; the Messages API allows both and which
+  one arrives varies by model and by turn. `toEvent()` did `(msg.message?.content) || []`, and a
+  non-empty string is **truthy**, so it sailed past the `|| []` guard straight into `.filter` and
+  threw. Because `toEvent()` runs *inside* the `for await` stream loop, the throw escaped to the
+  catch, set status `"error"` and ended the turn. Normalised once in a new `contentBlocks()` helper
+  (a string becomes one synthetic text block, which is what the API means by it; anything else
+  degrades to `[]`). Both the assistant and user paths had the identical bug.
+  `toolResultText()` already handled the string case — `toEvent()` never got the same treatment.
+### Added
+- **A translator hiccup can no longer destroy a live turn.** `toEvent()` is now called inside a
+  per-message guard: an unexpected message shape is skipped and surfaced as a new non-fatal
+  `kind: "warning"` event, and the turn keeps streaming. Rendered in both Core and Pact (worded
+  "— the turn continued." so it does not read as a failure) rather than silently dropped, because a
+  quiet skip would trade a loud bug for an invisible one.
+
+## [1.5.96] - 2026-09-05
+### Fixed
+- **Two unhandled promise rejections on session respawn/stop** (`ProcessTransport is not ready for
+  writing`, seen 4× in one afternoon in the journal). `try { q.interrupt(); } catch {}` catches
+  nothing — `interrupt()` is **async**, so a bare try/catch only traps a *synchronous* throw. During
+  a roll the transport is already down (the normal case — we just closed the stream), so it rejects,
+  escapes, and becomes an `unhandledRejection`; only sessiond's keep-alive net kept the engine up.
+  The second occurrence, in `stop()`, was found by the regression test, not by inspection.
+
 ## [1.5.95] - 2026-09-05
 ### Added
 - **Exocortex Phase 2 — the context viewer, threshold indicators, jump-to-#N, agents panel and recall

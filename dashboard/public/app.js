@@ -7731,6 +7731,12 @@ function pactChatRoute({ kind, sessionKey, data }) {
         pactChatPaint(t);
       }
       return;
+    // Non-fatal: the translator skipped one malformed engine message and the turn KEPT GOING.
+    // Deliberately does NOT touch status/live/_pendingText — this is not a turn failure, and
+    // treating it as one would abort a conversation that is still working.
+    case "warning":
+      t.msgs.push({ kind: "error", text: (d.message || d.text || "Engine warning") + " — the turn continued." });
+      pactChatPaint(t); return;
     case "error": {
       const emsg = d.text || d.message || "error";
       // A "could not be opened" reply to a rehydrate/resume in flight (the session no longer exists on
@@ -10548,6 +10554,11 @@ function viewWorkspace() {
     }
     if (m.kind === "result") return line("ws-result", [`— done · ${(m.usage?.output_tokens || 0)} out tok`]);
     if (m.kind === "error") return line("ws-err", ["⚠ " + (m.text || m.message || "Unknown error")]);
+    // A NON-fatal engine warning (e.g. one malformed SDK message skipped by the translator). The turn
+    // kept running — that is the whole point — but it must still be VISIBLE, never silently dropped,
+    // or we trade a loud bug for a quiet one. Rendered like an error, worded so it does not read as a
+    // turn failure.
+    if (m.kind === "warning") return line("ws-err", ["⚠ " + (m.message || m.text || "Engine warning") + " — the turn continued."]);
     if (m.kind === "created") return line("ws-note", [`created ${m.what}: ${m.path}`]);
     return null;
   }
@@ -12336,6 +12347,7 @@ function viewWorkspace() {
         else if (data.kind === "tool_result") logActivity(p, "✓ Tool finished — continuing…");
         else if (data.kind === "result") logActivity(p, `✓ Reply complete${data.persisted ? " & saved — safe to close" : ""} — ${(data.usage?.output_tokens || 0)} out tok`, "ws-act-ok");
         else if (data.kind === "error") logActivity(p, "⚠ " + (data.text || data.message || "Unknown error"), "ws-act-err");
+        else if (data.kind === "warning") logActivity(p, "⚠ " + (data.message || data.text || "Engine warning"), "ws-act-err");
         p.transcript.push(data);
         if (data.usageTotal) p.usage = data.usageTotal;
         // Context usage changes every turn — refresh it once a turn actually finishes (not on
