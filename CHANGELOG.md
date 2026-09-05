@@ -4,6 +4,28 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.105] - 2026-09-06
+### Fixed
+- **The model row vanished while typing a long prompt.** It was collapse step 1 — so the model, effort,
+  fast-mode and context controls disappeared at exactly the moment a big prompt makes you want to
+  confirm which model is about to receive it. Removed from `COLLAPSE_STEPS` entirely and added to the
+  never-collapsible set (`modelBarVisible`) with Stop, Send and the expand toggle. Only rows carrying no
+  control you need mid-compose may collapse now (image strip, inline metadata).
+- **Scrollbars were inconsistent.** The transcript used the browser default while the type box had its
+  own, so the two sat at different widths, colours and insets. One rule now covers every scrolling
+  surface: thin, rounded, inset inside the rounded container with a transparent track, so it reads as
+  part of the chat graphic instead of browser chrome bolted to the edge. Firefox matched via
+  `scrollbar-width`/`scrollbar-color`.
+- **The rollup metrics were cryptic.** `P 138 · R 219 · 🖼 12 / 4,272,000 chars` now reads
+  **`138 prompts · 219 answers · 12 images · 4.3M characters`** — these are the counts that make a
+  conversation heavy, so they must read as counts, not codes.
+### Added (lab)
+- **Live / Held marker** in the header — whether the view is following the newest turn or holding your
+  scroll position, with a rail toggle to see both states.
+- **Bookmark + share on every answer** (hover, keyboard-reachable), plus a bookmark button with a live
+  count in the footer action row. Bookmarks are what make a long conversation navigable, so they belong
+  on the turn itself, not only in a toolbar elsewhere.
+
 ## [1.5.104] - 2026-09-06
 ### Fixed
 - **The expand toggle disappeared exactly when you needed it.** It lived in the model row, which is

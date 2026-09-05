@@ -25,7 +25,22 @@ label{font-size:11.5px;color:var(--dim);display:flex;gap:5px;align-items:center;
 /* ===== THE THREE REGIONS. The boundaries are the point — 1px rule + a background TONE STEP so you can
    always see where a region ends, even mid-scroll. This is spec invariant I3. ===== */
 .rg-header{flex:0 0 auto;background:var(--hdr);border-bottom:2px solid var(--line);box-shadow:0 2px 0 #0003}
-.rg-core{flex:1 1 auto;min-height:0;overflow-y:auto;background:var(--panel);padding:10px 12px;display:flex;flex-direction:column;gap:8px;scrollbar-width:thin}
+.rg-core{flex:1 1 auto;min-height:0;overflow-y:auto;background:var(--panel);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+/* ---- ONE scrollbar treatment, shared by EVERY scrolling surface in the shell ----------------
+   The transcript used the browser default while the type box got a different one, so the two sat at
+   different widths, different colours and different insets. Same rule for both: thin, rounded, inset
+   inside the rounded container, transparent track so it reads as part of the chat graphic rather than
+   a browser chrome bar bolted on the edge. Firefox gets the same via scrollbar-width/color. */
+.rg-core, #typebox, .popbox, .histlist, #rail{scrollbar-width:thin;scrollbar-color:#3a4870 transparent}
+.rg-core::-webkit-scrollbar, #typebox::-webkit-scrollbar, .popbox::-webkit-scrollbar,
+.histlist::-webkit-scrollbar, #rail::-webkit-scrollbar{width:10px;height:10px}
+.rg-core::-webkit-scrollbar-track, #typebox::-webkit-scrollbar-track, .popbox::-webkit-scrollbar-track,
+.histlist::-webkit-scrollbar-track, #rail::-webkit-scrollbar-track{background:transparent}
+.rg-core::-webkit-scrollbar-thumb, #typebox::-webkit-scrollbar-thumb, .popbox::-webkit-scrollbar-thumb,
+.histlist::-webkit-scrollbar-thumb, #rail::-webkit-scrollbar-thumb{
+  background:#3a4870;border-radius:99px;border:3px solid transparent;background-clip:content-box}
+.rg-core::-webkit-scrollbar-thumb:hover, #typebox::-webkit-scrollbar-thumb:hover{background:#55689c;background-clip:content-box}
+.rg-core::-webkit-scrollbar-corner, #typebox::-webkit-scrollbar-corner{background:transparent}
 .rg-footer{flex:0 0 auto;background:var(--ftr);border-top:2px solid var(--line);box-shadow:0 -2px 0 #0003}
 body.showbounds .rg-header{border-bottom-color:var(--warn)}
 body.showbounds .rg-footer{border-top-color:var(--warn)}
@@ -39,6 +54,17 @@ body.showbounds .rg-core{outline:1px dashed #3ddc9755;outline-offset:-2px}
 .chip{padding:2px 8px;border-radius:11px;background:#16203a;border:1px solid var(--line);font-size:11px;color:var(--dim);white-space:nowrap}
 .chip.--ok{color:var(--ok);border-color:#3ddc9744}
 .chip.--acc{color:var(--acc);border-color:#c77dff44}
+/* Live / Held — whether the view is pinned to the newest turn or holding your scroll position. */
+.bulb{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:11px;font-size:11px;font-weight:600;border:1px solid}
+.bulb.--live{color:var(--ok);border-color:#3ddc9755;background:#0d1d18}
+.bulb.--held{color:var(--warn);border-color:#ffb45455;background:#1d1710}
+.bulb i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block}
+/* per-answer actions — bookmark + share, revealed on hover, always reachable by keyboard */
+.msg{position:relative}
+.msgacts{position:absolute;top:4px;right:6px;display:flex;gap:3px;opacity:0;transition:opacity .12s}
+.msg:hover .msgacts,.msgacts:focus-within{opacity:1}
+.msgacts button{padding:1px 6px;font-size:11px;line-height:1.4;background:#0f1730}
+.msgacts button.--on{color:var(--warn);border-color:var(--warn)}
 .spacer{flex:1}
 .roll{display:flex;align-items:center;gap:8px;margin:0 9px 6px;padding:5px 9px;border-radius:7px;background:#141c30;border:1px solid var(--line);font-size:11px;flex-wrap:wrap}
 .roll.--warn{border-color:#ffb45455;background:#1e1a10}
@@ -124,7 +150,8 @@ button:disabled{opacity:.4;cursor:not-allowed}
 
   <div class="grp"><b>Simulate</b>
     <div class="row"><button id="addConv">+ conversation</button><button id="addTurns">+ 6 turns</button><button id="clearTurns">clear</button></div>
-    <div class="row"><button id="agents">▸ agents running</button><button id="recon">↻ reconnected</button><button id="cue">cue strip</button></div>
+    <div class="row"><button id="agents">▸ agents running</button><button id="recon">↻ reconnected</button><button id="cue">rollup bar</button></div>
+    <div class="row"><button id="liveBtn">● Live / Held</button></div>
     <div class="row"><button id="imgs">+ image strip</button><button id="histBtn">🕐 history popup</button></div>
     <div class="row"><span class="sub">Context fill (drives the wrap bar)</span></div>
     <input type="range" id="ctxr" min="1" max="99" value="66">
@@ -160,7 +187,7 @@ var S = {
   repo: "Claudstermind", model: "Opus 4.5", auto: true, autoN: 4,
   ctxTok: 93016, ctxMax: 1000000,
   suggest: "Continue with the next item on the list.",
-  autoWrap: true, wraps: 0,
+  autoWrap: true, wraps: 0, live: true, bm: {},
   prompts: 138, responses: 219, images: 12, pChars: 412000, rChars: 3860000
 };
 var $ = function (s, r) { return (r || document).querySelector(s); };
@@ -227,6 +254,7 @@ function build() {
     var a = el("div", { class: "msg --a" });
     a.appendChild(el("div", { class: "tno" }, ["R#" + (i + 1)]));
     a.appendChild(el("div", {}, ["An assistant answer. ".repeat(3 + (i % 4) * 4)]));
+    a.appendChild(mkMsgActs(i + 1));
     core.appendChild(a);
   }
   if (!S.turns) core.appendChild(el("div", { class: "chip" }, ["no turns — use “+ 6 turns”"]));
@@ -265,6 +293,9 @@ function build() {
   act.appendChild(meta);
   act.appendChild(imgChip);
   act.appendChild(el("button", { id: "f-hist", title: "Conversations in THIS repository" }, ["\uD83D\uDD50"]));
+  var nbm = Object.keys(S.bm).filter(function (k) { return S.bm[k]; }).length;
+  act.appendChild(el("button", { id: "f-bm", title: nbm ? nbm + " bookmarked answer(s) — click to list" : "No bookmarks yet" },
+    [nbm ? "\u2605 " + nbm : "\u2606"]));
   act.appendChild(el("span", { class: "chip --gone", id: "f-modelchip2" }, [S.model]));
   // The EXPAND toggle lives HERE, in the never-collapsing action row — not in the model row, which is
   // collapse step 1. It used to vanish exactly when a long prompt made you want it.
@@ -316,9 +347,8 @@ function build() {
 function measureFrees(ftr) {
   // v1 hardcoded these and was WRONG by ~90px, which clipped the footer. Measure what each step really
   // frees; a step that frees no row height declares 0 rather than a plausible-looking number.
-  var modelRow = $("#f-model"), imgRow = $("#f-img");
+  var imgRow = $("#f-img");
   return [
-    { id: "modelRow",   frees: modelRow ? modelRow.offsetHeight : 0 },
     { id: "imageStrip", frees: imgRow ? imgRow.offsetHeight : 0 },
     { id: "meta",       frees: 0 }
   ];
@@ -331,7 +361,7 @@ function layout() {
 
   // Un-collapse everything before measuring, or we would measure a footer that is already collapsed and
   // then "free" height that was never there — the exact class of error that clipped v1.
-  ["#f-model", "#f-img", "#f-meta", "#f-modelchip2", "#f-imgchip"].forEach(function (sel) { var n = $(sel); if (n) n.classList.remove("--gone"); });
+  ["#f-img", "#f-meta", "#f-modelchip2", "#f-imgchip"].forEach(function (sel) { var n = $(sel); if (n) n.classList.remove("--gone"); });
   $("#f-modelchip2").classList.add("--gone"); $("#f-imgchip").classList.add("--gone");
 
   ta.style.height = "auto"; ta.style.overflowY = "hidden";
@@ -351,9 +381,9 @@ function layout() {
   core.classList.toggle("--gone", r.coreHidden);
 
   // Apply the collapse decision to WHOLE ROWS, so the freed height is real.
-  var mr = $("#f-model"); if (mr) mr.classList.toggle("--gone", !!r.collapsed.modelRow);
-  $("#f-modelchip2").classList.toggle("--gone", !r.collapsed.modelRow);
-  $("#f-modelchip2").textContent = S.model;
+  // The model row is no longer collapsible (see chat-shell.js COLLAPSE_STEPS) — it stays put.
+  var mr = $("#f-model"); if (mr) mr.classList.remove("--gone");
+  $("#f-modelchip2").classList.add("--gone");
   var im = $("#f-img"); if (im) im.classList.toggle("--gone", !!r.collapsed.imageStrip);
   $("#f-imgchip").classList.toggle("--gone", !(r.collapsed.imageStrip && S.imgs));
   var mt = $("#f-meta"); if (mt) mt.classList.toggle("--gone", !!r.collapsed.meta);
@@ -406,6 +436,16 @@ function openHist() {
 }
 
 function fmt(n) { return Number(n || 0).toLocaleString(); }
+function fmtChars(n) { n = Number(n || 0); return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(n); }
+/* Bookmark + share on EVERY answer. Bookmarks are what make a long conversation navigable, so they
+   belong on the turn itself, not only in a toolbar somewhere else. */
+function mkMsgActs(n) {
+  var bm = el("button", { class: S.bm[n] ? "--on" : "", title: S.bm[n] ? "Bookmarked — click to remove" : "Bookmark this answer" }, [S.bm[n] ? "\u2605" : "\u2606"]);
+  bm.onclick = function (e) { e.stopPropagation(); S.bm[n] = !S.bm[n]; render(); };
+  var sh = el("button", { title: "Copy a link to R#" + n }, ["\u2934"]);
+  sh.onclick = function (e) { e.stopPropagation(); sh.textContent = "\u2713"; setTimeout(function () { sh.textContent = "\u2934"; }, 900); };
+  return el("div", { class: "msgacts" }, [bm, sh]);
+}
 
 /* Context breakdown — what the ctx medallion opens. Percentages are summed from the parts so the
    slices genuinely account for the whole; "free" is shown as its own row, never implied. */
@@ -482,6 +522,7 @@ $("#agents").onclick = function () { S.agents = S.agents ? 0 : 3; this.classList
 $("#recon").onclick = function () { S.recon = !S.recon; this.classList.toggle("on", S.recon); render(); };
 $("#cue").onclick = function () { S.cue = !S.cue; this.classList.toggle("on", S.cue); render(); };
 $("#imgs").onclick = function () { S.imgs = S.imgs ? 0 : 3; this.classList.toggle("on", !!S.imgs); render(); };
+$("#liveBtn").onclick = function () { S.live = !S.live; render(); };
 $("#ctxr").oninput = function () { S.ctxTok = Math.round(S.ctxMax * this.value / 100); render(); };
 $("#histBtn").onclick = openHist;
 $("#histX").onclick = function () { $("#hist").classList.remove("--open"); };

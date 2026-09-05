@@ -33,8 +33,11 @@
   // it never actually received, the footer grew past the shell, and its bottom row was CLIPPED. A layout
   // module must never guess at a measurement. Callers pass `steps` with REAL measured heights; a step
   // that frees nothing measurable must declare 0 rather than a plausible-looking number.
+  // The MODEL ROW is NOT here on purpose. It was collapse step 1, so typing a long prompt hid the model /
+  // effort / context controls — the settings you are most likely to want to check while composing a big
+  // prompt. It joins Stop, Send and the expand toggle in the never-collapsible set. What remains are rows
+  // that carry no control you need mid-compose.
   var COLLAPSE_STEPS = [
-    { id: "modelRow",   frees: 0, note: "model row folds into the action row as one compact chip" },
     { id: "imageStrip", frees: 0, note: "pasted-image strip folds to a count chip" },
     { id: "meta",       frees: 0, note: "repo / worktree / identity text hidden (inline — frees no row)" }
   ];
@@ -156,6 +159,7 @@
       sendVisible: true,
       stopVisible: true,
       expandVisible: true,
+      modelBarVisible: true,
       capIsFloored: baseCap > minTypeH + (o.expanded ? SWALLOW_PCT_MAX : SWALLOW_PCT) * c0 + 0.5
     };
   }
