@@ -18,13 +18,29 @@ Waves: parallel where files don't conflict (new modules/docs); the two giant fil
       tokens,status}], totalTokens }` for the panel.
 
 ## Wave 2 — server integration (SERIAL, me: workspace.mjs / claudeSession.mjs / workspaceStore.mjs)
-- [~] T2.1 (FINDING: store already externalizes images; refocused onto the roll seed) Wire `imageStore` into the transcript persist path (externalize on save) + a one-time backfill on load.
+- [x] T2.1 **CLOSED — the original task was not needed.** Images have ALWAYS been externalized by
+      `workspaceStore.saveImage` (live install: 55 MB of `images/` blobs vs 4.1 MB of JSONL text, zero inline
+      base64 image blocks); `lib/imageStore.mjs` is an unused second implementation. The REAL gaps, all fixed
+      in 1.5.91: chained segments claimed overlapping absolute P#/R# ranges (so recall answered with the wrong
+      turn) and restarted numbering after a process restart (overwriting an existing segment file); the archive
+      recorded no `workspaceId`, so a recalled turn's image path resolved to nothing; `_segments` was enumerated
+      as a bogus workspace and was one row-order coincidence from being merged back into the pane; and a
+      one-time backfill (`migrateLegacyRootSegments`) now relocates the archive an earlier build left at the
+      transcript root. Also: `statSync` was never imported into workspace.mjs, so the cold-load cue never fired.
 - [x] T2.2 Forward the FULL context breakdown (shape via `contextUsage`) in the `contextUsage` event.
-- [~] T2.3 (module built + tested; fold into sessionSummary = follow pass) Background-task telemetry: fold `backgroundTasks` shaping into `sessionSummary` + the `background` event.
+- [x] T2.3 Background-task telemetry wired (1.5.92): `ClaudeSession.backgroundPanel()`, `panel` on every
+      background/taskStarted/taskDone event, `backgroundPanel` on `sessionSummary` (so a RECONNECTING client
+      gets the fleet state). `background`/`tasks` stay arrays — additive only. `toEvent` now also forwards
+      `subagentType`/`workflowName`/settle-time `tokens`, read defensively.
 - [x] T2.4 Auto-roll lifetime hook (`conversationRoll` + `conversationArchive`): detect `shouldRoll` after a turn →
       summarize head → create fresh SDK session seeded via `buildSeedText` → archive head + index → switch. Emit
       the `⟳ rolling` indicator state.
-- [~] T2.5 (recall lookup built in conversationArchive; control action/agent-tool = follow pass) `recall` control action (+ `🔍 looking up` state) and confirm the `around` jump action end-to-end.
+- [x] T2.5 `recall` control action + the `lookingUp`/`recall` ON/OFF cue pair (1.5.93); `around` jump confirmed
+      end-to-end on both `open` and `resync`. NOT done: the agent-side recall TOOL (the model still cannot call
+      recall itself) — tracked as a follow-up, see CONTRACT.md §5.
+
+## Contract freeze
+- [x] `docs/work/agentic-chat-engine/CONTRACT.md` — the frozen event/action shapes Wave 3 builds against.
 
 ## Wave 3 — client (SERIAL, me: dashboard/public/app.js + styles.css)
 - [ ] T3.1 Shared **context popover** helper (from the forwarded breakdown) → mount in Core + Pact.

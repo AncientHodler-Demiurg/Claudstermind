@@ -49,14 +49,23 @@ against. Detail lives in `docs/work/agentic-chat-engine/plan.md`; this is the ro
 
 All three touch `lib/workspace.mjs` / `claudeSession.mjs` → **serial, one agent**.
 
-- [ ] **1.1** → **T2.1** — roll-seed image handling. (Finding: the store already externalizes images, so
-      the original task was misscoped; refocus onto the roll seed path + a one-time load backfill.)
-- [ ] **1.2** → **T2.3** — fold `backgroundTasks` shaping into `sessionSummary` + the `background` event.
-      Module + tests already exist; only the wiring is missing.
-- [ ] **1.3** → **T2.5** — the `recall` control action (+ `🔍 looking up` state) and confirm the `around`
-      jump action end-to-end. Lookup logic exists in `conversationArchive`; the action + agent tool don't.
-- [ ] **1.4** Contract freeze: write down the exact event/action shapes Phase 2 will consume, so the five
-      Wave-3 client tasks can be built in parallel against a stable target instead of racing the server.
+- [x] **1.1** → **T2.1** — v1.5.91. **The image half was a non-issue and is closed as such:** the store has
+      externalized images since `saveImage()` existed (live install: 55 MB of blobs vs 4.1 MB of JSONL, zero
+      inline base64), and `lib/imageStore.mjs` is an unused duplicate. The real defects were in the ROLL
+      ARCHIVE around it — overlapping absolute P#/R# ranges across segments (recall answered with the WRONG
+      turn), numbering that restarted after a process restart and overwrote a segment file, no `workspaceId`
+      on the archive (so a recalled turn's image could not be resolved), `_segments` enumerated as a bogus
+      workspace, and a missing `statSync` import that silently disabled the cold-load cue. Plus the one-time
+      load backfill, which relocates the 6206-row archive already on disk into its owning workspace.
+- [x] **1.2** → **T2.3** — v1.5.92. `panel` on every background event, `backgroundPanel` on `sessionSummary`
+      (so a reconnecting client sees the fleet without replaying events). Additive: `background`/`tasks` stay
+      arrays. `toEvent` now forwards `subagentType`/`workflowName`/settle `tokens`.
+- [x] **1.3** → **T2.5** — v1.5.93. `recall` action (by absolute P#/R# or substring), a strictly balanced
+      `lookingUp`→`recall` cue pair that can never stick on, and `around` confirmed end-to-end on `open` +
+      `resync`. **Still missing: the agent-side recall TOOL** — the model cannot call recall itself yet.
+- [x] **1.4** Contract freeze — `docs/work/agentic-chat-engine/CONTRACT.md` (v1.5.94). Exact shapes + JSON
+      examples for the context breakdown, the background panel, every indicator state, the `around` window and
+      the `recall` action, with GUARANTEED vs PARTIAL marked per item and the two known holes stated plainly.
 
 **Why this is first:** every Phase 2 item consumes these events. Building the UI first means building
 against a moving target.
@@ -121,13 +130,16 @@ is not a safe assumption today.
       "unrelated" for many versions; before a 2.0 they get fixed or explicitly quarantined with a reason.
 - [ ] **4.3** ⇉ Branch hygiene — decide whether `feat-pact-changed-review` merges to `main` before the
       2.0 bump. Right now `main` does not contain any of this work.
-- [ ] **4.7** ⇉ **Possible server-side `deepwork` deadlock** (found while fixing auto-continue, NOT fixed —
-      no runtime evidence yet). `lib/claudeSession.mjs:489` flips `idle → deepwork` on any non-background,
-      non-`result` event, and deepwork clears ONLY on the next `result`. A stray event arriving after a
-      turn's `result` would pin the session busy forever, which gates auto-continue → no new prompt → no
-      `result` → never clears. The 1.5.87 client fix self-corrects against a *transient* stuck-busy but not
-      a permanent one. **Tell-tale: composer reads "Deep Work…" with no visible turn running.** Instrument
-      if stalls persist.
+- [x] **4.7** ⇉ **`deepwork` deadlock — INVESTIGATED, NOT REAL. Do not re-litigate.** (v1.5.94.) Post-result
+      events genuinely occur (that is why the branch exists), but deepwork is not terminal: the query loop has
+      exactly four exits and every one rewrites `status` — `result`→idle, generator ends→ended, generator
+      throws→error, respawn→thinking — and `interrupt()` accepts deepwork while `_stop` force-idles after its
+      6s race. All six paths are locked down by the `4.7:` tests in `lib/claudeSession.test.mjs`, and the
+      verdict is recorded at the branch itself plus CONTRACT.md §6. What remains is a genuinely HUNG SDK turn,
+      where reporting busy is honest and `_stop`'s timeout is the existing remedy. **No silence-based
+      self-heal was added on purpose**: legitimate deep work is silent for minutes, so one would un-busy live
+      sessions and let a prompt interleave into a running turn. If "Deep Work… with no visible turn" recurs,
+      capture the event sequence after the last `result` rather than patching again.
 - [ ] **4.5** ⇉ **Kimi exposes 0 models** — 1.5.84 restored Cursor, but the live gateway returns no Kimi
       models at all (`omniProviderOf`'s `kimi|moonshot|km` prefixes match nothing). Either the account is
       disconnected or its ids use an unrecognized prefix. The new sweep bench (0.4b) is the tool to confirm.

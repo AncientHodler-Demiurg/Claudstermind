@@ -4,6 +4,140 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.94] - 2026-09-05
+### Added
+- **`docs/work/agentic-chat-engine/CONTRACT.md` — the FROZEN server contract** the five parallel Phase-2
+  client tasks build against (roadmap 2.0 item 1.4). Exact key names, exact types, concrete JSON for every
+  event and control action they consume: the `contextUsage` breakdown, the background-agents panel, each
+  indicator state, the `around` window, and `recall`. Each item is marked **GUARANTEED** (shipped, tested,
+  additive-changes-only) or **PARTIAL**, and the two known holes are stated up front rather than left to be
+  discovered mid-task: there is **no agent-side recall tool**, and context usage is **poll-only** (no push).
+  It also records, with the evidence, that the `⟳ Compacting context…` indicator has no live server signal —
+  the SDK only emits a *boundary* after the fact — so a client must not present a local threshold heuristic
+  as server truth.
+### Fixed
+- **Roadmap item 4.7, the suspected `deepwork` deadlock: investigated, NOT REAL, and now written down so it
+  stops being re-litigated.** Post-`result` events genuinely do occur — that is exactly why the branch
+  exists — but `deepwork` is not terminal: the query loop has only four exits and every one rewrites
+  `status` (`result`→idle, generator ends→ended, generator throws→error, respawn→thinking), while
+  `interrupt()` explicitly accepts deepwork and `_stop` force-idles after its 6s race. All six paths are now
+  locked down by the `4.7:` tests in `lib/claudeSession.test.mjs`, and the verdict is recorded at the branch
+  itself. What remains is a genuinely **hung SDK turn**, where reporting busy is the honest answer and
+  `_stop`'s timeout is the existing remedy. **No silence-based self-heal was added, deliberately**: it would
+  have to fire on silence, legitimate deep work is silent for minutes, and it would therefore un-busy live
+  sessions and let a prompt interleave into a running turn — precisely what the single-writer turn lock
+  exists to prevent.
+- **`contextUsage` now carries `contextBreakdown` on EVERY path**, including the no-live-session answer,
+  where it is the zeroed `ok: false` shape. A missing key was indistinguishable at the client from a zeroed
+  one, i.e. "unavailable" rendered as "0% of the window used".
+
+## [1.5.93] - 2026-09-05
+### Added
+- **The `recall` control action** (roadmap 2.0 item 1.3 / T2.5) — read a turn that has rolled off the
+  active window back out of the archive, by absolute `P#`/`R#` ("what did you say at #1237") or by
+  substring query. The lookup logic already existed in `lib/conversationArchive.mjs`; the action that
+  reaches it did not.
+  - Per the locked design decision, recall is **visible, not silent magic**: a `lookingUp` event turns
+    the "🔍 Looking up historical turns…" cue ON before the disk scan and the terminal `recall` event
+    turns it OFF — always exactly one of each, including on the not-found and unknown-conversation
+    paths, so the cue can never be left stuck on. A call with neither a number nor a query is refused
+    outright and emits no cue at all.
+  - Every hit carries `workspaceId` alongside its image refs, which is exactly what the existing image
+    route needs to actually render a recalled screenshot.
+  - Recall resolves the archive for a conversation that is **no longer live** (the common case — you are
+    asking about something you rolled off long ago), via the store, falling back to the session key
+    itself when only the archive survives.
+### Fixed
+- **The `around` jump action is now covered end-to-end.** It was built but never exercised past
+  `conversationWindow`'s own unit tests: a `control open`/`resync` with `around: N` on a 1200-row saved
+  conversation returns the 501-row band `[N-250, N+250]` with `windowStart`/`windowEnd`, `truncated`,
+  and the absolute `promptOffset`/`responseOffset` the client needs to label the band `P176…`. This is
+  the server half of jump-to-#N.
+
+## [1.5.92] - 2026-09-05
+### Added
+- **Background-agent telemetry is now actually wired** (roadmap 2.0 item 1.2 / T2.3). `lib/backgroundTasks.mjs`
+  and its tests already existed and were sound; nothing consumed them. Now:
+  - `ClaudeSession` keeps a reduced `backgroundState` and exposes `backgroundPanel()` →
+    `{ count, running, done, agents:[{ id, label, description, elapsedMs, tokens, status }], totalTokens }`.
+  - Every `background` / `taskStarted` / `taskDone` event carries that model as `panel`, and
+    `sessionSummary` carries it as `backgroundPanel` — so a client that RECONNECTS gets the fleet
+    state without having to replay events it already missed. That reconnect gap is the literal
+    complaint ("you said work was happening in the background and I couldn't tell").
+  - `session.background` stays the RAW array and `event.tasks` stays the raw list: additive on
+    purpose, because both current renderers index them as arrays.
+  - The SDK's task shape is richer than the three fields `toEvent` was keeping. `subagentType`,
+    `workflowName` and the settle-time `tokens` are now read defensively (several spellings, neutral
+    defaults when absent) — that is what turns "something is running" into "which agent, how long,
+    how many tokens".
+  - `reduceBackground` now accepts a `startedAt` riding on a task in the authoritative
+    `background_tasks_changed` set. An agent first *seen* there rather than via `task_started`
+    otherwise rendered with elapsed 0 forever. A known start time always wins, so a REPLACE of the
+    same set never restarts the clock.
+
+## [1.5.91] - 2026-09-05
+### Fixed
+- **The conversation ARCHIVE the auto-roll writes was not addressable, and was one row-order
+  coincidence away from duplicating a whole conversation.** Roadmap 2.0 item 1.1 (T2.1). The task as
+  written ("wire `imageStore` into the transcript persist path") was misscoped and is now closed as
+  **not needed**: the store has externalized images since `saveImage()` existed — verified on the live
+  install, where `Claudstermind@main` is 55 MB of `images/` blobs against 4.1 MB of JSONL text, with
+  **zero** inline base64 image blocks in any transcript. `lib/imageStore.mjs` is a second, unused
+  implementation of that same job. The real gaps were in the ROLL path around it:
+  - **Chained segments all claimed `P1..`/`R1..`.** `_maybeRoll` passed no `promptOffset`/
+    `responseOffset`, so segment 2's index range overlapped segment 1's — and `recallByNumber` takes the
+    FIRST entry whose range contains the number, so recalling a late turn silently answered with an
+    early one. The offsets now chain, and are re-seeded from the on-disk index, so they also survive a
+    process restart (which previously restarted numbering at `seg1`/`P1` and **overwrote** the existing
+    segment file).
+  - **An archived turn's images could not be resolved.** An image reference is `images/<hash>.<ext>`
+    *relative to the workspace dir*; the archive recorded no workspace, so a recalled turn had a path
+    and nothing to hang it off. Every index entry and every recall hit now carries `workspaceId` (and
+    the image refs themselves), which is exactly what the existing image route needs.
+  - **`_segments` was enumerated as a conversation.** `workspaceStore.eachSession` treats every
+    top-level directory as a workspace and derives its id from `transcript[0].workspaceId` — and
+    archived rows keep their original stamp. On the live install 6204 of 6206 archived rows carry it;
+    only the first row happening to lack one kept the whole rolled-off head from being merged straight
+    back into the pane by `readWorkspace`. `_segments`/`_images` are now skipped by exact name (a real
+    workspace slug may legitimately start with `_`, e.g. the repo `_Archive/…`).
+  - **One-time backfill on load** — `migrateLegacyRootSegments()` relocates an archive an earlier build
+    wrote to the transcript ROOT into its owning workspace dir (recovering the owner from the rows' own
+    stamp), rewriting the index and leaving anything it cannot attribute untouched. Idempotent. This is
+    what makes the 6206-row head already on disk recallable instead of orphaned.
+  - `lib/workspace.mjs` imported `readdirSync` but not **`statSync`**, which `_sdkSessionBytes` calls —
+    so the ReferenceError was swallowed by its own guard, the function always returned 0, and the
+    big-conversation cold-load cue (`loadingHistory`) could never fire at all.
+  - **`control models: empty with no live session…`** — one of the three long-standing failures, and an
+    environment leak, not a product bug: with `OMNIROUTE_KEY` set (as it is on the dev box) `_models`
+    merges a live gateway fetch and answers asynchronously, so the test's synchronous assertion saw
+    nothing. The test now pins the Claude-only lane and restores the variable.
+
+## [1.5.90] - 2026-09-05
+### Fixed
+- **Two of the three long-standing "pre-existing / unrelated" test failures — root-caused, both real,
+  both fixed at the source rather than waved through** (roadmap 2.0 item 4.2). Neither test was stale:
+  each was catching something true.
+  - **The static `<pre>` Pact highlighter had silently regressed to the OLD colour bands** (deleted diff
+    lines coloured differently from the editable CodeMirror view). 1.4.55 fixed exactly this by routing
+    `pactHighlight()` through the wrapped global `pactClassifyWord` — and the 1.5.84 checkpoint,
+    which regenerated `dashboard/public/pact-highlight.js` from `packages/stoicsyntax-pact`, quietly
+    reverted it, because the fix lived only in the GENERATED file and never in the generator. The proof
+    was a bare `pactHighlight("URH_ScanAll") === "URH_ScanAll"` — no `<span>` at all, since the package's
+    band table has never known `URH_`, `URCx_`, `CT_`, `UEV_IMC` or `A_`/`C_` → RECIPE. The routing now
+    lives in `build-vendor.mjs`'s browser shim, so a regenerate reproduces it instead of erasing it. The
+    package's tokenizer stays pure and framework-agnostic; word tokens render through the (possibly
+    wrapped) global, everything else keeps the tokenizer's own type — with no wrapper loaded the output
+    is byte-identical to `toHtml()`.
+  - **The relay↔bridge restart-tunnel integration test was snapshotting THIS repo.** It called
+    `createBridge()` without `paths`, so the bridge defaulted to the real working tree; because that test
+    runs the bridge in the same process as the relay (in production it is a separate machine), the first
+    cold snapshot blocked the event loop for a measured ~3.7s. `waitFor`'s wall-clock 3s deadline expired
+    *while the loop was blocked* — one single poll got in — so `localConnected` was asserted false even
+    though the bridge had connected (the bridge's own "connected — pushing snapshot" log proved it). The
+    two restart tests now point the bridge at a scratch workspace exactly as the first tunnel test always
+    has. No assertion was weakened: the sibling pre-flight-refusal test, which silently swallowed the same
+    timeout, now *asserts* the connection too, and the file dropped from 5.8s to 0.9s.
+
 ## [1.5.87] - 2026-09-05
 ### Fixed
 - **Pact auto-continue: ticking the box did not reliably continue turns.** Fifth report, fourth set of
