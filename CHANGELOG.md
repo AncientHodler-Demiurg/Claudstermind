@@ -4,6 +4,24 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.111] - 2026-09-06
+### Fixed
+- **The lab's whole footer disappeared.** `S.worktrees` was read by the new worktree picker but never
+  defined — the patch that added the state field had silently aborted before writing, while the patch
+  that added the *consumer* succeeded. `S.worktrees.forEach` threw inside `build()`, so the footer was
+  never appended: the page rendered a header and a transcript and simply stopped, with the geometry
+  readout blank. Third instance of the same root problem in as many rounds — **I could grep the file but
+  I could not run it.**
+### Added
+- **`lib/chatShellLabRender.test.mjs` — a render smoke test that actually EXECUTES the lab.** It
+  evaluates the page's real inline script against a minimal DOM shim and asserts the shell builds: all
+  three regions present, the footer's seven controls present, and every state field the script reads is
+  defined. It is not a browser and proves nothing about pixels, but *"the script throws halfway through
+  building the UI"* is now unshippable.
+  - **Verified by mutation**: reintroducing the exact missing-`S.worktrees` bug turns all three tests
+    red, and removing it turns them green again. A guard that cannot fail is worthless, so it was made
+    to fail on purpose before being trusted.
+
 ## [1.5.110] - 2026-09-06
 ### Fixed
 - **The lab's Go button was never wired — and neither was the context medallion.** `doJump()` existed and
