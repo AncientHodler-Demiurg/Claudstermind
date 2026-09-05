@@ -4,6 +4,60 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.87] - 2026-09-05
+### Fixed
+- **Pact auto-continue: ticking the box did not reliably continue turns.** Fifth report, fourth set of
+  patches (1.5.47 / 1.5.48 / 1.5.49 / 1.5.80) — because every previous pass added a gate instead of fixing
+  the shape. The decision "should the loop send the next prompt now?" was spread across two places that
+  checked *different* conditions: the renderer (`pactChatUpdateSuggest`) and the countdown tick inside
+  `pactAutoStart`. Four concrete failures fell out of that split, all now fixed at the root:
+  - **A hard crash that killed the whole chat.** The tick treated `_suggestDismissed` as a stop condition;
+    the renderer did not. So pressing **✕** on the suggestion while Auto was on produced
+    renderer → arm → tick → stop → renderer → … without bound: `RangeError: Maximum call stack size
+    exceeded`, thrown out of `pactChatPaint` — i.e. out of *every* repaint, on every subsequent stream
+    event. Reproduced in a harness before touching anything. Dismissing the chip now cannot gate the loop
+    at all, which is what the ✕'s own tooltip has always said it does.
+  - **The countdown could restart forever and never reach zero.** The 6-second deadline was re-minted by
+    whoever re-armed last. A turn fires dozens of repaints and the ~4s self-heal resync can momentarily
+    flip the tab busy, so any flicker faster than the window reset it. A live deadline is now *kept* across
+    re-evaluation and cleared only when a round actually starts.
+  - **Two silent stops.** (a) Any text in the compose box hid the *entire* bar — so a leftover draft, or the
+    text the failed-send path itself puts back in the box, made Auto-continue vanish with no state and no
+    explanation. Worse, `t.draft` persists across reloads, so the loop stayed dead after a restart, and a
+    single offline blip during an auto-send was enough to trigger it. (b) Reaching the rolling ceiling
+    stopped the loop with the checkbox still ticked and only a small `(10/10)` as the cue — and the count
+    persists, so a reload came back permanently dead. Both now *pause visibly*, with the reason on screen,
+    and an auto-continue send that fails no longer refills the compose box.
+  - **The countdown outlived its tab.** Switching tabs only ever stopped the tab that was passed in, so the
+    previous tab's interval kept running — against the new tab's compose box and writing into the new tab's
+    countdown element.
+### Changed
+- **Auto-continue is now a state machine, not a chain of patches.** One pure decider
+  (`pactAutoDecide`) is the only thing that decides whether the loop runs and, when it doesn't, *why not*;
+  one imperative shell (`pactAutoEnsure`) owns the single interval and fires the send; the renderer draws
+  from the same decision object. Calls go one way only — renderer → ensure → decide, never back — so the
+  ping-pong that produced the stack overflow is structurally impossible rather than patched out.
+- **The loop is self-correcting.** `pactAutoEnsure` is idempotent (it derives everything from current
+  state), so it is also run from the existing ~4s self-heal heartbeat. Every past auto-continue bug was a
+  re-arm that some code path forgot to do; a missed one now costs ≤4 seconds instead of stranding the
+  sweep. Typing in — or clearing — the compose box also re-evaluates it immediately, since a keystroke
+  repaints nothing else. A deadline that expired while the tab was backgrounded (throttled timers, slept
+  phone) fires on wake instead of sitting at "sending in 0s".
+- **The suppression reason is always shown.** "a round is running…", "paused at 10/10 rounds — ▷ Continue
+  grants the next 10", "paused — send or clear your message to resume". An autonomous loop that has stopped
+  must say so; every version of this feature so far stopped silently, which is the entire reason it kept
+  reading as broken.
+### Added
+- `lib/pactAutoContinue.test.mjs` — 15 tests over the newly extracted pure helper (sentinel-sliced from
+  `dashboard/public/app.js`, same pattern as `lib/coldLoadStatus.test.mjs`). The feature had **zero**
+  coverage across four fix attempts. Includes a named regression test for each stuck state above, plus two
+  structural guards that fail if the renderer edge is ever re-added or the dismissed flag ever re-enters
+  the arming decision.
+### Notes
+- Suite: 1034 tests, 1031 pass, **the same 3 pre-existing failures** (static diff highlighter,
+  control-models catalog cache, tunnel restart-trigger) — none touch Pact chat. Baseline before this
+  change was 1019/1016/3; this adds 15 tests, all green, and no new failures.
+
 ## [1.5.86] - 2026-09-05
 ### Added
 - **OmniRoute model test bench (Admin → Model routing).** 1.5.84 fixed a catalog bug that had been silently

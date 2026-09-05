@@ -24,7 +24,7 @@ Goal: stop the bleeding (uncommitted work) and get the user able to use the Pact
 
 - [x] **0.1** Commit + push the 39-version pile as a restore point — `86c45a2`
 - [x] **0.2** Gitignore `dashboard/data/routing.json` (per-install runtime state, was being tracked)
-- [ ] **0.3** ⇉ **Pact auto-continue actually works** — v1.5.87 *(agent in flight)*
+- [~] **0.3** ⇉ **Pact auto-continue actually works** — v1.5.87 — *code shipped, AWAITING USER CONFIRMATION*
       - The user's stated blocker: ticking auto-continue does not reliably continue turns.
       - Has had 4 rounds of patches (1.5.47/48/49, 1.5.80) and is still broken → this pass must make the
         state machine *structurally* correct, not add a 5th band-aid.
@@ -121,6 +121,13 @@ is not a safe assumption today.
       "unrelated" for many versions; before a 2.0 they get fixed or explicitly quarantined with a reason.
 - [ ] **4.3** ⇉ Branch hygiene — decide whether `feat-pact-changed-review` merges to `main` before the
       2.0 bump. Right now `main` does not contain any of this work.
+- [ ] **4.7** ⇉ **Possible server-side `deepwork` deadlock** (found while fixing auto-continue, NOT fixed —
+      no runtime evidence yet). `lib/claudeSession.mjs:489` flips `idle → deepwork` on any non-background,
+      non-`result` event, and deepwork clears ONLY on the next `result`. A stray event arriving after a
+      turn's `result` would pin the session busy forever, which gates auto-continue → no new prompt → no
+      `result` → never clears. The 1.5.87 client fix self-corrects against a *transient* stuck-busy but not
+      a permanent one. **Tell-tale: composer reads "Deep Work…" with no visible turn running.** Instrument
+      if stalls persist.
 - [ ] **4.5** ⇉ **Kimi exposes 0 models** — 1.5.84 restored Cursor, but the live gateway returns no Kimi
       models at all (`omniProviderOf`'s `kimi|moonshot|km` prefixes match nothing). Either the account is
       disconnected or its ids use an unrecognized prefix. The new sweep bench (0.4b) is the tool to confirm.
