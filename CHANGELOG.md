@@ -4,6 +4,27 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.99] - 2026-09-05
+### Fixed
+- **The control app's DMP Start/Stop buttons could never have worked — root-caused at two layers.**
+  Surfaced by the DMP agent bouncing a live complaint back to our side.
+  1. `lib/dmpControlPlane.mjs` is **dead code**: complete, documented, unit-tested, and imported by
+     nothing but its own test. No server route, no UI, no `control/cli.mjs` verb.
+  2. Even once wired, systemd would have refused it — `control/polkit/49-claudstermind.rules`
+     allowlisted only the three Claudstermind units and **no DMP units at all**. Now allowlists
+     `dmp-main` / `dmp-tunnel` / `dmp-snapshot.service` / `dmp-snapshot.timer` (`dmp-remote.service`
+     deliberately excluded: it lives on the VPS and cannot be systemctl'd from this box).
+     ⚠ **Needs re-installing to take effect** — it is a repo file, not a live one:
+     `sudo cp control/polkit/49-claudstermind.rules /etc/polkit-1/rules.d/ && sudo systemctl restart polkit`
+  Layer 1 (the wiring) is roadmap item 3.4 and is not done yet. This is the "tested module that was
+  never mounted" class: a green suite proves a module works, never that anything calls it.
+### Changed
+- **Renamed `dmpControlPlane.DMP_MAIN_URL` → `DMP_MAIN_LOCAL_URL`.** Ours is a *loopback probe target*
+  (`http://127.0.0.1:4002`) and has nothing to do with the `DMP_MAIN_URL` env var from the rejected
+  http-proxy design — which the DMP agent has now confirmed does not exist on their side (zero hits in
+  any `.mjs`). Two different things sharing one name is a large part of why a settled architecture
+  decision looked unsettled for weeks.
+
 ## [1.5.98] - 2026-09-05
 ### Added
 - **The model selector now names the EXACT model you are running.** The SDK's `ModelInfo` has always
