@@ -50,6 +50,10 @@ body.showbounds .rg-core{outline:1px dashed #3ddc9755;outline-offset:-2px}
 .frow{display:flex;align-items:center;gap:6px;padding:5px 9px;min-height:30px}
 .frow+.frow{border-top:1px solid #ffffff0d}
 .frow.--gone{display:none}
+/* `--gone` is applied by JS to rows AND to inline chips/spans (#f-modelchip2, #f-imgchip, #f-meta).
+   It was only ever DEFINED for .rg-core and .frow, so hiding a chip silently did nothing and the
+   collapsed-state chips showed permanently alongside the very rows they stand in for. One global rule. */
+.--gone{display:none !important}
 /* the type box sits in a wrapper so ghost text can be overlaid exactly on top of it */
 .tawrap{position:relative;width:100%}
 #ghost{position:absolute;inset:0;padding:7px 9px;font:inherit;font-size:12.5px;line-height:18px;color:#6b7796;pointer-events:none;white-space:pre-wrap;overflow:hidden}
@@ -301,9 +305,19 @@ function layout() {
   var mt = $("#f-meta"); if (mt) mt.classList.toggle("--gone", !!r.collapsed.meta);
 
   // Ghost suggestion, positioned exactly over the empty box.
+  // The ghost overlay sits ON TOP of the textarea, so while it is showing the browser's own placeholder
+  // renders underneath it and the two strings overlap into mush. Only one may be visible at a time:
+  // the ghost is the more useful of the two, so it wins and the placeholder is suspended.
   var g = $("#ghost");
-  if (!ta.value && S.suggest) { g.innerHTML = ""; g.appendChild(document.createTextNode(S.suggest + "  ")); var k = document.createElement("kbd"); k.textContent = "Tab"; g.appendChild(k); }
-  else g.textContent = "";
+  if (!ta.value && S.suggest) {
+    g.innerHTML = "";
+    g.appendChild(document.createTextNode(S.suggest + "  "));
+    var k = document.createElement("kbd"); k.textContent = "Tab"; g.appendChild(k);
+    if (ta.placeholder) { ta.dataset.ph = ta.placeholder; ta.placeholder = ""; }
+  } else {
+    g.textContent = "";
+    if (!ta.placeholder && ta.dataset.ph) ta.placeholder = ta.dataset.ph;
+  }
 
   var used = hdr.offsetHeight + (r.coreHidden ? 0 : r.coreH) + r.footerH;
   $("#metrics").innerHTML =

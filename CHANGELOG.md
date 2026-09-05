@@ -4,6 +4,19 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.103] - 2026-09-06
+### Fixed
+- **Chat Shell Lab: overlapping text in the type box.** Two independent bugs in the same spot.
+  1. **Ghost suggestion vs. placeholder.** The ghost overlay is absolutely positioned on top of the
+     textarea, so on an empty box the browser's own `placeholder` rendered *underneath it* and the two
+     strings overlapped into unreadable mush ("Message the agent…" + "Continue with the next item…").
+     Only one may show at a time; the ghost is the more useful, so it wins and the placeholder is
+     suspended (and restored the moment the ghost goes away).
+  2. **`--gone` styled nothing on inline elements.** It was only ever *defined* for `.rg-core` and
+     `.frow`, but JS applies it to chips and spans too (`#f-modelchip2`, `#f-imgchip`, `#f-meta`). So
+     "hide this chip" was a silent no-op, and the collapsed-state stand-in chips (`Opus 4.5`, `🖼 0`)
+     showed permanently *next to the very rows they stand in for*. Now one global `.--gone` rule.
+
 ## [1.5.102] - 2026-09-06
 ### Fixed
 - **Chat Shell Lab: the footer was clipped at 100%, cutting off the Stop/Send row.** Root cause was in
