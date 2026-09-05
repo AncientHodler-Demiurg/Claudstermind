@@ -4412,6 +4412,67 @@ function pactEdSearchState(g) { return g._search || (g._search = { find: "", rep
 // carries the current theme so it looks exactly like the read-only view; print-color-adjust:exact keeps the
 // medallion colours + dark background. `.pact-medallion-pre` height/overflow are overridden so it is NOT a
 // scroll container (which would otherwise clip to the viewport) — every line flows and paginates.
+//
+// ===== PACT PRINT ROWS — pure helper (sliced + eval'd by lib/pactPrintRows.test.mjs) =====
+// Turns the ALREADY-HIGHLIGHTED full-document HTML into the printable body: exactly one `.pml-row`
+// per SOURCE line, numbered 1..N, plus the gutter width that fits the largest line number.
+// The input MUST be the whole file re-highlighted from `tab.content` — never a clone of the live
+// editor DOM, which only ever contains the visible viewport.
+function pactPrintRows(highlightedHtml) {
+  const lines = String(highlightedHtml == null ? "" : highlightedHtml).split("\n");
+  const html = lines.map((ln, i) =>
+    '<div class="pml-row"><span class="pml-ln">' + (i + 1) + '</span><span class="pml-code">' + ln + "</span></div>"
+  ).join("");
+  return { count: lines.length, gutterCh: Math.max(2, String(lines.length).length) + 1, html };
+}
+// ===== end PACT PRINT ROWS pure helper =====
+
+// THE one-page bug: the Pact/Workspace cockpit runs under `body.ws-full { height:100vh; overflow:hidden }`
+// (styles.css) and `html,body{height:100%}`, i.e. the BODY is a viewport-tall CLIPPING box and a flex
+// column. At print time that clips the print root to a single page — the document was never laid out past
+// page 1 (nothing to do with virtualization: the root already holds every line). Unclamp html/body for
+// print so the root is a plain block that flows and paginates. Shared by both print flavours below.
+const PACT_PRINT_UNCLAMP =
+  "html,body{height:auto!important;min-height:0!important;max-height:none!important;" +
+  "overflow:visible!important;overflow-x:visible!important;overflow-y:visible!important;" +
+  "display:block!important;position:static!important;}";
+
+// Paper palette. The print dialog's "Background graphics" box is OFF by default, so ANY background is
+// unreliable — the page is white and meaning must live in the FOREGROUND (text colour + borders, which
+// always print). These override the dark-theme medallion hues with darkened same-hue ink; the pill
+// classes lose their fill but keep a same-hue border so they still read as medallions.
+const PACT_PRINT_INK = [
+  ".cmt{color:#55616f!important;}",
+  ".bi,.bib{color:#0e7a6c!important;}",
+  ".ty{color:#454d59!important;}",
+  ".struct,.structb{color:#5a6270!important;}",
+  ".bk0{color:#c02a3a!important;}", ".bk1{color:#8f6b0c!important;}", ".bk2{color:#1d6fc0!important;}",
+  ".ctor{color:#7f6400!important;}", ".ctorx{color:#7f6400!important;}",
+  ".compute{color:#1a5fc0!important;}", ".ck{color:#2a6fc4!important;}", ".cx{color:#4a72a4!important;}",
+  ".rl,.rx{color:#8f5a1e!important;}", ".heavy{color:#a9560a!important;}", ".cost{color:#7f4d22!important;}",
+  ".val,.cap{color:#a81f3f!important;}",
+  ".ww{color:#bd0a72!important;}", ".wu{color:#a8357f!important;}", ".wi{color:#954c7c!important;}",
+  ".xi{color:#7626a6!important;}", ".xe{color:#7b31a9!important;}", ".xb{color:#7f3fa9!important;}",
+  ".adm{color:#12713a!important;}", ".cli{color:#2c8253!important;}", ".const{color:#5b6470!important;}",
+  ".form{background:transparent!important;border:1.5px solid #a8860a!important;color:#755c00!important;}",
+  ".tag{background:transparent!important;border:1.5px solid #bd0a72!important;color:#9c0761!important;}",
+  ".tagO{background:transparent!important;border:1.5px solid #a9560a!important;color:#8d4808!important;}",
+  ".strBlk{background:transparent!important;color:#8a5a1e!important;padding:0!important;}",
+  // Angled capability medallions: the hexagon is pure background, so it vanishes on paper. Square them
+  // off into a bordered chip whose border carries the band colour and whose text is dark.
+  ".capmed{background:transparent!important;clip-path:none!important;padding:0!important;}",
+  ".capmedi{background:transparent!important;clip-path:none!important;border-radius:4px!important;padding:0 5px!important;}",
+  ".capBo{border:1.5px solid #8a5a24!important;border-radius:5px!important;}", ".capBi{color:#7a4a14!important;}",
+  ".capSo{border:1.5px solid #6b7280!important;border-radius:5px!important;}", ".capSi{color:#333a44!important;}",
+  ".capGo{border:1.5px solid #997d17!important;border-radius:5px!important;}", ".capGi{color:#6f5c0c!important;}",
+  ".capKo{border:1.5px solid #565b66!important;border-radius:5px!important;}", ".capKi{color:#3a4049!important;}",
+  ".fnK{background:transparent!important;border:1.5px solid #767c88!important;color:#2c313a!important;}",
+  // Type/value medallions are emitted with INLINE styles (dark fill + pale text) so they can't be
+  // recoloured per-hue from here. Drop the fill and darken the whole fragment — `filter` keeps the hue
+  // (so the syntax colour survives) while pushing it into legible-on-white territory.
+  "span[style]{background:none!important;background-color:transparent!important;filter:brightness(.5) saturate(1.6);}",
+].map((r) => "#pact-print-root .pact-print-code " + r).join("");
+
 function pactExportPdf(g) {
   const a = g && g.tabs && g.tabs.find((t) => t.path === g.active);
   if (!a) return;
@@ -4432,6 +4493,7 @@ function pactExportPdf(g) {
       "#pact-print-root{display:none;}" +
       "@media print{" +
         "@page{size:A4 portrait;margin:12mm 10mm;}" +
+        PACT_PRINT_UNCLAMP +
         "body{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important;}" +
         "body>*:not(#pact-print-root){display:none!important;}" +
         "#pact-print-root{display:block!important;position:static!important;width:auto!important;height:auto!important;background:#fff!important;color:#111!important;}" +
@@ -4446,27 +4508,32 @@ function pactExportPdf(g) {
       "}";
   } else {
     if (typeof window.pactMedallionHtml !== "function") return;
-    const lines = window.pactMedallionHtml(String(a.content || "")).split("\n");
-    const lnw = Math.max(2, String(lines.length).length) + 1;   // gutter scales to the largest line number
-    const rows = lines.map((ln, i) =>
-      '<div class="pml-row"><span class="pml-ln">' + (i + 1) + '</span><span class="pml-code">' + ln + "</span></div>"
-    ).join("");
+    // Built from the FULL document text, re-highlighted — never by cloning the live editor DOM (CodeMirror
+    // only materialises the visible viewport, which would print one screenful). N source lines ⇒ N rows.
+    const doc = pactPrintRows(window.pactMedallionHtml(String(a.content || "")));
+    const rows = doc.html, lnw = doc.gutterCh;
     // Print via the MAIN window with an isolated print container — NOT a hidden iframe (a 1px iframe wrapped every
     // char and hung). A print-only stylesheet hides everything except our root; @page drives a sane width.
     root.innerHTML = '<div class="px-title">' + escapeHtml(path) + "</div>" +
-      '<div class="pact-medallion-pre">' + rows + "</div>";
+      '<div class="pact-medallion-pre pact-print-code">' + rows + "</div>";
     style.textContent =
       "#pact-print-root{display:none;}" +
       "@media print{" +
         "@page{size:A4 portrait;margin:12mm 8mm;}" +
-        "html,body{background:var(--bg,#0e1420)!important;}" +
+        PACT_PRINT_UNCLAMP +
+        "html,body{background:#fff!important;}" +
         "body{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important;}" +
         "body>*:not(#pact-print-root){display:none!important;}" +
-        "#pact-print-root{display:block!important;position:static!important;width:auto!important;height:auto!important;}" +
-        "#pact-print-root .pact-medallion-pre{height:auto!important;max-height:none!important;overflow:visible!important;width:100%!important;border:0!important;border-radius:0!important;margin:0!important;}" +
-        "#pact-print-root .pml-row{break-inside:avoid;}" +
-        "#pact-print-root .pml-ln{width:" + lnw + "ch!important;}" +
-        "#pact-print-root .px-title{font:600 10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;padding:0 0 6px;color:var(--mute,#9fb0d0);word-break:break-all;}" +
+        "#pact-print-root{display:block!important;position:static!important;width:auto!important;height:auto!important;max-height:none!important;overflow:visible!important;background:#fff!important;color:#111!important;}" +
+        "#pact-print-root .pact-medallion-pre{height:auto!important;max-height:none!important;overflow:visible!important;width:100%!important;border:0!important;border-radius:0!important;margin:0!important;padding:0!important;background:#fff!important;color:#111!important;font-size:10px!important;line-height:1.62!important;}" +
+        // A row = one SOURCE line (it may wrap onto several visual lines). Keeping it whole across a page
+        // boundary is what stops a line being sliced in half by the page break.
+        "#pact-print-root .pml-row{break-inside:avoid;page-break-inside:avoid;}" +
+        "#pact-print-root .pml-ln{width:" + lnw + "ch!important;position:static!important;background:transparent!important;color:#777!important;border-right:1px solid #ccc!important;}" +
+        "#pact-print-root .pml-row.--wrapped{background:none!important;}" +
+        "#pact-print-root .pml-row.--wrapped .pml-code{box-shadow:none!important;}" +
+        PACT_PRINT_INK +
+        "#pact-print-root .px-title{font:600 10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;padding:0 0 6px;color:#555;word-break:break-all;}" +
       "}";
   }
   document.body.appendChild(style);
