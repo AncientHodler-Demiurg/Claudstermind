@@ -4,6 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.106] - 2026-09-06
+### Fixed
+- **The three regions were not visible without the debug outline — because the tone step ran the WRONG
+  WAY.** The header was `#121a2e` against a core of `#101827`: the *chrome was lighter than the reading
+  surface*, at a measured **1.03:1** — indistinguishable, so the shell read as one flat slab and the
+  debug outline was doing all the work. Rebuilt as a deliberate material hierarchy:
+  - **CORE is the lightest thing in the shell** — it holds the content, so it gets the light.
+  - **HEADER and FOOTER are chrome and are clearly darker**, now **1.27:1** against the core.
+  - Each seam is a hard line **plus a 1px inner highlight**, which is what actually makes an edge legible
+    on a dark UI — a low-contrast border alone simply disappears.
+  - Every dependent surface was re-tuned against the new base and **verified numerically**, not by eye:
+    answers 1.12:1 and prompts 1.20:1 against the core, and the type box 1.16:1 against the footer (it
+    was 1.03:1 — the same flat-slab mistake one level down) with an inset shade so it reads as a field.
+- **The boundary-highlight tick now defaults OFF.** What you see is the shipping design, not a debug view
+  of it. If the regions are not obvious with it off, the tone step is wrong and *that* is the bug — a
+  debug outline must not be allowed to paper over it. With it on it also labels the regions.
+
 ## [1.5.105] - 2026-09-06
 ### Fixed
 - **The model row vanished while typing a long prompt.** It was collapse step 1 — so the model, effort,

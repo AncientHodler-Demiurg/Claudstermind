@@ -2,7 +2,15 @@
 <title>Chat Shell Lab — Header / Core / Footer</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-:root{--bg:#0b1020;--panel:#101827;--panel2:#0d1226;--line:#22304a;--ink:#e7ecff;--dim:#9aa6c7;--acc:#c77dff;--ok:#3ddc97;--warn:#ffb454;--err:#ff6b81;--hdr:#121a2e;--ftr:#101a2c}
+/* REGION TONES. The three regions must be separable WITHOUT the debug outline.
+   v1 had --hdr #121a2e against --panel #101827 — a tone step of ~1%, running the WRONG WAY (the chrome
+   was LIGHTER than the reading surface), so the shell read as one flat slab. Now:
+     CORE  = the reading surface, the LIGHTEST thing in the shell (content deserves the light)
+   Measured: core #1a2440 vs chrome #080c18 = 1.27:1 surface contrast (was 1.03:1, and inverted).
+     HEADER/FOOTER = chrome, clearly DARKER, so the eye reads "content" vs "controls" instantly
+   plus a hard line and a 1px inner highlight at each seam, which is what actually makes an edge
+   legible on a dark UI — a border alone disappears at low contrast. */
+:root{--bg:#05080f;--panel:#1a2440;--panel2:#0d1226;--line:#22304a;--ink:#e7ecff;--dim:#9aa6c7;--acc:#c77dff;--ok:#3ddc97;--warn:#ffb454;--err:#ff6b81;--hdr:#080c18;--ftr:#080c18;--seam:#33436b}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;display:flex;height:100vh;overflow:hidden}
 /* ---------- control rail ---------- */
@@ -24,7 +32,7 @@ label{font-size:11.5px;color:var(--dim);display:flex;gap:5px;align-items:center;
 #shell{width:100%;max-width:960px;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 10px 40px #0006}
 /* ===== THE THREE REGIONS. The boundaries are the point — 1px rule + a background TONE STEP so you can
    always see where a region ends, even mid-scroll. This is spec invariant I3. ===== */
-.rg-header{flex:0 0 auto;background:var(--hdr);border-bottom:2px solid var(--line);box-shadow:0 2px 0 #0003}
+.rg-header{flex:0 0 auto;background:var(--hdr);border-bottom:1px solid var(--seam);box-shadow:inset 0 -1px 0 #ffffff0f, 0 3px 8px -3px #000a}
 .rg-core{flex:1 1 auto;min-height:0;overflow-y:auto;background:var(--panel);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
 /* ---- ONE scrollbar treatment, shared by EVERY scrolling surface in the shell ----------------
    The transcript used the browser default while the type box got a different one, so the two sat at
@@ -41,17 +49,21 @@ label{font-size:11.5px;color:var(--dim);display:flex;gap:5px;align-items:center;
   background:#3a4870;border-radius:99px;border:3px solid transparent;background-clip:content-box}
 .rg-core::-webkit-scrollbar-thumb:hover, #typebox::-webkit-scrollbar-thumb:hover{background:#55689c;background-clip:content-box}
 .rg-core::-webkit-scrollbar-corner, #typebox::-webkit-scrollbar-corner{background:transparent}
-.rg-footer{flex:0 0 auto;background:var(--ftr);border-top:2px solid var(--line);box-shadow:0 -2px 0 #0003}
+.rg-footer{flex:0 0 auto;background:var(--ftr);border-top:1px solid var(--seam);box-shadow:inset 0 1px 0 #ffffff0f, 0 -3px 8px -3px #000a}
+/* Debug amplifier only. The regions must already be obvious with this OFF — if they are not, the
+   tone step above is wrong and THAT is the bug, rather than something a debug outline should paper over. */
 body.showbounds .rg-header{border-bottom-color:var(--warn)}
 body.showbounds .rg-footer{border-top-color:var(--warn)}
 body.showbounds .rg-core{outline:1px dashed #3ddc9755;outline-offset:-2px}
+body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr(data-rg);position:absolute;right:6px;font:700 9px/1 sans-serif;letter-spacing:1px;color:var(--warn);opacity:.85}
+.rg-header,.rg-footer{position:relative}
 .rg-core.--gone{display:none}
 /* header innards — MAX 3 rows, transient status is a CHIP not a row */
 .hrow{display:flex;align-items:center;gap:6px;padding:6px 9px;min-height:32px;flex-wrap:nowrap;overflow:hidden}
 .hrow+.hrow{border-top:1px solid #ffffff0d}
-.tab{padding:3px 9px;border-radius:14px;background:#1a2440;border:1px solid var(--line);font-size:11.5px;white-space:nowrap}
+.tab{padding:3px 9px;border-radius:14px;background:#16203a;border:1px solid var(--line);font-size:11.5px;white-space:nowrap}
 .tab.--act{border-color:var(--acc);color:#fff}
-.chip{padding:2px 8px;border-radius:11px;background:#16203a;border:1px solid var(--line);font-size:11px;color:var(--dim);white-space:nowrap}
+.chip{padding:2px 8px;border-radius:11px;background:#131d34;border:1px solid var(--line);font-size:11px;color:var(--dim);white-space:nowrap}
 .chip.--ok{color:var(--ok);border-color:#3ddc9744}
 .chip.--acc{color:var(--acc);border-color:#c77dff44}
 /* Live / Held — whether the view is pinned to the newest turn or holding your scroll position. */
@@ -66,7 +78,7 @@ body.showbounds .rg-core{outline:1px dashed #3ddc9755;outline-offset:-2px}
 .msgacts button{padding:1px 6px;font-size:11px;line-height:1.4;background:#0f1730}
 .msgacts button.--on{color:var(--warn);border-color:var(--warn)}
 .spacer{flex:1}
-.roll{display:flex;align-items:center;gap:8px;margin:0 9px 6px;padding:5px 9px;border-radius:7px;background:#141c30;border:1px solid var(--line);font-size:11px;flex-wrap:wrap}
+.roll{display:flex;align-items:center;gap:8px;margin:0 9px 6px;padding:5px 9px;border-radius:7px;background:#111a2e;border:1px solid var(--line);font-size:11px;flex-wrap:wrap}
 .roll.--warn{border-color:#ffb45455;background:#1e1a10}
 .roll.--err{border-color:#ff6b8155;background:#1e1116}
 .roll .m{color:var(--dim);white-space:nowrap}
@@ -86,8 +98,8 @@ button:disabled{opacity:.4;cursor:not-allowed}
 .cue{margin:0 9px 6px;padding:6px 9px;border-radius:7px;background:#1b1330;border:1px solid #c77dff44;font-size:11.5px;color:#e3d3ff}
 /* core innards */
 .msg{padding:7px 10px;border-radius:8px;font-size:12.5px;max-width:88%}
-.msg.--u{background:#1a2340;border:1px solid var(--line);align-self:flex-end}
-.msg.--a{background:#141c30;border:1px solid #ffffff0f;align-self:flex-start}
+.msg.--u{background:#243059;border:1px solid #3a4a7a;align-self:flex-end}
+.msg.--a{background:#121b30;border:1px solid #ffffff1a;align-self:flex-start}
 .tno{font-size:10px;color:var(--acc);font-weight:700;margin-bottom:2px}
 /* footer innards */
 .frow{display:flex;align-items:center;gap:6px;padding:5px 9px;min-height:30px}
@@ -99,16 +111,16 @@ button:disabled{opacity:.4;cursor:not-allowed}
 .--gone{display:none !important}
 /* the type box sits in a wrapper so ghost text can be overlaid exactly on top of it */
 .tawrap{position:relative;width:100%}
-#ghost{position:absolute;inset:0;padding:7px 9px;font:inherit;font-size:12.5px;line-height:18px;color:#6b7796;pointer-events:none;white-space:pre-wrap;overflow:hidden}
+#ghost{position:absolute;inset:0;padding:7px 9px;font:inherit;font-size:12.5px;line-height:18px;color:#8290b5;pointer-events:none;white-space:pre-wrap;overflow:hidden}
 #ghost kbd{background:#1a2440;border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:10.5px;color:var(--dim)}
 /* Stop/Send + auto-continue live in ONE bordered group, per feedback */
-.sendgrp{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:9px;padding:3px 5px;background:#0c1424}
+.sendgrp{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:9px;padding:3px 5px;background:#101a30}
 .sendgrp.--auto{border-color:#3ddc9755;background:#0c1a1c}
 .sendgrp .rounds{font-size:10.5px;color:var(--dim);white-space:nowrap}
 .autolbl{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--dim);white-space:nowrap;cursor:pointer}
 .autolbl input{margin:0}
-#typebox{width:100%;resize:none;background:#0a1020;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:inherit;font-size:12.5px;line-height:18px;outline:none;display:block}
-#typebox:focus{border-color:var(--acc)}
+#typebox{width:100%;resize:none;background:#131d33;color:var(--ink);border:1px solid #3a4a75;border-radius:8px;box-shadow:inset 0 1px 3px #0007;padding:7px 9px;font:inherit;font-size:12.5px;line-height:18px;outline:none;display:block}
+#typebox:focus{border-color:var(--acc);box-shadow:inset 0 1px 3px #0007,0 0 0 2px #c77dff22}
 .btn-send{background:var(--acc);color:#1a0b2e;font-weight:700;border-color:var(--acc)}
 .btn-stop{background:#3a1720;color:#ffb3c0;border-color:#7a2b3c}
 .sel{background:#0f1730;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:3px 6px;font:inherit;font-size:11.5px}
@@ -136,7 +148,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
 
   <div class="grp"><b>Footer growth</b>
     <div class="row"><button id="expandBtn">⇕ Expand (40% → full)</button></div>
-    <label><input type="checkbox" id="bounds" checked> Highlight region boundaries</label>
+    <label><input type="checkbox" id="bounds"> Debug: amplify region boundaries</label>
     <label style="margin-top:6px"><input type="checkbox" id="fit" checked> Fit shell to available height</label>
     <input type="range" id="shellH" min="320" max="900" value="620">
   </div>
@@ -200,7 +212,7 @@ function build() {
   shell.replaceChildren();
 
   /* ================= HEADER — fixed height, max 3 rows, transient status is a CHIP ============== */
-  var hdr = el("div", { class: "rg-header" });
+  var hdr = el("div", { class: "rg-header", "data-rg": "HEADER" });
   var r1 = el("div", { class: "hrow" });
   if (slots.header.tabs) {
     S.convs.forEach(function (c) { r1.appendChild(el("span", { class: "tab" + (c.act ? " --act" : "") }, [c.n])); });
@@ -261,7 +273,7 @@ function build() {
   shell.appendChild(core);
 
   /* ================= FOOTER — grows, collapses in order, Send/Stop never ======================= */
-  var ftr = el("div", { class: "rg-footer" });
+  var ftr = el("div", { class: "rg-footer", "data-rg": "FOOTER" });
   if (S.imgs) {
     var ir = el("div", { class: "frow", id: "f-img" });
     for (var j = 0; j < S.imgs; j++) ir.appendChild(el("span", { class: "chip" }, ["\uD83D\uDDBC shot-" + (j + 1) + ".png \u00d7"]));
@@ -530,7 +542,7 @@ $("#hOpen").onclick = function () { this.classList.add("on"); $("#hRet").classLi
 $("#hRet").onclick = function () { this.classList.add("on"); $("#hOpen").classList.remove("on"); openHist(); };
 window.addEventListener("resize", function () { syncSlider(); $("#shell").style.height = shellTargetH() + "px"; layout(); });
 syncSlider();
-document.body.classList.add("showbounds");
+/* OFF by default: what you see IS the shipping design, not a debug view of it. */
 $("#cue").classList.add("on");
 note(); render();
 </script>
