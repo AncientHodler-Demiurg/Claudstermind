@@ -96,6 +96,9 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
 .tab .star{color:var(--warn);font-size:11px}
 .chip{padding:2px 8px;border-radius:11px;background:var(--chip);border:1px solid var(--line);font-size:11px;color:var(--dim);white-space:nowrap}
 .chip.--ok{color:var(--ok);border-color:#3ddc9744}
+/* A ceiling that is nowhere near binding still keeps its slot — dimmed, so the bar never reflows when
+   one becomes relevant. It brightens in place instead of appearing from nowhere. */
+.chip.--far{opacity:.42;font-size:10.5px}
 .chip.--acc{color:var(--acc);border-color:#c77dff44}
 /* Live / Held — whether the view is pinned to the newest turn or holding your scroll position. */
 .bulb{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:11px;font-size:11px;font-weight:600;border:1px solid}
@@ -129,6 +132,9 @@ button:disabled{opacity:.4;cursor:not-allowed}
 .kv{display:flex;gap:8px;font-size:12px}.kv .k{color:var(--dim);flex:1}.kv .v{font-weight:600}
 .ctxrow{display:flex;align-items:center;gap:7px;font-size:12px}
 .ctxsw{width:11px;height:11px;border-radius:3px;flex:0 0 auto}
+.loadstrip{position:relative;height:16px;margin:0 9px 6px;border-radius:8px;background:#0a1020;border:1px solid var(--line);overflow:hidden}
+.loadstrip i{display:block;height:100%;background:linear-gradient(90deg,var(--acc),#5aa8f0);transition:width .25s}
+.loadstrip .lbl{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;text-shadow:0 1px 2px #000}
 .cue{margin:0 9px 6px;padding:6px 9px;border-radius:7px;background:#1b1330;border:1px solid #c77dff44;font-size:11.5px;color:#e3d3ff}
 /* core innards */
 .msg{padding:7px 10px;border-radius:8px;font-size:12.5px;max-width:88%}
@@ -216,9 +222,17 @@ button:disabled{opacity:.4;cursor:not-allowed}
     <div class="row"><button id="addConv">+ conversation</button><button id="addTurns">+ 6 turns</button><button id="clearTurns">clear</button></div>
     <div class="row"><button id="agents">▸ agents running</button><button id="recon">↻ reconnected</button><button id="cue">rollup bar</button></div>
     <div class="row"><button id="liveBtn">● Live / Held</button></div>
+    <div class="row"><span class="sub">Connection</span></div>
+    <div class="row"><button id="cOk" class="on">ok</button><button id="cLost">disconnected</button><button id="cRecon">reconnecting</button></div>
+    <div class="row"><span class="sub">History load progress</span></div>
+    <input type="range" id="loadr" min="0" max="100" value="0">
+    <div class="row"><button id="loadSim">▶ simulate a cold load</button></div>
     <div class="row"><button id="imgs">+ image strip</button><button id="histBtn">🕐 history popup</button></div>
-    <div class="row"><span class="sub">Context fill (drives the wrap bar)</span></div>
+    <div class="row"><span class="sub">Context fill</span></div>
     <input type="range" id="ctxr" min="1" max="99" value="66">
+    <div class="row"><span class="sub">Turn ceiling (engine default is 400)</span></div>
+    <div class="row"><button data-mt="400">400</button><button data-mt="500">500</button><button data-mt="1000" class="on">1000</button><button data-mt="2000">2000</button></div>
+    <div class="row"><button id="nearTurns">▸ push turns near the ceiling</button></div>
   </div>
 
   <div class="grp"><b>Live geometry</b><div id="metrics"></div></div>
@@ -248,11 +262,12 @@ button:disabled{opacity:.4;cursor:not-allowed}
 var CS = window.ChatShell;
 var S = {
   kind: "core", expanded: false, prevLevel: 0,
-  turns: 8, convs: [{ n: "Master", act: true }], agents: 0, recon: false, cue: true, imgs: 0,
+  turns: 60, convs: [{ n: "Master", act: true }], agents: 0, recon: false, cue: true, imgs: 0,
   repo: "Claudstermind", model: "Opus 4.5", auto: true, autoN: 4,
   ctxTok: 93016, ctxMax: 1000000,
   suggest: "Continue with the next item on the list.",
-  autoWrap: true, wraps: 0, live: true, bm: {},
+  autoWrap: true, wraps: 0, live: true, bm: {}, maxTurns: 1000,
+  conn: "ok", loadPct: 0,
   prompts: 138, responses: 219, images: 12, pChars: 412000, rChars: 3860000
 };
 var $ = function (s, r) { return (r || document).querySelector(s); };
@@ -306,10 +321,17 @@ function build() {
     // Only ceilings that can plausibly bind (see chat-shell.js rollTriggers relevance). The 25MB byte
     // ceiling is 6-31x further away than any real context window, so it never appears.
     var tg = CS.rollTriggers({ prompts: S.prompts, responses: S.responses, bytes: S.pChars + S.rChars, tokens: S.ctxTok, ceiling: S.ctxMax });
-    tg.visible.forEach(function (c) {
+    // Every ceiling keeps a SLOT, so the bar never changes shape as one becomes relevant — it just
+    // brightens. A far-away ceiling is dimmed and compact; the binding one is accented and marked.
+    tg.list.forEach(function (c) {
       if (c.id === "context") return;   // the footer already carries the context figure — don't repeat it
-      bar.appendChild(el("span", { class: "chip --acc", title: "This is the ceiling that will fire the wrap" },
-        ["\u25b8 " + fmt(c.now) + " / " + fmt(c.max) + " turns \u00b7 " + c.pct + "%"]));
+      var near = c.id === tg.willRollOn;
+      var label = c.id === "turns" ? fmt(c.now) + "/" + fmt(c.max) + " turns" : fmtChars(c.now) + "/" + fmtChars(c.max) + "B";
+      bar.appendChild(el("span", {
+        class: "chip" + (near ? " --acc" : " --far"),
+        title: near ? "NEAREST ceiling \u2014 this is what will fire the wrap (" + c.pct + "%)"
+                    : c.label + " is at " + c.pct + "% \u2014 far from binding; context will get there first"
+      }, [(near ? "\u25b8 " : "") + label + " \u00b7 " + c.pct + "%"]));
     });
     // WHAT THE WRAP WOULD TAKE, right here — the actual question you are asking when you look at this bar.
     var sp = CS.wrapSpan({ rFrom: 1, rTo: Math.max(0, S.responses - 40), pFrom: 1, pTo: Math.max(0, S.prompts - 40) });
@@ -323,6 +345,12 @@ function build() {
     wbtn.onclick = openWrap;
     bar.appendChild(wbtn);
     hdr.appendChild(bar);
+  }
+  // LOADING STRIP — a real progress bar for a cold load / catch-up, in flow so it cannot overlap
+  // anything. Zero height when idle, so it costs nothing when there is nothing to report.
+  if (S.loadPct > 0 && S.loadPct < 100) {
+    hdr.appendChild(el("div", { class: "loadstrip", title: "Loading conversation history" },
+      [el("i", { style: "width:" + S.loadPct + "%" }), el("span", { class: "lbl" }, ["loading history \u00b7 " + S.loadPct + "%"])]));
   }
   shell.appendChild(hdr);
 
@@ -527,11 +555,22 @@ function fmt(n) { return Number(n || 0).toLocaleString(); }
 /* Jump to R#n / P#n. Accepts "R#35", "r35", "P#12", or a bare "35" (treated as a response).
    Scrolls the turn into view and flashes it, so you can see WHERE you landed. */
 function doJump(raw) {
-  var m = String(raw || "").trim().match(/^([rRpP])?\s*#?\s*(\d+)$/);
-  if (!m) return;                                   // not a turn ref — that is Recall's job, not Jump's
+  var txt = String(raw || "").trim();
+  if (!txt) return;
+  var m = txt.match(/^([rRpP])?\s*#?\s*(\d+)$/);
+  // Not a turn reference at all -> that is Recall's job. SAY so rather than doing nothing.
+  if (!m) { flashMsg("\u201c" + txt + "\u201d is not a turn number. Use R#12 or P#12 to jump \u2014 or press Recall to search the archive for this text."); return; }
   var kind = (m[1] || "R").toUpperCase(), n = +m[2];
   var node = document.querySelector('[data-turn="' + kind + n + '"]');
-  if (!node) { flashMsg("R/P #" + n + " is not in the loaded window \u2014 use Recall to reach wrapped turns."); return; }
+  if (!node) {
+    // The old message just said "not in the loaded window", which is useless when the real problem is
+    // that the turn does not exist at all. State the range that DOES exist.
+    var have = S.turns;
+    flashMsg(have
+      ? kind + "#" + n + " is not loaded. This conversation holds " + kind + "#1\u2013" + kind + "#" + have + " \u2014 press Recall for turns already wrapped out."
+      : "This conversation has no turns yet \u2014 use \u201c+ 6 turns\u201d in the rail.");
+    return;
+  }
   node.scrollIntoView({ block: "center", behavior: "smooth" });
   node.classList.add("--flash");
   setTimeout(function () { node.classList.remove("--flash"); }, 1400);
@@ -625,6 +664,35 @@ $("#agents").onclick = function () { S.agents = S.agents ? 0 : 3; this.classList
 $("#recon").onclick = function () { S.recon = !S.recon; this.classList.toggle("on", S.recon); render(); };
 $("#cue").onclick = function () { S.cue = !S.cue; this.classList.toggle("on", S.cue); render(); };
 $("#imgs").onclick = function () { S.imgs = S.imgs ? 0 : 3; this.classList.toggle("on", !!S.imgs); render(); };
+["cOk","cLost","cRecon"].forEach(function (id) {
+  $("#" + id).onclick = function () {
+    S.conn = id === "cOk" ? "ok" : id === "cLost" ? "lost" : "recon";
+    ["cOk","cLost","cRecon"].forEach(function (o) { $("#" + o).classList.toggle("on", o === id); });
+    render();
+  };
+});
+$("#loadr").oninput = function () { S.loadPct = +this.value; render(); };
+$("#loadSim").onclick = function () {
+  S.conn = "recon"; S.loadPct = 1; render();
+  var t = setInterval(function () {
+    S.loadPct += 7;
+    if (S.loadPct >= 100) { clearInterval(t); S.loadPct = 0; S.conn = "ok"; S.recon = true; }
+    render();
+  }, 120);
+};
+document.querySelectorAll("[data-mt]").forEach(function (b) {
+  b.onclick = function () {
+    S.maxTurns = +b.dataset.mt;
+    document.querySelectorAll("[data-mt]").forEach(function (o) { o.classList.toggle("on", o === b); });
+    render();
+  };
+});
+$("#nearTurns").onclick = function () {
+  // Put the turn ceiling within striking distance so you can SEE the chip brighten and take over.
+  var target = Math.round(S.maxTurns * 0.93);
+  S.responses = Math.round(target * 0.55); S.prompts = target - S.responses; S.turns = Math.min(200, S.responses);
+  render();
+};
 $("#liveBtn").onclick = function () { S.live = !S.live; render(); };
 $("#ctxr").oninput = function () { S.ctxTok = Math.round(S.ctxMax * this.value / 100); render(); };
 $("#histBtn").onclick = openHist;

@@ -4,6 +4,32 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.109] - 2026-09-06
+### Fixed
+- **Jump appeared to do nothing.** The code was correct — the lab only held 8 turns, so `R#23` genuinely
+  did not exist, and the failure message was too quiet to notice. Three fixes: the lab now starts with a
+  realistic 60 turns; a miss states **the range that actually exists** (`R#1–R#60`) instead of the
+  useless "not in the loaded window"; and a non-numeric entry now says it is not a turn number and
+  points at Recall, rather than silently returning.
+### Changed
+- **Every ceiling keeps a permanent slot on the rollup bar.** Previously a far-away ceiling was removed
+  entirely, so the bar changed shape when one became relevant. Now a far ceiling is dimmed and compact
+  and simply **brightens in place** when it becomes the binding one — the layout never reflows.
+### Added (lab)
+- **Turn-ceiling selector (400 / 500 / 1000 / 2000)** plus a **"push turns near the ceiling"** button, so
+  the near-ceiling state can be seen rather than imagined.
+- **Connection simulation** — ok / disconnected–retrying / reconnecting — and a **history-load progress
+  bar** with a one-click cold-load animation. The strip is in flow and zero-height when idle.
+### Measured (answers to open questions)
+- **The 25 MB ceiling is TEXT ONLY.** `bytes` is the UTF-8 length of `JSON.stringify(transcript)`, and
+  images are written to disk with only their **paths** in the transcript — roughly 100 bytes each, not
+  megabytes. So 25 MB is **6.2x** a 1M-token context window and **31x** a 200k one, and cannot bind
+  first. Raising it would change nothing.
+- **400 turns genuinely is low.** On a 1M window at ~6k chars/turn, context fills at ~667 turns, so a
+  400-turn ceiling fires **before** context and wraps a conversation that had room left. 400 and 500
+  both bind early; **1000 does not**. Recommendation: raise `ROLL_DEFAULTS.maxTurns` to **1000** —
+  a one-line engine change, deliberately NOT made yet.
+
 ## [1.5.108] - 2026-09-06
 ### Changed
 - **The rollup bar was showing ceilings that can never fire.** Measured against a real context window,
