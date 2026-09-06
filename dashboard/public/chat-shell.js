@@ -306,6 +306,64 @@
     };
   }
 
+  /**
+   * SEED PLAN — what a fresh window should actually be given after a wrap.
+   *
+   * Measured on a real 8,039-turn session (164 MB of JSONL):
+   *     prose (user + assistant text + thinking) ...  7.1%   ~156 tok/turn
+   *     tool calls + results ......................  27.4%
+   *     file attachments ..........................  65.5%
+   *     => 92.9% of what the model has seen is RE-DERIVABLE.
+   *
+   * That is the whole answer. The current seed carries the last 40 turns VERBATIM (~87k tok on that
+   * session) and 93% of those bytes are file contents and command output the agent can simply read
+   * again. Writing a better summary optimises the 7% that is already cheap; dropping the 93% is where
+   * the win is.
+   *
+   * Three tiers, cheapest last:
+   *   working  the last few turns VERBATIM (tool output included) — the immediate task needs exact state
+   *   spine    prose-only for a long stretch before that — at ~156 tok/turn this reaches ten times
+   *            further than the verbatim tail for a fraction of the cost
+   *   ledger   a durable decisions/constraints record, APPENDED as work happens rather than generated
+   *            at wrap time. This is the part compaction cannot do well: compaction re-summarises its
+   *            own previous summary every time it runs, so detail decays with each pass. An appended
+   *            ledger is written once per decision and never re-compressed, so it does not decay.
+   *   (+ the archive stays searchable, so specifics are FETCHED rather than carried.)
+   */
+  function seedPlan(o) {
+    o = o || {};
+    var TOK = 4;
+    var proseTokPerTurn = Math.max(1, num(o.proseTokPerTurn, 156));
+    var fullTokPerTurn = Math.max(proseTokPerTurn, num(o.fullTokPerTurn, 2184));   // measured: 87355/40
+    // Defaults chosen against the measured ratio (a verbatim turn costs 14x a prose turn), balancing the
+    // two things that trade off: 6 working + 200 spine gives ~1.9x cheaper AND ~5x more reach. Going
+    // wider on the spine buys reach but gives back the saving; 10/300 was only 1.2x cheaper, which is
+    // not a win worth the change.
+    var working = Math.max(0, num(o.workingTurns, 6));
+    var spine = Math.max(0, num(o.spineTurns, 200));
+    var ledgerTok = Math.max(0, num(o.ledgerTokens, 2500));
+    var ceiling = Math.max(1, num(o.ceiling, 1));
+
+    var workingTok = working * fullTokPerTurn;
+    var spineTok = spine * proseTokPerTurn;
+    var total = workingTok + spineTok + ledgerTok;
+    // What today's approach costs for comparison: tailTurns carried verbatim.
+    var currentTail = Math.max(0, num(o.currentTailTurns, 40));
+    var currentTok = currentTail * fullTokPerTurn;
+    return {
+      workingTurns: working, workingTok: workingTok,
+      spineTurns: spine, spineTok: spineTok,
+      ledgerTok: ledgerTok,
+      totalTok: total,
+      pctOfCeiling: Math.round(total / ceiling * 1000) / 10,
+      currentTok: currentTok,
+      // How much cheaper, and how much further back it reaches.
+      cheaperBy: currentTok > 0 ? Math.round(currentTok / Math.max(1, total) * 10) / 10 : 0,
+      reachTurns: working + spine,
+      reachVsCurrent: currentTail > 0 ? Math.round((working + spine) / currentTail * 10) / 10 : 0
+    };
+  }
+
   function wrapReadiness(o) {
     o = o || {};
     var ceiling = Math.max(1, num(o.ceiling, 1));
@@ -329,7 +387,7 @@
   var API = {
     SWALLOW_PCT: SWALLOW_PCT, SWALLOW_PCT_MAX: SWALLOW_PCT_MAX, FLOOR_ROWS: FLOOR_ROWS,
     COLLAPSE_STEPS: COLLAPSE_STEPS, HYSTERESIS: HYSTERESIS,
-    coreAtRest: coreAtRest, swallowCap: swallowCap, computeShell: computeShell, slotsFor: slotsFor, wrapReadiness: wrapReadiness, rollTriggers: rollTriggers, wrapSpan: wrapSpan, wrapSeedEstimate: wrapSeedEstimate,
+    coreAtRest: coreAtRest, swallowCap: swallowCap, computeShell: computeShell, slotsFor: slotsFor, wrapReadiness: wrapReadiness, rollTriggers: rollTriggers, wrapSpan: wrapSpan, wrapSeedEstimate: wrapSeedEstimate, seedPlan: seedPlan,
     ROLL_MAX_TURNS: ROLL_MAX_TURNS, ROLL_MAX_BYTES: ROLL_MAX_BYTES
   };
   if (typeof module === "object" && module.exports) module.exports = API;
