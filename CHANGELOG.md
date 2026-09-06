@@ -4,6 +4,17 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.122] - 2026-09-06
+### Fixed
+- **A wrap could be triggered by a misclick.** The preview popup alone was not a gate: a double-click on
+  the bar's Wrap button lands the second click on the confirm button the instant the popup paints, so
+  the two-step collapses into one. The confirm now **starts disabled and arms after a short beat**, an
+  explicit **Cancel** takes the calm default weight, and **Escape closes any dialog** — a gate with no
+  easy exit is a trap. The rail's mock button now goes through the **same** gate; a mock that skipped
+  the confirmation would be testing a flow that does not exist.
+- A confirmed wrap is counted **once** — the counter moved to the confirm handler, since `runEvent` was
+  also incrementing it.
+
 ## [1.5.121] - 2026-09-06
 ### Documented — wrapping is OUR design; Claude Code does not do this
 - Checked against `sdk.d.ts`: the SDK/CLI answer to a long conversation is **compaction, repeatedly, in

@@ -1042,12 +1042,23 @@ function openWrap() {
     + "engine session is respawned, seeded with a summary plus the last " + TAIL + " rounds, so the model keeps context. "
     + "The earlier turns are archived verbatim as segment #" + (S.wraps + 1) + " and stay searchable via Recall. "
     + "They do NOT become a separate conversation in this repository's history."]));
+  // MISCLICK GUARD. A preview alone is not a gate: a double-click on the bar's Wrap button lands the
+  // second click on the confirm button the instant the popup paints, so the two-step becomes one step.
+  // The confirm is therefore disabled for a short beat after opening, and Cancel is the calm default —
+  // it takes the visual weight, and Escape closes too.
+  var cancel = el("button", {}, ["Cancel"]);
+  cancel.onclick = function () { $("#wrappop").classList.remove("--open"); };
   var go = el("button", { class: "btn-send" }, ["\u27f3 Wrap now"]);
+  go.disabled = true;
+  setTimeout(function () { go.disabled = false; go.textContent = "\u27f3 Wrap now"; }, 600);
+  go.textContent = "\u27f3 Wrap now\u2026";
   go.onclick = function () {
-    S.wraps++; S.ctxTok = Math.round(S.ctxTok * 0.12);   // a fresh window keeps only a carried summary
-    $("#wrappop").classList.remove("--open"); render();
+    S.wraps++;
+    $("#wrappop").classList.remove("--open");
+    runEvent("wrap");                         // the real thing: progress band, marker, counters
   };
-  b.appendChild(el("div", { class: "row" }, [el("span", { class: "spacer" }), go]));
+  b.appendChild(el("div", { class: "row", style: "margin-top:8px" },
+    [el("span", { class: "spacer" }), cancel, go]));
   $("#wrappop").classList.add("--open");
 }
 
@@ -1163,14 +1174,16 @@ function runEvent(kind) {
         S.ctxTok = Math.round(pre * 0.45);          // a compaction keeps its summary in the window
       }
       S.marks.push({ kind: kind, afterRound: S.rounds, preTokens: pre, postTokens: S.ctxTok, trigger: "auto" });
-      if (kind === "wrap") S.wraps++;
+      // S.wraps is incremented by the confirm handler, not here — otherwise a wrap would count twice.
       S.busy = null;
     }
     render();
   }, 130);
 }
 $("#simComp").onclick = function () { runEvent("compact"); };
-$("#simWrap").onclick = function () { runEvent("wrap"); };
+// The rail button goes through the SAME gate as the real control — a mock that skips the confirmation
+// would be testing a flow that does not exist.
+$("#simWrap").onclick = openWrap;
 $("#histBtn").onclick = openHist;
 $("#histX").onclick = function () { $("#hist").classList.remove("--open"); };
 $("#hOpen").onclick = function () { this.classList.add("on"); $("#hRet").classList.remove("on"); openHist(); };
@@ -1190,6 +1203,12 @@ document.querySelectorAll("[data-w]").forEach(function (b) {
     document.querySelectorAll("[data-w]").forEach(function (o) { o.classList.toggle("on", o === b); });
     render();
   };
+});
+// Escape closes whatever dialog is open. A gated action must always have a way out that is not "find
+// the right ✕", or the gate becomes a trap.
+document.addEventListener("keydown", function (e) {
+  if (e.key !== "Escape") return;
+  ["#wrappop", "#ctxpop", "#hist"].forEach(function (sel) { var n = $(sel); if (n) n.classList.remove("--open"); });
 });
 window.addEventListener("resize", function () { syncSlider(); $("#shell").style.height = shellTargetH() + "px"; layout(); });
 syncSlider();
