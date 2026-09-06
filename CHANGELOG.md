@@ -4,6 +4,30 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.114] - 2026-09-06
+### Fixed
+- **The image strip is never hidden again.** It was collapse step 1, so at the moment you were writing
+  the long prompt the images belong to, the evidence that you had attached them disappeared — an
+  attached image became indistinguishable from a forgotten one. Removed from `COLLAPSE_STEPS` and added
+  to the never-collapsible set (`imageStripVisible`), tested at every height and both toggle states.
+  **Only inline metadata may collapse now**, which frees no row at all — the honest outcome: this footer
+  contains no row that is safe to take away mid-compose.
+- **Bookmark and share are now always visible, beside their P#/R# medallion** on the bubble's top edge —
+  answers to the right of the R# pill, prompts to the left of the P# pill. Hover-to-reveal hid the one
+  thing a bookmark exists to tell you (*which* answers are marked) and was unusable on touch.
+- **The footer context readout shows both figures with thousand separators** — `93,016 / 1,000,000 tok`
+  rather than `1000k`, which forced a mental conversion to compare it with the number beside it.
+- **Bookmarks can be removed from the bookmark list.** Previously removal meant finding the answer and
+  un-starring it, which requires that answer to still be loaded — impossible once it has been wrapped
+  out. The list now has a ✕ per row, keeps its heading count, and says "No bookmarks left" instead of
+  showing an empty box.
+- **The wrap summary in the requested `R#a–R#b [n]` form had never actually been applied** (a silent
+  patch failure from an earlier round — the popup still showed the old flat rows). It is in now, R
+  before P, each in its tag colour, with `chars = r + p = total`.
+- **The two popups shared a heading.** A stray title assignment had landed inside `openBm`, and
+  `openWrap` had none — so opening Wrap after Bookmarks showed "★ Bookmarked answers". Each popup sets
+  its own title, guarded by a test.
+
 ## [1.5.113] - 2026-09-06
 ### Fixed
 - **The turn counter read `930/400` no matter which ceiling you picked** — `maxTurns` was never passed to

@@ -141,9 +141,16 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
 .statetag{font-size:9.5px;font-weight:800;letter-spacing:.5px;opacity:.85;display:block;margin-bottom:2px}
 #jumpmsg{display:none;position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:80;
   background:#2a1c0b;border:1px solid var(--warn);color:var(--warn);padding:6px 12px;border-radius:8px;font-size:12px}
-.msgacts{position:absolute;top:4px;right:6px;display:flex;gap:3px;opacity:0;transition:opacity .12s}
-.msg:hover .msgacts,.msgacts:focus-within{opacity:1}
-.msgacts button{padding:1px 6px;font-size:11px;line-height:1.4;background:#0f1730}
+/* Bookmark + share sit ON the bubble's top edge, immediately beside their P#/R# medallion, and are
+   ALWAYS visible. Hover-to-reveal hid the one thing the mark exists to tell you — which answers are
+   bookmarked — and is unusable on a touch screen. */
+.msgacts{position:absolute;top:-10px;z-index:2;display:flex;gap:3px;align-items:center}
+.msg.--a .msgacts{left:62px}
+.msg.--u .msgacts{right:62px}
+.msgacts button{height:19px;padding:0 6px;font-size:11px;line-height:1;background:var(--chip);
+  border:1px solid var(--line);border-radius:8px;box-shadow:0 1px 3px #0006;opacity:.62;transition:opacity .12s}
+.msg:hover .msgacts button,.msgacts button:focus{opacity:1}
+.msgacts button.--on{opacity:1}
 .msgacts button.--on{color:var(--warn);border-color:var(--warn)}
 .spacer{flex:1}
 .roll{display:flex;align-items:center;gap:8px;margin:0 9px 6px;padding:5px 9px;border-radius:7px;background:var(--chip);border:1px solid var(--line);font-size:11px;flex-wrap:wrap}
@@ -649,8 +656,10 @@ function layout() {
   // The model row is no longer collapsible (see chat-shell.js COLLAPSE_STEPS) — it stays put.
   var mr = $("#f-model"); if (mr) mr.classList.remove("--gone");
   $("#f-modelchip2").classList.add("--gone");
-  var im = $("#f-img"); if (im) im.classList.toggle("--gone", !!r.collapsed.imageStrip);
-  $("#f-imgchip").classList.toggle("--gone", !(r.collapsed.imageStrip && S.imgs));
+  // The image strip stays at EVERY height (see chat-shell.js COLLAPSE_STEPS). Hiding it meant that
+  // while writing the long prompt the images belong to, the evidence you had attached them vanished.
+  var im = $("#f-img"); if (im) im.classList.remove("--gone");
+  $("#f-imgchip").classList.add("--gone");
   var mt = $("#f-meta"); if (mt) mt.classList.toggle("--gone", !!r.collapsed.meta);
 
   // Ghost suggestion, positioned exactly over the empty box.
@@ -773,13 +782,28 @@ function openCtx() {
 function openWrap() {
   var wr = CS.wrapReadiness({ tokens: S.ctxTok, ceiling: S.ctxMax });
   var b = $("#wrapbody"); b.replaceChildren();
-  var rows = [
-    ["Context being wrapped", fmt(S.ctxTok) + " tok · " + wr.pct + "% of " + fmt(S.ctxMax)],
-    ["Prompts", fmt(nPrompts())], ["Responses", fmt(nResponses())], ["Images", fmt(S.images)],
-    ["Characters in prompts", fmt(Math.round(nChars() * 0.22))], ["Characters in responses", fmt(Math.round(nChars() * 0.78))],
-    ["Turn numbering after wrap", "CONTINUES — next is P#" + fmt(nPrompts() + 1) + " / R#" + fmt(nResponses() + 1)]
-  ];
-  rows.forEach(function (r) { b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, [r[0]]), el("span", { class: "v" }, [r[1]])])); });
+  $("#wrappop").querySelector(".pophd span").textContent = "\u27f3 Wrap conversation";
+  // A wrap carries the last `tailTurns` rounds verbatim; everything before that is what gets wrapped.
+  var TAIL = 40;
+  var span = CS.wrapSpan({
+    rFrom: 1, rTo: Math.max(0, nResponses() - TAIL), pFrom: 1, pTo: Math.max(0, nPrompts() - TAIL),
+    rChars: Math.round(nChars() * 0.78 * 0.88), pChars: Math.round(nChars() * 0.22 * 0.88)
+  });
+  // R first, then P, each in its own tag colour, so the line is scannable without reading the labels.
+  b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Answers wrapped"]),
+    el("span", { class: "v tR" }, ["R#" + fmt(span.r.from) + "\u2013R#" + fmt(span.r.to) + "  [" + fmt(span.r.count) + "]"])]));
+  b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Prompts wrapped"]),
+    el("span", { class: "v tP" }, ["P#" + fmt(span.p.from) + "\u2013P#" + fmt(span.p.to) + "  [" + fmt(span.p.count) + "]"])]));
+  b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Characters"]),
+    el("span", { class: "v" }, [el("span", { class: "tR" }, [fmt(span.r.chars)]), " + ",
+      el("span", { class: "tP" }, [fmt(span.p.chars)]), " = " + fmt(span.chars)])]));
+  b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Context"]),
+    el("span", { class: "v" }, [fmt(S.ctxTok) + " / " + fmt(S.ctxMax) + " tok \u00b7 " + wr.pct + "%"])]));
+  b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Images"]), el("span", { class: "v" }, [fmt(S.images)])]));
+  b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Kept verbatim"]), el("span", { class: "v" }, ["the last " + TAIL + " rounds"])]));
+  b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Numbering after wrap"]),
+    el("span", { class: "v" }, ["CONTINUES \u2014 next is ", el("span", { class: "tR" }, ["R#" + fmt(nResponses() + 1)]),
+      " / ", el("span", { class: "tP" }, ["P#" + fmt(nPrompts() + 1)])])]));
   b.appendChild(el("div", { class: "chip" }, ["Nothing is deleted. The wrap starts a fresh context window; the wrapped turns stay searchable in the archive and keep their original numbers."]));
   var go = el("button", { class: "btn-send" }, ["\u27f3 Wrap now"]);
   go.onclick = function () {
@@ -792,13 +816,18 @@ function openWrap() {
 
 function openBm() {
   var b = $("#wrapbody"); b.replaceChildren();
-  $("#wrappop").querySelector(".pophd span").textContent = "\u27f3 Wrap conversation";
-  $("#wrappop").querySelector(".pophd span").textContent = "\u2605 Bookmarked answers";
+  var keys = Object.keys(S.bm).filter(function (k) { return S.bm[k]; });
+  $("#wrappop").querySelector(".pophd span").textContent = "\u2605 Bookmarked answers (" + keys.length + ")";
+  if (!keys.length) b.appendChild(el("div", { class: "chip" }, ["No bookmarks left \u2014 star an answer to add one."]));
   Object.keys(S.bm).filter(function (k) { return S.bm[k]; }).sort(function (a, c) { return a - c; }).forEach(function (n) {
     var row = el("div", { class: "kv" }, [el("span", { class: "k tR" }, ["R#" + n]), el("span", { class: "v" }, ["An assistant answer\u2026"])]);
     var go = el("button", {}, ["jump"]);
     go.onclick = function () { $("#wrappop").classList.remove("--open"); doJump("R#" + n); };
-    row.appendChild(go); b.appendChild(row);
+    // Removal previously required finding the answer and un-starring it — which needs that answer to
+    // still be loaded. From the list it is one click, and the list stays open.
+    var rm = el("button", { class: "kill", title: "Remove this bookmark" }, ["\u2715"]);
+    rm.onclick = function () { delete S.bm[n]; render(); openBm(); };
+    row.appendChild(go); row.appendChild(rm); b.appendChild(row);
   });
   $("#wrappop").classList.add("--open");
 }

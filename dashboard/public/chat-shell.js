@@ -37,9 +37,13 @@
   // effort / context controls — the settings you are most likely to want to check while composing a big
   // prompt. It joins Stop, Send and the expand toggle in the never-collapsible set. What remains are rows
   // that carry no control you need mid-compose.
+  // The IMAGE STRIP is not here either. Hiding it meant that at the moment you were writing the long
+  // prompt the images belong to, the evidence that you had attached them disappeared — you could not
+  // tell an attached image from a forgotten one. Attachments are part of the prompt you are composing,
+  // so they stay. What is left collapses no rows at all, which is the honest outcome: this footer has
+  // no row that is safe to take away mid-compose.
   var COLLAPSE_STEPS = [
-    { id: "imageStrip", frees: 0, note: "pasted-image strip folds to a count chip" },
-    { id: "meta",       frees: 0, note: "repo / worktree / identity text hidden (inline — frees no row)" }
+    { id: "meta", frees: 0, note: "repo / worktree / identity text hidden (inline — frees no row)" }
   ];
   // Hysteresis: a step that engaged at X only releases below 0.9X, so typing on the boundary cannot
   // flicker the footer open/closed on every keystroke.
@@ -160,6 +164,7 @@
       stopVisible: true,
       expandVisible: true,
       modelBarVisible: true,
+      imageStripVisible: true,
       capIsFloored: baseCap > minTypeH + (o.expanded ? SWALLOW_PCT_MAX : SWALLOW_PCT) * c0 + 0.5
     };
   }
