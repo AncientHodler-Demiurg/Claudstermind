@@ -198,6 +198,9 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
 .deadbtns button{font-size:11px;padding:2px 9px}
 .deadbtns .go{color:var(--ok);border-color:#3ddc9766}
 .deadbtns .kill{color:var(--err);border-color:#ff6b8166}
+#laberr{display:none;position:fixed;left:8px;right:8px;bottom:8px;z-index:200;cursor:pointer;
+  background:#3a0d0d;border:2px solid #ef4444;color:#ffd7d7;padding:8px 12px;border-radius:9px;
+  font:600 12px/1.5 ui-monospace,Consolas,monospace;box-shadow:0 8px 30px #000c}
 #jumpmsg{display:none;position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:80;
   background:#2a1c0b;border:1px solid var(--warn);color:var(--warn);padding:6px 12px;border-radius:8px;font-size:12px}
 /* Bookmark + share sit ON the bubble's top edge, immediately beside their P#/R# medallion, and are
@@ -250,7 +253,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
    in a multi-pane cockpit a pane's own dialog would appear miles from the pane that raised it — and even
    here it sat off-centre over the transcript. They are re-parented into #shell on every build and
    positioned against it, so they dim and centre on exactly the box they belong to. */
-.pop{position:absolute;inset:0;background:#000b;display:none;align-items:center;justify-content:center;z-index:60;border-radius:12px}
+.pop{position:fixed;inset:0;background:#000b;display:none;align-items:center;justify-content:center;z-index:60;border-radius:12px}
 .pop.--open{display:flex}
 /* Dialogs must FIT the box they belong to — a 460px panel inside a 380px pane would hang over the
    edge, which is exactly the kind of thing a fixed width hides until you try a narrow pane. */
@@ -328,7 +331,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
 .sel.--danger{color:#ffb4b4;border-color:#ef4444;background:#2a1114;font-weight:700}
 .sel.--plan{color:#a5b4fc;border-color:#6366f1;background:#171a35}
 /* history popup */
-#hist{position:absolute;inset:0;background:#000b;display:none;align-items:center;justify-content:center;z-index:50;border-radius:12px}
+#hist{position:fixed;inset:0;background:#000b;display:none;align-items:center;justify-content:center;z-index:50;border-radius:12px}
 #hist.--open{display:flex}
 .histbox{width:min(520px,calc(100% - 20px));max-height:calc(100% - 20px);background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 14px 46px #000b}
 .histhd{padding:9px 12px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;font-weight:600}
@@ -350,7 +353,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
 <div id="rail">
   <h1>Chat Shell Lab</h1>
   <p class="sub">Mockup only — production untouched. Runs the real <code>chat-shell.js</code> maths.<br>
-    <b id="buildstamp" style="color:var(--ok)">build 1.5.130</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
+    <b id="buildstamp" style="color:var(--ok)">build 1.5.131</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
 
   <div class="grp"><b>Workspace</b>
     <div class="row"><button id="wCore" class="on">Core</button><button id="wPact">Pact</button></div>
@@ -419,6 +422,38 @@ button:disabled{opacity:.4;cursor:not-allowed}
 
 <script src="/chat-shell.js"></script>
 <script>
+// ERROR SURFACE. "Nothing happens" has been the report three times now, and each time the cause was a
+// silent throw somewhere the browser swallowed. Any uncaught error is now shown ON THE PAGE — a lab you
+// cannot debug from a screenshot is a lab that wastes a round every time something breaks.
+window.addEventListener("error", function (e) { labError((e && e.message) || "unknown error", e && e.filename, e && e.lineno); });
+window.addEventListener("unhandledrejection", function (e) { labError("unhandled rejection: " + ((e && e.reason && e.reason.message) || e.reason)); });
+/* Open a dialog SCOPED TO THE CHAT BOX without re-parenting it: read the shell's rectangle and pin the
+   overlay to it. Scoped as tightly as a child would be, but it cannot be orphaned by a re-render, and
+   it does not care what order build() appends things in. Falls back to the viewport if the shell has
+   not been laid out yet, which is better than not opening at all. */
+function openPop(sel) {
+  var n = document.querySelector(sel); if (!n) { labError("dialog " + sel + " does not exist"); return; }
+  var sh = document.getElementById("shell");
+  var r = sh && sh.getBoundingClientRect ? sh.getBoundingClientRect() : null;
+  if (r && r.width > 40 && r.height > 40) {
+    n.style.top = r.top + "px"; n.style.left = r.left + "px";
+    n.style.width = r.width + "px"; n.style.height = r.height + "px";
+    n.style.right = "auto"; n.style.bottom = "auto";
+  } else {
+    n.style.top = n.style.left = "0"; n.style.right = n.style.bottom = "0";
+    n.style.width = n.style.height = "auto";
+  }
+  n.classList.add("--open");
+}
+function closePop(sel) { var n = document.querySelector(sel); if (n) n.classList.remove("--open"); }
+
+function labError(msg, file, line) {
+  var box = document.getElementById("laberr");
+  if (!box) { box = document.createElement("div"); box.id = "laberr"; document.body.appendChild(box); }
+  box.style.display = "block";
+  box.textContent = "⚠ " + msg + (line ? "  (line " + line + ")" : "") + "  — click to dismiss";
+  box.onclick = function () { box.style.display = "none"; };
+}
 var CS = window.ChatShell;
 var S = {
   kind: "core", expanded: false, prevLevel: 0,
@@ -668,7 +703,7 @@ function build() {
       var pre = el("pre", { style: "white-space:pre-wrap;margin:0;padding:9px;border-radius:8px;background:var(--field);border:1px solid var(--line);font:11.5px/1.6 ui-monospace,Consolas,monospace" },
         [CS.buildReplyPreamble(S.replies) + ($("#typebox") && $("#typebox").value ? $("#typebox").value : "(your prompt goes here)")]);
       b2.appendChild(pre);
-      $("#ctxpop").classList.add("--open");
+      openPop("#ctxpop");
     };
     rr.appendChild(prev);
     rr.appendChild(el("span", { class: "chip", title: "Quoting costs context \u2014 this is what these references will add to the prompt" },
@@ -854,9 +889,11 @@ function build() {
   mb.appendChild(el("span", { class: "split" }, [cbtn2, wbtn2]));
   ftr.appendChild(mb);
   shell.appendChild(ftr);
-  // Re-home the dialogs inside the shell after every rebuild (replaceChildren above detaches them).
-  // appendChild MOVES an existing node, so their state and handlers survive untouched.
-  ["#ctxpop", "#wrappop", "#hist"].forEach(function (sel) { var n = $(sel); if (n) shell.appendChild(n); });
+  // Dialogs are NOT moved into the shell any more. Re-parenting them on every rebuild made their
+  // visibility depend on build order and on `replaceChildren` not having orphaned them first — a whole
+  // class of "the class is set but nothing appears". They stay in the body and are POSITIONED over the
+  // shell from its bounding box when opened (see openPop), which is scoped just as tightly and cannot
+  // be detached by a re-render.
 
   $("#f-hist").onclick = openHist;
   $("#f-expand").onclick = toggleExpand;
@@ -972,7 +1009,7 @@ function openHist() {
     list.appendChild(it);
   }
   if (!slots.history.multi && $("#hOpen").classList.contains("on")) list.appendChild(el("div", { class: "chip" }, ["Core has exactly ONE active conversation — the rest are Retired."]));
-  $("#hist").classList.add("--open");
+  openPop("#hist");
 }
 
 function fmt(n) { return Number(n || 0).toLocaleString(); }
@@ -1142,7 +1179,7 @@ function openRecall(mode, kind, arg, wrapped) {
     });
     b.appendChild(el("div", { class: "chip" }, ["Newest segment first \u2014 a substring scan, not a ranked search."]));
   }
-  $("#ctxpop").classList.add("--open");
+  openPop("#ctxpop");
 }
 
 function openCtx() {
@@ -1165,12 +1202,16 @@ function openCtx() {
   var fsw = el("span", { class: "ctxsw" }); fsw.style.background = "#2a3350";
   body.appendChild(el("div", { class: "ctxrow" }, [fsw, el("span", { class: "k", style: "flex:1;color:var(--dim)" }, ["Free"]), el("span", { class: "v" }, [fmt(free) + " tok"])]));
   body.appendChild(el("div", { class: "chip" }, ["Parts account for 100.0% of what is used — free space is listed separately, never folded in."]));
-  $("#ctxpop").classList.add("--open");
+  openPop("#ctxpop");
 }
 
 /* Wrap popup — states exactly WHAT is being wrapped before you commit, and is explicit that nothing
    is deleted and nothing is renumbered (verified against the engine: a roll only advances a marker). */
 function openWrap() {
+  try { return openWrapInner(); }
+  catch (err) { labError("openWrap failed: " + (err && err.message ? err.message : err)); }
+}
+function openWrapInner() {
   var wr = CS.wrapReadiness({ tokens: S.ctxTok, ceiling: S.ctxMax });
   var b = $("#wrapbody"); b.replaceChildren();
   $("#wrappop").querySelector(".pophd span").textContent = "\u27f3 Wrap conversation";
@@ -1226,7 +1267,7 @@ function openWrap() {
   };
   b.appendChild(el("div", { class: "row", style: "margin-top:8px" },
     [el("span", { class: "spacer" }), cancel, go]));
-  $("#wrappop").classList.add("--open");
+  openPop("#wrappop");
 }
 
 var BM_TAB = "R";
@@ -1259,7 +1300,7 @@ function openBm() {
     rm.onclick = function () { delete S.bm[BM_TAB + n]; render(); openBm(); };
     row.appendChild(go); row.appendChild(rm); b.appendChild(row);
   });
-  $("#wrappop").classList.add("--open");
+  openPop("#wrappop");
 }
 function render() { build(); }
 

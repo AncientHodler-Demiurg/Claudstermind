@@ -4,6 +4,25 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.131] - 2026-09-06
+### Fixed (lab)
+- **Dialogs stopped appearing at all.** Scoping them to the chat box had been done by **re-parenting**
+  them into `#shell` on every rebuild — so their visibility depended on build order and on
+  `replaceChildren` not having orphaned them first. `--open` was being set on a node that was no longer
+  where it needed to be: the class was right, nothing appeared.
+  Replaced with **one `openPop(sel)`** that leaves dialogs in the body and **pins the overlay to the
+  shell's bounding rectangle**. Scoped exactly as tightly, but impossible to detach by a re-render and
+  indifferent to the order `build()` appends things in. A test asserts **only `openPop` may set
+  `--open`**, so no caller can bypass the scoping.
+- **A page-visible error surface.** *"Nothing happens"* has been the report three times, and each time
+  the cause was a silent throw the browser swallowed. Uncaught errors and unhandled rejections now
+  render in a red bar at the bottom of the lab, and `openWrap` reports its own failures. A lab you
+  cannot debug from a screenshot costs a round every time something breaks.
+### Changed (tests)
+- The DOM shim gained `getBoundingClientRect` and `getElementById` — both were missing, and the missing
+  `getElementById` is exactly why the shim could not reproduce this failure. Every gap in the harness is
+  a class of bug it silently cannot see.
+
 ## [1.5.130] - 2026-09-06
 ### Fixed (lab)
 - **The Wrap button read as broken when it was actually refusing.** At 9% of the window a wrap is
