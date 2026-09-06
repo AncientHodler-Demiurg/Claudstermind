@@ -125,20 +125,33 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
 /* per-answer actions — bookmark + share, revealed on hover, always reachable by keyboard */
 .msg{position:relative}
 .msg.--flash{outline:2px solid var(--acc);outline-offset:2px;transition:outline-color .5s}
-/* PROMPT STATES (production: .pc-queued / .pc-interrupted / .pc-discarded)
-   queued   ORANGE — typed and waiting because a turn is still running
-   deep     PINK   — queued behind BACKGROUND work, which can run far longer
-   dead     BLUE   — sent, never answered (interrupted); offers Resume / Discard
-   discard  RED    — explicitly killed; kept visible so it is never silently lost */
-.msg.--queued{background:color-mix(in srgb,#f59e0b 16%,var(--chip));border-color:#f59e0b;color:#f59e0b}
+/* PROMPT STATES — copied from production styles.css (.ws-user / .ws-queued / .ws-queued-deep /
+   .ws-interrupted / .ws-discarded). The lab had invented its own washed-out versions; these are the
+   real colours, so what is judged here is what ships.
+     queued      ORANGE #f59e0b — typed, waiting for the running turn to finish
+     queued deep PINK   #f472b6 — waiting behind BACKGROUND work, which can run far longer
+     interrupted BLUE   #172554 — sent, never answered; offers Resume / Discard
+     discarded   RED    #3a0d0d — explicitly killed, kept visible so it is never silently lost */
+.msg.--queued{background:color-mix(in srgb,#f59e0b 16%,var(--chip));border:1px solid #f59e0b;color:#f59e0b;white-space:pre-wrap}
 .msg.--deep{background:color-mix(in srgb,#f472b6 16%,var(--chip));border-color:#f472b6;color:#f472b6}
-.msg.--dead{background:#172554;box-shadow:inset 0 0 0 1px #3b5bbf;color:#cddafb}
-.msg.--discarded{background:#3a0d0d;color:#fca5a5;box-shadow:inset 0 0 0 1px #7f1d1d}
+.msg.--dead{background:#172554;box-shadow:inset 0 0 0 1px #3b5bbf;color:#cddafb;border-color:#3b5bbf}
+.msg.--discarded{background:#3a0d0d;color:#fca5a5;box-shadow:inset 0 0 0 1px #7f1d1d;border-color:#7f1d1d}
+.msg.--risk{box-shadow:0 0 0 2px #f87171}
+.msg b.who{display:block;font-size:11px;margin-bottom:3px}
+/* the queued/interrupted status line, at the BOTTOM of the bubble as production renders it */
+.qtag{display:block;margin-top:3px;font-size:10px;font-weight:400;color:#f59e0b}
+.msg.--deep .qtag{color:#f472b6}
+.msg.--dead .qtag{color:#93b0f0}
+.msg.--discarded .qtag{color:#fca5a5}
+/* attached-image thumbnails INSIDE the bubble — a queued message carries its images with it */
+.msgimgs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.msgimg{width:132px;height:84px;border-radius:6px;border:1px solid rgba(255,255,255,.25);
+  background:repeating-linear-gradient(45deg,#223,#223 8px,#2b2b3d 8px,#2b2b3d 16px);
+  display:flex;align-items:center;justify-content:center;font-size:9.5px;color:#aab}
 .deadbtns{display:flex;gap:6px;margin-top:6px}
 .deadbtns button{font-size:11px;padding:2px 9px}
 .deadbtns .go{color:var(--ok);border-color:#3ddc9766}
 .deadbtns .kill{color:var(--err);border-color:#ff6b8166}
-.statetag{font-size:9.5px;font-weight:800;letter-spacing:.5px;opacity:.85;display:block;margin-bottom:2px}
 #jumpmsg{display:none;position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:80;
   background:#2a1c0b;border:1px solid var(--warn);color:var(--warn);padding:6px 12px;border-radius:8px;font-size:12px}
 /* Bookmark + share sit ON the bubble's top edge, immediately beside their P#/R# medallion, and are
@@ -457,14 +470,34 @@ function build() {
     a.appendChild(mkMsgActs(i + 1));
     core.appendChild(a);
   }
-  // The four prompt states, so their colour and affordances can be judged against real bubbles.
+  // The four prompt states, built the way production builds them (app.js ~11493): a bold "you" label,
+  // the attached-image thumbnails, the text, then the status line LAST.
   if (S.states) {
-    core.appendChild(el("div", { class: "msg --u --queued" }, [
-      el("span", { class: "statetag" }, ["QUEUED \u2014 waiting for the current turn"]), "Send this once the reply lands."]));
-    core.appendChild(el("div", { class: "msg --u --deep" }, [
-      el("span", { class: "statetag" }, ["QUEUED BEHIND DEEP WORK \u2014 may be a while"]), "Background agents are still running."]));
+    var mkQueued = function (deep, nQueued, withImgs) {
+      var kids = [el("b", { class: "who" }, ["you"])];
+      if (withImgs && S.imgs) {
+        var strip = el("div", { class: "msgimgs" });
+        for (var q = 0; q < S.imgs; q++) strip.appendChild(el("div", { class: "msgimg" }, ["shot-" + (q + 1) + ".png"]));
+        kids.push(strip);                                   // a queued message carries its images with it
+      }
+      kids.push(deep ? "Background agents are still running \u2014 this waits behind them."
+                     : "Send this once the reply lands.");
+      // Production wording, including the merge case: several queued messages go out as ONE prompt.
+      var tag = nQueued > 1
+        ? "queued \u2014 will be merged with the other" + (nQueued - 1 > 1 ? "s" : "") + " into one message once this turn finishes"
+        : "queued \u2014 sending once this turn finishes";
+      kids.push(el("span", { class: "qtag" }, [tag]));
+      return el("div", { class: "msg --u --queued" + (deep ? " --deep" : "") }, kids);
+    };
+    core.appendChild(mkQueued(false, 2, true));
+    core.appendChild(mkQueued(false, 2, false));
+    core.appendChild(mkQueued(true, 1, false));
+
     var dead = el("div", { class: "msg --u --dead" }, [
-      el("span", { class: "statetag" }, ["NEVER ANSWERED \u2014 the turn was interrupted"]), "This prompt was sent but no answer came back."]);
+      el("b", { class: "who" }, ["you"]),
+      "This prompt was sent but no answer came back.",
+      el("span", { class: "qtag" }, ["interrupted \u2014 the turn ended before a reply arrived"])
+    ]);
     var btns = el("div", { class: "deadbtns" });
     var go = el("button", { class: "go", title: "Send it again as a fresh turn" }, ["\u25b6 Resume"]);
     var kill = el("button", { class: "kill", title: "Mark it dead \u2014 it stays visible but is excluded from the next prompt" }, ["\u2715 Discard"]);
@@ -472,8 +505,12 @@ function build() {
     kill.onclick = function () { S.states = "discarded"; render(); };
     btns.appendChild(go); btns.appendChild(kill); dead.appendChild(btns);
     core.appendChild(dead);
+
     if (S.states === "discarded") core.appendChild(el("div", { class: "msg --u --discarded" }, [
-      el("span", { class: "statetag" }, ["DISCARDED \u2014 excluded from the next prompt"]), "Kept visible on purpose: a killed prompt is never silently deleted."]));
+      el("b", { class: "who" }, ["you"]),
+      "This prompt was killed.",
+      el("span", { class: "qtag" }, ["discarded \u2014 excluded from the next prompt, kept visible on purpose"])
+    ]));
   }
   if (!S.rounds) core.appendChild(el("div", { class: "chip" }, ["no turns — use “+ 6 turns”"]));
   shell.appendChild(core);

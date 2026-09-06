@@ -4,6 +4,25 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.115] - 2026-09-06
+### Fixed
+- **The lab's queued bubbles were invented, not copied — so the thing being judged was not the thing
+  that ships.** They are now built exactly as production builds them (`app.js` ~11493 +
+  `styles.css .ws-queued`): a bold **you** label, then the attached-image thumbnails, then the text,
+  then the status line **last**. Real colours throughout — queued `#f59e0b` orange, queued-behind-deep-work
+  `#f472b6` pink, interrupted `#172554`/`#3b5bbf` blue, discarded `#3a0d0d`/`#7f1d1d` red.
+- **A queued message now shows its attached images**, as production does — they are still local blobs at
+  that point and travel with the message when it finally sends.
+- **Production's exact wording**, including the case that was missing entirely: several queued messages
+  are merged into ONE prompt, so with more than one waiting the tag reads *"queued — will be merged with
+  the others into one message once this turn finishes"* rather than implying they send separately.
+### Added (tests)
+- **A drift guard tying the lab's prompt-state colours to `styles.css`.** Each of the six production
+  hexes must appear in **both** files, so the lab cannot quietly diverge from what ships — and if
+  production changes a colour, the lab goes red instead of silently becoming a lie.
+  Mutation-checked: altering one hex in the lab fails with *"the lab is missing the production colour
+  #f59e0b for queued (orange)"*.
+
 ## [1.5.114] - 2026-09-06
 ### Fixed
 - **The image strip is never hidden again.** It was collapse step 1, so at the moment you were writing
