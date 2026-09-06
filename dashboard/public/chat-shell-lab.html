@@ -350,7 +350,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
 <div id="rail">
   <h1>Chat Shell Lab</h1>
   <p class="sub">Mockup only — production untouched. Runs the real <code>chat-shell.js</code> maths.<br>
-    <b id="buildstamp" style="color:var(--ok)">build 1.5.129</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
+    <b id="buildstamp" style="color:var(--ok)">build 1.5.130</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
 
   <div class="grp"><b>Workspace</b>
     <div class="row"><button id="wCore" class="on">Core</button><button id="wPact">Pact</button></div>
@@ -845,7 +845,10 @@ function build() {
     [fill2]));
   var cbtn2 = el("button", { class: "splitL", title: "Compact \u2014 summarise earlier turns to shrink the context window. Cheap, keeps this session, but the summary itself stays in the window." }, ["\uD83D\uDDDC Compact"]);
   cbtn2.onclick = function () { runEvent("compact"); };
-  var wbtn2 = el("button", { class: "splitR", title: wr2.reason }, ["\u27f3 Wrap"]);
+  // A disabled control with no VISIBLE reason is indistinguishable from a broken one — which is exactly
+  // how this was read. The button states the threshold it is waiting for, on its face.
+  var wbtn2 = el("button", { class: "splitR", title: wr2.reason },
+    [wr2.canWrapManually ? "\u27f3 Wrap" : "\u27f3 Wrap at " + Math.round(wr2.manualAt * 100) + "%"]);
   wbtn2.disabled = !wr2.canWrapManually;
   wbtn2.onclick = openWrap;
   mb.appendChild(el("span", { class: "split" }, [cbtn2, wbtn2]));
@@ -1353,7 +1356,18 @@ function runEvent(kind) {
 $("#simComp").onclick = function () { runEvent("compact"); };
 // The rail button goes through the SAME gate as the real control — a mock that skips the confirmation
 // would be testing a flow that does not exist.
-$("#simWrap").onclick = openWrap;
+// Simulating a wrap has to simulate the SITUATION too: at 9% of the window a wrap is correctly
+// refused, so "open the dialog" alone looked like nothing happening. Fill the window first, then ask.
+$("#simWrap").onclick = function () {
+  var wr = CS.wrapReadiness({ tokens: S.ctxTok, ceiling: S.ctxMax });
+  if (!wr.canWrapManually) {
+    S.ctxTok = Math.round(S.ctxMax * 0.72);        // past the manual threshold, short of automatic
+    flashMsg("Filled the window to 72% so a wrap is allowed \u2014 a wrap is refused below "
+      + Math.round(wr.manualAt * 100) + "%.", true);
+    render();
+  }
+  openWrap();
+};
 $("#histBtn").onclick = openHist;
 $("#histX").onclick = function () { $("#hist").classList.remove("--open"); };
 $("#hOpen").onclick = function () { this.classList.add("on"); $("#hRet").classList.remove("on"); openHist(); };

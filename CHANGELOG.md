@@ -4,6 +4,29 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.130] - 2026-09-06
+### Fixed (lab)
+- **The Wrap button read as broken when it was actually refusing.** At 9% of the window a wrap is
+  correctly declined — but the reason lived only in a tooltip, and a disabled control with no visible
+  cause is indistinguishable from a dead one. The button now states the threshold on its face:
+  **"⟳ Wrap at 60%"**.
+- **The rail's "wrap… (asks first)" appeared to do nothing** for the same reason: it opened the confirm,
+  but the wrap underneath was refused. Simulating a wrap now simulates the **situation** too — it fills
+  the window to 72% (past manual, short of automatic), says so, and *then* opens the confirm. It still
+  never wraps without asking, which is asserted.
+- Added a test that **clicks** the rail button and asserts the dialog opens. "Has a handler" and "the
+  handler works" are different claims and only the second one mattered here.
+### Documented
+- **`spec.md` §9 — portability against a non-Claude provider.** Most of this UI is Claude-shaped because
+  it was designed against the Agent SDK. Three tiers recorded: **provider-agnostic** (layout, turn
+  addressing, reply/quote, and the whole wrap/archive/recall chain, which is ours and not an SDK
+  feature); **provider-dependent** (context usage, compaction markers, effort, ultracode, fast mode,
+  background agents, permission modes, model identity); and **Claude-only** (`/compact`, `--resume`
+  semantics, deep-work states).
+  The rule written down: **a capability the provider lacks must disappear or say it is unreported — never
+  render a plausible-looking default.** Every one already has an honest "unknown" state, so this is
+  wiring rather than redesign. `slotsFor()` should gain a *provider* axis alongside its workspace axis.
+
 ## [1.5.129] - 2026-09-06
 ### Changed (lab)
 - **The jump / recall search moved out of the header into a drawer under the type box.** A **⌕** button

@@ -211,3 +211,54 @@ The worked example of why this is one component and not two. Same UI, adapted by
 - Mobile layout (deferred by instruction until desktop is signed off)
 - The REPL terminal (Pact-only, lives outside the shell)
 - Any change to transcript rendering, markdown, or the Exocortex bar's own internals
+
+---
+
+## 9. Portability: what survives a non-Claude provider
+
+Raised during the lab rounds and worth recording before the shape is frozen: **most of this UI is
+Claude-shaped**, because it was designed against the Agent SDK's capabilities. When OmniRoute (or any
+other provider) is wired in, some of it will have nothing behind it.
+
+Three tiers. The distinction that matters is not "does it work" but **"is it a lie when it doesn't"**.
+
+### A. Provider-agnostic — keep as-is
+Nothing here depends on the engine at all.
+
+| | |
+|---|---|
+| Header / Core / Footer regions, the 40%→100% growth rule, collapse order, scroll-driven Live/Held | pure layout |
+| P#/R# tags, jump-to-turn, bookmarks, share, **reply/quote** | our own addressing scheme over our own transcript |
+| Prompt states (queued / deep / interrupted / discarded) | our queueing, not the provider's |
+| Line gutter, image + file attachment strips, history popup, themes | ours |
+| Wrap / archive / recall / segments | **ours entirely** — this is not an SDK feature (see `wrap-seed.md` §0) |
+
+### B. Provider-dependent — must DEGRADE, never fake
+These exist because the Agent SDK reports them. Another provider may report nothing.
+
+| Feature | SDK source | If absent |
+|---|---|---|
+| Context readout + breakdown | `getContextUsage()` / `SDKContextUsage` | show **"unavailable"**, never `0%` — the trap already documented in CONTRACT §1 |
+| Compaction markers + count | `compact_boundary` | no markers; the count must read **"not reported"**, not **0** |
+| Effort levels | `ModelInfo.supportedEffortLevels` | hide the selector rather than offer levels the provider ignores |
+| Ultracode | `settings.ultracode` | hide |
+| Fast mode | `ModelInfo.supportsFastMode` | hide (already gated this way in production) |
+| Background agents / swarm dots | `background_tasks_changed` | **"no fleet data"** ≠ "nothing running" — the distinction is already built |
+| Permission modes | SDK permission modes | a provider without them must not show a Bypass toggle that does nothing |
+| Model identity (`resolvedModel`) | `ModelInfo` | fall back to the provider's own id, and say it is unresolved |
+
+**The rule:** a capability the provider does not have must **disappear**, or say plainly that it is
+unreported. It must never render a plausible-looking default. Every one of these already has an honest
+"unknown" state built for it, so the work is wiring, not redesign.
+
+### C. Claude-only — expect to remove or rebuild
+- **`/compact`** — the button sends a Claude Code slash command. Another provider needs either its own
+  compaction or the button hidden.
+- **`--resume` semantics**, which is why a wrap respawns onto a fresh session at all. A provider without
+  resumable sessions changes what a wrap *is*.
+- **Deep-work / background-task states** — no equivalent in a plain request/response API.
+
+### Consequence for the mount
+`slotsFor(kind)` already encodes per-workspace capability. It should gain a **provider** dimension at
+mount time, so a slot can be switched off by capability rather than by workspace — the same mechanism,
+one more axis. `footer.omniRoute === false` is the first entry in that table.
