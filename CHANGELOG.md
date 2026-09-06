@@ -4,6 +4,31 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.137] - 2026-09-06
+### Added (lab)
+- **A wrap counter beside the compaction counter — with their different SCOPES made explicit**, because
+  the two behave oppositely and that is easy to get wrong:
+  - **`🗜 N compacted · this window`** — compactions belong to the **current window** and **reset at
+    every wrap**. The ones that happened before a wrap belong to the segment that was archived, not to
+    the window you are now in. Confirmed as the boss guessed.
+  - **`⟳ N wrapped · this conversation`** — wraps are **cumulative** and only ever go up, because each
+    one is an archived segment Recall can still reach.
+  - **Both render at zero.** A counter that appears only when non-zero makes its own absence ambiguous:
+    *"none yet"* and *"not tracked"* would look identical.
+### Documented
+- **`spec.md` §10 — migration.** Answering *"do we wrap the long conversations when this ships?"*:
+  **no.** The chat shell is a UI change; wrapping is an engine action costing a session respawn and a
+  prompt-cache invalidation. Paying that on every long conversation because the CSS changed would be
+  indefensible. Migration is **read-only with respect to conversation state** — transcripts, segments,
+  attachments, `_rolledThrough` and segment numbering all untouched, sessions keep running. The engine
+  already decides when to wrap, from real measurements, and needs no help.
+  Two consequences recorded before they surprise anyone: **markers will not appear retroactively**
+  (compaction boundaries still are not persisted — roadmap 4.12 — so an old conversation shows none),
+  and **the roll thresholds already changed in 1.5.123**, so the first wrap after upgrading arrives
+  later and carries five times as much context. The one thing migration *should* do is **read the
+  existing segment count** so the wrap counter is correct from the first render instead of looking like
+  the history was lost.
+
 ## [1.5.136] - 2026-09-06
 ### Added — the background-agents panel, and how it goes away
 - **`pruneFinished()` in `lib/backgroundTasks.mjs`** (engine, 5 tests) answers the question the old

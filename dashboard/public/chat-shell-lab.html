@@ -371,7 +371,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
 <div id="rail">
   <h1>Chat Shell Lab</h1>
   <p class="sub">Mockup only — production untouched. Runs the real <code>chat-shell.js</code> maths.<br>
-    <b id="buildstamp" style="color:var(--ok)">build 1.5.136</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
+    <b id="buildstamp" style="color:var(--ok)">build 1.5.137</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
 
   <div class="grp"><b>Workspace</b>
     <div class="row"><button id="wCore" class="on">Core</button><button id="wPact">Pact</button></div>
@@ -584,12 +584,30 @@ function build() {
                   : c.label + " is at " + c.pct + "% \u2014 far from binding" },
       [(near ? "\u25b8 " : "") + label + " \u00b7 " + c.pct + "%"]));
   });
-  var nComp = S.marks.filter(function (mk) { return mk.kind === "compact"; }).length;
+  // TWO COUNTERS WITH DIFFERENT SCOPES, and the difference matters:
+  //   compactions are a property of the CURRENT WINDOW. A wrap starts a fresh window, so the count
+  //     resets to zero — compactions that happened before a wrap belong to the segment that was
+  //     archived, not to the conversation you are now in.
+  //   wraps are a property of the CONVERSATION. They are cumulative, and each one is a segment you can
+  //     still recall from, so the number only ever goes up.
+  // Both render even at zero: "none yet" and "not tracked" must not look the same, and a counter that
+  // appears only when non-zero makes its own absence ambiguous.
+  var lastWrapRound = S.marks.reduce(function (m, mk) { return mk.kind === "wrap" ? Math.max(m, mk.afterRound) : m; }, 0);
+  var nComp = S.marks.filter(function (mk) { return mk.kind === "compact" && mk.afterRound >= lastWrapRound; }).length;
   right.appendChild(el("span", { class: "chip" + (nComp ? "" : " --far"), style: nComp ? "color:#8fc3ff;border-color:#5aa8f055" : "",
-    title: nComp ? nComp + " compaction" + (nComp === 1 ? "" : "s") + " in this session. Each replaced earlier turns with a summary that STILL occupies the window \u2014 wrapping is what actually clears it."
-                 : "No compactions yet in this session." },
-    ["\uD83D\uDDDC " + nComp + " compacted"]));
-  if (S.wraps) right.appendChild(el("span", { class: "chip" }, ["\u27f3 " + S.wraps + " wrapped"]));
+    title: nComp
+      ? nComp + " compaction" + (nComp === 1 ? "" : "s") + " IN THIS WINDOW. Each replaced earlier turns "
+        + "with a summary that still occupies the window \u2014 wrapping is what actually clears it. "
+        + "This count resets at every wrap, because a fresh window starts with none."
+      : "No compactions in this window yet. Resets at every wrap." },
+    ["\uD83D\uDDDC " + nComp + " compacted \u00b7 this window"]));
+  right.appendChild(el("span", { class: "chip" + (S.wraps ? "" : " --far"), style: S.wraps ? "color:var(--acc);border-color:#c77dff55" : "",
+    title: S.wraps
+      ? S.wraps + " wrap" + (S.wraps === 1 ? "" : "s") + " in this conversation \u2014 so there are "
+        + S.wraps + " archived segment" + (S.wraps === 1 ? "" : "s") + " you can still reach with Recall. "
+        + "Cumulative: this only ever goes up."
+      : "No wraps yet \u2014 the whole conversation is still in one window, and Recall has nothing to search." },
+    ["\u27f3 " + S.wraps + " wrapped \u00b7 this conversation"]));
   // SIZE stats sit together on the left; the wrap RANGE is pushed to the far right, because it answers
   // a different question ("what would I lose?") from the rest ("how big is this?").
   right.appendChild(el("span", { class: "spacer" }));

@@ -262,3 +262,50 @@ unreported. It must never render a plausible-looking default. Every one of these
 `slotsFor(kind)` already encodes per-workspace capability. It should gain a **provider** dimension at
 mount time, so a slot can be switched off by capability rather than by workspace — the same mechanism,
 one more axis. `footer.omniRoute === false` is the first entry in that table.
+
+---
+
+## 10. Migration: what happens to existing long conversations
+
+Asked directly: *when the new chat goes to production, do we wrap the long conversations, or wait for the
+engine to decide?*
+
+### Answer: wait. Do not wrap anything on migration.
+
+**The chat shell is a UI change. Wrapping is an engine action with real cost** — a session respawn and a
+prompt-cache invalidation, which is exactly the "re-read the whole conversation" charge the model-switch
+warning exists to flag. Paying that on every long conversation because we changed some CSS would be
+indefensible.
+
+Concretely, migration must be **read-only with respect to conversation state**:
+
+| | |
+|---|---|
+| transcripts (`.claude/workspace/**.jsonl`) | untouched |
+| archived segments (`_segments/`) | untouched |
+| images / documents | untouched |
+| `_rolledThrough`, segment numbering, P#/R# offsets | untouched |
+| running sessions | keep running; a UI swap is a reload, not a respawn |
+
+The engine already decides when to wrap, and it decides per-conversation from real measurements
+(`shouldRoll`: `turns >= 1000 || bytes >= 25 MiB`). That is the right authority, and it needs no help
+from a migration script.
+
+### Two consequences worth stating before they surprise someone
+
+**1. Markers will not appear retroactively.** Compaction boundaries are still not persisted (roadmap
+4.12), and wraps were never recorded as transcript events either. So an existing conversation that has
+compacted five times and wrapped twice will show **no marker lines for any of it** — the record does not
+exist. Markers begin from the moment persistence ships. This is not a bug to chase later; it is the
+expected consequence, and the UI should not imply the history was clean.
+
+**2. The roll thresholds already changed in 1.5.123** (`tailTurns` 40 → 200, `maxTurns` 400 → 1000),
+independently of the UI. A conversation currently sitting at, say, 600 turns since its last roll will now
+wrap **later** than it would have. That is intended — 400 turns was only ~200 exchanges and fired long
+before the window was full — but it means the first wrap after upgrading arrives further away than
+before, and carries five times as much context when it does.
+
+### The one thing migration SHOULD do
+Nothing to the data — but it should **surface the state that already exists**: how many segments a
+conversation already has (readable from the archive index), so `⟳ N wrapped · this conversation` is
+correct from the first render rather than starting at zero and looking like the history was lost.
