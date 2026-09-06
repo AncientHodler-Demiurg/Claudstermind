@@ -371,7 +371,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
 <div id="rail">
   <h1>Chat Shell Lab</h1>
   <p class="sub">Mockup only — production untouched. Runs the real <code>chat-shell.js</code> maths.<br>
-    <b id="buildstamp" style="color:var(--ok)">build 1.5.137</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
+    <b id="buildstamp" style="color:var(--ok)">build 1.5.138</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
 
   <div class="grp"><b>Workspace</b>
     <div class="row"><button id="wCore" class="on">Core</button><button id="wPact">Pact</button></div>
@@ -484,6 +484,7 @@ var S = {
   searchOpen: false,   // the jump/recall drawer is closed until asked for
   autoArm: null,       // { left } while an automatic wrap is counting down
   agentRows: [], agentsOpen: false, dismissed: {},   // background-agent panel
+  multiChat: false,    // Core: one conversation per repository unless switched on
   replies: [],        // pending reply references for the next prompt
   // Compaction/wrap MARKERS must be recorded to be renderable at all — a line can only be drawn where
   // an event says it happened. Each entry pins itself to the round it landed after.
@@ -511,7 +512,7 @@ function firstRendered() { return Math.max(1, S.rounds - S.renderCap + 1); }   /
 function el(t, a, k) { var e = document.createElement(t); for (var x in (a || {})) { if (x === "class") e.className = a[x]; else if (x === "html") e.innerHTML = a[x]; else e.setAttribute(x, a[x]); } (k || []).forEach(function (c) { e.appendChild(typeof c === "string" ? document.createTextNode(c) : c); }); return e; }
 
 function build() {
-  var slots = CS.slotsFor(S.kind);
+  var slots = CS.slotsFor(S.kind, { multiChat: S.multiChat });
   var shell = $("#shell");
   shell.style.height = shellTargetH() + "px";
   shell.style.maxWidth = S.width ? S.width + "px" : "none";   // 0 = take everything on offer
@@ -528,8 +529,26 @@ function build() {
     });
     r1.appendChild(el("button", { title: "new conversation" }, ["+"]));
   } else {
-    r1.appendChild(el("span", { class: "chip --acc" }, ["◍ " + S.repo]));
+    r1.appendChild(el("span", { class: "chip --acc" }, ["\u25cd " + S.repo]));
     r1.appendChild(el("span", { class: "chip" }, ["1 active conversation"]));
+  }
+  // MULTI-CHAT toggle, Core only. Off by default: one repository usually means one thread, and tabs you
+  // did not ask for are clutter. Switching it on creates and splits NOTHING — the store has always
+  // written one file per conversation (appendTurn(dir, id, sessionId, …)) and exposes both a per-session
+  // and a merged read. Core simply stops merging them for display.
+  if (S.kind === "core") {
+    var mcCb = el("input", { type: "checkbox", id: "h-multichat" });
+    mcCb.checked = S.multiChat;
+    mcCb.onchange = function () {
+      S.multiChat = this.checked;
+      if (!S.multiChat) S.convs = [S.convs[0] || { n: "Master", act: true }];
+      render();
+    };
+    r1.appendChild(el("label", { class: "autolbl", id: "h-multichat-lbl",
+      title: S.multiChat
+        ? "Several conversations in this repository. They were always stored separately \u2014 this only stops merging them for display."
+        : "One conversation per repository. Switch on to work on two things at once; nothing is created or split, the store already keeps them apart." },
+      [mcCb, "multi-chat"]));
   }
   r1.appendChild(el("span", { class: "spacer" }));
   // THE FIX for the wasted line: transient status is a chip here, never its own full-width row.

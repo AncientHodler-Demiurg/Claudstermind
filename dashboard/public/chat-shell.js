@@ -177,12 +177,21 @@
    *   core → repo is CHOSEN, one active conversation, history lists that repo's conversations
    *   pact → repo is LOCKED, many tabs, history has Open + Retired
    */
-  function slotsFor(kind) {
+  function slotsFor(kind, opts) {
     var pact = kind === "pact";
+    // MULTI-CHAT in Core is a READ-MODE FLIP, not new storage. The store already writes one file per
+    // conversation (`appendTurn(dir, id, sessionId, …)`) and exposes both views: `readSession()` for one
+    // conversation and `readWorkspace()` for the merged one — which even tags every record with its
+    // `_sessionId`. Core simply chooses the merged view today. So turning this on does not create,
+    // migrate or split anything: it stops merging conversations that were always stored apart.
+    // Off by default in Core, because one repository usually means one thread and tabs you did not ask
+    // for are clutter. Pact is always multi.
+    var multi = pact || !!(opts && opts.multiChat);
     return {
       kind: pact ? "pact" : "core",
+      multiChat: multi,
       header: {
-        tabs: pact,                    // Pact is multi-tab; Core has one active conversation
+        tabs: multi,                   // tabs appear only where several conversations can exist
         identity: !pact,
         bulb: true,
         exoBar: true,
@@ -210,7 +219,7 @@
       },
       history: {
         scope: "repo",                 // never "all repos" — that is what buried the Core tree view
-        multi: pact,                   // Pact: many open tabs. Core: exactly one active.
+        multi: multi,                  // several open conversations, or exactly one
         retiredTab: true               // both get Open / Retired
       }
     };

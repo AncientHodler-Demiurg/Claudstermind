@@ -4,6 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.138] - 2026-09-06
+### Added — optional multi-chat in Core
+- **`slotsFor(kind, { multiChat })`** — Core is single-conversation by **default** and gains tabs plus a
+  multi-conversation history when switched on. Pact is always multi and cannot be made single.
+  A test asserts the flag changes **exactly three** things (`multiChat`, `header.tabs`, `history.multi`)
+  and nothing else — Core keeps its repository picker and does not inherit Pact-only slots.
+- **The toggle sits in the Core header, off by default**, because one repository usually means one
+  thread and tabs you did not ask for are clutter.
+### Verified — this is cheaper than it looks
+- Checked before agreeing: **the store has always written one file per conversation.**
+  `appendTurn(dir, id, sessionId, record)` writes per session, and both reads already exist —
+  `readSession()` for one conversation and `readWorkspace()` for the merged set, which even tags every
+  record with its `_sessionId`. **Core simply chooses the merged view.**
+  So enabling multi-chat **creates nothing, splits nothing and migrates nothing** — it stops merging
+  conversations that were always stored apart. The toggle says so, rather than implying a migration.
+
 ## [1.5.137] - 2026-09-06
 ### Added (lab)
 - **A wrap counter beside the compaction counter — with their different SCOPES made explicit**, because
