@@ -205,6 +205,15 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
   border:1px solid var(--line);border-radius:8px;box-shadow:0 1px 3px #0006;opacity:.62;transition:opacity .12s}
 .msg:hover .msgacts button,.msgacts button:focus{opacity:1}
 .msgacts button.--on{opacity:1}
+/* Pending reply references. They look like a quote, not like a tag, because that is what they become. */
+.replyrow{gap:6px;flex-wrap:wrap;align-items:flex-start}
+.replychip{display:inline-flex;align-items:baseline;gap:6px;max-width:340px;padding:3px 8px;border-radius:8px;
+  background:var(--chip);border-left:3px solid var(--acc);border-top:1px solid var(--line);
+  border-right:1px solid var(--line);border-bottom:1px solid var(--line);font-size:11px}
+.replychip.--arch{border-left-color:var(--warn)}
+.replychip .rq{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
+.replychip .rx{padding:0 4px;font-size:10px;background:transparent;border:none;color:var(--dim)}
+.replychip .rx:hover{color:var(--err)}
 .msgacts button.--on{color:var(--warn);border-color:var(--warn)}
 .spacer{flex:1}
 .roll{display:flex;align-items:center;gap:8px;margin:0 9px 6px;padding:5px 9px;border-radius:7px;background:var(--chip);border:1px solid var(--line);font-size:11px;flex-wrap:wrap}
@@ -406,6 +415,7 @@ var S = {
   suggest: "Continue with the next item on the list.",
   autoWrap: true, wraps: 0, live: true, bm: {}, maxTurns: 1000, jumpText: "", states: true,
   effort: "high", ultracode: false, width: 0, perm: "bypassPermissions",
+  replies: [],        // pending reply references for the next prompt
   // Compaction/wrap MARKERS must be recorded to be renderable at all — a line can only be drawn where
   // an event says it happened. Each entry pins itself to the round it landed after.
   //   { kind:"compact"|"wrap", afterRound, preTokens, postTokens, trigger }
@@ -654,6 +664,41 @@ function build() {
   }
   // The pasted-image strip collapses to a single count chip rather than a whole row.
   var imgChip = el("span", { class: "chip --gone", id: "f-imgchip" }, ["\uD83D\uDDBC " + S.imgs]);
+
+  // PENDING REPLIES — the turns this prompt is answering. Shown ABOVE the type box because they are
+  // part of the message you are composing, and with their token cost, because quoting is not free.
+  if (S.replies.length) {
+    var rr = el("div", { class: "frow replyrow", id: "f-replies" });
+    S.replies.forEach(function (ref, idx) {
+      var q = CS.replyQuote(ref);
+      var chip = el("span", { class: "replychip" + (q.archived ? " --arch" : ""),
+        title: q.who + " \u00b7 " + (q.archived ? "from the archive, not in the current window" : "in this window") + "\n\n" + q.text },
+        [el("b", { class: q.kind === "R" ? "tR" : "tP" }, ["\u21a9 " + q.label]),
+         el("span", { class: "rq" }, [q.text])]);
+      var x = el("button", { class: "rx", title: "Remove this reference" }, ["\u2715"]);
+      x.onclick = function () { S.replies.splice(idx, 1); render(); };
+      chip.appendChild(x);
+      rr.appendChild(chip);
+    });
+    var cost = CS.replyCost(S.replies);
+    var prev = el("button", { title: "See exactly what will be sent" }, ["preview"]);
+    prev.onclick = function () {
+      var b2 = $("#ctxbody"); b2.replaceChildren();
+      $("#ctxpop").querySelector(".pophd span").textContent = "\u21a9 What will be sent";
+      b2.appendChild(el("div", { class: "chip" }, [
+        "The quoted block is prepended to your prompt. A bare \u201cR#219\u201d would not be enough: absolute "
+        + "turn numbers are OUR addressing scheme, and after a wrap the referenced turn may not be in the "
+        + "window at all \u2014 so the reference carries the turn's own words with it."]));
+      var pre = el("pre", { style: "white-space:pre-wrap;margin:0;padding:9px;border-radius:8px;background:var(--field);border:1px solid var(--line);font:11.5px/1.6 ui-monospace,Consolas,monospace" },
+        [CS.buildReplyPreamble(S.replies) + ($("#typebox") && $("#typebox").value ? $("#typebox").value : "(your prompt goes here)")]);
+      b2.appendChild(pre);
+      $("#ctxpop").classList.add("--open");
+    };
+    rr.appendChild(prev);
+    rr.appendChild(el("span", { class: "chip", title: "Quoting costs context \u2014 this is what these references will add to the prompt" },
+      ["\u2248 " + fmt(cost.approxTokens) + " tok"]));
+    ftr.appendChild(rr);
+  }
 
   // CONTEXT ACTIONS — moved down from the stats bar. Actions live in the footer with the other
   // controls; the upper bar keeps only the numbers.
@@ -967,9 +1012,19 @@ function mkMsgActs(kind, n) {
   var bm = el("button", { class: on ? "--on" : "", title: on ? "Bookmarked \u2014 click to remove" : "Bookmark this " + (kind === "R" ? "answer" : "prompt") },
     [on ? "\u2605" : "\u2606"]);
   bm.onclick = function (e) { e.stopPropagation(); if (on) delete S.bm[key]; else S.bm[key] = true; render(); };
+  // REPLY — quote this turn and answer it, the way a chat reply works. It sits with the other per-turn
+  // actions because it is an action ON that turn, not a compose-box feature.
+  var rp = el("button", { title: "Reply to " + kind + "#" + n + " \u2014 quotes it into your next prompt" }, ["\u21a9"]);
+  rp.onclick = function (e) {
+    e.stopPropagation();
+    if (S.replies.some(function (x) { return x.kind === kind && x.number === n; })) return;   // no duplicates
+    S.replies.push({ kind: kind, number: n,
+      text: kind === "R" ? "An assistant answer. ".repeat(6) : "A user turn.", archived: false });
+    render();
+  };
   var sh = el("button", { title: "Copy a link to " + kind + "#" + n }, ["\u2934"]);
   sh.onclick = function (e) { e.stopPropagation(); sh.textContent = "\u2713"; setTimeout(function () { sh.textContent = "\u2934"; }, 900); };
-  return el("div", { class: "msgacts" }, [bm, sh]);
+  return el("div", { class: "msgacts" }, [bm, rp, sh]);
 }
 
 /* Line numbers for the prompt, in lockstep with the textarea's own scroll. Written lines bright,
@@ -1048,9 +1103,20 @@ function openRecall(mode, kind, arg, wrapped) {
     b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Fetched"]),
       el("span", { class: "v " + tag }, [kind + "#" + fmt(arg)])]));
     b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["From segment"]), el("span", { class: "v" }, ["#" + Math.max(1, S.wraps)])]));
-    b.appendChild(el("div", { class: "msg --a", style: "max-width:none;align-self:stretch" },
-      ["(the full original text of " + kind + "#" + fmt(arg) + ", returned verbatim from the archive \u2014 "
-       + "including any images it carried, which is why a recall hit carries its workspace id)"]));
+    var recalledText = "(the full original text of " + kind + "#" + fmt(arg) + ", returned verbatim from the archive "
+      + "\u2014 including any images it carried, which is why a recall hit carries its workspace id)";
+    b.appendChild(el("div", { class: "msg --a", style: "max-width:none;align-self:stretch" }, [recalledText]));
+    // Replying to what you just recalled is the usual reason for recalling it, so the action belongs
+    // here rather than making you find the turn again.
+    var rbtn = el("button", {}, ["\u21a9 Reply to " + kind + "#" + fmt(arg)]);
+    rbtn.onclick = function () {
+      if (!S.replies.some(function (x) { return x.kind === kind && x.number === arg; })) {
+        S.replies.push({ kind: kind, number: arg, text: recalledText, archived: true, segment: Math.max(1, S.wraps) });
+      }
+      $("#ctxpop").classList.remove("--open");
+      render();
+    };
+    b.appendChild(el("div", { class: "row" }, [el("span", { class: "spacer" }), rbtn]));
   } else {
     b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Query"]), el("span", { class: "v" }, ["\u201c" + arg + "\u201d"])]));
     [3, 2, 1].forEach(function (seg) {

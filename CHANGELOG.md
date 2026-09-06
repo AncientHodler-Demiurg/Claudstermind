@@ -4,6 +4,21 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.126] - 2026-09-06
+### Added — reply to a turn (WhatsApp-style quoting)
+- **Every prompt and answer can now be replied to.** A `↩` button sits with the turn's other actions;
+  the pending reference appears **above the type box** with its quoted text and **what it will cost in
+  tokens**, and can be removed. Multiple references are allowed.
+- **`buildReplyPreamble()` / `replyQuote()` / `replyCost()`** in the shared module, with 6 tests. The
+  design point: **a reference cannot be a bare turn number.** `R#219` is *our* addressing scheme, not
+  something the model can resolve on its own, and after a wrap the referenced turn may not be in the
+  window at all. So a reference carries the turn's **own words** — capped at 280 chars (~70 tok) and
+  truncated on a word boundary — plus who said it.
+- **An archived reference says so**: *"from the archive, segment #2, not in the current window"*, because
+  the model must not assume it can see the turn being referenced.
+- **Reply directly from a recall result** — that is usually why you recalled it — and **preview exactly
+  what will be sent** before sending, rendered from the shared builder rather than a second copy.
+
 ## [1.5.125] - 2026-09-06
 ### Changed (lab)
 - **The auto-wrap fill METER moved to the footer too**, next to the tick it describes. The controls had

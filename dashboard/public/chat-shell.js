@@ -364,6 +364,63 @@
     };
   }
 
+  /**
+   * REPLY REFERENCES — "quote this turn and answer it", the way a chat reply works.
+   *
+   * The model does not reliably know what "R#219" means on its own: absolute turn numbers are OUR
+   * addressing scheme, and after a wrap the referenced turn may not even be in the window any more. So
+   * a reference cannot be passed as a bare number — it has to carry enough of the turn's own words to
+   * be unambiguous, while staying small enough that quoting is cheap.
+   *
+   * Each quote is capped (default 280 chars ≈ 70 tokens) and truncated on a word boundary. An archived
+   * reference is marked as such, because "this is from before the wrap" changes how the model should
+   * treat it — it is not in the visible conversation.
+   */
+  function replyQuote(ref, maxChars) {
+    var r = ref && typeof ref === "object" ? ref : {};
+    var cap = Math.max(40, num(maxChars, 280));
+    var kind = r.kind === "P" ? "P" : "R";
+    var n = Math.max(1, Math.round(num(r.number, 1)));
+    var text = typeof r.text === "string" ? r.text.replace(/\s+/g, " ").trim() : "";
+    var truncated = text.length > cap;
+    if (truncated) {
+      var cut = text.slice(0, cap);
+      var sp = cut.lastIndexOf(" ");
+      text = (sp > cap * 0.6 ? cut.slice(0, sp) : cut) + "\u2026";
+    }
+    return {
+      kind: kind, number: n, label: kind + "#" + n,
+      who: kind === "R" ? "the agent" : "you",
+      text: text, truncated: truncated,
+      archived: !!r.archived, segment: r.segment == null ? null : r.segment,
+      approxTokens: Math.ceil(text.length / 4)
+    };
+  }
+
+  /** The block prepended to a prompt that carries reply references. "" when there are none. */
+  function buildReplyPreamble(refs, opts) {
+    var list = (Array.isArray(refs) ? refs : []).map(function (r) { return replyQuote(r, (opts || {}).maxChars); });
+    if (!list.length) return "";
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+      var q = list[i];
+      var head = "In reply to " + q.label + " (" + q.who + ")"
+        + (q.archived ? " \u2014 from the archive" + (q.segment ? ", segment #" + q.segment : "") + ", not in the current window" : "");
+      out.push("> **" + head + "**");
+      out.push(q.text ? "> " + q.text.split("\n").join("\n> ") : "> _(no text)_");
+      out.push("");
+    }
+    return out.join("\n");
+  }
+
+  /** Total cost of the pending references, so the UI can show it before you send. */
+  function replyCost(refs, opts) {
+    var list = (Array.isArray(refs) ? refs : []).map(function (r) { return replyQuote(r, (opts || {}).maxChars); });
+    var t = 0;
+    for (var i = 0; i < list.length; i++) t += list[i].approxTokens + 12;   // + the header line
+    return { count: list.length, approxTokens: t };
+  }
+
   function wrapReadiness(o) {
     o = o || {};
     var ceiling = Math.max(1, num(o.ceiling, 1));
@@ -388,6 +445,7 @@
     SWALLOW_PCT: SWALLOW_PCT, SWALLOW_PCT_MAX: SWALLOW_PCT_MAX, FLOOR_ROWS: FLOOR_ROWS,
     COLLAPSE_STEPS: COLLAPSE_STEPS, HYSTERESIS: HYSTERESIS,
     coreAtRest: coreAtRest, swallowCap: swallowCap, computeShell: computeShell, slotsFor: slotsFor, wrapReadiness: wrapReadiness, rollTriggers: rollTriggers, wrapSpan: wrapSpan, wrapSeedEstimate: wrapSeedEstimate, seedPlan: seedPlan,
+    replyQuote: replyQuote, buildReplyPreamble: buildReplyPreamble, replyCost: replyCost,
     ROLL_MAX_TURNS: ROLL_MAX_TURNS, ROLL_MAX_BYTES: ROLL_MAX_BYTES
   };
   if (typeof module === "object" && module.exports) module.exports = API;
