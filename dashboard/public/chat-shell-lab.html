@@ -180,6 +180,12 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
 .msg.--discarded .qtag{color:#fca5a5}
 /* attached-image thumbnails INSIDE the bubble — a queued message carries its images with it */
 .msgimgs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+/* Referenced files travel with a queued message too — shown as chips so a long path cannot blow the
+   bubble's width open. */
+.msgfiles{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px}
+.mfile{font:600 10px/1.6 ui-monospace,Consolas,monospace;padding:1px 7px;border-radius:7px;
+  background:#0006;border:1px solid currentColor;opacity:.8;max-width:220px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
 .msgimg{width:132px;height:84px;border-radius:6px;border:1px solid rgba(255,255,255,.25);
   background:repeating-linear-gradient(45deg,#223,#223 8px,#2b2b3d 8px,#2b2b3d 16px);
   display:flex;align-items:center;justify-content:center;font-size:9.5px;color:#aab}
@@ -296,6 +302,8 @@ button:disabled{opacity:.4;cursor:not-allowed}
 .btn-send{background:var(--acc);color:#1a0b2e;font-weight:700;border-color:var(--acc)}
 .btn-stop{background:#3a1720;color:#ffb3c0;border-color:#7a2b3c}
 .sel{background:#0f1730;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:3px 6px;font:inherit;font-size:11.5px}
+.sel.--danger{color:#ffb4b4;border-color:#ef4444;background:#2a1114;font-weight:700}
+.sel.--plan{color:#a5b4fc;border-color:#6366f1;background:#171a35}
 /* history popup */
 #hist{position:absolute;inset:0;background:#000b;display:none;align-items:center;justify-content:center;z-index:50;border-radius:12px}
 #hist.--open{display:flex}
@@ -395,7 +403,7 @@ var S = {
   ctxTok: 93016, ctxMax: 1000000,
   suggest: "Continue with the next item on the list.",
   autoWrap: true, wraps: 0, live: true, bm: {}, maxTurns: 1000, jumpText: "", states: true,
-  effort: "high", ultracode: false, width: 0,
+  effort: "high", ultracode: false, width: 0, perm: "bypassPermissions",
   // Compaction/wrap MARKERS must be recorded to be renderable at all — a line can only be drawn where
   // an event says it happened. Each entry pins itself to the round it landed after.
   //   { kind:"compact"|"wrap", afterRound, preTokens, postTokens, trigger }
@@ -508,7 +516,7 @@ function build() {
       // Spell out rounds beside turns: the engine counts ROWS, but you think in exchanges.
       var label = c.id === "turns"
         ? fmt(c.now) + "/" + fmt(c.max) + " turns \u00b7 " + fmt(Math.round(c.now / 2)) + " rounds"
-        : fmtChars(c.now) + "/" + fmtChars(c.max) + "B";
+        : fmtBytes(c.now) + " / " + fmtBytes(c.max);
       bar.appendChild(el("span", {
         class: "chip" + (near ? " --acc" : " --far"),
         title: near ? "NEAREST ceiling \u2014 this is what will fire the wrap (" + c.pct + "%)"
@@ -573,9 +581,17 @@ function build() {
     var mkQueued = function (deep, nQueued, withImgs) {
       var kids = [el("b", { class: "who" }, ["you"])];
       if (withImgs && S.imgs) {
+        // A queued message carries its attachments with it — both pasted IMAGES (still local blobs at
+        // this point) and referenced FILES. They have to be visible on the bubble, or a queued message
+        // is indistinguishable from one whose attachments were dropped.
         var strip = el("div", { class: "msgimgs" });
         for (var q = 0; q < S.imgs; q++) strip.appendChild(el("div", { class: "msgimg" }, ["shot-" + (q + 1) + ".png"]));
-        kids.push(strip);                                   // a queued message carries its images with it
+        kids.push(strip);
+        kids.push(el("div", { class: "msgfiles" }, [
+          el("span", { class: "mfile" }, ["\uD83D\uDCC4 lib/workspace.mjs"]),
+          el("span", { class: "mfile" }, ["\uD83D\uDCC4 docs/work/chat-shell/spec.md"]),
+          el("span", { class: "mfile" }, ["\uD83D\uDCC1 dashboard/public/"])
+        ]));
       }
       kids.push(deep ? "Background agents are still running \u2014 this waits behind them."
                      : "Send this once the reply lands.");
@@ -743,6 +759,16 @@ function build() {
   ucCb.onchange = function () { S.ultracode = ucCb.checked; if (S.ultracode) S.effort = "xhigh"; render(); };
   mb.appendChild(el("label", { class: "autolbl", title: "Session-scoped; requires an xhigh-capable model" }, [ucCb, "ultracode"]));
   mb.appendChild(el("label", { class: "autolbl" }, [el("input", { type: "checkbox" }), "fast"]));
+  // PERMISSION MODE was missing entirely — and it is the control most often changed, since Bypass is
+  // the working default here. Coloured when it is the dangerous one, so the state is visible at a
+  // glance rather than needing to be read.
+  var psel = el("select", { class: "sel" + (S.perm === "bypassPermissions" ? " --danger" : S.perm === "plan" ? " --plan" : ""),
+    title: "Permission mode for this conversation" });
+  [["default", "Default"], ["acceptEdits", "Accept edits"], ["plan", "Plan"], ["bypassPermissions", "Bypass"]]
+    .forEach(function (m) { psel.appendChild(el("option", { value: m[0] }, [m[1]])); });
+  psel.value = S.perm;
+  psel.onchange = function () { S.perm = psel.value; render(); };
+  mb.appendChild(psel);
   // THE CEILING, spelled out — "16%" alone never said 16% of what.
   var pct = Math.round(S.ctxTok / S.ctxMax * 100);
   mb.appendChild(el("span", { class: "chip --acc", id: "f-ctx", title: "Context window: " + S.ctxTok.toLocaleString() + " of " + S.ctxMax.toLocaleString() + " tokens used" },
@@ -906,6 +932,13 @@ function flashMsg(t, ok) {
   if (f) { f.textContent = t; f.style.display = "block"; setTimeout(function () { f.style.display = "none"; }, 3200); }
 }
 function fmtChars(n) { n = Number(n || 0); return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(n); }
+// BYTES are binary. The roll ceiling is 25 MiB (25 * 1024 * 1024), and dividing by 1e6 printed it as
+// "26.2MB" — a number that appears nowhere in the code and looks like a typo. Print MiB, as MiB.
+function fmtBytes(n) {
+  n = Number(n || 0);
+  return n >= 1048576 ? (n / 1048576).toFixed(n >= 10485760 ? 0 : 1) + " MiB"
+       : n >= 1024 ? Math.round(n / 1024) + " KiB" : n + " B";
+}
 /* Bookmark + share on EVERY answer. Bookmarks are what make a long conversation navigable, so they
    belong on the turn itself, not only in a toolbar somewhere else. */
 function mkMsgActs(kind, n) {

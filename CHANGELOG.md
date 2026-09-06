@@ -4,6 +4,33 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.123] - 2026-09-06
+### Changed — engine
+- **`ROLL_DEFAULTS.tailTurns` 40 → 200, `maxTurns` 400 → 1000**, on measured evidence.
+  ⚠️ **First, a correction:** the proposal that prompted this was **wrong**. It measured Claude Code's
+  own session JSONL and concluded we carry 93% re-derivable tool output. **We do not** — `s.transcript`
+  only ever receives user/assistant turns, and `buildSeedText` already renders tool rows as
+  `[tool: name]`. The seed has always been prose-only; that work was already done.
+  Measuring **our own** store (8,287 turns) gives **546 chars ≈ 137 tokens per carried turn**, so the
+  40-turn tail cost ≈5,500 tokens — not the 87,000 claimed. **The error was ~16x**, from applying a
+  per-turn figure taken from a transcript that includes tool output to one that does not.
+  - `tailTurns` 200 ≈ 27,300 tok — **5x the carried context for ~2.7% of a 1M window**.
+  - `maxTurns` 1000 because **a turn is one ROW**, so 400 was only ~200 exchanges and fired long before
+    the context window was anywhere near full.
+  - New test asserts the **prose-only property** directly (a 200 KB tool result must not reach the
+    seed) — that property is what makes a large tail affordable, so it is now guarded rather than
+    assumed. Every test that hardcoded 400/40 now derives from `ROLL_DEFAULTS`.
+### Fixed (lab)
+- **`25 MiB` was displayed as `26.2MB`** — a number that appears nowhere in the code and reads like a
+  typo. Byte ceilings now use a binary formatter and say **MiB**.
+### Added (lab)
+- **Queued/interrupted bubbles now show their attachments** — pasted images *and* referenced files, as
+  chips that ellipsise so a long path cannot blow the bubble open. Without them a queued message is
+  indistinguishable from one whose attachments were dropped.
+- **The permission-mode selector** (Default / Accept edits / Plan / **Bypass**) was missing entirely
+  from the model row, despite being the most-changed control. Bypass renders red and Plan indigo, so the
+  mode is visible at a glance rather than needing to be read.
+
 ## [1.5.122] - 2026-09-06
 ### Fixed
 - **A wrap could be triggered by a misclick.** The preview popup alone was not a gate: a double-click on

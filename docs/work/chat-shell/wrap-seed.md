@@ -1,12 +1,38 @@
 # What a fresh window should be given after a wrap
 
-**Status:** measured finding + proposal. Not implemented in the engine.
+**Status:** ⚠️ **CORRECTED 2026-09-06.** The original version of this document was **wrong**, and the
+correction is more useful than the proposal was. Engine change applied (see §6).
 **Question it answers:** *"can't we make a handoff and feed it in at the start of the new session?
 What's the best way to start after a wrap — least context consumed, most knowledge kept?"*
 
 ---
 
-## 1. The measurement that decides it
+## 0. The correction — read this first
+
+The first version measured **Claude Code's own session JSONL** (`~/.claude/projects/**.jsonl`) and
+concluded that 93% of what we carry is re-derivable tool output and file attachments, so we should strip
+it. **That conclusion did not apply to us.** Those files are the CLI's own record; they are not what our
+roll carries.
+
+**Our engine already carries prose only.** Two facts, both verified:
+- `s.transcript` only ever receives `{role:"user"|"assistant", text, at, images?}` — the two
+  `transcript.push` sites in `workspace.mjs` are the only ones, and neither pushes a tool row.
+- `buildSeedText` renders any non-turn row as `[tool: name]` and every image as `[image]`.
+
+So the "strip the tool output" proposal was **already implemented**, years of commits ago. Measuring our
+*own* store (`.claude/workspace/…`, 8,287 turns) gives the real numbers:
+
+| | measured |
+|---|---:|
+| prose per carried turn | **546 chars ≈ 137 tokens** |
+| today's 40-turn seed | **≈ 5,500 tokens** — not the 87,000 first claimed |
+| 200-turn seed | ≈ 27,300 tokens |
+
+**The error was ~16x**, caused by applying a per-turn figure from a transcript that includes tool output
+to one that does not. The lesson is narrow and worth keeping: *measure the artefact you are actually
+going to change, not a similar-looking one.*
+
+## 1. The original (mis-)measurement, kept for the record
 
 Measured on a real Claude Code session: **8,039 turns, 164 MB of JSONL**, ~70 MB of material the model
 actually sees.
@@ -97,7 +123,25 @@ a win worth a change.)
 - **Stripping tool output from the spine is the single highest-value change** and is independent of
   everything else here. It could ship on its own.
 
-## 5. Not done
-No engine change has been made. `lib/conversationRoll.mjs` still carries 40 turns verbatim. This is a
+## 6. What was actually changed (2026-09-06)
+
+Because a carried turn costs ~137 tokens rather than ~2,200, the tail was far more conservative than
+anyone had realised — it was set before anyone measured it.
+
+| `ROLL_DEFAULTS` | was | now | why |
+|---|---:|---:|---|
+| `tailTurns` | 40 | **200** | ≈5,500 → ≈27,300 tok. **5x the carried context for ~2.7% of a 1M window.** |
+| `maxTurns` | 400 | **1000** | a turn is one ROW, so 400 was only ~200 exchanges — it fired long before the window was full |
+| `maxBytes` | 25 MiB | 25 MiB | unchanged: ~6x further away than a 1M window; a runaway guard only |
+
+A new test asserts the **prose-only property** directly (a 200 KB tool result must not reach the seed),
+since that is the property that makes a large `tailTurns` affordable. Every test that hardcoded 400/40
+now derives from `ROLL_DEFAULTS`, so the next change cannot leave stale literals asserting old behaviour.
+
+**Still not done:** the decisions ledger. That remains the one genuinely new idea here — compaction
+re-summarises its own summary each pass so detail decays compounding, whereas an appended ledger is
+written once per decision and never re-compressed.
+
+## 5. Superseded `lib/conversationRoll.mjs` still carries 40 turns verbatim. This is a
 proposal with the numbers attached; `seedPlan()` in `dashboard/public/chat-shell.js` models it and
 `lib/chatShell.test.mjs` locks the ratios.
