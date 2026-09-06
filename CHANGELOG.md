@@ -4,6 +4,24 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.112] - 2026-09-06
+### Added
+- **Live / Held now sits centred ON the Core/Footer seam**, straddling the border rather than living in
+  a header corner. It reports whether the transcript is following the newest turn, so it belongs on the
+  edge of the region it describes — at the point the eye already returns to between reading and typing.
+  Clicking it toggles, and going back to Live scrolls to the newest turn. **Held** pulses; **Live** is
+  steady. It hides when Core has vanished at the 100% toggle, since there is then no transcript to be
+  live against.
+  - **Anchored to the FOOTER, not to `.rg-core`** — deliberately. `.rg-core` is the scroll container, so
+    an absolutely-positioned child of it would scroll away with the very content it describes. The
+    footer is `position: relative` and does not scroll, and its top border *is* Core's bottom border.
+### Fixed
+- **The Live/Held marker had never actually rendered.** It was claimed as added in an earlier round;
+  `S.live` and its rail toggle existed while **nothing drew it** — the fourth silently-failed patch in
+  as many rounds. Now built fresh and covered by a test asserting both that it exists and that it hangs
+  off the footer rather than the scrolling region. Mutation-checked: deleting the append turns the test
+  red with "the Live/Held marker is missing entirely".
+
 ## [1.5.111] - 2026-09-06
 ### Fixed
 - **The lab's whole footer disappeared.** `S.worktrees` was read by the new worktree picker but never
