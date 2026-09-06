@@ -4,6 +4,39 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.117] - 2026-09-06
+### Fixed
+- **The context readout still said `1000k`.** My earlier "fix" only ever reached the **tooltip**, and the
+  test I wrote matched that tooltip string — so it passed while the visible label was untouched. A test
+  that asserts on the wrong string is worse than no test: it converts an open bug into a closed one.
+  The label now reads `93,016 / 1,000,000 tok · 9%`, and the guard asserts on the rendered children.
+- **The two workspace themes never switched.** The Pact handler set `data-theme="pact"` and then reset it
+  to `"core"` on the same line — a duplicate left by an earlier double-patch — so Pact always rendered
+  in Core's palette. Both palettes existed and only one was ever reachable.
+- **The state bubbles were a dark box with coloured text, not coloured bubbles.** Production tints at
+  16%, which on the darker Core surface reads as no tint at all. Raised to 34% with a 2px state border
+  and legible body text, so the state is *recognised* rather than read. Recorded as a deliberate
+  proposal for production rather than allowed to look like drift; the discarded red is also brightened
+  from near-black `#3a0d0d`/`#7f1d1d` to `#b91c1c`/`#ef4444`, and the divergence is listed explicitly in
+  the drift test.
+- **Effort had a "Default" level that does not exist.** The SDK's `ModelInfo.supportedEffortLevels` is
+  exactly `low | medium | high | xhigh | max`. **Ultracode is not a level either** — the SDK declares it
+  as its own boolean ("xhigh effort plus standing dynamic-workflow orchestration; requires workflows
+  enabled and an xhigh-capable model"), so it is now a separate toggle that forces xhigh. Both are
+  asserted against `sdk.d.ts` itself, so a future SDK change turns the test red.
+- **The line-number column now widens with the digit count** (one glyph costs one glyph) and the numbers
+  no longer hug the divider.
+### Added
+- **Prompts are bookmarkable and shareable, not only answers** — backwards for the common case, since
+  you more often want the *question* you asked than the reply. Bookmarks are keyed by kind.
+- **The bookmark list has two tabs, Answers and Prompts**, each with counts, per-row jump and remove, and
+  its own empty state. Answers and prompts are looked for in different moods; one mixed list makes you
+  filter by eye.
+- **Press-and-hold dictation.** The Agent SDK has **no audio API whatsoever** (grepped `sdk.d.ts`), so
+  this cannot come from the engine — it is the browser's Web Speech API. The button pulses red while
+  live so it can never record silently, and where the browser has no such API it is **disabled and says
+  why** rather than sitting there dead.
+
 ## [1.5.116] - 2026-09-06
 ### Fixed
 - **The type box grew but never shrank back.** The line-number gutter was a flex sibling under

@@ -132,10 +132,18 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
      queued deep PINK   #f472b6 — waiting behind BACKGROUND work, which can run far longer
      interrupted BLUE   #172554 — sent, never answered; offers Resume / Discard
      discarded   RED    #3a0d0d — explicitly killed, kept visible so it is never silently lost */
-.msg.--queued{background:color-mix(in srgb,#f59e0b 16%,var(--chip));border:1px solid #f59e0b;color:#f59e0b;white-space:pre-wrap}
-.msg.--deep{background:color-mix(in srgb,#f472b6 16%,var(--chip));border-color:#f472b6;color:#f472b6}
-.msg.--dead{background:#172554;box-shadow:inset 0 0 0 1px #3b5bbf;color:#cddafb;border-color:#3b5bbf}
-.msg.--discarded{background:#3a0d0d;color:#fca5a5;box-shadow:inset 0 0 0 1px #7f1d1d;border-color:#7f1d1d}
+/* Production tints at 16%, which on this darker Core surface reads as a dark box with coloured text
+   rather than an orange message. The tint is raised so the STATE is carried by the bubble itself — the
+   point of a coloured state is to be recognisable without reading the label. Border widened to 2px and
+   the body text kept legible rather than dyed the same hue as the tag. */
+.msg.--queued{background:color-mix(in srgb,#f59e0b 34%,var(--chip));border:2px solid #f59e0b;color:#ffe6bd;white-space:pre-wrap}
+.msg.--deep{background:color-mix(in srgb,#f472b6 34%,var(--chip));border:2px solid #f472b6;color:#ffd9ec}
+.msg.--dead{background:color-mix(in srgb,#3b5bbf 34%,var(--chip));border:2px solid #3b5bbf;color:#dbe6ff}
+.msg.--discarded{background:color-mix(in srgb,#b91c1c 34%,var(--chip));border:2px solid #ef4444;color:#ffdcdc}
+.msg.--queued b.who{color:#f59e0b}
+.msg.--deep b.who{color:#f472b6}
+.msg.--dead b.who{color:#93b0f0}
+.msg.--discarded b.who{color:#fca5a5}
 .msg.--risk{box-shadow:0 0 0 2px #f87171}
 .msg b.who{display:block;font-size:11px;margin-bottom:3px}
 /* the queued/interrupted status line, at the BOTTOM of the bubble as production renders it */
@@ -164,6 +172,10 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
   border:1px solid var(--line);border-radius:8px;box-shadow:0 1px 3px #0006;opacity:.62;transition:opacity .12s}
 .msg:hover .msgacts button,.msgacts button:focus{opacity:1}
 .msgacts button.--on{opacity:1}
+/* Dictation button. --rec pulses red while the mic is live, so it can never be recording silently. */
+#f-mic.--rec{color:#fff;background:#b91c1c;border-color:#ef4444;animation:micpulse .9s ease-in-out infinite}
+@keyframes micpulse{0%,100%{box-shadow:0 0 0 0 #ef444488}50%{box-shadow:0 0 0 5px #ef444400}}
+#f-mic:disabled{opacity:.35}
 .msgacts button.--on{color:var(--warn);border-color:var(--warn)}
 .spacer{flex:1}
 .roll{display:flex;align-items:center;gap:8px;margin:0 9px 6px;padding:5px 9px;border-radius:7px;background:var(--chip);border:1px solid var(--line);font-size:11px;flex-wrap:wrap}
@@ -225,16 +237,15 @@ button:disabled{opacity:.4;cursor:not-allowed}
    gutter out of the sizing path breaks that circular dependency: the textarea's height is now driven
    only by its own content. */
 .tawrap{position:relative;width:100%}
-.gutter{position:absolute;left:1px;top:1px;bottom:1px;width:36px;padding:7px 6px 7px 0;text-align:right;
+.gutter{position:absolute;left:1px;top:1px;bottom:1px;padding:7px 8px 7px 4px;text-align:right;
   overflow:hidden;font:11px/18px ui-monospace,Consolas,monospace;user-select:none;pointer-events:none;
   background:color-mix(in srgb,var(--field) 70%,#000);border-right:1px solid var(--field-line);
-  border-radius:8px 0 0 8px;z-index:1}
-/* An unwritten line slot is dim; a line you have actually typed is bright. The dim ones show how much
-   room is left before the box starts scrolling. */
+  border-radius:8px 0 0 8px;z-index:1;transition:width .08s}
 .gutter b{display:block;font-weight:400;color:#39435f}
 .gutter b.--on{color:#8fa0c8;font-weight:600}
 /* Both the text and the ghost clear the gutter, or they render underneath it. */
-#typebox,.tawrap #ghost{padding-left:46px}
+/* left padding is set from the measured gutter width in paintGutter(); this is only the initial value */
+#typebox,.tawrap #ghost{padding-left:32px}
 #ghost{position:absolute;inset:0;padding:7px 9px;font:inherit;font-size:12.5px;line-height:18px;color:#8290b5;pointer-events:none;white-space:pre-wrap;overflow:hidden}
 #ghost kbd{background:#1a2440;border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:10.5px;color:var(--dim)}
 /* Stop/Send + auto-continue live in ONE bordered group, per feedback */
@@ -334,6 +345,7 @@ var S = {
   ctxTok: 93016, ctxMax: 1000000,
   suggest: "Continue with the next item on the list.",
   autoWrap: true, wraps: 0, live: true, bm: {}, maxTurns: 1000, jumpText: "", states: true,
+  effort: "high", ultracode: false,
   worktree: "main", worktrees: ["main", "feat-pact-changed-review", "exocortex"],
   conn: "ok", loadPct: 0,
   // ONE source of truth. `rounds` is the conversation's size; prompts, responses and turns are
@@ -470,12 +482,13 @@ function build() {
   /* ================= CORE — the only flexing region ============================================ */
   var core = el("div", { class: "rg-core" });
   for (var i = firstRendered() - 1; i < S.rounds; i++) {
-    var u = el("div", { class: "msg --u", "data-turn": "P" + (i + 1) }, [el("span", { class: "num num-p" }, ["P#" + (i + 1)]), "A user turn."]);
+    var u = el("div", { class: "msg --u", "data-turn": "P" + (i + 1) },
+      [el("span", { class: "num num-p" }, ["P#" + (i + 1)]), mkMsgActs("P", i + 1), "A user turn."]);
     core.appendChild(u);
     var a = el("div", { class: "msg --a", "data-turn": "R" + (i + 1) });
     a.appendChild(el("span", { class: "num num-r" }, ["R#" + (i + 1)]));
     a.appendChild(el("div", {}, ["An assistant answer. ".repeat(3 + (i % 4) * 4)]));
-    a.appendChild(mkMsgActs(i + 1));
+    a.appendChild(mkMsgActs("R", i + 1));
     core.appendChild(a);
   }
   // The four prompt states, built the way production builds them (app.js ~11493): a bold "you" label,
@@ -563,6 +576,38 @@ function build() {
   // ACTION ROW: attach \u00b7 meta \u00b7 history \u2026 [ auto-continue + Stop + Send ] in ONE rectangle.
   var act = el("div", { class: "frow", id: "f-act" });
   act.appendChild(el("button", { id: "f-attach", title: "Attach" }, ["\uD83D\uDCCE"]));
+  // PRESS AND HOLD TO DICTATE. The Agent SDK has no audio/transcription API at all (grepped: no
+  // audio/microphone/voice/transcribe symbols anywhere in sdk.d.ts), so this cannot come from the
+  // engine. It is a BROWSER capability — the Web Speech API — and the button reports honestly when the
+  // browser does not provide it, rather than sitting there dead.
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var mic = el("button", { id: "f-mic", class: SR ? "" : "--gone-cap",
+    title: SR ? "Press and hold to dictate \u2014 release to insert" : "Dictation unavailable: this browser exposes no Web Speech API" },
+    ["\uD83C\uDFA4"]);
+  mic.disabled = !SR;
+  if (SR) {
+    var rec = null;
+    var start = function (e) {
+      e.preventDefault();
+      if (rec) return;
+      rec = new SR(); rec.continuous = true; rec.interimResults = true; rec.lang = "en-GB";
+      var base = ($("#typebox").value || "");
+      rec.onresult = function (ev) {
+        var txt = "";
+        for (var i = ev.resultIndex; i < ev.results.length; i++) txt += ev.results[i][0].transcript;
+        var ta2 = $("#typebox");
+        ta2.value = (base ? base.replace(/\s*$/, "") + " " : "") + txt;
+        S._text = ta2.value; S.prevLevel = 0; layout();
+      };
+      rec.onerror = function (ev) { flashMsg("Dictation failed: " + (ev && ev.error ? ev.error : "unknown"), false); };
+      try { rec.start(); mic.classList.add("--rec"); } catch (err) { rec = null; }
+    };
+    var stop = function () { if (!rec) return; try { rec.stop(); } catch (err) {} rec = null; mic.classList.remove("--rec"); };
+    mic.addEventListener("mousedown", start);
+    mic.addEventListener("touchstart", start, { passive: false });
+    ["mouseup", "mouseleave", "touchend", "touchcancel"].forEach(function (ev) { mic.addEventListener(ev, stop); });
+  }
+  act.appendChild(mic);
   act.appendChild(el("span", { class: "chip", id: "f-lines", title: "How long this prompt has become" }, ["1 line"]));
   var meta = el("span", { class: "row", id: "f-meta", style: "gap:6px" });
   if (slots.footer.repoPicker) {
@@ -591,7 +636,7 @@ function build() {
   act.appendChild(el("button", { id: "f-hist", title: "Conversations in THIS repository" }, ["\uD83D\uDD50"]));
   // Empty star when there are none; FILLED star + the count when there are. "Are there any, and how
   // many" is the question you ask before clicking, so the answer belongs on the button itself.
-  var nbm = Object.keys(S.bm).filter(function (k) { return S.bm[k]; }).length;
+  var nbm = Object.keys(S.bm).filter(function (k) { return S.bm[k]; }).length;   // prompts AND answers
   var bmBtn = el("button", { id: "f-bm", class: nbm ? "--on" : "",
     title: nbm ? nbm + " bookmarked answer" + (nbm === 1 ? "" : "s") + " \u2014 click to list"
                : "No bookmarks yet \u2014 star an answer to add one" },
@@ -626,14 +671,29 @@ function build() {
   msel.title = "Claude subscription models only. OmniRoute is intentionally not selectable here until it is verified.";
   msel.value = S.model; msel.onchange = function () { S.model = msel.value; render(); };
   mb.appendChild(msel);
-  var esel = el("select", { class: "sel" });
-  ["Default effort", "low", "medium", "high", "xhigh", "max"].forEach(function (m) { esel.appendChild(el("option", {}, [m])); });
+  // The SDK's ModelInfo.supportedEffortLevels is exactly ('low'|'medium'|'high'|'xhigh'|'max').
+  // There is NO "default" level — that was an invented entry that mapped to nothing.
+  var esel = el("select", { class: "sel", title: "Reasoning effort (SDK: low | medium | high | xhigh | max)" });
+  ["low", "medium", "high", "xhigh", "max"].forEach(function (m) {
+    esel.appendChild(el("option", { value: m }, ["effort: " + m]));
+  });
+  esel.value = S.effort;
+  esel.onchange = function () { S.effort = esel.value; render(); };
   mb.appendChild(esel);
-  mb.appendChild(el("label", {}, [el("input", { type: "checkbox" }), " Fast"]));
+  // ULTRACODE is NOT an effort level — the SDK declares it as its own boolean: "xhigh effort plus
+  // standing dynamic-workflow orchestration. Requires workflows enabled and an xhigh-capable model."
+  // Listing it among the levels would have misrepresented what it does and what it needs.
+  var ucCb = el("input", { type: "checkbox", title: "Ultracode: xhigh effort + standing dynamic-workflow orchestration. Forces effort to xhigh." });
+  ucCb.checked = S.ultracode;
+  ucCb.onchange = function () { S.ultracode = ucCb.checked; if (S.ultracode) S.effort = "xhigh"; render(); };
+  mb.appendChild(el("label", { class: "autolbl", title: "Session-scoped; requires an xhigh-capable model" }, [ucCb, "ultracode"]));
+  mb.appendChild(el("label", { class: "autolbl" }, [el("input", { type: "checkbox" }), "fast"]));
   // THE CEILING, spelled out — "16%" alone never said 16% of what.
   var pct = Math.round(S.ctxTok / S.ctxMax * 100);
   mb.appendChild(el("span", { class: "chip --acc", id: "f-ctx", title: "Context window: " + S.ctxTok.toLocaleString() + " of " + S.ctxMax.toLocaleString() + " tokens used" },
-    [S.ctxTok.toLocaleString() + " / " + (S.ctxMax / 1000) + "k tok \u00b7 " + pct + "%"]));
+    // Both figures in full with thousand separators. The previous patch only reached the TOOLTIP, and
+    // the test I wrote matched that tooltip string — so it passed while the visible label still read "1000k".
+    [S.ctxTok.toLocaleString() + " / " + S.ctxMax.toLocaleString() + " tok \u00b7 " + pct + "%"]));
   ftr.appendChild(mb);
   shell.appendChild(ftr);
 
@@ -790,12 +850,58 @@ function flashMsg(t, ok) {
 function fmtChars(n) { n = Number(n || 0); return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(n); }
 /* Bookmark + share on EVERY answer. Bookmarks are what make a long conversation navigable, so they
    belong on the turn itself, not only in a toolbar somewhere else. */
-function mkMsgActs(n) {
-  var bm = el("button", { class: S.bm[n] ? "--on" : "", title: S.bm[n] ? "Bookmarked — click to remove" : "Bookmark this answer" }, [S.bm[n] ? "\u2605" : "\u2606"]);
-  bm.onclick = function (e) { e.stopPropagation(); S.bm[n] = !S.bm[n]; render(); };
-  var sh = el("button", { title: "Copy a link to R#" + n }, ["\u2934"]);
+function mkMsgActs(kind, n) {
+  // PROMPTS are bookmarkable too. Only answers were, which is backwards for the common case: you far
+  // more often want to find the QUESTION you asked than the reply it produced.
+  var key = kind + n;
+  var on = !!S.bm[key];
+  var bm = el("button", { class: on ? "--on" : "", title: on ? "Bookmarked \u2014 click to remove" : "Bookmark this " + (kind === "R" ? "answer" : "prompt") },
+    [on ? "\u2605" : "\u2606"]);
+  bm.onclick = function (e) { e.stopPropagation(); if (on) delete S.bm[key]; else S.bm[key] = true; render(); };
+  var sh = el("button", { title: "Copy a link to " + kind + "#" + n }, ["\u2934"]);
   sh.onclick = function (e) { e.stopPropagation(); sh.textContent = "\u2713"; setTimeout(function () { sh.textContent = "\u2934"; }, 900); };
   return el("div", { class: "msgacts" }, [bm, sh]);
+}
+
+/* Line numbers for the prompt, in lockstep with the textarea's own scroll. Written lines bright,
+   remaining slots dim, and the column's WIDTH follows the widest number actually shown. */
+function paintGutter(ta) {
+  var g = $("#f-gutter"); if (!g || !ta) return;
+  var written = (ta.value || "").split("\n").length;
+  if (!ta.value) written = 0;                                 // an empty box has typed NO lines
+  var boxH = parseFloat(ta.style.height) || ta.clientHeight || 34;
+  var slots = Math.max(1, Math.floor((boxH - 14) / 18));
+  var kids = [];
+  for (var i = 1; i <= Math.max(written, slots); i++) {
+    kids.push(el("b", { class: i <= written ? "--on" : "" }, [String(i)]));
+  }
+  g.replaceChildren.apply(g, kids);
+  // Width follows the widest number shown: one glyph costs one glyph. A fixed column wasted space on
+  // short prompts and would clip the numbers on long ones.
+  var digits = String(Math.max(written, slots)).length;
+  var w = 14 + digits * 7;                                   // padding + glyph advance at 11px monospace
+  g.style.width = w + "px";
+  ta.style.paddingLeft = (w + 10) + "px";                    // …and the text keeps clear of the divider
+  var gh = $("#ghost"); if (gh) gh.style.paddingLeft = (w + 10) + "px";
+  // Height is NOT taken from the textarea — that was half of the circular dependency that stopped the
+  // box shrinking. The column stretches via top/bottom instead.
+  if (!ta._gutBound) {
+    ta._gutBound = true;
+    ta.addEventListener("scroll", function () { g.scrollTop = ta.scrollTop; });
+  }
+  var tot = $("#f-lines");
+  if (tot) tot.textContent = written + (written === 1 ? " line" : " lines");
+}
+
+/* Repaint ONLY the bulb, never the whole shell. A full rebuild on every scroll event would reset
+   scrollTop, snap you to the bottom and make Held unreachable — the indicator would destroy the state
+   it is trying to report. */
+function paintBulb() {
+  var b = $("#f-bulb"); if (!b) return;
+  b.className = "seambulb " + (S.live ? "--live" : "--held");
+  b.replaceChildren(el("i"), document.createTextNode(S.live ? "Live" : "Held"));
+  b.title = S.live ? "Live \u2014 following the newest turn."
+                   : "Held \u2014 scrolled up; new turns are arriving below. Click to return to live.";
 }
 
 /* Context breakdown — what the ctx medallion opens. Percentages are summed from the parts so the
@@ -859,65 +965,43 @@ function openWrap() {
   $("#wrappop").classList.add("--open");
 }
 
+var BM_TAB = "R";
 function openBm() {
   var b = $("#wrapbody"); b.replaceChildren();
   var keys = Object.keys(S.bm).filter(function (k) { return S.bm[k]; });
-  $("#wrappop").querySelector(".pophd span").textContent = "\u2605 Bookmarked answers (" + keys.length + ")";
-  if (!keys.length) b.appendChild(el("div", { class: "chip" }, ["No bookmarks left \u2014 star an answer to add one."]));
-  Object.keys(S.bm).filter(function (k) { return S.bm[k]; }).sort(function (a, c) { return a - c; }).forEach(function (n) {
-    var row = el("div", { class: "kv" }, [el("span", { class: "k tR" }, ["R#" + n]), el("span", { class: "v" }, ["An assistant answer\u2026"])]);
+  var ofKind = function (k) { return keys.filter(function (x) { return x[0] === k; }); };
+  var nR = ofKind("R").length, nP = ofKind("P").length;
+  $("#wrappop").querySelector(".pophd span").textContent = "\u2605 Bookmarks (" + (nR + nP) + ")";
+  // Two tabs, because answers and prompts are looked for in different moods: "what did the agent say"
+  // versus "what did I ask". A single mixed list forces you to filter by eye.
+  var tabs = el("div", { class: "histtabs" });
+  var mk = function (kind, label, n) {
+    var t = el("button", { class: BM_TAB === kind ? "on" : "" }, [label + " (" + n + ")"]);
+    t.onclick = function () { BM_TAB = kind; openBm(); };
+    return t;
+  };
+  tabs.appendChild(mk("R", "\u2605 Answers", nR));
+  tabs.appendChild(mk("P", "\u2605 Prompts", nP));
+  b.appendChild(tabs);
+  var list = ofKind(BM_TAB).map(function (k) { return +k.slice(1); }).sort(function (a2, c) { return a2 - c; });
+  if (!list.length) b.appendChild(el("div", { class: "chip" }, ["No " + (BM_TAB === "R" ? "answers" : "prompts") + " bookmarked yet \u2014 use the \u2606 on a turn."]));
+  list.forEach(function (n) {
+    var tag = BM_TAB === "R" ? "tR" : "tP";
+    var row = el("div", { class: "kv" }, [el("span", { class: "k " + tag }, [BM_TAB + "#" + n]),
+      el("span", { class: "v" }, [BM_TAB === "R" ? "An assistant answer\u2026" : "A prompt you sent\u2026"])]);
     var go = el("button", {}, ["jump"]);
-    go.onclick = function () { $("#wrappop").classList.remove("--open"); doJump("R#" + n); };
-    // Removal previously required finding the answer and un-starring it — which needs that answer to
-    // still be loaded. From the list it is one click, and the list stays open.
+    go.onclick = function () { $("#wrappop").classList.remove("--open"); doJump(BM_TAB + "#" + n); };
     var rm = el("button", { class: "kill", title: "Remove this bookmark" }, ["\u2715"]);
-    rm.onclick = function () { delete S.bm[n]; render(); openBm(); };
+    rm.onclick = function () { delete S.bm[BM_TAB + n]; render(); openBm(); };
     row.appendChild(go); row.appendChild(rm); b.appendChild(row);
   });
   $("#wrappop").classList.add("--open");
 }
-
-/* Repaint ONLY the bulb, never the whole shell. A full rebuild on every scroll event would reset
-   scrollTop, snap you to the bottom and make Held unreachable — the indicator would destroy the state
-   it is trying to report. */
-/* Line numbers for the prompt, kept in lockstep with the textarea's own scroll. The TOTAL is pinned at
-   the bottom because that is the number you actually want when the box is capped and scrolling. */
-function paintGutter(ta) {
-  var g = $("#f-gutter"); if (!g || !ta) return;
-  var written = (ta.value || "").split("\n").length;
-  if (!ta.value) written = 0;                                 // an empty box has typed NO lines
-  // Fill the whole visible height with slots so the column never looks half-drawn: written lines are
-  // bright, the remaining slots dim. The dim ones are the honest "how much room is left" signal.
-  var boxH = parseFloat(ta.style.height) || ta.clientHeight || 34;
-  var slots = Math.max(1, Math.floor((boxH - 14) / 18));
-  var kids = [];
-  for (var i = 1; i <= Math.max(written, slots); i++) {
-    kids.push(el("b", { class: i <= written ? "--on" : "" }, [String(i)]));
-  }
-  g.replaceChildren.apply(g, kids);
-  // NOTE: the gutter's height is NOT set from the textarea any more — that was half of the circular
-  // dependency that stopped the box shrinking. It stretches via top/bottom instead.
-  if (!ta._gutBound) {
-    ta._gutBound = true;
-    ta.addEventListener("scroll", function () { g.scrollTop = ta.scrollTop; });
-  }
-  var tot = $("#f-lines");
-  if (tot) tot.textContent = written + (written === 1 ? " line" : " lines");
-}
-function paintBulb() {
-  var b = $("#f-bulb"); if (!b) return;
-  b.className = "seambulb " + (S.live ? "--live" : "--held");
-  b.replaceChildren(el("i"), document.createTextNode(S.live ? "Live" : "Held"));
-  b.title = S.live ? "Live \u2014 following the newest turn."
-                   : "Held \u2014 scrolled up; new turns are arriving below. Click to return to live.";
-}
 function render() { build(); }
 
 /* ---- controls ---- */
-$("#wCore").onclick = function () { S.kind = "core"; document.body.dataset.theme = "core"; this.classList.add("on"); $("#wPact").classList.remove("on"); document.body.dataset.theme = "core";
-note(); render(); };
-$("#wPact").onclick = function () { S.kind = "pact"; document.body.dataset.theme = "pact"; this.classList.add("on"); $("#wCore").classList.remove("on"); document.body.dataset.theme = "core";
-note(); render(); };
+$("#wCore").onclick = function () { S.kind = "core"; this.classList.add("on"); $("#wPact").classList.remove("on"); document.body.dataset.theme = "core"; note(); render(); };
+$("#wPact").onclick = function () { S.kind = "pact"; this.classList.add("on"); $("#wCore").classList.remove("on"); document.body.dataset.theme = "pact"; note(); render(); };
 function note() { $("#wNote").textContent = S.kind === "pact" ? "Pact: repo LOCKED, many tabs, continuation line on." : "Core: repo CHOSEN, one active conversation, no continuation line."; }
 $("#expandBtn").onclick = toggleExpand;
 $("#bounds").onchange = function () { document.body.classList.toggle("showbounds", this.checked); };
