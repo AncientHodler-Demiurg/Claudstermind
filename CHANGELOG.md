@@ -4,6 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.119] - 2026-09-06
+### Fixed
+- **Dialogs were centred on the page, not on the chat box.** `.pop` and `#hist` were `position: fixed;
+  inset: 0`, so they dimmed the whole window and centred on the viewport — which looked off here and
+  would be plainly wrong in production, where the cockpit runs four panes side by side and a pane's own
+  dialog would open nowhere near the pane that raised it. They are now `position: absolute` inside
+  `#shell` (which became the positioning context) and are **re-homed into the shell after every
+  rebuild**, since `replaceChildren` would otherwise orphan them. Asserted structurally.
+### Changed
+- **The chat box now takes all the width it is offered.** The 960px cap was a lie about the space it
+  will actually run in — cockpit panes are narrow and variable. Added a **width control (380 / 560 /
+  760 / full)** to the rail so narrow-pane behaviour can be judged rather than assumed. Production
+  wiring will inherit this for free; the point of testing it here is to find what breaks first.
+- **Dialogs now fit the pane they belong to** — `width: min(460px, calc(100% - 20px))` instead of a flat
+  460/520px, which would have hung over the edge of a 380px pane. Header and footer rows wrap, so
+  nothing escapes at narrow widths.
+
 ## [1.5.118] - 2026-09-06
 ### Removed
 - **Dictation dropped** on request. Recorded rather than silently deleted: the Agent SDK exposes **no**
