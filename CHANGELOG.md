@@ -4,6 +4,28 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.133] - 2026-09-06
+### Added (lab)
+- **The wrap dialog now states what a wrap does NOT free.** "Wrapped" reads like "reclaimed", and that is
+  untrue of everything on disk. It distinguishes the two kinds of attachment explicitly:
+  **images attached · kept on disk** and **files referenced · paths only**.
+### Documented — what actually happens to attachments (read from the code)
+- **Images are uploaded and kept permanently.** `workspaceStore.saveImage` writes them to
+  `<workspace>/images/<sha256-24>.<ext>`, **content-addressed** — the same picture pasted twice is
+  stored once. A wrap never touches them, which is *why* a recalled turn can still show its pictures.
+- **"Documents" are not uploaded at all.** A referenced file is a **path in the prompt text**; the agent
+  re-reads the file when it needs it. It costs context, but nothing is stored and nothing is carried
+  through a wrap.
+- 🔴 **Roadmap 4.13 — images are never garbage-collected.** Nothing deletes them: `deleteSession`
+  removes a conversation's JSONL only, so **deleting a chat orphans its images**, and a wrap never
+  touches them either. Content-addressing limits the damage but the store grows monotonically forever.
+  Needs a reference-counted sweep (an image is dead when no live transcript **and no archived segment**
+  references its hash) or an explicit "images are permanent by design" decision.
+- 🔴 **Roadmap 4.14 — document attachments are unsupported.** `saveImage` accepts `png|jpg|webp` and
+  throws on anything else, so a PDF or text file cannot be attached at all. Real document upload is new
+  work rather than a widened mediaType list: documents need extraction, chunking and their own recall
+  path. Both found while answering *"what happens to documents and images when a conversation wraps?"*.
+
 ## [1.5.132] - 2026-09-06
 ### Fixed (lab)
 - **"New window starts at" was a constant, not a measurement.** It used the module's default

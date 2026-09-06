@@ -228,6 +228,19 @@ because tests prove a module works, never that anything *calls* it. Wiring it is
       compaction is visible live and **gone on reload**: the same class as 4.11 (error rows). This blocks
       drawing "compacted here" markers in the transcript at all, since a line can only be rendered where
       a record says the event happened. Needed for the chat-shell design; prototyped in the lab.
+- [ ] **4.13** ⇉ **Attached images are never garbage-collected.** `workspaceStore.saveImage` writes
+      content-addressed bytes to `<workspace>/images/<sha256-24>.<ext>` and **nothing ever deletes them**:
+      `deleteSession` removes a conversation's JSONL only, so deleting a chat **orphans its images**, and
+      a roll/wrap never touches them either. Content-addressing limits the damage (the same picture is
+      stored once however many times it is pasted) but the store grows monotonically forever. Needs
+      either a reference-counted sweep — an image is dead when no live transcript *and no archived
+      segment* references its hash — or an explicit "this is by design, images are permanent" decision.
+      Found while answering "what happens to attachments when a conversation wraps?".
+- [ ] **4.14** ⇉ **Document attachments are not supported.** `saveImage` accepts `png|jpg|webp` only and
+      throws on anything else, so a PDF or text file cannot be attached to a prompt at all. What the UI
+      calls a "referenced file" is a **path in the prompt text** that the agent re-reads on demand —
+      which costs context but stores nothing. If real document upload is wanted, it is new work, not a
+      widened mediaType list: documents need extraction, chunking and their own recall path.
 - [ ] **4.4** ⇉ Commit cadence: stop accumulating 39-version piles. Checkpoint commit per phase.
 
 ---

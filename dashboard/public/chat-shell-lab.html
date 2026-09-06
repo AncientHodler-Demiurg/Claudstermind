@@ -358,7 +358,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
 <div id="rail">
   <h1>Chat Shell Lab</h1>
   <p class="sub">Mockup only — production untouched. Runs the real <code>chat-shell.js</code> maths.<br>
-    <b id="buildstamp" style="color:var(--ok)">build 1.5.132</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
+    <b id="buildstamp" style="color:var(--ok)">build 1.5.133</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
 
   <div class="grp"><b>Workspace</b>
     <div class="row"><button id="wCore" class="on">Core</button><button id="wPact">Pact</button></div>
@@ -1263,7 +1263,21 @@ function openWrapInner() {
       el("span", { class: "tP" }, [fmt(span.p.chars)]), " = " + fmt(span.chars)])]));
   b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Context"]),
     el("span", { class: "v" }, [fmt(S.ctxTok) + " / " + fmt(S.ctxMax) + " tok \u00b7 " + wr.pct + "%"])]));
-  b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Images"]), el("span", { class: "v" }, [fmt(S.images)])]));
+  // ATTACHMENTS. Two different things, and a wrap frees NEITHER — worth saying, because "wrapped" reads
+  // like "reclaimed" and it is not true of anything on disk.
+  //   images  — uploaded bytes, written to <workspace>/images/<sha256>.<ext>, content-addressed
+  //             (the same picture pasted twice is stored once) and kept permanently
+  //   files   — NOT uploaded. A referenced path is just text in the prompt; the agent re-reads the file
+  //             when it needs it, so nothing is stored and nothing is carried
+  b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Images attached"]),
+    el("span", { class: "v" }, [fmt(S.images) + " \u00b7 kept on disk"])]));
+  b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Files referenced"]),
+    el("span", { class: "v" }, [fmt(S.imgs ? 3 : 0) + " \u00b7 paths only"])]));
+  b.appendChild(el("div", { class: "chip" }, [
+    "A wrap frees CONTEXT, not disk. Images are stored once by content hash under the workspace and are "
+    + "kept permanently \u2014 a wrap does not touch them, and a recalled turn still shows its pictures. "
+    + "Referenced files were never uploaded at all: the path is text in the prompt and the agent re-reads "
+    + "the file when it needs it, so there is nothing stored to free."]));
   b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Kept verbatim"]), el("span", { class: "v" }, ["the last " + TAIL + " rounds"])]));
   // A wrap does NOT start from zero. Say where the new window actually begins, and warn when the
   // carried tail is so large that a wrap barely helps — which is what happens on a 200k window.
