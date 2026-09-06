@@ -105,6 +105,11 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
 /* header innards — MAX 3 rows, transient status is a CHIP not a row */
 .hrow{display:flex;align-items:center;gap:6px;padding:6px 9px;min-height:32px;flex-wrap:nowrap;overflow:hidden}
 .hrow+.hrow{border-top:1px solid #ffffff0d}
+/* The search line and the stats line were separate full-width rows, each half empty. One row, split:
+   actions left, numbers right. They wrap independently at narrow pane widths. */
+.hrow.--split{align-items:center;gap:10px}
+.hleft{display:flex;align-items:center;gap:6px;flex:1 1 46%;min-width:0}
+.hright{display:flex;align-items:center;gap:6px;flex:1 1 54%;min-width:0;justify-content:flex-end;flex-wrap:wrap;row-gap:4px}
 /* Conversation medallions and header chips are the SAME construction — same height, padding, radius,
    border and font. Only their LENGTH may differ. Previously a tab was 3px/14px and a chip 2px/11px, so
    the two rows sat at different heights and the header jumped between workspaces. */
@@ -337,7 +342,8 @@ button:disabled{opacity:.4;cursor:not-allowed}
 
 <div id="rail">
   <h1>Chat Shell Lab</h1>
-  <p class="sub">Mockup only — production untouched. Runs the real <code>chat-shell.js</code> maths.</p>
+  <p class="sub">Mockup only — production untouched. Runs the real <code>chat-shell.js</code> maths.<br>
+    <b id="buildstamp" style="color:var(--ok)">build 1.5.127</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
 
   <div class="grp"><b>Workspace</b>
     <div class="row"><button id="wCore" class="on">Core</button><button id="wPact">Pact</button></div>
@@ -362,7 +368,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
 
   <div class="grp"><b>Simulate</b>
     <div class="row"><button id="addConv">+ conversation</button><button id="addTurns">+ 6 turns</button><button id="clearTurns">clear</button></div>
-    <div class="row"><button id="agents">▸ agents running</button><button id="recon">↻ reconnected</button><button id="cue">rollup bar</button></div>
+    <div class="row"><button id="agents">▸ agents running</button><button id="recon">↻ reconnected</button><button id="marks">＋ event marker</button></div>
     <div class="row"><button id="liveBtn">● Live / Held</button></div>
     <div class="row"><span class="sub">Connection</span></div>
     <div class="row"><button id="cOk" class="on">ok</button><button id="cLost">disconnected</button><button id="cRecon">reconnecting</button></div>
@@ -474,87 +480,63 @@ function build() {
   r1.appendChild(el("span", { class: "chip --ok" }, ["✓ Saved"]));
   hdr.appendChild(r1);
 
-  var r2 = el("div", { class: "hrow" });
-  // Was a static chip with no handler at all — it LOOKED clickable and did nothing.
-  var ctxBtn = el("button", { class: "chip --acc", title: "What is filling the context window" },
-    ["\u25d0 " + Math.round(S.ctxTok / S.ctxMax * 100) + "% ctx"]);
-  ctxBtn.onclick = openCtx;
-  r2.appendChild(ctxBtn);
-  r2.appendChild(el("span", { class: "chip" }, ["⚙ " + S.agents + " agents"]));
-  // WIRED. Previously this input and the Go button below were created with NO handlers at all, so
-  // doJump() existed, was correct, and was never once called — the control looked broken because
-  // nothing was connected to it. The result is now reported INLINE beside the button (see .jstat):
-  // a floating toast can be missed or clipped, and when it is, a working control reads as broken.
-  var jin = el("input", { class: "sel", id: "h-jump", style: "flex:1",
+  // ONE row, split in two: SEARCH on the left, STATS on the right. Previously the search line and the
+  // stats line were separate full-width rows, each half empty — two rows of header for one row of
+  // content. The context chip is gone from here entirely: the footer already carries the same figure,
+  // and the same number in two places is one number too many.
+  var r2 = el("div", { class: "hrow --split" });
+  var left = el("div", { class: "hleft" });
+  var jin = el("input", { class: "sel", id: "h-jump", style: "flex:1;min-width:90px",
     placeholder: "R#12 or P#12 to jump \u00b7 or text to search the archive" });
   jin.value = S.jumpText || "";
   jin.oninput = function () { S.jumpText = jin.value; };
   jin.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); S.jumpText = jin.value; doJump(jin.value); } };
-  r2.appendChild(jin);
   var jgo = el("button", { title: "Jump to that turn in this conversation" }, ["Go"]);
   jgo.onclick = function () { S.jumpText = jin.value; doJump(jin.value); };
-  r2.appendChild(jgo);
-  r2.appendChild(el("span", { class: "jstat", id: "h-jstat" }, []));
-  var rec = el("button", { title: "Search the ARCHIVE — turns already wrapped out of the live window. Jump only reaches loaded turns; Recall reaches the ones that are not." }, ["⌕ Recall"]);
-  // RECALL has TWO modes, exactly as lib/conversationArchive.mjs does — the lab previously implied a
-  // single text search, which misrepresented it.
-  //   recallByNumber(kind, n) -> ONE archived turn, fetched in full by its absolute P#/R#
-  //   recallByQuery(text)     -> substring hits across archived segments, newest segment first
-  // Both search the ARCHIVE — turns already wrapped OUT of the live window. Jump only reaches turns
-  // still loaded; Recall is the only way back to the rest.
+  var rec = el("button", { title: "Search the ARCHIVE \u2014 turns already wrapped out of the live window. Jump only reaches loaded turns; Recall reaches the ones that are not." }, ["\u2312 Recall"]);
   rec.onclick = function () {
     var q = (jin.value || "").trim();
     if (!q) { flashMsg("Type a turn number (R#46) to fetch it, or any text to search wrapped turns.", false); return; }
     var m = q.match(/^([rRpP])?\s*#?\s*(\d+)$/);
     var wrapped = Math.max(0, nResponses() - 40);
-    if (m) {
-      var kind = (m[1] || "R").toUpperCase(), n = +m[2];
-      openRecall("number", kind, n, wrapped);
-    } else {
-      openRecall("query", null, q, wrapped);
-    }
+    if (m) openRecall("number", (m[1] || "R").toUpperCase(), +m[2], wrapped);
+    else openRecall("query", null, q, wrapped);
   };
-  r2.appendChild(rec);
+  left.appendChild(jin); left.appendChild(jgo); left.appendChild(rec);
+  left.appendChild(el("span", { class: "jstat", id: "h-jstat" }, []));
+  r2.appendChild(left);
+
+  // RIGHT HALF — the numbers that describe the conversation's size, and nothing you can click by accident.
+  var right = el("div", { class: "hright" });
+  var tg = CS.rollTriggers({ prompts: nPrompts(), responses: nResponses(), bytes: nChars(),
+                             tokens: S.ctxTok, ceiling: S.ctxMax, maxTurns: S.maxTurns });
+  right.appendChild(el("span", { class: "chip" }, ["\u2699 " + S.agents + " agents"]));
+  tg.list.forEach(function (c) {
+    if (c.id === "context") return;                       // the footer carries the context figure
+    var near = c.id === tg.willRollOn;
+    var label = c.id === "turns"
+      ? fmt(c.now) + "/" + fmt(c.max) + " turns \u00b7 " + fmt(Math.round(c.now / 2)) + " rounds"
+      : fmtBytes(c.now) + " / " + fmtBytes(c.max);
+    right.appendChild(el("span", { class: "chip" + (near ? " --acc" : " --far"),
+      title: near ? "NEAREST ceiling \u2014 this is what will fire the wrap (" + c.pct + "%)"
+                  : c.label + " is at " + c.pct + "% \u2014 far from binding" },
+      [(near ? "\u25b8 " : "") + label + " \u00b7 " + c.pct + "%"]));
+  });
+  var nComp = S.marks.filter(function (mk) { return mk.kind === "compact"; }).length;
+  right.appendChild(el("span", { class: "chip" + (nComp ? "" : " --far"), style: nComp ? "color:#8fc3ff;border-color:#5aa8f055" : "",
+    title: nComp ? nComp + " compaction" + (nComp === 1 ? "" : "s") + " in this session. Each replaced earlier turns with a summary that STILL occupies the window \u2014 wrapping is what actually clears it."
+                 : "No compactions yet in this session." },
+    ["\uD83D\uDDDC " + nComp + " compacted"]));
+  if (S.wraps) right.appendChild(el("span", { class: "chip" }, ["\u27f3 " + S.wraps + " wrapped"]));
+  var sp = CS.wrapSpan({ rFrom: 1, rTo: Math.max(0, nResponses() - 40), pFrom: 1, pTo: Math.max(0, nPrompts() - 40) });
+  right.appendChild(el("span", { class: "chip", title: "The range a wrap would take right now (the last 40 rounds are always kept verbatim)" },
+    ["would wrap ", el("span", { class: "tR" }, ["R#1\u2013R#" + fmt(sp.r.to) + " [" + fmt(sp.r.count) + "]"]),
+     " \u00b7 ", el("span", { class: "tP" }, ["P#1\u2013P#" + fmt(sp.p.to) + " [" + fmt(sp.p.count) + "]"])]));
+  r2.appendChild(right);
   hdr.appendChild(r2);
-  // ROLLUP BAR — replaces the old one-line advice text. Same row, far more information: the ceilings
-  // that actually drive a wrap, plus the auto tick and a manual wrap button.
-  if (S.cue) {
-    var wr = CS.wrapReadiness({ tokens: S.ctxTok, ceiling: S.ctxMax });
-    var bar = el("div", { class: "roll --" + wr.tone });
-    // Only ceilings that can plausibly bind (see chat-shell.js rollTriggers relevance). The 25MB byte
-    // ceiling is 6-31x further away than any real context window, so it never appears.
-    // maxTurns was NOT passed, so this always compared against the engine default of 400 and read
-    // "930/400" whichever ceiling you picked. It is passed now.
-    var tg = CS.rollTriggers({ prompts: nPrompts(), responses: nResponses(), bytes: nChars(),
-                               tokens: S.ctxTok, ceiling: S.ctxMax, maxTurns: S.maxTurns });
-    // Every ceiling keeps a SLOT, so the bar never changes shape as one becomes relevant — it just
-    // brightens. A far-away ceiling is dimmed and compact; the binding one is accented and marked.
-    tg.list.forEach(function (c) {
-      if (c.id === "context") return;   // the footer already carries the context figure — don't repeat it
-      var near = c.id === tg.willRollOn;
-      // Spell out rounds beside turns: the engine counts ROWS, but you think in exchanges.
-      var label = c.id === "turns"
-        ? fmt(c.now) + "/" + fmt(c.max) + " turns \u00b7 " + fmt(Math.round(c.now / 2)) + " rounds"
-        : fmtBytes(c.now) + " / " + fmtBytes(c.max);
-      bar.appendChild(el("span", {
-        class: "chip" + (near ? " --acc" : " --far"),
-        title: near ? "NEAREST ceiling \u2014 this is what will fire the wrap (" + c.pct + "%)"
-                    : c.label + " is at " + c.pct + "% \u2014 far from binding; context will get there first"
-      }, [(near ? "\u25b8 " : "") + label + " \u00b7 " + c.pct + "%"]));
-    });
-    var nComp = S.marks.filter(function (mk) { return mk.kind === "compact"; }).length;
-    if (nComp) bar.appendChild(el("span", { class: "chip", style: "color:#8fc3ff;border-color:#5aa8f055",
-      title: nComp + " compaction" + (nComp === 1 ? "" : "s") + " in this session. Each replaced earlier turns with a summary that still occupies the window \u2014 wrapping is what actually clears it." },
-      ["\uD83D\uDDDC " + nComp + " compacted"]));
-    if (S.wraps) bar.appendChild(el("span", { class: "chip" }, ["\u27f3 " + S.wraps + " wrapped"]));
-    bar.appendChild(el("span", { class: "spacer" }));
-    // The upper bar is READ-ONLY STATS now. The controls moved to the footer, where the other actions
-    // already live and where there is room. A stats strip you read while scrolling is the wrong place
-    // to put an irreversible action.
-    hdr.appendChild(bar);
-  }
+
   // LOADING STRIP — a real progress bar for a cold load / catch-up, in flow so it cannot overlap
-  // anything. Zero height when idle, so it costs nothing when there is nothing to report.
+  // anything, and zero height when idle so it costs nothing when there is nothing to report.
   if (S.loadPct > 0 && S.loadPct < 100) {
     hdr.appendChild(el("div", { class: "loadstrip", title: "Loading conversation history" },
       [el("i", { style: "width:" + S.loadPct + "%" }), el("span", { class: "lbl" }, ["loading history \u00b7 " + S.loadPct + "%"])]));
@@ -834,10 +816,14 @@ function build() {
   mb.appendChild(psel);
   // THE CEILING, spelled out — "16%" alone never said 16% of what.
   var pct = Math.round(S.ctxTok / S.ctxMax * 100);
-  mb.appendChild(el("span", { class: "chip --acc", id: "f-ctx", title: "Context window: " + S.ctxTok.toLocaleString() + " of " + S.ctxMax.toLocaleString() + " tokens used" },
-    // Both figures in full with thousand separators. The previous patch only reached the TOOLTIP, and
-    // the test I wrote matched that tooltip string — so it passed while the visible label still read "1000k".
-    [S.ctxTok.toLocaleString() + " / " + S.ctxMax.toLocaleString() + " tok \u00b7 " + pct + "%"]));
+  // The footer readout is the ONLY context figure now, so it is also the way into the breakdown —
+  // when the header medallion was removed, its click went with it and the breakdown became unreachable.
+  var ctxBtn = el("button", { class: "chip --acc", id: "f-ctx",
+    title: "Context window: " + S.ctxTok.toLocaleString() + " of " + S.ctxMax.toLocaleString()
+         + " tokens used \u2014 click for the breakdown" },
+    [S.ctxTok.toLocaleString() + " / " + S.ctxMax.toLocaleString() + " tok \u00b7 " + pct + "%"]);
+  ctxBtn.onclick = openCtx;
+  mb.appendChild(ctxBtn);
   ftr.appendChild(mb);
   shell.appendChild(ftr);
   // Re-home the dialogs inside the shell after every rebuild (replaceChildren above detaches them).
@@ -1273,7 +1259,13 @@ $("#addTurns").onclick = function () { S.rounds += 6; render(); };
 $("#clearTurns").onclick = function () { S.rounds = 0; render(); };
 $("#agents").onclick = function () { S.agents = S.agents ? 0 : 3; this.classList.toggle("on", !!S.agents); render(); };
 $("#recon").onclick = function () { S.recon = !S.recon; this.classList.toggle("on", S.recon); render(); };
-$("#cue").onclick = function () { S.cue = !S.cue; this.classList.toggle("on", S.cue); render(); };
+// The old "rollup bar" toggle controlled a row that no longer exists — its contents moved into the
+// header's stats half. Repurposed to drop a marker into the transcript without waiting out an animation.
+$("#marks").onclick = function () {
+  S.marks.push({ kind: S.marks.length % 2 ? "wrap" : "compact", afterRound: S.rounds,
+    preTokens: S.ctxTok, postTokens: Math.round(S.ctxTok * 0.45), trigger: "auto" });
+  render();
+};
 $("#imgs").onclick = function () { S.imgs = S.imgs ? 0 : 3; this.classList.toggle("on", !!S.imgs); render(); };
 ["cOk","cLost","cRecon"].forEach(function (id) {
   $("#" + id).onclick = function () {
@@ -1365,7 +1357,7 @@ document.addEventListener("keydown", function (e) {
 window.addEventListener("resize", function () { syncSlider(); $("#shell").style.height = shellTargetH() + "px"; layout(); });
 syncSlider();
 /* OFF by default: what you see IS the shipping design, not a debug view of it. */
-$("#cue").classList.add("on");
+
 document.body.dataset.theme = "core";
 note(); render();
 </script>

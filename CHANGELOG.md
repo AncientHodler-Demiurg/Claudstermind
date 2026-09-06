@@ -4,6 +4,27 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.127] - 2026-09-06
+### Added (lab)
+- **A build stamp in the rail.** "Is this the new copy?" has cost two rounds — the footer controls were
+  reported missing twice while the tests proved they rendered. The rail prints the build and says
+  plainly that a mismatch means a cached page.
+### Changed (lab)
+- **The header is ONE split row instead of two half-empty ones**: search, Go and Recall on the left; the
+  numbers on the right — agents, `turns · rounds`, size, **compactions**, wraps, and the **wrap range**
+  (`would wrap R#1–R#20 [20] · P#1–P#20 [20]`).
+- **The context chip is gone from the header** — the footer already carries the same figure, and the
+  same number in two places is one number too many.
+- **The compaction count renders even at zero**, so its absence is not ambiguous.
+### Fixed (lab)
+- **The cold-load progress strip had been sliced out by accident** with the old rollup row. Restored and
+  covered by a test — it is invisible when idle, which is exactly how it went missing unnoticed.
+- **Removing the header medallion took the context breakdown with it.** The wiring guard caught it
+  immediately: the breakdown had no opener left. The footer readout — now the only context figure — is
+  the button that opens it.
+- The dead "rollup bar" rail toggle (it controlled a row that no longer exists) is now **＋ event
+  marker**, which drops a compact/wrap line into the transcript without waiting out an animation.
+
 ## [1.5.126] - 2026-09-06
 ### Added — reply to a turn (WhatsApp-style quoting)
 - **Every prompt and answer can now be replied to.** A `↩` button sits with the turn's other actions;
