@@ -4,6 +4,39 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.113] - 2026-09-06
+### Fixed
+- **The turn counter read `930/400` no matter which ceiling you picked** — `maxTurns` was never passed to
+  `rollTriggers`, so it always compared against the engine default of 400.
+- **The counters and the transcript were separate state and disagreed permanently.** `prompts`,
+  `responses` and `turns` were independent fields, so "+6 turns" moved the transcript while the counters
+  sat still. There is now ONE source of truth — `rounds` — and prompts/responses/turns/characters are
+  **derived**, asserted by a test that fails if `S.prompts`, `S.responses` or `S.turns` ever reappear.
+  - **Definitions, since they were ambiguous:** a **ROUND** is one prompt plus its answer; a **TURN** is a
+    single row, prompt *or* answer. The engine counts rows, so **turns = 2 x rounds** — a 400-turn ceiling
+    is 200 exchanges. The chip now says both: `412/1000 turns · 206 rounds`.
+  - The transcript is now **windowed** like production: it renders the newest `renderCap` rounds with
+    absolute numbering, so a conversation can be 500 rounds while only 60 are in the DOM.
+- **Live / Held is now driven by the actual scroll position**, not a rail toggle: measured at the bottom
+  edge of the transcript, repainted **alone** rather than via a full rebuild. A `render()` on scroll would
+  reset `scrollTop`, snap you to the bottom and make Held unreachable — the indicator would destroy the
+  state it reports. Clicking now only ever means "take me back to live", because Held is a *consequence*
+  of scrolling, not a mode to pick. Guarded by a test that fails if a scroll handler calls `render()`.
+- **The disconnected / reconnecting chips never rendered** — the patch that added them had silently
+  failed to match, so the rail buttons toggled state nothing displayed.
+### Added (lab)
+- **The four prompt states as real bubbles**: **QUEUED** (orange, waiting on the current turn),
+  **QUEUED BEHIND DEEP WORK** (pink, background agents still running), **NEVER ANSWERED** (blue, with
+  working **▶ Resume** / **✕ Discard**) and **DISCARDED** (red, kept visible on purpose — a killed prompt
+  is never silently deleted). Colours match production `.pc-queued` / `.pc-interrupted` / `.pc-discarded`.
+- **A line-number gutter in its own column beside the type box**, scrolling in lockstep with it, plus a
+  total-lines chip in the action row. At the 40% cap you cannot see the whole prompt, so the count is the
+  only honest signal of how large it has become.
+### Changed (tests)
+- The render shim now **parses element ids out of the page markup** instead of a hardcoded list. The
+  hardcoded list went stale the moment a control was added and produced a shim failure that looked
+  exactly like a page bug.
+
 ## [1.5.112] - 2026-09-06
 ### Added
 - **Live / Held now sits centred ON the Core/Footer seam**, straddling the border rather than living in

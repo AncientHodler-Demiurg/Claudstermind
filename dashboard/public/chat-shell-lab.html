@@ -114,6 +114,8 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
 /* A ceiling that is nowhere near binding still keeps its slot — dimmed, so the bar never reflows when
    one becomes relevant. It brightens in place instead of appearing from nowhere. */
 .chip.--far{opacity:.42;font-size:10.5px}
+.chip.--bad{color:var(--err);border-color:#ff6b8166;background:#1e1116}
+.chip.--warn{color:var(--warn);border-color:#ffb45466;background:#1e1a10}
 .chip.--acc{color:var(--acc);border-color:#c77dff44}
 /* Live / Held — whether the view is pinned to the newest turn or holding your scroll position. */
 .bulb{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:11px;font-size:11px;font-weight:600;border:1px solid}
@@ -123,6 +125,20 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
 /* per-answer actions — bookmark + share, revealed on hover, always reachable by keyboard */
 .msg{position:relative}
 .msg.--flash{outline:2px solid var(--acc);outline-offset:2px;transition:outline-color .5s}
+/* PROMPT STATES (production: .pc-queued / .pc-interrupted / .pc-discarded)
+   queued   ORANGE — typed and waiting because a turn is still running
+   deep     PINK   — queued behind BACKGROUND work, which can run far longer
+   dead     BLUE   — sent, never answered (interrupted); offers Resume / Discard
+   discard  RED    — explicitly killed; kept visible so it is never silently lost */
+.msg.--queued{background:color-mix(in srgb,#f59e0b 16%,var(--chip));border-color:#f59e0b;color:#f59e0b}
+.msg.--deep{background:color-mix(in srgb,#f472b6 16%,var(--chip));border-color:#f472b6;color:#f472b6}
+.msg.--dead{background:#172554;box-shadow:inset 0 0 0 1px #3b5bbf;color:#cddafb}
+.msg.--discarded{background:#3a0d0d;color:#fca5a5;box-shadow:inset 0 0 0 1px #7f1d1d}
+.deadbtns{display:flex;gap:6px;margin-top:6px}
+.deadbtns button{font-size:11px;padding:2px 9px}
+.deadbtns .go{color:var(--ok);border-color:#3ddc9766}
+.deadbtns .kill{color:var(--err);border-color:#ff6b8166}
+.statetag{font-size:9.5px;font-weight:800;letter-spacing:.5px;opacity:.85;display:block;margin-bottom:2px}
 #jumpmsg{display:none;position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:80;
   background:#2a1c0b;border:1px solid var(--warn);color:var(--warn);padding:6px 12px;border-radius:8px;font-size:12px}
 .msgacts{position:absolute;top:4px;right:6px;display:flex;gap:3px;opacity:0;transition:opacity .12s}
@@ -183,7 +199,14 @@ button:disabled{opacity:.4;cursor:not-allowed}
    collapsed-state chips showed permanently alongside the very rows they stand in for. One global rule. */
 .--gone{display:none !important}
 /* the type box sits in a wrapper so ghost text can be overlaid exactly on top of it */
-.tawrap{position:relative;width:100%}
+.tawrap{position:relative;width:100%;display:flex;align-items:stretch}
+/* The prompt's line-number column. Scrolls in lockstep with the textarea it annotates. */
+.gutter{flex:0 0 auto;min-width:34px;padding:7px 6px 7px 0;text-align:right;overflow:hidden;
+  font:11px/18px ui-monospace,Consolas,monospace;color:#5d6b8f;user-select:none;
+  background:var(--field);border:1px solid var(--field-line);border-right:none;border-radius:8px 0 0 8px}
+.gutter b{display:block;font-weight:400}
+.gutter .tot{color:var(--acc);font-weight:700;border-top:1px solid var(--field-line);margin-top:2px;padding-top:2px}
+.tawrap #typebox{border-radius:0 8px 8px 0}
 #ghost{position:absolute;inset:0;padding:7px 9px;font:inherit;font-size:12.5px;line-height:18px;color:#8290b5;pointer-events:none;white-space:pre-wrap;overflow:hidden}
 #ghost kbd{background:#1a2440;border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:10.5px;color:var(--dim)}
 /* Stop/Send + auto-continue live in ONE bordered group, per feedback */
@@ -242,6 +265,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
     <div class="row"><span class="sub">History load progress</span></div>
     <input type="range" id="loadr" min="0" max="100" value="0">
     <div class="row"><button id="loadSim">▶ simulate a cold load</button></div>
+    <div class="row"><button id="states" class="on">prompt states</button></div>
     <div class="row"><button id="imgs">+ image strip</button><button id="histBtn">🕐 history popup</button></div>
     <div class="row"><span class="sub">Context fill</span></div>
     <input type="range" id="ctxr" min="1" max="99" value="66">
@@ -277,16 +301,28 @@ button:disabled{opacity:.4;cursor:not-allowed}
 var CS = window.ChatShell;
 var S = {
   kind: "core", expanded: false, prevLevel: 0,
-  turns: 60, convs: [{ n: "Master", act: true }], agents: 0, recon: false, cue: true, imgs: 0,
+  rounds: 60, renderCap: 60, convs: [{ n: "Master", act: true }], agents: 0, recon: false, cue: true, imgs: 0,
   repo: "Claudstermind", model: "Opus 4.5", auto: true, autoN: 4,
   ctxTok: 93016, ctxMax: 1000000,
   suggest: "Continue with the next item on the list.",
-  autoWrap: true, wraps: 0, live: true, bm: {}, maxTurns: 1000, jumpText: "",
+  autoWrap: true, wraps: 0, live: true, bm: {}, maxTurns: 1000, jumpText: "", states: true,
   worktree: "main", worktrees: ["main", "feat-pact-changed-review", "exocortex"],
   conn: "ok", loadPct: 0,
-  prompts: 138, responses: 219, images: 12, pChars: 412000, rChars: 3860000
+  // ONE source of truth. `rounds` is the conversation's size; prompts, responses and turns are
+  // DERIVED from it. They used to be independent fields, so "+6 turns" moved the transcript while
+  // the counters sat still, and the two disagreed permanently.
+  //   a ROUND  = one prompt + its answer      (what you think of as an exchange)
+  //   a TURN   = a single row, prompt OR answer  (what the engine counts: turns = 2 x rounds)
+  images: 12, charsPerRound: 21000,
 };
 var $ = function (s, r) { return (r || document).querySelector(s); };
+// DERIVED, never stored — so they cannot drift from the conversation the way the old fields did.
+//   a ROUND = one prompt + its answer.  a TURN = one row (prompt OR answer). turns = 2 x rounds.
+function nPrompts() { return S.rounds; }
+function nResponses() { return S.rounds; }
+function nTurns() { return S.rounds * 2; }
+function nChars() { return S.rounds * S.charsPerRound; }
+function firstRendered() { return Math.max(1, S.rounds - S.renderCap + 1); }   // the transcript is WINDOWED
 function el(t, a, k) { var e = document.createElement(t); for (var x in (a || {})) { if (x === "class") e.className = a[x]; else if (x === "html") e.innerHTML = a[x]; else e.setAttribute(x, a[x]); } (k || []).forEach(function (c) { e.appendChild(typeof c === "string" ? document.createTextNode(c) : c); }); return e; }
 
 function build() {
@@ -313,6 +349,11 @@ function build() {
   // THE FIX for the wasted line: transient status is a chip here, never its own full-width row.
   if (S.recon) r1.appendChild(el("span", { class: "chip --ok" }, ["↻ caught up"]));
   if (S.agents) r1.appendChild(el("span", { class: "chip --ok" }, ["🟢".repeat(Math.min(S.agents, 5)) + " " + S.agents]));
+  // These were never rendered — the patch that added them silently failed to match, so the rail
+  // buttons toggled state that nothing displayed.
+  if (S.conn === "lost") r1.appendChild(el("span", { class: "chip --bad" }, ["\u26a1 disconnected \u2014 retrying"]));
+  else if (S.conn === "recon") r1.appendChild(el("span", { class: "chip --warn" }, ["\u21bb reconnecting\u2026"]));
+  else if (S.recon) r1.appendChild(el("span", { class: "chip --ok" }, ["\u21bb caught up"]));
   r1.appendChild(el("span", { class: "chip --ok" }, ["✓ Saved"]));
   hdr.appendChild(r1);
 
@@ -340,7 +381,7 @@ function build() {
   var rec = el("button", { title: "Search the ARCHIVE — turns already wrapped out of the live window. Jump only reaches loaded turns; Recall reaches the ones that are not." }, ["⌕ Recall"]);
   rec.onclick = function () {
     var q = (jin.value || "").trim();
-    flashMsg(q ? "Recall: searching the archive for \u201c" + q + "\u201d — " + fmt(Math.max(0, S.responses - 40)) + " wrapped answers to scan"
+    flashMsg(q ? "Recall: searching the archive for \u201c" + q + "\u201d — " + fmt(Math.max(0, nResponses() - 40)) + " wrapped answers to scan"
                : "Type some text first — Recall searches wrapped turns by content, not by number.", !!q);
   };
   r2.appendChild(rec);
@@ -358,13 +399,19 @@ function build() {
     bar.appendChild(el("span", { class: "bar" }, [fill]));
     // Only ceilings that can plausibly bind (see chat-shell.js rollTriggers relevance). The 25MB byte
     // ceiling is 6-31x further away than any real context window, so it never appears.
-    var tg = CS.rollTriggers({ prompts: S.prompts, responses: S.responses, bytes: S.pChars + S.rChars, tokens: S.ctxTok, ceiling: S.ctxMax });
+    // maxTurns was NOT passed, so this always compared against the engine default of 400 and read
+    // "930/400" whichever ceiling you picked. It is passed now.
+    var tg = CS.rollTriggers({ prompts: nPrompts(), responses: nResponses(), bytes: nChars(),
+                               tokens: S.ctxTok, ceiling: S.ctxMax, maxTurns: S.maxTurns });
     // Every ceiling keeps a SLOT, so the bar never changes shape as one becomes relevant — it just
     // brightens. A far-away ceiling is dimmed and compact; the binding one is accented and marked.
     tg.list.forEach(function (c) {
       if (c.id === "context") return;   // the footer already carries the context figure — don't repeat it
       var near = c.id === tg.willRollOn;
-      var label = c.id === "turns" ? fmt(c.now) + "/" + fmt(c.max) + " turns" : fmtChars(c.now) + "/" + fmtChars(c.max) + "B";
+      // Spell out rounds beside turns: the engine counts ROWS, but you think in exchanges.
+      var label = c.id === "turns"
+        ? fmt(c.now) + "/" + fmt(c.max) + " turns \u00b7 " + fmt(Math.round(c.now / 2)) + " rounds"
+        : fmtChars(c.now) + "/" + fmtChars(c.max) + "B";
       bar.appendChild(el("span", {
         class: "chip" + (near ? " --acc" : " --far"),
         title: near ? "NEAREST ceiling \u2014 this is what will fire the wrap (" + c.pct + "%)"
@@ -372,7 +419,7 @@ function build() {
       }, [(near ? "\u25b8 " : "") + label + " \u00b7 " + c.pct + "%"]));
     });
     // WHAT THE WRAP WOULD TAKE, right here — the actual question you are asking when you look at this bar.
-    var sp = CS.wrapSpan({ rFrom: 1, rTo: Math.max(0, S.responses - 40), pFrom: 1, pTo: Math.max(0, S.prompts - 40) });
+    var sp = CS.wrapSpan({ rFrom: 1, rTo: Math.max(0, nResponses() - 40), pFrom: 1, pTo: Math.max(0, nPrompts() - 40) });
     bar.appendChild(el("span", { class: "m", title: "What a wrap right now would take (the last 40 turns are always kept verbatim)" },
       ["would wrap ", el("span", { class: "tR" }, ["R#1\u2013R#" + fmt(sp.r.to) + " [" + fmt(sp.r.count) + "]"]),
        " \u00b7 ", el("span", { class: "tP" }, ["P#1\u2013P#" + fmt(sp.p.to) + " [" + fmt(sp.p.count) + "]"])]));
@@ -394,7 +441,7 @@ function build() {
 
   /* ================= CORE — the only flexing region ============================================ */
   var core = el("div", { class: "rg-core" });
-  for (var i = 0; i < S.turns; i++) {
+  for (var i = firstRendered() - 1; i < S.rounds; i++) {
     var u = el("div", { class: "msg --u", "data-turn": "P" + (i + 1) }, [el("span", { class: "num num-p" }, ["P#" + (i + 1)]), "A user turn."]);
     core.appendChild(u);
     var a = el("div", { class: "msg --a", "data-turn": "R" + (i + 1) });
@@ -403,7 +450,25 @@ function build() {
     a.appendChild(mkMsgActs(i + 1));
     core.appendChild(a);
   }
-  if (!S.turns) core.appendChild(el("div", { class: "chip" }, ["no turns — use “+ 6 turns”"]));
+  // The four prompt states, so their colour and affordances can be judged against real bubbles.
+  if (S.states) {
+    core.appendChild(el("div", { class: "msg --u --queued" }, [
+      el("span", { class: "statetag" }, ["QUEUED \u2014 waiting for the current turn"]), "Send this once the reply lands."]));
+    core.appendChild(el("div", { class: "msg --u --deep" }, [
+      el("span", { class: "statetag" }, ["QUEUED BEHIND DEEP WORK \u2014 may be a while"]), "Background agents are still running."]));
+    var dead = el("div", { class: "msg --u --dead" }, [
+      el("span", { class: "statetag" }, ["NEVER ANSWERED \u2014 the turn was interrupted"]), "This prompt was sent but no answer came back."]);
+    var btns = el("div", { class: "deadbtns" });
+    var go = el("button", { class: "go", title: "Send it again as a fresh turn" }, ["\u25b6 Resume"]);
+    var kill = el("button", { class: "kill", title: "Mark it dead \u2014 it stays visible but is excluded from the next prompt" }, ["\u2715 Discard"]);
+    go.onclick = function () { S.states = "resumed"; render(); };
+    kill.onclick = function () { S.states = "discarded"; render(); };
+    btns.appendChild(go); btns.appendChild(kill); dead.appendChild(btns);
+    core.appendChild(dead);
+    if (S.states === "discarded") core.appendChild(el("div", { class: "msg --u --discarded" }, [
+      el("span", { class: "statetag" }, ["DISCARDED \u2014 excluded from the next prompt"]), "Kept visible on purpose: a killed prompt is never silently deleted."]));
+  }
+  if (!S.rounds) core.appendChild(el("div", { class: "chip" }, ["no turns — use “+ 6 turns”"]));
   shell.appendChild(core);
 
   /* ================= FOOTER — grows, collapses in order, Send/Stop never ======================= */
@@ -413,11 +478,9 @@ function build() {
     title: S.live ? "Live — following the newest turn. Click to hold your position."
                   : "Held — your scroll position is pinned; new turns are arriving below. Click to jump back to live." },
     [el("i"), S.live ? "Live" : "Held"]);
-  bulb.onclick = function () {
-    S.live = !S.live;
-    if (S.live) { var c = document.querySelector(".rg-core"); if (c) c.scrollTop = c.scrollHeight; }
-    render();
-  };
+  // Clicking only ever means "take me back to live". Held is a CONSEQUENCE of scrolling up, not a mode
+  // you choose — as a toggle it could claim Held while you were sitting at the bottom.
+  bulb.onclick = function () { var c = document.querySelector(".rg-core"); if (c) c.scrollTop = c.scrollHeight; };
   ftr.appendChild(bulb);
   if (S.imgs) {
     var ir = el("div", { class: "frow", id: "f-img" });
@@ -437,6 +500,10 @@ function build() {
   // you would actually type it.
   var taRow = el("div", { class: "frow" });
   var wrap = el("div", { class: "tawrap" });
+  // LINE NUMBERS in their own column. At the 40% cap you cannot see the whole prompt, so the count is
+  // the only honest signal of how big it has actually become.
+  var gut = el("div", { class: "gutter", id: "f-gutter" }, []);
+  wrap.appendChild(gut);
   var ta = el("textarea", { id: "typebox", placeholder: "Message the agent\u2026 (\u2318/Ctrl+Enter to send)" });
   var ghost = el("div", { id: "ghost" });
   wrap.appendChild(ta); wrap.appendChild(ghost); taRow.appendChild(wrap); ftr.appendChild(taRow);
@@ -444,6 +511,7 @@ function build() {
   // ACTION ROW: attach \u00b7 meta \u00b7 history \u2026 [ auto-continue + Stop + Send ] in ONE rectangle.
   var act = el("div", { class: "frow", id: "f-act" });
   act.appendChild(el("button", { id: "f-attach", title: "Attach" }, ["\uD83D\uDCCE"]));
+  act.appendChild(el("span", { class: "chip", id: "f-lines", title: "How long this prompt has become" }, ["1 line"]));
   var meta = el("span", { class: "row", id: "f-meta", style: "gap:6px" });
   if (slots.footer.repoPicker) {
     var rsel = el("select", { class: "sel" });
@@ -563,7 +631,17 @@ function layout() {
 
   ta.style.height = r.typeH + "px";
   ta.style.overflowY = r.typeScrolls ? "auto" : "hidden";
+  paintGutter(ta);
   core.classList.toggle("--gone", r.coreHidden);
+  // Live/Held is OBSERVED from the real scroll position now, not mocked from a rail button.
+  if (!core._liveBound) {
+    core._liveBound = true;
+    core.addEventListener("scroll", function () {
+      var atBottom = (core.scrollHeight - core.scrollTop - core.clientHeight) < 24;
+      if (atBottom !== S.live) { S.live = atBottom; paintBulb(); }
+    });
+  }
+  paintBulb();
   // When Core has vanished there is no transcript to be live against, so the marker goes with it.
   var sb = $("#f-bulb"); if (sb) sb.classList.toggle("--gone", r.coreHidden);
 
@@ -636,7 +714,7 @@ function doJump(raw) {
   if (!node) {
     // The old message just said "not in the loaded window", which is useless when the real problem is
     // that the turn does not exist at all. State the range that DOES exist.
-    var have = S.turns;
+    var have = S.rounds;
     flashMsg(have
       ? kind + "#" + n + " is not loaded. This conversation holds " + kind + "#1\u2013" + kind + "#" + have + " \u2014 press Recall for turns already wrapped out."
       : "This conversation has no turns yet \u2014 use \u201c+ 6 turns\u201d in the rail.");
@@ -697,9 +775,9 @@ function openWrap() {
   var b = $("#wrapbody"); b.replaceChildren();
   var rows = [
     ["Context being wrapped", fmt(S.ctxTok) + " tok · " + wr.pct + "% of " + fmt(S.ctxMax)],
-    ["Prompts", fmt(S.prompts)], ["Responses", fmt(S.responses)], ["Images", fmt(S.images)],
-    ["Characters in prompts", fmt(S.pChars)], ["Characters in responses", fmt(S.rChars)],
-    ["Turn numbering after wrap", "CONTINUES — next is P#" + fmt(S.prompts + 1) + " / R#" + fmt(S.responses + 1)]
+    ["Prompts", fmt(nPrompts())], ["Responses", fmt(nResponses())], ["Images", fmt(S.images)],
+    ["Characters in prompts", fmt(Math.round(nChars() * 0.22))], ["Characters in responses", fmt(Math.round(nChars() * 0.78))],
+    ["Turn numbering after wrap", "CONTINUES — next is P#" + fmt(nPrompts() + 1) + " / R#" + fmt(nResponses() + 1)]
   ];
   rows.forEach(function (r) { b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, [r[0]]), el("span", { class: "v" }, [r[1]])])); });
   b.appendChild(el("div", { class: "chip" }, ["Nothing is deleted. The wrap starts a fresh context window; the wrapped turns stay searchable in the archive and keep their original numbers."]));
@@ -725,6 +803,32 @@ function openBm() {
   $("#wrappop").classList.add("--open");
 }
 
+/* Repaint ONLY the bulb, never the whole shell. A full rebuild on every scroll event would reset
+   scrollTop, snap you to the bottom and make Held unreachable — the indicator would destroy the state
+   it is trying to report. */
+/* Line numbers for the prompt, kept in lockstep with the textarea's own scroll. The TOTAL is pinned at
+   the bottom because that is the number you actually want when the box is capped and scrolling. */
+function paintGutter(ta) {
+  var g = $("#f-gutter"); if (!g || !ta) return;
+  var lines = (ta.value || "").split("\n").length;
+  var kids = [];
+  for (var i = 1; i <= lines; i++) kids.push(el("b", {}, [String(i)]));
+  g.replaceChildren.apply(g, kids);
+  g.style.height = ta.style.height || "auto";
+  if (!ta._gutBound) {
+    ta._gutBound = true;
+    ta.addEventListener("scroll", function () { g.scrollTop = ta.scrollTop; });
+  }
+  var tot = $("#f-lines");
+  if (tot) tot.textContent = lines + (lines === 1 ? " line" : " lines");
+}
+function paintBulb() {
+  var b = $("#f-bulb"); if (!b) return;
+  b.className = "seambulb " + (S.live ? "--live" : "--held");
+  b.replaceChildren(el("i"), document.createTextNode(S.live ? "Live" : "Held"));
+  b.title = S.live ? "Live \u2014 following the newest turn."
+                   : "Held \u2014 scrolled up; new turns are arriving below. Click to return to live.";
+}
 function render() { build(); }
 
 /* ---- controls ---- */
@@ -750,8 +854,8 @@ document.querySelectorAll("[data-fill]").forEach(function (b) {
   };
 });
 $("#addConv").onclick = function () { S.convs.forEach(function (c) { c.act = false; }); S.convs.push({ n: "Chat " + (S.convs.length + 1), act: true }); render(); };
-$("#addTurns").onclick = function () { S.turns += 6; render(); };
-$("#clearTurns").onclick = function () { S.turns = 0; render(); };
+$("#addTurns").onclick = function () { S.rounds += 6; render(); };
+$("#clearTurns").onclick = function () { S.rounds = 0; render(); };
 $("#agents").onclick = function () { S.agents = S.agents ? 0 : 3; this.classList.toggle("on", !!S.agents); render(); };
 $("#recon").onclick = function () { S.recon = !S.recon; this.classList.toggle("on", S.recon); render(); };
 $("#cue").onclick = function () { S.cue = !S.cue; this.classList.toggle("on", S.cue); render(); };
@@ -781,12 +885,12 @@ document.querySelectorAll("[data-mt]").forEach(function (b) {
 });
 $("#nearTurns").onclick = function () {
   // Put the turn ceiling within striking distance so you can SEE the chip brighten and take over.
-  var target = Math.round(S.maxTurns * 0.93);
-  S.responses = Math.round(target * 0.55); S.prompts = target - S.responses; S.turns = Math.min(200, S.responses);
+  S.rounds = Math.max(1, Math.round(S.maxTurns * 0.93 / 2));
   render();
 };
 $("#liveBtn").onclick = function () { S.live = !S.live; render(); };
 $("#ctxr").oninput = function () { S.ctxTok = Math.round(S.ctxMax * this.value / 100); render(); };
+$("#states").onclick = function () { S.states = S.states ? false : true; this.classList.toggle("on", !!S.states); render(); };
 $("#histBtn").onclick = openHist;
 $("#histX").onclick = function () { $("#hist").classList.remove("--open"); };
 $("#hOpen").onclick = function () { this.classList.add("on"); $("#hRet").classList.remove("on"); openHist(); };
