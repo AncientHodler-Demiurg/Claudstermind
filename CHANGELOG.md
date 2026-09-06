@@ -4,6 +4,27 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.139] - 2026-09-06
+### Added (lab) — three modes for how an answer arrives
+- The diagnosis was right: production streams raw characters into a live node, then **re-renders the
+  whole bubble with markdown** on the final event. That second render **reflows** everything already on
+  screen — which is both the visual stutter and, because the content above moves, the scroll jump.
+- Three modes, selectable in the rail, so the trade can be **felt rather than argued**:
+  - **raw** — what production does today. Kept so the stutter can be compared against, not just
+    described from memory.
+  - **calm** *(default)* — the characters stream into a **fixed, unformatted, `pre-wrap` block that
+    cannot reflow**; markdown lands in **one** morph at the end. You can still read along; nothing
+    already on screen moves until that single settle.
+  - **counter** — the requested design: no text, a **fixed-height** bubble with a live glyph count, then
+    the reveal. The smoothest possible, because **a fixed height cannot move the scroll at all**.
+- **Counter mode states its cost rather than only its smoothness**: you give up reading along, and on a
+  thirteen-minute answer that is a real loss, not a detail — it is exactly the "is it still thinking?"
+  problem in a different shape. `calm` is the default because it removes the reflow *without* removing
+  the content.
+- The reveal is **one** transition at the end, never per-character — animating every delta would be
+  worse than the stutter it replaces. The arriving bubble also carries its `R#` from the first frame, so
+  jump and reply work on an answer that is still being written.
+
 ## [1.5.138] - 2026-09-06
 ### Added — optional multi-chat in Core
 - **`slotsFor(kind, { multiChat })`** — Core is single-conversation by **default** and gains tabs plus a
