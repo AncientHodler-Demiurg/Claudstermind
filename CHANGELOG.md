@@ -4,6 +4,20 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.129] - 2026-09-06
+### Changed (lab)
+- **The jump / recall search moved out of the header into a drawer under the type box.** A **⌕** button
+  sits on the right edge of the compose field (mirroring the line-number gutter on the left); clicking
+  it reveals a row beneath the field with the search input, **Go** and **⌕ Recall**. The header is now
+  a single slim stats row.
+  - Two reasons beyond space: a control used occasionally does not deserve permanent header height, and
+    **what you search for usually becomes what you reference in the prompt you are writing** — so it
+    belongs with the compose box, not three rows away from it.
+  - **Closed, the drawer does not exist** — it is not rendered rather than merely hidden, so it costs
+    nothing at all. Asserted by a test.
+  - **Escape** closes it, and closes the dialogs. The type box reserves room on the right so the toggle
+    can never sit on top of your text.
+
 ## [1.5.128] - 2026-09-06
 ### Changed (lab)
 - **The context actions moved onto the MODEL row**, into the space that was empty beside the model

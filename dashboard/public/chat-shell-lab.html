@@ -229,6 +229,12 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
 .roll .bar,.frow .bar{flex:0 1 140px;min-width:70px;height:6px;border-radius:3px;background:#0a1020;overflow:hidden;border:1px solid var(--line)}
 .frow .bar i{display:block;height:100%;background:var(--ok)}
 #f-model{gap:8px}
+/* The drawer toggle sits ON the field, mirroring the line-number gutter on the left. */
+.fieldbtn{position:absolute;right:5px;top:5px;z-index:2;height:20px;padding:0 7px;font-size:11px;
+  line-height:1;background:var(--chip);border:1px solid var(--line);border-radius:7px;opacity:.75}
+.fieldbtn:hover{opacity:1;border-color:var(--acc)}
+/* The drawer: only present when asked for, so it costs nothing the rest of the time. */
+.searchrow{gap:6px;align-items:center;background:color-mix(in srgb,var(--acc) 7%,transparent)}
 #f-model .bar{flex:0 1 90px}
 .roll .bar i{display:block;height:100%;background:var(--ok)}
 .roll.--warn .bar i{background:var(--warn)} .roll.--err .bar i{background:var(--err)}
@@ -344,7 +350,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
 <div id="rail">
   <h1>Chat Shell Lab</h1>
   <p class="sub">Mockup only — production untouched. Runs the real <code>chat-shell.js</code> maths.<br>
-    <b id="buildstamp" style="color:var(--ok)">build 1.5.128</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
+    <b id="buildstamp" style="color:var(--ok)">build 1.5.129</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
 
   <div class="grp"><b>Workspace</b>
     <div class="row"><button id="wCore" class="on">Core</button><button id="wPact">Pact</button></div>
@@ -422,6 +428,7 @@ var S = {
   suggest: "Continue with the next item on the list.",
   autoWrap: true, wraps: 0, live: true, bm: {}, maxTurns: 1000, jumpText: "", states: true,
   effort: "high", ultracode: false, width: 0, perm: "bypassPermissions",
+  searchOpen: false,   // the jump/recall drawer is closed until asked for
   replies: [],        // pending reply references for the next prompt
   // Compaction/wrap MARKERS must be recorded to be renderable at all — a line can only be drawn where
   // an event says it happened. Each entry pins itself to the round it landed after.
@@ -485,30 +492,12 @@ function build() {
   // stats line were separate full-width rows, each half empty — two rows of header for one row of
   // content. The context chip is gone from here entirely: the footer already carries the same figure,
   // and the same number in two places is one number too many.
-  var r2 = el("div", { class: "hrow --split" });
-  var left = el("div", { class: "hleft" });
-  var jin = el("input", { class: "sel", id: "h-jump", style: "flex:1;min-width:90px",
-    placeholder: "R#12 or P#12 to jump \u00b7 or text to search the archive" });
-  jin.value = S.jumpText || "";
-  jin.oninput = function () { S.jumpText = jin.value; };
-  jin.onkeydown = function (e) { if (e.key === "Enter") { e.preventDefault(); S.jumpText = jin.value; doJump(jin.value); } };
-  var jgo = el("button", { title: "Jump to that turn in this conversation" }, ["Go"]);
-  jgo.onclick = function () { S.jumpText = jin.value; doJump(jin.value); };
-  var rec = el("button", { title: "Search the ARCHIVE \u2014 turns already wrapped out of the live window. Jump only reaches loaded turns; Recall reaches the ones that are not." }, ["\u2312 Recall"]);
-  rec.onclick = function () {
-    var q = (jin.value || "").trim();
-    if (!q) { flashMsg("Type a turn number (R#46) to fetch it, or any text to search wrapped turns.", false); return; }
-    var m = q.match(/^([rRpP])?\s*#?\s*(\d+)$/);
-    var wrapped = Math.max(0, nResponses() - 40);
-    if (m) openRecall("number", (m[1] || "R").toUpperCase(), +m[2], wrapped);
-    else openRecall("query", null, q, wrapped);
-  };
-  left.appendChild(jin); left.appendChild(jgo); left.appendChild(rec);
-  left.appendChild(el("span", { class: "jstat", id: "h-jstat" }, []));
-  r2.appendChild(left);
-
+  var r2 = el("div", { class: "hrow" });
+  // The search moved OUT of the header entirely — it is now a drawer under the type box, opened on
+  // demand (see the ⌕ button on the compose field). A control you use occasionally does not deserve
+  // permanent header height; the header is for what you read constantly.
   // RIGHT HALF — the numbers that describe the conversation's size, and nothing you can click by accident.
-  var right = el("div", { class: "hright" });
+  var right = el("div", { class: "hright" });   // now the whole row
   var tg = CS.rollTriggers({ prompts: nPrompts(), responses: nResponses(), bytes: nChars(),
                              tokens: S.ctxTok, ceiling: S.ctxMax, maxTurns: S.maxTurns });
   // The agents chip is gone: the live figures in the title row already say it, and the same fact twice
@@ -699,7 +688,42 @@ function build() {
   wrap.appendChild(gut);
   var ta = el("textarea", { id: "typebox", rows: "1", placeholder: "Message the agent\u2026 (\u2318/Ctrl+Enter to send)" });
   var ghost = el("div", { id: "ghost" });
-  wrap.appendChild(ta); wrap.appendChild(ghost); taRow.appendChild(wrap); ftr.appendChild(taRow);
+  // The search DRAWER's toggle sits on the field itself, at the right — the same place the gutter sits
+  // on the left. It belongs to the compose box because what you search for usually becomes what you
+  // reference in the prompt you are writing.
+  var srchBtn = el("button", { class: "fieldbtn", id: "f-search",
+    title: S.searchOpen ? "Hide the jump / recall bar" : "Jump to a turn, or search the archive" },
+    [S.searchOpen ? "\u2715" : "\u2312"]);
+  srchBtn.onclick = function () { S.searchOpen = !S.searchOpen; render(); };
+  wrap.appendChild(ta); wrap.appendChild(ghost); wrap.appendChild(srchBtn);
+  taRow.appendChild(wrap); ftr.appendChild(taRow);
+
+  // …and the drawer itself, BENEATH the field, only when asked for.
+  if (S.searchOpen) {
+    var sr = el("div", { class: "frow searchrow", id: "f-searchrow" });
+    var jin = el("input", { class: "sel", id: "h-jump", style: "flex:1;min-width:80px",
+      placeholder: "R#12 or P#12 to jump \u00b7 or text to search the archive" });
+    jin.value = S.jumpText || "";
+    jin.oninput = function () { S.jumpText = jin.value; };
+    jin.onkeydown = function (e) {
+      if (e.key === "Enter") { e.preventDefault(); S.jumpText = jin.value; doJump(jin.value); }
+      if (e.key === "Escape") { S.searchOpen = false; render(); }
+    };
+    var jgo = el("button", { title: "Jump to that turn in this conversation" }, ["Go"]);
+    jgo.onclick = function () { S.jumpText = jin.value; doJump(jin.value); };
+    var rec = el("button", { title: "Search the ARCHIVE \u2014 turns already wrapped out of the live window. Jump only reaches loaded turns; Recall reaches the ones that are not." }, ["\u2312 Recall"]);
+    rec.onclick = function () {
+      var q = (jin.value || "").trim();
+      if (!q) { flashMsg("Type a turn number (R#46) to fetch it, or any text to search wrapped turns.", false); return; }
+      var m = q.match(/^([rRpP])?\s*#?\s*(\d+)$/);
+      var wrapped = Math.max(0, nResponses() - 40);
+      if (m) openRecall("number", (m[1] || "R").toUpperCase(), +m[2], wrapped);
+      else openRecall("query", null, q, wrapped);
+    };
+    sr.appendChild(jin); sr.appendChild(jgo); sr.appendChild(rec);
+    sr.appendChild(el("span", { class: "jstat", id: "h-jstat" }, []));
+    ftr.appendChild(sr);
+  }
 
   // ACTION ROW: attach \u00b7 meta \u00b7 history \u2026 [ auto-continue + Stop + Send ] in ONE rectangle.
   var act = el("div", { class: "frow", id: "f-act" });
@@ -1048,6 +1072,7 @@ function paintGutter(ta) {
   var w = 14 + digits * 7;                                   // padding + glyph advance at 11px monospace
   g.style.width = w + "px";
   ta.style.paddingLeft = (w + 10) + "px";                    // …and the text keeps clear of the divider
+  ta.style.paddingRight = "44px";                            // …and clear of the drawer toggle on the right
   var gh = $("#ghost"); if (gh) gh.style.paddingLeft = (w + 10) + "px";
   // Height is NOT taken from the textarea — that was half of the circular dependency that stopped the
   // box shrinking. The column stretches via top/bottom instead.
@@ -1354,6 +1379,7 @@ document.querySelectorAll("[data-w]").forEach(function (b) {
 document.addEventListener("keydown", function (e) {
   if (e.key !== "Escape") return;
   ["#wrappop", "#ctxpop", "#hist"].forEach(function (sel) { var n = $(sel); if (n) n.classList.remove("--open"); });
+  if (S.searchOpen && !$("#wrappop").classList.contains("--open")) { S.searchOpen = false; render(); }
 });
 window.addEventListener("resize", function () { syncSlider(); $("#shell").style.height = shellTargetH() + "px"; layout(); });
 syncSlider();
