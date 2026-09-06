@@ -4,6 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.125] - 2026-09-06
+### Changed (lab)
+- **The auto-wrap fill METER moved to the footer too**, next to the tick it describes. The controls had
+  already moved; the meter had been left behind in the stats strip, separated from the checkbox it
+  belongs to. The upper bar is now purely numbers.
+- **The rail buttons say what they actually do.** "⟳ run a wrap" opened a confirmation dialog rather
+  than running anything — so it looked like nothing happened. Relabelled **"⟳ wrap… (asks first)"** and
+  **"🗜 compact now"**, since compaction is ungated and a wrap is not.
+### Added (tests)
+- **A test that DRIVES a wrap and asserts the line actually appears in the transcript.** The existing
+  guards only checked that a renderer and a record both existed — neither proves a wrap puts anything on
+  screen, which is exactly what was reported missing.
+  - Two things were learned writing it. `runEvent()` cannot be called from a test: it starts a
+    `setInterval` that keeps the process alive forever, and the first version **hung**. And the DOM shim
+    does not aggregate `textContent` up the tree, so the assertion has to walk descendants — a failure
+    that was about the harness, not the page.
+
 ## [1.5.124] - 2026-09-06
 ### Changed (lab)
 - **Every context ACTION moved out of the stats bar and into the footer.** The auto-wrap tick and the

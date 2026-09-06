@@ -212,7 +212,9 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
 .roll.--err{border-color:#ff6b8155;background:#1e1116}
 .roll .m{color:var(--dim);white-space:nowrap}
 .roll .m b{color:var(--ink)}
-.roll .bar{flex:1;min-width:70px;height:6px;border-radius:3px;background:#0a1020;overflow:hidden;border:1px solid var(--line)}
+.roll .bar,.frow .bar{flex:0 1 140px;min-width:70px;height:6px;border-radius:3px;background:#0a1020;overflow:hidden;border:1px solid var(--line)}
+.frow .bar i{display:block;height:100%;background:var(--ok)}
+#f-ctxrow{gap:8px}
 .roll .bar i{display:block;height:100%;background:var(--ok)}
 .roll.--warn .bar i{background:var(--warn)} .roll.--err .bar i{background:var(--err)}
 button:disabled{opacity:.4;cursor:not-allowed}
@@ -360,7 +362,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
     <div class="row"><button id="loadSim">▶ simulate a cold load</button></div>
     <div class="row"><button id="states" class="on">prompt states</button></div>
     <div class="row"><span class="sub">Context events</span></div>
-    <div class="row"><button id="simComp">🗜 run a compaction</button><button id="simWrap">⟳ run a wrap</button></div>
+    <div class="row"><button id="simComp">🗜 compact now</button><button id="simWrap">⟳ wrap… (asks first)</button></div>
     <div class="row"><button id="imgs">+ image strip</button><button id="histBtn">🕐 history popup</button></div>
     <div class="row"><span class="sub">Context window</span></div>
     <div class="row"><button data-cm="200000">200k</button><button data-cm="1000000" class="on">1M</button></div>
@@ -509,8 +511,6 @@ function build() {
   if (S.cue) {
     var wr = CS.wrapReadiness({ tokens: S.ctxTok, ceiling: S.ctxMax });
     var bar = el("div", { class: "roll --" + wr.tone });
-    var fill = el("i"); fill.style.width = Math.min(100, wr.pct) + "%";
-    bar.appendChild(el("span", { class: "bar" }, [fill]));
     // Only ceilings that can plausibly bind (see chat-shell.js rollTriggers relevance). The 25MB byte
     // ceiling is 6-31x further away than any real context window, so it never appears.
     // maxTurns was NOT passed, so this always compared against the engine default of 400 and read
@@ -664,6 +664,11 @@ function build() {
   awCb2.checked = S.autoWrap;
   awCb2.onchange = function () { S.autoWrap = this.checked; render(); };
   ctxRow.appendChild(el("label", { class: "autolbl" }, [awCb2, "auto-wrap"]));
+  // The fill meter belongs WITH the auto-wrap control it describes, not stranded in the stats strip.
+  var fill2 = el("i"); fill2.style.width = Math.min(100, wr2.pct) + "%";
+  ctxRow.appendChild(el("span", { class: "bar", id: "f-wrapmeter",
+    title: wr2.pct + "% of the context window \u2014 automatic wrap fires at " + Math.round(wr2.autoAt * 100) + "%" },
+    [fill2]));
   var cbtn2 = el("button", { class: "splitL", title: "Compact \u2014 summarise earlier turns to shrink the context window. Cheap, keeps this session, but the summary itself stays in the window." }, ["\uD83D\uDDDC Compact"]);
   cbtn2.onclick = function () { runEvent("compact"); };
   var wbtn2 = el("button", { class: "splitR", title: wr2.reason }, ["\u27f3 Wrap"]);
