@@ -4,6 +4,25 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.116] - 2026-09-06
+### Fixed
+- **The type box grew but never shrank back.** The line-number gutter was a flex sibling under
+  `align-items: stretch`, so the textarea was stretched to the flex container's height — and that height
+  was itself set *from* the textarea. A circular dependency: `height: auto` could never collapse the
+  box, so deleting the text left an empty tall box. The gutter is now **absolutely positioned, outside
+  the sizing path entirely**, and no longer takes its height from the textarea. The box's height is
+  driven only by its own content again.
+- **An empty type box is one line, not two.** A `<textarea>` defaults to `rows="2"`; it was never set.
+- **The ghost suggestion rendered underneath the line numbers.** Both the textarea and the ghost overlay
+  are now padded past the gutter column.
+- **The gutter now numbers empty line slots too** — written lines bright (`#8fa0c8`), unwritten slots dim
+  (`#39435f`). The dim ones are the honest "how much room is left before this starts scrolling" signal,
+  and the column no longer looks half-drawn. An empty box reports **0 lines**, not 1.
+### Added (tests)
+- Structural guards for all four: `.tawrap` must not be flex, the gutter must be absolutely positioned
+  and must not derive its height from the textarea, `rows="1"` must be explicit, and both the text and
+  the ghost must clear the gutter.
+
 ## [1.5.115] - 2026-09-06
 ### Fixed
 - **The lab's queued bubbles were invented, not copied — so the thing being judged was not the thing

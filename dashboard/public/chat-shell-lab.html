@@ -219,14 +219,22 @@ button:disabled{opacity:.4;cursor:not-allowed}
    collapsed-state chips showed permanently alongside the very rows they stand in for. One global rule. */
 .--gone{display:none !important}
 /* the type box sits in a wrapper so ghost text can be overlaid exactly on top of it */
-.tawrap{position:relative;width:100%;display:flex;align-items:stretch}
-/* The prompt's line-number column. Scrolls in lockstep with the textarea it annotates. */
-.gutter{flex:0 0 auto;min-width:34px;padding:7px 6px 7px 0;text-align:right;overflow:hidden;
-  font:11px/18px ui-monospace,Consolas,monospace;color:#5d6b8f;user-select:none;
-  background:var(--field);border:1px solid var(--field-line);border-right:none;border-radius:8px 0 0 8px}
-.gutter b{display:block;font-weight:400}
-.gutter .tot{color:var(--acc);font-weight:700;border-top:1px solid var(--field-line);margin-top:2px;padding-top:2px}
-.tawrap #typebox{border-radius:0 8px 8px 0}
+/* The gutter is ABSOLUTELY positioned, deliberately. As a flex sibling with align-items:stretch the
+   textarea was stretched to the flex container's height — which was itself set from the textarea — so
+   `height:auto` could never shrink it and the box stayed tall after you deleted the text. Taking the
+   gutter out of the sizing path breaks that circular dependency: the textarea's height is now driven
+   only by its own content. */
+.tawrap{position:relative;width:100%}
+.gutter{position:absolute;left:1px;top:1px;bottom:1px;width:36px;padding:7px 6px 7px 0;text-align:right;
+  overflow:hidden;font:11px/18px ui-monospace,Consolas,monospace;user-select:none;pointer-events:none;
+  background:color-mix(in srgb,var(--field) 70%,#000);border-right:1px solid var(--field-line);
+  border-radius:8px 0 0 8px;z-index:1}
+/* An unwritten line slot is dim; a line you have actually typed is bright. The dim ones show how much
+   room is left before the box starts scrolling. */
+.gutter b{display:block;font-weight:400;color:#39435f}
+.gutter b.--on{color:#8fa0c8;font-weight:600}
+/* Both the text and the ghost clear the gutter, or they render underneath it. */
+#typebox,.tawrap #ghost{padding-left:46px}
 #ghost{position:absolute;inset:0;padding:7px 9px;font:inherit;font-size:12.5px;line-height:18px;color:#8290b5;pointer-events:none;white-space:pre-wrap;overflow:hidden}
 #ghost kbd{background:#1a2440;border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:10.5px;color:var(--dim)}
 /* Stop/Send + auto-continue live in ONE bordered group, per feedback */
@@ -548,7 +556,7 @@ function build() {
   // the only honest signal of how big it has actually become.
   var gut = el("div", { class: "gutter", id: "f-gutter" }, []);
   wrap.appendChild(gut);
-  var ta = el("textarea", { id: "typebox", placeholder: "Message the agent\u2026 (\u2318/Ctrl+Enter to send)" });
+  var ta = el("textarea", { id: "typebox", rows: "1", placeholder: "Message the agent\u2026 (\u2318/Ctrl+Enter to send)" });
   var ghost = el("div", { id: "ghost" });
   wrap.appendChild(ta); wrap.appendChild(ghost); taRow.appendChild(wrap); ftr.appendChild(taRow);
 
@@ -876,17 +884,25 @@ function openBm() {
    the bottom because that is the number you actually want when the box is capped and scrolling. */
 function paintGutter(ta) {
   var g = $("#f-gutter"); if (!g || !ta) return;
-  var lines = (ta.value || "").split("\n").length;
+  var written = (ta.value || "").split("\n").length;
+  if (!ta.value) written = 0;                                 // an empty box has typed NO lines
+  // Fill the whole visible height with slots so the column never looks half-drawn: written lines are
+  // bright, the remaining slots dim. The dim ones are the honest "how much room is left" signal.
+  var boxH = parseFloat(ta.style.height) || ta.clientHeight || 34;
+  var slots = Math.max(1, Math.floor((boxH - 14) / 18));
   var kids = [];
-  for (var i = 1; i <= lines; i++) kids.push(el("b", {}, [String(i)]));
+  for (var i = 1; i <= Math.max(written, slots); i++) {
+    kids.push(el("b", { class: i <= written ? "--on" : "" }, [String(i)]));
+  }
   g.replaceChildren.apply(g, kids);
-  g.style.height = ta.style.height || "auto";
+  // NOTE: the gutter's height is NOT set from the textarea any more — that was half of the circular
+  // dependency that stopped the box shrinking. It stretches via top/bottom instead.
   if (!ta._gutBound) {
     ta._gutBound = true;
     ta.addEventListener("scroll", function () { g.scrollTop = ta.scrollTop; });
   }
   var tot = $("#f-lines");
-  if (tot) tot.textContent = lines + (lines === 1 ? " line" : " lines");
+  if (tot) tot.textContent = written + (written === 1 ? " line" : " lines");
 }
 function paintBulb() {
   var b = $("#f-bulb"); if (!b) return;
