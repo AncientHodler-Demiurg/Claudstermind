@@ -4,6 +4,33 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.118] - 2026-09-06
+### Removed
+- **Dictation dropped** on request. Recorded rather than silently deleted: the Agent SDK exposes **no**
+  audio, microphone or transcription API, so it could only ever have been a browser (Web Speech) feature.
+### Fixed
+- **The state bubbles finally carry their colour.** `.msg.--queued` and `.msg.--u` had *equal*
+  specificity, so which one won depended on source order — which is why they kept rendering as a dark
+  navy box with only the label tinted. Rewritten at `.msg.--u.--queued` specificity with explicit
+  values: warm orange field, solid orange border, orange text; the same for pink, blue and red.
+### Added (lab)
+- **Compaction is modelled properly.** Answering the question directly: with auto-wrap **off** and the
+  window full, the engine **does** compact — the SDK emits `compact_boundary { trigger, pre_tokens,
+  post_tokens }` and `claudeSession.mjs` already translates it. A session can therefore carry several
+  compactions, each leaving a summary in the window that a wrap would clear.
+  - **A per-session compaction counter** on the rollup bar, whose tooltip explains *why* it matters:
+    compaction leaves luggage; wrapping is what actually clears it.
+  - **Event markers drawn in the transcript where they happened** — compaction a thin dashed blue rule,
+    a wrap a heavy double violet rule. Deliberately different weights: one is routine housekeeping, the
+    other is a boundary you will want to find again.
+  - **An in-flow progress band** while a compact or wrap runs, stating that nothing is deleted — a pause
+    you can see, rather than a silence indistinguishable from a hang. Both are runnable from the rail.
+### Documented
+- **Roadmap 4.12 — compaction boundaries are never persisted.** `workspace.mjs` has zero references to
+  `"compacted"` and only pushes `assistant` rows, so a compaction is live-only and lost on reload —
+  the same class as 4.11. This **blocks** transcript markers in production, since a line can only be
+  drawn where a record says the event happened.
+
 ## [1.5.117] - 2026-09-06
 ### Fixed
 - **The context readout still said `1000k`.** My earlier "fix" only ever reached the **tooltip**, and the

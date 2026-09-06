@@ -124,6 +124,25 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
 .bulb i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block}
 /* per-answer actions — bookmark + share, revealed on hover, always reachable by keyboard */
 .msg{position:relative}
+/* The in-progress band for a compact/wrap. In flow at the end of Core so it cannot overlap anything. */
+.busyband{align-self:stretch;margin:8px 0 2px;padding:8px 10px;border-radius:9px;border:1px solid}
+.busyband.--compact{background:#0e1a2e;border-color:#5aa8f088}
+.busyband.--wrap{background:#1b1030;border-color:#c77dff}
+.busyband .bt{font-size:11.5px;font-weight:700;margin-bottom:5px}
+.busyband.--compact .bt{color:#8fc3ff} .busyband.--wrap .bt{color:#e3c4ff}
+.busyband .bbar{height:6px;border-radius:3px;background:#0006;overflow:hidden}
+.busyband .bbar i{display:block;height:100%;transition:width .18s}
+.busyband.--compact .bbar i{background:#5aa8f0} .busyband.--wrap .bbar i{background:#c77dff}
+.busyband .bs{margin-top:4px;font-size:10px;color:var(--dim)}
+/* Transcript event markers. */
+.mark{position:relative;align-self:stretch;margin:6px 0;text-align:center}
+.mark .mlbl{position:relative;display:inline-block;padding:1px 10px;border-radius:9px;
+  font:700 9.5px/1.7 ui-monospace,Consolas,monospace;letter-spacing:.4px;z-index:1}
+.mark::before{content:"";position:absolute;left:0;right:0;top:50%;transform:translateY(-50%)}
+.mark.--compact::before{border-top:1px dashed #5aa8f0aa}
+.mark.--compact .mlbl{background:#0e1a2e;border:1px solid #5aa8f066;color:#8fc3ff}
+.mark.--wrap::before{border-top:3px double #c77dff;height:5px}
+.mark.--wrap .mlbl{background:#1b1030;border:1px solid #c77dff;color:#e3c4ff;font-size:10.5px;padding:2px 12px}
 .msg.--flash{outline:2px solid var(--acc);outline-offset:2px;transition:outline-color .5s}
 /* PROMPT STATES — copied from production styles.css (.ws-user / .ws-queued / .ws-queued-deep /
    .ws-interrupted / .ws-discarded). The lab had invented its own washed-out versions; these are the
@@ -132,18 +151,23 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
      queued deep PINK   #f472b6 — waiting behind BACKGROUND work, which can run far longer
      interrupted BLUE   #172554 — sent, never answered; offers Resume / Discard
      discarded   RED    #3a0d0d — explicitly killed, kept visible so it is never silently lost */
-/* Production tints at 16%, which on this darker Core surface reads as a dark box with coloured text
-   rather than an orange message. The tint is raised so the STATE is carried by the bubble itself — the
-   point of a coloured state is to be recognisable without reading the label. Border widened to 2px and
-   the body text kept legible rather than dyed the same hue as the tag. */
-.msg.--queued{background:color-mix(in srgb,#f59e0b 34%,var(--chip));border:2px solid #f59e0b;color:#ffe6bd;white-space:pre-wrap}
-.msg.--deep{background:color-mix(in srgb,#f472b6 34%,var(--chip));border:2px solid #f472b6;color:#ffd9ec}
-.msg.--dead{background:color-mix(in srgb,#3b5bbf 34%,var(--chip));border:2px solid #3b5bbf;color:#dbe6ff}
-.msg.--discarded{background:color-mix(in srgb,#b91c1c 34%,var(--chip));border:2px solid #ef4444;color:#ffdcdc}
-.msg.--queued b.who{color:#f59e0b}
-.msg.--deep b.who{color:#f472b6}
-.msg.--dead b.who{color:#93b0f0}
-.msg.--discarded b.who{color:#fca5a5}
+/* STATE BUBBLES. Written as .msg.--u.--queued (three classes) so they cannot be overridden by the
+   generic .msg.--u prompt styling — equal specificity meant the winner depended on source order, which
+   is why these kept rendering as a dark navy box with only the label coloured.
+   Explicit values rather than color-mix(): the whole bubble carries the state — warm orange field,
+   solid orange border, orange text — so it is recognised without being read. */
+.msg.--u.--queued{background:#4a3410;border:2px solid #f59e0b;color:#fbbf24}
+.msg.--u.--queued b.who{color:#f59e0b}
+.msg.--u.--queued .qtag{color:#fcd34d}
+.msg.--u.--deep{background:#4a1533;border:2px solid #f472b6;color:#f9a8d4}
+.msg.--u.--deep b.who{color:#f472b6}
+.msg.--u.--deep .qtag{color:#f9a8d4}
+.msg.--u.--dead{background:#16255c;border:2px solid #3b5bbf;color:#bfd0ff}
+.msg.--u.--dead b.who{color:#93b0f0}
+.msg.--u.--dead .qtag{color:#93b0f0}
+.msg.--u.--discarded{background:#4a1214;border:2px solid #ef4444;color:#fca5a5}
+.msg.--u.--discarded b.who{color:#ef4444}
+.msg.--u.--discarded .qtag{color:#fca5a5}
 .msg.--risk{box-shadow:0 0 0 2px #f87171}
 .msg b.who{display:block;font-size:11px;margin-bottom:3px}
 /* the queued/interrupted status line, at the BOTTOM of the bubble as production renders it */
@@ -172,10 +196,6 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
   border:1px solid var(--line);border-radius:8px;box-shadow:0 1px 3px #0006;opacity:.62;transition:opacity .12s}
 .msg:hover .msgacts button,.msgacts button:focus{opacity:1}
 .msgacts button.--on{opacity:1}
-/* Dictation button. --rec pulses red while the mic is live, so it can never be recording silently. */
-#f-mic.--rec{color:#fff;background:#b91c1c;border-color:#ef4444;animation:micpulse .9s ease-in-out infinite}
-@keyframes micpulse{0%,100%{box-shadow:0 0 0 0 #ef444488}50%{box-shadow:0 0 0 5px #ef444400}}
-#f-mic:disabled{opacity:.35}
 .msgacts button.--on{color:var(--warn);border-color:var(--warn)}
 .spacer{flex:1}
 .roll{display:flex;align-items:center;gap:8px;margin:0 9px 6px;padding:5px 9px;border-radius:7px;background:var(--chip);border:1px solid var(--line);font-size:11px;flex-wrap:wrap}
@@ -305,6 +325,8 @@ button:disabled{opacity:.4;cursor:not-allowed}
     <input type="range" id="loadr" min="0" max="100" value="0">
     <div class="row"><button id="loadSim">▶ simulate a cold load</button></div>
     <div class="row"><button id="states" class="on">prompt states</button></div>
+    <div class="row"><span class="sub">Context events</span></div>
+    <div class="row"><button id="simComp">🗜 run a compaction</button><button id="simWrap">⟳ run a wrap</button></div>
     <div class="row"><button id="imgs">+ image strip</button><button id="histBtn">🕐 history popup</button></div>
     <div class="row"><span class="sub">Context fill</span></div>
     <input type="range" id="ctxr" min="1" max="99" value="66">
@@ -346,6 +368,12 @@ var S = {
   suggest: "Continue with the next item on the list.",
   autoWrap: true, wraps: 0, live: true, bm: {}, maxTurns: 1000, jumpText: "", states: true,
   effort: "high", ultracode: false,
+  // Compaction/wrap MARKERS must be recorded to be renderable at all — a line can only be drawn where
+  // an event says it happened. Each entry pins itself to the round it landed after.
+  //   { kind:"compact"|"wrap", afterRound, preTokens, postTokens, trigger }
+  marks: [],
+  busy: null,          // { kind, pct } while a compact/wrap is in progress
+
   worktree: "main", worktrees: ["main", "feat-pact-changed-review", "exocortex"],
   conn: "ok", loadPct: 0,
   // ONE source of truth. `rounds` is the conversation's size; prompts, responses and turns are
@@ -463,6 +491,12 @@ function build() {
     bar.appendChild(el("span", { class: "m", title: "What a wrap right now would take (the last 40 turns are always kept verbatim)" },
       ["would wrap ", el("span", { class: "tR" }, ["R#1\u2013R#" + fmt(sp.r.to) + " [" + fmt(sp.r.count) + "]"]),
        " \u00b7 ", el("span", { class: "tP" }, ["P#1\u2013P#" + fmt(sp.p.to) + " [" + fmt(sp.p.count) + "]"])]));
+    // COMPACTS carried by this session. Each one leaves summarised luggage in the window that a wrap
+    // would clear, so the count is the honest answer to "why is this still heavy after compacting?".
+    var nComp = S.marks.filter(function (mk) { return mk.kind === "compact"; }).length;
+    if (nComp) bar.appendChild(el("span", { class: "chip", style: "color:#8fc3ff;border-color:#5aa8f055",
+      title: nComp + " compaction" + (nComp === 1 ? "" : "s") + " in this session. Each replaced earlier turns with a summary that still occupies the window \u2014 wrapping is what actually clears it." },
+      ["\uD83D\uDDDC " + nComp + " compacted"]));
     if (S.wraps) bar.appendChild(el("span", { class: "chip" }, ["\u27f3 " + S.wraps + " wrapped"]));
     bar.appendChild(el("span", { class: "spacer" }));
     var wbtn = el("button", { title: wr.reason }, ["\u27f3 Wrap now"]);
@@ -490,6 +524,10 @@ function build() {
     a.appendChild(el("div", {}, ["An assistant answer. ".repeat(3 + (i % 4) * 4)]));
     a.appendChild(mkMsgActs("R", i + 1));
     core.appendChild(a);
+    // Any recorded compact/wrap that landed after this round gets its line here.
+    S.marks.filter(function (mk) { return mk.afterRound === i + 1; }).forEach(function (mk) {
+      core.appendChild(mkMark(mk));
+    });
   }
   // The four prompt states, built the way production builds them (app.js ~11493): a bold "you" label,
   // the attached-image thumbnails, the text, then the status line LAST.
@@ -534,6 +572,17 @@ function build() {
     ]));
   }
   if (!S.rounds) core.appendChild(el("div", { class: "chip" }, ["no turns — use “+ 6 turns”"]));
+  // A compact or a wrap is a pause you should be able to SEE — otherwise the session just goes quiet
+  // and you cannot tell it apart from a hang. In flow at the bottom of Core, never a floating dialog.
+  if (S.busy) {
+    var isW = S.busy.kind === "wrap";
+    core.appendChild(el("div", { class: "busyband " + (isW ? "--wrap" : "--compact") }, [
+      el("div", { class: "bt" }, [isW ? "\u27f3 Wrapping to a fresh context window\u2026"
+                                      : "\uD83D\uDDDC Compacting \u2014 summarising earlier turns to fit the window\u2026"]),
+      el("div", { class: "bbar" }, [(function () { var i2 = el("i"); i2.style.width = S.busy.pct + "%"; return i2; })()]),
+      el("div", { class: "bs" }, [S.busy.pct + "%  \u00b7  nothing is deleted \u2014 earlier turns stay searchable"])
+    ]));
+  }
   shell.appendChild(core);
 
   /* ================= FOOTER — grows, collapses in order, Send/Stop never ======================= */
@@ -576,38 +625,6 @@ function build() {
   // ACTION ROW: attach \u00b7 meta \u00b7 history \u2026 [ auto-continue + Stop + Send ] in ONE rectangle.
   var act = el("div", { class: "frow", id: "f-act" });
   act.appendChild(el("button", { id: "f-attach", title: "Attach" }, ["\uD83D\uDCCE"]));
-  // PRESS AND HOLD TO DICTATE. The Agent SDK has no audio/transcription API at all (grepped: no
-  // audio/microphone/voice/transcribe symbols anywhere in sdk.d.ts), so this cannot come from the
-  // engine. It is a BROWSER capability — the Web Speech API — and the button reports honestly when the
-  // browser does not provide it, rather than sitting there dead.
-  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  var mic = el("button", { id: "f-mic", class: SR ? "" : "--gone-cap",
-    title: SR ? "Press and hold to dictate \u2014 release to insert" : "Dictation unavailable: this browser exposes no Web Speech API" },
-    ["\uD83C\uDFA4"]);
-  mic.disabled = !SR;
-  if (SR) {
-    var rec = null;
-    var start = function (e) {
-      e.preventDefault();
-      if (rec) return;
-      rec = new SR(); rec.continuous = true; rec.interimResults = true; rec.lang = "en-GB";
-      var base = ($("#typebox").value || "");
-      rec.onresult = function (ev) {
-        var txt = "";
-        for (var i = ev.resultIndex; i < ev.results.length; i++) txt += ev.results[i][0].transcript;
-        var ta2 = $("#typebox");
-        ta2.value = (base ? base.replace(/\s*$/, "") + " " : "") + txt;
-        S._text = ta2.value; S.prevLevel = 0; layout();
-      };
-      rec.onerror = function (ev) { flashMsg("Dictation failed: " + (ev && ev.error ? ev.error : "unknown"), false); };
-      try { rec.start(); mic.classList.add("--rec"); } catch (err) { rec = null; }
-    };
-    var stop = function () { if (!rec) return; try { rec.stop(); } catch (err) {} rec = null; mic.classList.remove("--rec"); };
-    mic.addEventListener("mousedown", start);
-    mic.addEventListener("touchstart", start, { passive: false });
-    ["mouseup", "mouseleave", "touchend", "touchcancel"].forEach(function (ev) { mic.addEventListener(ev, stop); });
-  }
-  act.appendChild(mic);
   act.appendChild(el("span", { class: "chip", id: "f-lines", title: "How long this prompt has become" }, ["1 line"]));
   var meta = el("span", { class: "row", id: "f-meta", style: "gap:6px" });
   if (slots.footer.repoPicker) {
@@ -865,6 +882,21 @@ function mkMsgActs(kind, n) {
 
 /* Line numbers for the prompt, in lockstep with the textarea's own scroll. Written lines bright,
    remaining slots dim, and the column's WIDTH follows the widest number actually shown. */
+/* A recorded compaction or wrap, drawn IN the transcript at the point it happened.
+   COMPACT is a thin dashed rule: the conversation continued, the hidden window just got smaller.
+   WRAP is a heavy double rule: a new context window began. Deliberately different weights — one is
+   routine housekeeping, the other is a boundary you will want to find again. */
+function mkMark(mk) {
+  var isWrap = mk.kind === "wrap";
+  var saved = (mk.preTokens && mk.postTokens) ? (mk.preTokens - mk.postTokens) : 0;
+  var label = isWrap
+    ? "WRAPPED \u2014 a fresh context window starts here"
+    : "COMPACTED (" + (mk.trigger || "auto") + ") \u2014 " + fmt(mk.preTokens) + " \u2192 " + fmt(mk.postTokens) + " tok, freed " + fmt(saved);
+  return el("div", { class: "mark " + (isWrap ? "--wrap" : "--compact"),
+    title: isWrap ? "Everything before this line was rolled out of the live window. Nothing was deleted; it stays searchable."
+                  : "The engine summarised earlier turns to fit the window. The transcript is unchanged — only the hidden context shrank." },
+    [el("span", { class: "mlbl" }, [label])]);
+}
 function paintGutter(ta) {
   var g = $("#f-gutter"); if (!g || !ta) return;
   var written = (ta.value || "").split("\n").length;
@@ -1057,6 +1089,27 @@ $("#nearTurns").onclick = function () {
 $("#liveBtn").onclick = function () { S.live = !S.live; render(); };
 $("#ctxr").oninput = function () { S.ctxTok = Math.round(S.ctxMax * this.value / 100); render(); };
 $("#states").onclick = function () { S.states = S.states ? false : true; this.classList.toggle("on", !!S.states); render(); };
+// Run a compact or a wrap for real (in mock time), so the band, the marker line and the counters can
+// all be judged in motion rather than described.
+function runEvent(kind) {
+  if (S.busy) return;
+  S.busy = { kind: kind, pct: 4 }; render();
+  var t = setInterval(function () {
+    S.busy.pct += kind === "wrap" ? 9 : 13;
+    if (S.busy.pct >= 100) {
+      clearInterval(t);
+      var pre = S.ctxTok;
+      // A compaction reclaims a lot but leaves a summary behind; a wrap starts a genuinely fresh window.
+      S.ctxTok = Math.round(pre * (kind === "wrap" ? 0.12 : 0.45));
+      S.marks.push({ kind: kind, afterRound: S.rounds, preTokens: pre, postTokens: S.ctxTok, trigger: "auto" });
+      if (kind === "wrap") S.wraps++;
+      S.busy = null;
+    }
+    render();
+  }, 130);
+}
+$("#simComp").onclick = function () { runEvent("compact"); };
+$("#simWrap").onclick = function () { runEvent("wrap"); };
 $("#histBtn").onclick = openHist;
 $("#histX").onclick = function () { $("#hist").classList.remove("--open"); };
 $("#hOpen").onclick = function () { this.classList.add("on"); $("#hRet").classList.remove("on"); openHist(); };

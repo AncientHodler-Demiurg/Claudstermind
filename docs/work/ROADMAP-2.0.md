@@ -221,6 +221,13 @@ because tests prove a module works, never that anything *calls* it. Wiring it is
       1.5.97 `parts.filter` error and being unable to recover the text. The one class of message you most
       want to inspect afterwards is the only one we throw away. Decide: persist error rows (changes what
       appears in transcripts) or keep a separate error journal.
+- [ ] **4.12** ⇉ **Compaction boundaries are never persisted.** The SDK emits
+      `SDKCompactBoundaryMessage { trigger, pre_tokens, post_tokens }` and `lib/claudeSession.mjs`
+      already translates it to `{ kind:"compacted", … }` — but `lib/workspace.mjs` contains **zero**
+      references to `"compacted"`, and only `assistant` rows are pushed into the transcript. So a
+      compaction is visible live and **gone on reload**: the same class as 4.11 (error rows). This blocks
+      drawing "compacted here" markers in the transcript at all, since a line can only be rendered where
+      a record says the event happened. Needed for the chat-shell design; prototyped in the lab.
 - [ ] **4.4** ⇉ Commit cadence: stop accumulating 39-version piles. Checkpoint commit per phase.
 
 ---
