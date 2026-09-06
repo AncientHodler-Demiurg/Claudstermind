@@ -276,6 +276,36 @@
     };
   }
 
+  /**
+   * What the FRESH window actually starts at after a wrap. A wrap does not start from zero — the new
+   * session is seeded with (a) a mechanical summary of the head and (b) the last `tailTurns` turns
+   * VERBATIM. That tail is the expensive part, and it is a fixed number of turns, so on a small context
+   * window it can be most of the window: the same wrap that frees 89% of a 1M window frees far less of
+   * a 200k one. Callers should say so rather than promising a clean slate.
+   */
+  function wrapSeedEstimate(o) {
+    o = o || {};
+    var tailTurns = Math.max(0, num(o.tailTurns, 40));
+    var charsPerTurn = Math.max(1, num(o.charsPerTurn, 10500));
+    var ceiling = Math.max(1, num(o.ceiling, 1));
+    var CHARS_PER_TOKEN = 4;
+    var summaryChars = Math.min(80, Math.max(0, num(o.headPrompts, 80))) * 140;   // ≤80 lines of ≤140 chars
+    var seedChars = tailTurns * charsPerTurn + summaryChars;
+    var seedTokens = Math.round(seedChars / CHARS_PER_TOKEN);
+    var frac = seedTokens / ceiling;
+    return {
+      seedTokens: seedTokens,
+      pctOfCeiling: Math.round(frac * 1000) / 10,
+      // Below this a wrap is not buying much: you pay a respawn and a cache reset to reclaim little.
+      worthwhile: frac < 0.5,
+      note: frac < 0.25
+        ? "The fresh window starts near-empty."
+        : frac < 0.5
+          ? "The carried tail is a sizeable slice of this window."
+          : "The carried tail alone fills most of this window — a wrap will not free much here."
+    };
+  }
+
   function wrapReadiness(o) {
     o = o || {};
     var ceiling = Math.max(1, num(o.ceiling, 1));
@@ -299,7 +329,7 @@
   var API = {
     SWALLOW_PCT: SWALLOW_PCT, SWALLOW_PCT_MAX: SWALLOW_PCT_MAX, FLOOR_ROWS: FLOOR_ROWS,
     COLLAPSE_STEPS: COLLAPSE_STEPS, HYSTERESIS: HYSTERESIS,
-    coreAtRest: coreAtRest, swallowCap: swallowCap, computeShell: computeShell, slotsFor: slotsFor, wrapReadiness: wrapReadiness, rollTriggers: rollTriggers, wrapSpan: wrapSpan,
+    coreAtRest: coreAtRest, swallowCap: swallowCap, computeShell: computeShell, slotsFor: slotsFor, wrapReadiness: wrapReadiness, rollTriggers: rollTriggers, wrapSpan: wrapSpan, wrapSeedEstimate: wrapSeedEstimate,
     ROLL_MAX_TURNS: ROLL_MAX_TURNS, ROLL_MAX_BYTES: ROLL_MAX_BYTES
   };
   if (typeof module === "object" && module.exports) module.exports = API;

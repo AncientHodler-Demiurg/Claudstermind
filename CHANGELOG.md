@@ -4,6 +4,30 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.121] - 2026-09-06
+### Documented — wrapping is OUR design; Claude Code does not do this
+- Checked against `sdk.d.ts`: the SDK/CLI answer to a long conversation is **compaction, repeatedly, in
+  place** — it exposes `isAutoCompactEnabled`, `autoCompactThreshold`, a compaction **reserve buffer**
+  inside the window (`kind: 'buffer'`), and `compact_boundary` events. There is **no auto-roll**: it
+  never respawns a session onto a fresh one. The only session-splitting primitive is `forkSession()`,
+  which is a user-initiated branch, not an automatic size remedy.
+- So **wrapping is ours**: compaction shrinks the window in place and leaves its summary inside it,
+  while a wrap moves onto a fresh session and archives the head verbatim for recall. That is why a
+  session can carry several compactions *and* still be heavy — and why the compaction counter matters.
+### Added
+- **`wrapSeedEstimate()` — a wrap does not start from zero, and the UI now says where it does start.**
+  The new session is seeded with a mechanical summary **plus the last `tailTurns` turns verbatim**, and
+  that tail is a fixed number of TURNS while the window is not. The wrap preview now reports
+  *"New window starts at ~108,000 tok · 10.8% of 1,000,000"* instead of implying a clean slate.
+  - **The consequence, now surfaced as a warning:** the same 40-turn tail is ~11% of a 1M window but
+    **over half of a 200k one** — so on a 200k model a wrap reclaims little and costs a respawn plus a
+    cache reset. The preview turns amber and says *"the carried tail alone fills most of this window —
+    a wrap will not free much here."*
+  - The lab's simulated wrap now **computes** the post-wrap figure from the carried tail instead of an
+    invented 12%, so the mock cannot flatter the feature.
+- **A 200k / 1M context-window switch** in the rail, which preserves the current fill percentage while
+  changing the ceiling — so the difference can be seen rather than argued about.
+
 ## [1.5.120] - 2026-09-06
 ### Added (lab)
 - **Compact and Wrap are now one split control** on the rollup bar, sharing a divider so they read as

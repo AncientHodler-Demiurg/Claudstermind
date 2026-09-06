@@ -354,6 +354,8 @@ button:disabled{opacity:.4;cursor:not-allowed}
     <div class="row"><span class="sub">Context events</span></div>
     <div class="row"><button id="simComp">🗜 run a compaction</button><button id="simWrap">⟳ run a wrap</button></div>
     <div class="row"><button id="imgs">+ image strip</button><button id="histBtn">🕐 history popup</button></div>
+    <div class="row"><span class="sub">Context window</span></div>
+    <div class="row"><button data-cm="200000">200k</button><button data-cm="1000000" class="on">1M</button></div>
     <div class="row"><span class="sub">Context fill</span></div>
     <input type="range" id="ctxr" min="1" max="99" value="66">
     <div class="row"><span class="sub">Turn ceiling (engine default is 400)</span></div>
@@ -1023,6 +1025,13 @@ function openWrap() {
     el("span", { class: "v" }, [fmt(S.ctxTok) + " / " + fmt(S.ctxMax) + " tok \u00b7 " + wr.pct + "%"])]));
   b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Images"]), el("span", { class: "v" }, [fmt(S.images)])]));
   b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Kept verbatim"]), el("span", { class: "v" }, ["the last " + TAIL + " rounds"])]));
+  // A wrap does NOT start from zero. Say where the new window actually begins, and warn when the
+  // carried tail is so large that a wrap barely helps — which is what happens on a 200k window.
+  var seed = CS.wrapSeedEstimate({ tailTurns: TAIL * 2, charsPerTurn: S.charsPerRound / 2, ceiling: S.ctxMax });
+  b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["New window starts at"]),
+    el("span", { class: "v", style: seed.worthwhile ? "" : "color:var(--warn)" },
+      ["~" + fmt(seed.seedTokens) + " tok \u00b7 " + seed.pctOfCeiling + "% of " + fmt(S.ctxMax)])]));
+  b.appendChild(el("div", { class: "chip", style: seed.worthwhile ? "" : "color:var(--warn);border-color:#ffb45466" }, [seed.note]));
   b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Numbering after wrap"]),
     el("span", { class: "v" }, ["CONTINUES \u2014 next is ", el("span", { class: "tR" }, ["R#" + fmt(nResponses() + 1)]),
       " / ", el("span", { class: "tP" }, ["P#" + fmt(nPrompts() + 1)])])]));
@@ -1145,7 +1154,14 @@ function runEvent(kind) {
       clearInterval(t);
       var pre = S.ctxTok;
       // A compaction reclaims a lot but leaves a summary behind; a wrap starts a genuinely fresh window.
-      S.ctxTok = Math.round(pre * (kind === "wrap" ? 0.12 : 0.45));
+      // The post-wrap figure is COMPUTED from the carried tail, not an invented fraction — otherwise the
+      // mock would flatter the feature and hide that a wrap barely helps on a small window.
+      if (kind === "wrap") {
+        var sd = CS.wrapSeedEstimate({ tailTurns: 80, charsPerTurn: S.charsPerRound / 2, ceiling: S.ctxMax });
+        S.ctxTok = Math.min(pre, sd.seedTokens);
+      } else {
+        S.ctxTok = Math.round(pre * 0.45);          // a compaction keeps its summary in the window
+      }
       S.marks.push({ kind: kind, afterRound: S.rounds, preTokens: pre, postTokens: S.ctxTok, trigger: "auto" });
       if (kind === "wrap") S.wraps++;
       S.busy = null;
@@ -1159,6 +1175,15 @@ $("#histBtn").onclick = openHist;
 $("#histX").onclick = function () { $("#hist").classList.remove("--open"); };
 $("#hOpen").onclick = function () { this.classList.add("on"); $("#hRet").classList.remove("on"); openHist(); };
 $("#hRet").onclick = function () { this.classList.add("on"); $("#hOpen").classList.remove("on"); openHist(); };
+document.querySelectorAll("[data-cm]").forEach(function (b) {
+  b.onclick = function () {
+    var pctNow = S.ctxTok / S.ctxMax;
+    S.ctxMax = +b.dataset.cm;
+    S.ctxTok = Math.round(S.ctxMax * pctNow);          // keep the FILL, change the ceiling
+    document.querySelectorAll("[data-cm]").forEach(function (o) { o.classList.toggle("on", o === b); });
+    render();
+  };
+});
 document.querySelectorAll("[data-w]").forEach(function (b) {
   b.onclick = function () {
     S.width = +b.dataset.w;
