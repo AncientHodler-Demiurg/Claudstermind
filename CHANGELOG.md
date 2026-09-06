@@ -4,6 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.136] - 2026-09-06
+### Added — the background-agents panel, and how it goes away
+- **`pruneFinished()` in `lib/backgroundTasks.mjs`** (engine, 5 tests) answers the question the old
+  panel never did: *how does a finished agent leave?* The rules, each for a stated reason:
+  - **running** — kept always. This is the question the panel exists to answer.
+  - **done** — kept ~3 minutes after finishing, then dropped. **A success nobody read is not
+    information**, and 23 of them from nine hours ago buried the 3 failures that mattered.
+  - **error** — **never auto-dropped; leaves only when dismissed.** A failure that disappears on a timer
+    is a failure you never find out about.
+  - **unknown end time** — kept. If we never learned when it finished we cannot know if it has aged out,
+    and guessing would drop rows arbitrarily.
+- **The lab's panel is built on those rules.** The header chip shows **live work only** (`●●● 2 running`,
+  or `⚠ 1 error`, or `✓ idle`); everything settled is behind it. Expanded, rows sort running → errors →
+  recent successes, each with the clock that fits its state — a live agent **ticks**, a finished one says
+  **"took 4s"**, and one whose duration we never learned says so. Errors carry a dismiss button, and the
+  panel states the retention rule in words rather than leaving it to be discovered.
+
 ## [1.5.135] - 2026-09-06
 ### Added — engine: document attachments
 - **`document` content blocks are now emitted.** `claudeSession._input()` builds a `document` block for

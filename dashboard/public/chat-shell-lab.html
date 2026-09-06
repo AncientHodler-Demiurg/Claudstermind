@@ -269,6 +269,19 @@ button:disabled{opacity:.4;cursor:not-allowed}
 .kv{display:flex;gap:8px;font-size:12px}.kv .k{color:var(--dim);flex:1}.kv .v{font-weight:600}
 .ctxrow{display:flex;align-items:center;gap:7px;font-size:12px}
 .ctxsw{width:11px;height:11px;border-radius:3px;flex:0 0 auto}
+/* Background-agent panel. Running first, then errors, then the handful of recent successes. */
+.agentpanel{margin:0 9px 6px;padding:5px;border-radius:8px;background:#0a1020;border:1px solid var(--line);
+  max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:3px}
+.arow{display:flex;align-items:center;gap:7px;padding:3px 7px;border-radius:6px;font-size:11px;background:#0e1626}
+.arow .adot{width:6px;height:6px;border-radius:50%;flex:0 0 auto;background:var(--dim)}
+.arow.--running .adot{background:var(--ok);animation:seampulse 1.1s ease-in-out infinite}
+.arow.--error{background:#2a1114;border:1px solid #ef444455}
+.arow.--error .adot{background:var(--err)}
+.arow.--done{opacity:.62}
+.arow .alabel{font:700 10px ui-monospace,Consolas,monospace;color:var(--acc);white-space:nowrap}
+.arow .adesc{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.arow .aclock{font:10px ui-monospace,Consolas,monospace;color:var(--dim);white-space:nowrap}
+.arow .kill{padding:0 5px;font-size:10px;background:transparent;border:none;color:var(--err)}
 .loadstrip{position:relative;height:16px;margin:0 9px 6px;border-radius:8px;background:#0a1020;border:1px solid var(--line);overflow:hidden}
 .loadstrip i{display:block;height:100%;background:linear-gradient(90deg,var(--acc),#5aa8f0);transition:width .25s}
 .loadstrip .lbl{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;text-shadow:0 1px 2px #000}
@@ -358,7 +371,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
 <div id="rail">
   <h1>Chat Shell Lab</h1>
   <p class="sub">Mockup only — production untouched. Runs the real <code>chat-shell.js</code> maths.<br>
-    <b id="buildstamp" style="color:var(--ok)">build 1.5.134</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
+    <b id="buildstamp" style="color:var(--ok)">build 1.5.136</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
 
   <div class="grp"><b>Workspace</b>
     <div class="row"><button id="wCore" class="on">Core</button><button id="wPact">Pact</button></div>
@@ -470,6 +483,7 @@ var S = {
   effort: "high", ultracode: false, width: 0, perm: "bypassPermissions",
   searchOpen: false,   // the jump/recall drawer is closed until asked for
   autoArm: null,       // { left } while an automatic wrap is counting down
+  agentRows: [], agentsOpen: false, dismissed: {},   // background-agent panel
   replies: [],        // pending reply references for the next prompt
   // Compaction/wrap MARKERS must be recorded to be renderable at all — a line can only be drawn where
   // an event says it happened. Each entry pins itself to the round it landed after.
@@ -526,6 +540,22 @@ function build() {
   if (S.conn === "lost") r1.appendChild(el("span", { class: "chip --bad" }, ["\u26a1 disconnected \u2014 retrying"]));
   else if (S.conn === "recon") r1.appendChild(el("span", { class: "chip --warn" }, ["\u21bb reconnecting\u2026"]));
   else if (S.recon) r1.appendChild(el("span", { class: "chip --ok" }, ["\u21bb caught up"]));
+  // BACKGROUND AGENTS. The header shows only what is LIVE — that is the question you are asking when
+  // you glance at it. Everything settled sits behind the chip, so a run of successes can never bury the
+  // one failure that matters.
+  var live = S.agentRows.filter(function (a) { return a.status === "running"; });
+  var errs = S.agentRows.filter(function (a) { return a.status === "error"; });
+  var dones = S.agentRows.filter(function (a) { return a.status === "done"; });
+  if (S.agentRows.length) {
+    var ab = el("button", { class: "chip" + (errs.length ? " --bad" : live.length ? " --ok" : ""),
+      title: live.length + " running \u00b7 " + dones.length + " done \u00b7 " + errs.length + " error(s). "
+           + "Successes clear themselves after a few minutes; errors stay until dismissed." },
+      [live.length ? "\u25cf".repeat(Math.min(live.length, 3)) + " " + live.length + " running"
+                   : errs.length ? "\u26a0 " + errs.length + " error" + (errs.length === 1 ? "" : "s")
+                   : "\u2713 idle"]);
+    ab.onclick = function () { S.agentsOpen = !S.agentsOpen; render(); };
+    r1.appendChild(ab);
+  }
   r1.appendChild(el("span", { class: "chip --ok" }, ["✓ Saved"]));
   hdr.appendChild(r1);
 
@@ -575,6 +605,33 @@ function build() {
   if (S.loadPct > 0 && S.loadPct < 100) {
     hdr.appendChild(el("div", { class: "loadstrip", title: "Loading conversation history" },
       [el("i", { style: "width:" + S.loadPct + "%" }), el("span", { class: "lbl" }, ["loading history \u00b7 " + S.loadPct + "%"])]));
+  }
+  // The expanded panel: running first, then errors, then the few recent successes. Each row shows the
+  // clock that fits its state — a live agent ticks, a finished one reports how long it TOOK.
+  if (S.agentsOpen && S.agentRows.length) {
+    var pan = el("div", { class: "agentpanel", id: "f-agents" });
+    live.concat(errs, dones).forEach(function (a) {
+      var row = el("div", { class: "arow --" + a.status });
+      row.appendChild(el("span", { class: "adot" }, []));
+      row.appendChild(el("span", { class: "alabel" }, [a.label]));
+      row.appendChild(el("span", { class: "adesc" }, [a.description]));
+      row.appendChild(el("span", { class: "spacer" }));
+      row.appendChild(el("span", { class: "aclock" }, [
+        a.status === "running" ? "running " + Math.round((a.elapsedMs || 0) / 1000) + "s"
+        : a.durationMs != null ? "took " + Math.round(a.durationMs / 1000) + "s"
+        : "duration unknown"]));
+      if (a.status === "error") {
+        var dis = el("button", { class: "kill", title: "Dismiss this failure" }, ["\u2715"]);
+        dis.onclick = function () { S.dismissed[a.id] = true; pruneAgents(); render(); };
+        row.appendChild(dis);
+      }
+      pan.appendChild(row);
+    });
+    pan.appendChild(el("div", { class: "chip" }, [
+      "Running agents stay. Successes clear themselves " + Math.round(CS_RETAIN / 60000)
+      + " minutes after they finish. Errors stay until you dismiss them \u2014 a failure that vanishes on "
+      + "a timer is one you never find out about."]));
+    hdr.appendChild(pan);
   }
   shell.appendChild(hdr);
 
@@ -1387,7 +1444,12 @@ document.querySelectorAll("[data-fill]").forEach(function (b) {
 $("#addConv").onclick = function () { S.convs.forEach(function (c) { c.act = false; }); S.convs.push({ n: "Chat " + (S.convs.length + 1), act: true }); render(); };
 $("#addTurns").onclick = function () { S.rounds += 6; render(); };
 $("#clearTurns").onclick = function () { S.rounds = 0; render(); };
-$("#agents").onclick = function () { S.agents = S.agents ? 0 : 3; this.classList.toggle("on", !!S.agents); render(); };
+$("#agents").onclick = function () {
+  if (S.agentRows.length) { S.agentRows = []; S.dismissed = {}; S.agentsOpen = false; }
+  else { seedAgents(); S.agentsOpen = true; }
+  this.classList.toggle("on", !!S.agentRows.length);
+  render();
+};
 $("#recon").onclick = function () { S.recon = !S.recon; this.classList.toggle("on", S.recon); render(); };
 // The old "rollup bar" toggle controlled a row that no longer exists — its contents moved into the
 // header's stats half. Repurposed to drop a marker into the transcript without waiting out an animation.
@@ -1447,6 +1509,35 @@ function armAutoWrap() {
     }
     render();
   }, 1000);
+}
+
+var CS_RETAIN = 3 * 60 * 1000;   // mirrors backgroundTasks.RETAIN_DONE_MS
+/* The same retention the engine helper applies: running stays, done ages out, errors stay until
+   dismissed. Implemented over the mock rows so the LIFECYCLE can be watched rather than described. */
+function pruneAgents() {
+  var now = Date.now();
+  S.agentRows = S.agentRows.filter(function (a) {
+    if (S.dismissed[a.id]) return false;
+    if (a.status === "running" || a.status === "error") return true;
+    if (a.finishedAt == null) return true;                 // unknown age is not old
+    return now - a.finishedAt < CS_RETAIN;
+  });
+}
+function seedAgents() {
+  var now = Date.now(), n = 0;
+  var mk = function (st, desc, ago) {
+    return { id: "a" + (++n), label: "local_bash", description: desc, status: st,
+      startedAt: now - ago - 4000, finishedAt: st === "running" ? null : now - ago,
+      elapsedMs: st === "running" ? ago + 4000 : null, durationMs: st === "running" ? null : 4000 };
+  };
+  S.agentRows = [
+    mk("running", "Drive a wrap end-to-end through the DOM shim", 0),
+    mk("running", "Rerun the render test cleanly", 0),
+    mk("error", "Verify suite, changelog, bump, commit", 9 * 3600 * 1000),
+    mk("done", "Make the footer context readout open the breakdown", 20 * 1000),
+    mk("done", "Stamp, changelog, bump, verify, commit", 9 * 3600 * 1000)
+  ];
+  pruneAgents();
 }
 
 function runEvent(kind) {
