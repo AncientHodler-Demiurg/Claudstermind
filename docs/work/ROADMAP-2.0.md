@@ -236,11 +236,24 @@ because tests prove a module works, never that anything *calls* it. Wiring it is
       either a reference-counted sweep — an image is dead when no live transcript *and no archived
       segment* references its hash — or an explicit "this is by design, images are permanent" decision.
       Found while answering "what happens to attachments when a conversation wraps?".
-- [ ] **4.14** ⇉ **Document attachments are not supported.** `saveImage` accepts `png|jpg|webp` only and
-      throws on anything else, so a PDF or text file cannot be attached to a prompt at all. What the UI
-      calls a "referenced file" is a **path in the prompt text** that the agent re-reads on demand —
-      which costs context but stores nothing. If real document upload is wanted, it is new work, not a
-      widened mediaType list: documents need extraction, chunking and their own recall path.
+- [ ] **4.14** ⇉ **Document attachments — a gap in OUR code, not a platform limit.** *(corrected)*
+      The first version of this item said documents were "unsupported" and implied that was upstream.
+      **It is not.** The Agent SDK's own typing of a user message reads: *"a MessageParam with role
+      'user' whose content is a string or an array of content blocks (text, image, **document**,
+      tool_result, …)"* — so the API takes them and the SDK passes them through. Claude Desktop and DMP
+      both use that path.
+      **We simply never send one.** Two places decide it:
+      - `lib/workspaceStore.mjs` — `IMAGE_EXT` whitelists `png|jpeg|webp` and `saveImage` throws on
+        anything else, so a PDF cannot even be stored.
+      - `lib/claudeSession.mjs:373` — `_input()` only ever builds `{ type: "image", … }` blocks.
+      So the work is: widen storage past the image whitelist (a `documents/` sibling, same
+      content-addressing), emit a `document` block alongside the text, and render the attachment row.
+      **Note the context cost differs from an image**: a PDF is charged by its extracted pages, so a
+      long document can consume the window on its own — the attachment strip should show an estimate
+      before sending, not after.
+      ⚠️ Related but distinct: Claude Code's usual way of "attaching" a local file is for the agent to
+      **read it with a tool**, which stores nothing and costs context only while it is in the window.
+      That path already works here. Uploading is what is missing.
 - [ ] **4.4** ⇉ Commit cadence: stop accumulating 39-version piles. Checkpoint commit per phase.
 
 ---

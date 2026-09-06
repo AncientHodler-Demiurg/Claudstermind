@@ -4,6 +4,25 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.134] - 2026-09-06
+### Corrected
+- **"Document attachments are unsupported" was wrong, and wrong in a misleading way.** It described our
+  code but implied a platform limitation. The boss pushed back — Claude Desktop and DMP both attach
+  documents — and he was right.
+  The Agent SDK's own typing of a user message says: *"a MessageParam with role 'user' whose content is
+  a string or an array of content blocks (text, image, **document**, tool_result, …)"*. **The API takes
+  document blocks and the SDK passes them straight through.** DMP can do it because it calls the
+  Messages API directly.
+  **We never send one.** Exactly two places decide that: `workspaceStore.IMAGE_EXT` whitelists
+  `png|jpeg|webp` and `saveImage` throws on anything else, and `claudeSession.mjs:373` only ever builds
+  `{ type: "image", … }` blocks. So this is a gap in our implementation, and a much smaller one than
+  "new feature" suggested — roadmap 4.14 rewritten accordingly, including the part that *is* genuinely
+  different from images: **a PDF is charged by its extracted pages**, so the attachment strip needs to
+  show a context estimate *before* sending.
+- Also distinguished the third case that was being conflated: Claude Code's usual "attach a file" is the
+  agent **reading it with a tool** — stores nothing, costs context only while in the window. **That path
+  already works here.** Uploading is what is missing.
+
 ## [1.5.133] - 2026-09-06
 ### Added (lab)
 - **The wrap dialog now states what a wrap does NOT free.** "Wrapped" reads like "reclaimed", and that is
