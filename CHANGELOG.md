@@ -4,6 +4,18 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.128] - 2026-09-06
+### Changed (lab)
+- **The context actions moved onto the MODEL row**, into the space that was empty beside the model
+  controls. They belong next to the context readout they act on — auto-wrap, the meter and
+  Compact│Wrap are all answers to the number sitting immediately to their left — and it removes a whole
+  row of footer height. The dedicated context row is gone.
+- **The redundant agents chip is gone from the header** — the live figures in the title row already say
+  it, and the same fact in two places is one place too many for them to disagree.
+- **Header stats are left-aligned; the wrap RANGE is pushed to the far right.** It answers a different
+  question from the rest — *"what would I lose?"* versus *"how big is this?"* — so it reads better
+  separated than bunched in with them.
+
 ## [1.5.127] - 2026-09-06
 ### Added (lab)
 - **A build stamp in the rail.** "Is this the new copy?" has cost two rounds — the footer controls were

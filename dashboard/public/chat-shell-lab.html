@@ -108,8 +108,8 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
 /* The search line and the stats line were separate full-width rows, each half empty. One row, split:
    actions left, numbers right. They wrap independently at narrow pane widths. */
 .hrow.--split{align-items:center;gap:10px}
-.hleft{display:flex;align-items:center;gap:6px;flex:1 1 46%;min-width:0}
-.hright{display:flex;align-items:center;gap:6px;flex:1 1 54%;min-width:0;justify-content:flex-end;flex-wrap:wrap;row-gap:4px}
+.hleft{display:flex;align-items:center;gap:6px;flex:0 1 42%;min-width:0}
+.hright{display:flex;align-items:center;gap:6px;flex:1 1 58%;min-width:0;justify-content:flex-start;flex-wrap:wrap;row-gap:4px}
 /* Conversation medallions and header chips are the SAME construction — same height, padding, radius,
    border and font. Only their LENGTH may differ. Previously a tab was 3px/14px and a chip 2px/11px, so
    the two rows sat at different heights and the header jumped between workspaces. */
@@ -228,7 +228,8 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
 .roll .m b{color:var(--ink)}
 .roll .bar,.frow .bar{flex:0 1 140px;min-width:70px;height:6px;border-radius:3px;background:#0a1020;overflow:hidden;border:1px solid var(--line)}
 .frow .bar i{display:block;height:100%;background:var(--ok)}
-#f-ctxrow{gap:8px}
+#f-model{gap:8px}
+#f-model .bar{flex:0 1 90px}
 .roll .bar i{display:block;height:100%;background:var(--ok)}
 .roll.--warn .bar i{background:var(--warn)} .roll.--err .bar i{background:var(--err)}
 button:disabled{opacity:.4;cursor:not-allowed}
@@ -343,7 +344,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
 <div id="rail">
   <h1>Chat Shell Lab</h1>
   <p class="sub">Mockup only — production untouched. Runs the real <code>chat-shell.js</code> maths.<br>
-    <b id="buildstamp" style="color:var(--ok)">build 1.5.127</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
+    <b id="buildstamp" style="color:var(--ok)">build 1.5.128</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
 
   <div class="grp"><b>Workspace</b>
     <div class="row"><button id="wCore" class="on">Core</button><button id="wPact">Pact</button></div>
@@ -510,7 +511,8 @@ function build() {
   var right = el("div", { class: "hright" });
   var tg = CS.rollTriggers({ prompts: nPrompts(), responses: nResponses(), bytes: nChars(),
                              tokens: S.ctxTok, ceiling: S.ctxMax, maxTurns: S.maxTurns });
-  right.appendChild(el("span", { class: "chip" }, ["\u2699 " + S.agents + " agents"]));
+  // The agents chip is gone: the live figures in the title row already say it, and the same fact twice
+  // is one place too many for them to disagree.
   tg.list.forEach(function (c) {
     if (c.id === "context") return;                       // the footer carries the context figure
     var near = c.id === tg.willRollOn;
@@ -528,6 +530,9 @@ function build() {
                  : "No compactions yet in this session." },
     ["\uD83D\uDDDC " + nComp + " compacted"]));
   if (S.wraps) right.appendChild(el("span", { class: "chip" }, ["\u27f3 " + S.wraps + " wrapped"]));
+  // SIZE stats sit together on the left; the wrap RANGE is pushed to the far right, because it answers
+  // a different question ("what would I lose?") from the rest ("how big is this?").
+  right.appendChild(el("span", { class: "spacer" }));
   var sp = CS.wrapSpan({ rFrom: 1, rTo: Math.max(0, nResponses() - 40), pFrom: 1, pTo: Math.max(0, nPrompts() - 40) });
   right.appendChild(el("span", { class: "chip", title: "The range a wrap would take right now (the last 40 rounds are always kept verbatim)" },
     ["would wrap ", el("span", { class: "tR" }, ["R#1\u2013R#" + fmt(sp.r.to) + " [" + fmt(sp.r.count) + "]"]),
@@ -682,31 +687,6 @@ function build() {
     ftr.appendChild(rr);
   }
 
-  // CONTEXT ACTIONS — moved down from the stats bar. Actions live in the footer with the other
-  // controls; the upper bar keeps only the numbers.
-  var ctxRow = el("div", { class: "frow", id: "f-ctxrow" });
-  var wr2 = CS.wrapReadiness({ tokens: S.ctxTok, ceiling: S.ctxMax });
-  var awCb2 = el("input", { type: "checkbox", id: "f-autowrap",
-    title: "Automatically wrap to a fresh window at " + Math.round(wr2.autoAt * 100) + "%" });
-  awCb2.checked = S.autoWrap;
-  awCb2.onchange = function () { S.autoWrap = this.checked; render(); };
-  ctxRow.appendChild(el("label", { class: "autolbl" }, [awCb2, "auto-wrap"]));
-  // The fill meter belongs WITH the auto-wrap control it describes, not stranded in the stats strip.
-  var fill2 = el("i"); fill2.style.width = Math.min(100, wr2.pct) + "%";
-  ctxRow.appendChild(el("span", { class: "bar", id: "f-wrapmeter",
-    title: wr2.pct + "% of the context window \u2014 automatic wrap fires at " + Math.round(wr2.autoAt * 100) + "%" },
-    [fill2]));
-  var cbtn2 = el("button", { class: "splitL", title: "Compact \u2014 summarise earlier turns to shrink the context window. Cheap, keeps this session, but the summary itself stays in the window." }, ["\uD83D\uDDDC Compact"]);
-  cbtn2.onclick = function () { runEvent("compact"); };
-  var wbtn2 = el("button", { class: "splitR", title: wr2.reason }, ["\u27f3 Wrap"]);
-  wbtn2.disabled = !wr2.canWrapManually;
-  wbtn2.onclick = openWrap;
-  ctxRow.appendChild(el("span", { class: "split" }, [cbtn2, wbtn2]));
-  ctxRow.appendChild(el("span", { class: "spacer" }));
-  ctxRow.appendChild(el("span", { class: "chip", title: "What a wrap would take right now" },
-    ["would wrap ", el("span", { class: "tR" }, ["R#1\u2013R#" + fmt(Math.max(0, nResponses() - 40))]),
-     " \u00b7 ", el("span", { class: "tP" }, ["P#1\u2013P#" + fmt(Math.max(0, nPrompts() - 40))])]));
-  ftr.appendChild(ctxRow);
 
   // TYPE BOX + ghost suggestion. The old "continuation line" row is GONE: the suggested next prompt is
   // ghost text inside the box, Tab to accept. That reclaims a whole row and puts the suggestion where
@@ -824,6 +804,27 @@ function build() {
     [S.ctxTok.toLocaleString() + " / " + S.ctxMax.toLocaleString() + " tok \u00b7 " + pct + "%"]);
   ctxBtn.onclick = openCtx;
   mb.appendChild(ctxBtn);
+
+  // CONTEXT ACTIONS live on THIS row, in the space that was empty to the right of the model controls.
+  // They belong beside the context readout they act on — auto-wrap and Compact/Wrap are all answers to
+  // the number sitting immediately to their left — and it saves a whole row of footer height.
+  mb.appendChild(el("span", { class: "spacer" }));
+  var wr2 = CS.wrapReadiness({ tokens: S.ctxTok, ceiling: S.ctxMax });
+  var awCb2 = el("input", { type: "checkbox", id: "f-autowrap",
+    title: "Automatically wrap to a fresh window at " + Math.round(wr2.autoAt * 100) + "%" });
+  awCb2.checked = S.autoWrap;
+  awCb2.onchange = function () { S.autoWrap = this.checked; render(); };
+  mb.appendChild(el("label", { class: "autolbl" }, [awCb2, "auto-wrap"]));
+  var fill2 = el("i"); fill2.style.width = Math.min(100, wr2.pct) + "%";
+  mb.appendChild(el("span", { class: "bar", id: "f-wrapmeter",
+    title: wr2.pct + "% of the context window \u2014 automatic wrap fires at " + Math.round(wr2.autoAt * 100) + "%" },
+    [fill2]));
+  var cbtn2 = el("button", { class: "splitL", title: "Compact \u2014 summarise earlier turns to shrink the context window. Cheap, keeps this session, but the summary itself stays in the window." }, ["\uD83D\uDDDC Compact"]);
+  cbtn2.onclick = function () { runEvent("compact"); };
+  var wbtn2 = el("button", { class: "splitR", title: wr2.reason }, ["\u27f3 Wrap"]);
+  wbtn2.disabled = !wr2.canWrapManually;
+  wbtn2.onclick = openWrap;
+  mb.appendChild(el("span", { class: "split" }, [cbtn2, wbtn2]));
   ftr.appendChild(mb);
   shell.appendChild(ftr);
   // Re-home the dialogs inside the shell after every rebuild (replaceChildren above detaches them).
