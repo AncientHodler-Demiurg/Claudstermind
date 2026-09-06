@@ -4,6 +4,213 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.6.0] - 2026-09-06
+### Added — `chat-shell.js` now loads in production (inert)
+- `dashboard/public/chat-shell.js` was written to be shared between the prototyping lab and
+  production, but `dashboard/public/index.html` never actually loaded it — only the lab did, so
+  `window.ChatShell` never existed in the real app. Added `<script src="/chat-shell.js">` before
+  `/app.js` (same precedent as `md-mini.js`/`deploy-helpers.js`). No behavior change yet: nothing in
+  `app.js` calls it yet. This unblocks reply/quote and manual-wrap, which reuse its
+  `replyQuote`/`buildReplyPreamble`/`replyCost`/`wrapReadiness`/`wrapSpan`/`wrapSeedEstimate` instead
+  of a second implementation. Guarded by `lib/chatShellProdWiring.test.mjs`, asserting the script
+  tag exists and loads before `app.js`.
+### Added — distinct Core / Pact visual identity
+- Core and Pact shared exactly one `--accent` value app-wide, feeding 130 rules (buttons, focus
+  rings, links) — no visual way to tell which workspace a pane belonged to beyond its layout.
+  `.ws-pane` (Core) now gets its own accent (violet), `.pact-right` (Pact) its own (teal), in both
+  dark and light mode, additive to the existing `data-theme="light"|"dark"` switch — `--panel`/`--bg`
+  are untouched, since their light/dark contrast was independently tuned and isn't being redone here.
+  P#/R# addressing-tag colours are deliberately unaffected — they're an addressing scheme, not decor.
+  Guarded by `lib/workspaceThemeIdentity.test.mjs`.
+### Added — reply/quote a turn, both workspaces
+- Every prompt and answer now has a `↩` button (next to `★`/`⤴` on answers, inline next to "you" on
+  prompts). Tapping it queues that turn as a removable chip above the compose box; sending prepends
+  the queued quotes to the message **visibly**, like a WhatsApp reply — not hidden the way the
+  existing discarded-message note rides the payload only, since a reply is content the user chose to
+  attach, not an instruction about prior turns. Built on `ChatShell.replyQuote`/`buildReplyPreamble`
+  (already tested, now reachable from `app.js` since the foundation topic wired `chat-shell.js` in).
+  Pending references are a one-shot per send, same treatment as attached images.
+  Guarded by `lib/replyQuote.test.mjs`: 8 behavioral tests for the pending-reference list and chip
+  labelling, plus 2 wiring-presence tests (Core/Pact bookmark and share buttons have no equivalent
+  DOM-interaction test in this codebase today — button placement isn't proven by these, only that the
+  call sites and the preamble-building/clearing exist and can't silently regress unnoticed).
+### Added — Core's multi-chat toggle (confirmed absent before this)
+- Core has always been exactly one conversation per (repo, worktree) — `wsWorkspaceId(repo, worktree)`
+  is the session/bookmark/image identity for a pane, with no notion of "conversation N of this repo."
+  Extended it with an **optional, backward-compatible** third `slot` argument: slot 0 (the default) is
+  **byte-identical to the id this always produced** — every existing bookmark, image path, and saved
+  session keeps resolving exactly as before, so turning this on cannot touch existing data. A non-zero
+  slot is a genuinely separate id (`repo@worktree#N`) — its own session, bookmarks and images, not a
+  filtered view of one conversation.
+- New per-pane toggle (`☐ multi-chat`, off by default) reveals a tab strip — Master first (★, can't be
+  removed, mirrors Pact's own "first tab is prime" rule), a `＋` to start a new conversation for the
+  same repo, click to switch. Switching to an existing slot reuses the exact restore mechanism
+  `restorePanes()` already relies on at boot (`beginPendingOpen` + control `open`), not a new one.
+  Turning the toggle off collapses back to Master without deleting the other slots — they reappear if
+  it's switched back on.
+- Every other call site that derives a workspace id from a pane (bookmarks, image lookups, transcript
+  backfill — 6 sites) was updated through one shared `wsPaneSlot(p)` helper, guarded by a test that
+  fails if any call site regresses back to the old 2-argument form.
+  Guarded by `lib/coreMultiChat.test.mjs`: 12 tests covering the pure slot-list helpers, the
+  byte-identical-at-slot-0 guarantee, save/load persistence, and the slot-consistency invariant.
+### Added — a pane-scoped dialog primitive
+- Desktop's only existing dialog primitive, `showModal`, is viewport-fixed (`.modal-overlay {position:
+  fixed; inset:0}`) — wrong for the 4-pane cockpit, where it would open nowhere near the pane that
+  raised it and dim the other three while it does. New `wsOpenPaneDialog(paneEl, opts)` appends its
+  overlay **inside the pane** instead: `.ws-pane` already establishes a containing block for it via its
+  existing `contain: layout paint`; `.pact-right` was given `position: relative` for the same reason.
+  Escape and clicking the dimmed backdrop both close it. Built for manual wrap's confirmation dialog
+  (next), reusable by anything else that needs to ask before doing something in-pane.
+- Includes `wsDialogArmed(elapsedMs, armDelayMs)` — a confirm button armed with no delay is a misclick
+  trap (double-clicking the button that opens a dialog can land the second click on the button that
+  confirms it, the instant it paints); this is the pure timing check a caller uses to keep a confirm
+  button disabled until a short delay has passed.
+  Guarded by `lib/paneDialog.test.mjs`: the arm-delay logic tested directly, plus wiring checks that
+  the overlay is appended to the pane (not `document.body`) and that Escape/backdrop-click both close.
+### Changed — answer-arrival style: counter, both workspaces
+- Settled by direct comparison in the lab (raw vs. calm vs. counter): no partial text shown while an
+  answer streams, just a live "N characters arriving…" count, then one full reveal when the turn
+  finishes. Shipped as the new default behavior everywhere a live answer renders (4 call sites across
+  Core and Pact), not a per-pane toggle — the user's verdict was a definitive pick, not a preference
+  to keep both options open for.
+- Neither workspace had the reflow/scroll-jump bug the lab was originally built to diagnose (both
+  already updated live text as plain `nodeValue`/`textContent`, markdown applied once at the end) —
+  this is a deliberate display choice, not a bug fix.
+- Unexpected bonus: this also retires `liveTail`'s 6000-character cap on the live preview, a
+  workaround for a real, previously-measured performance bug ("2 panes lag but 1 doesn't" — laying
+  out one big growing text node is expensive, and any pane's textarea-height read forces a
+  document-wide layout that re-triggers it). A fixed-length counter string can't reproduce that cost
+  at any streamed length, so the cap — and the now-dead code implementing it — was removed rather
+  than left stale.
+  Guarded by `lib/liveCounterStyle.test.mjs`: the counter-text formatting tested directly, plus
+  wiring checks that all 4 real call sites use it and that none of the old raw-text rendering
+  survives alongside it.
+### Added — manual wrap, both workspaces (the largest item in this migration)
+- Production had **no way to trigger a wrap at all** before this — `Workspace._maybeRoll` only ever
+  fired automatically, silently, past a fixed turns/bytes/context threshold. No confirmation, no
+  preview, no manual override, and — separately — no way to see what a wrap would even archive
+  before committing to one.
+- **Engine (`lib/workspace.mjs`)**: `_maybeRoll`'s body was extracted into `_performRoll(s, slice)` —
+  archive, seed, respawn — unchanged in behavior, now callable from two places instead of one. New
+  `manualRoll(sessionKey)` calls the exact same `_performRoll`, bypassing the automatic threshold
+  entirely, so a manual wrap can never drift from what an automatic one does. New `wrapPreview
+  (sessionKey)` is fully read-only — same head/tail split, zero mutation — so the confirmation dialog
+  can show real numbers before anything happens. Eligibility (is this conversation heavy enough to be
+  worth it) is a client-side gate on `ChatShell.wrapReadiness`'s 60%-of-context threshold, mirroring
+  how Compact already has no server-side gate either.
+- **Protocol**: two new control actions, `wrapPreview` and `wrapNow`, added to the fixed allowlist in
+  `lib/protocol.mjs`.
+- **Client, both workspaces**: a split `🗜 Compact │ ⟳ Wrap` control (they answer the same question —
+  "this is getting heavy, what do I do?" — with genuinely different tradeoffs, so a split control
+  rather than a menu). Wrap opens a confirmation dialog — scoped to the pane via topic 5's
+  `wsOpenPaneDialog`, not the viewport — showing a live preview (`Responses R#a–R#b [n]`, `Prompts
+  P#a–P#b [n]`, total characters archived, turns kept verbatim) fetched from `wrapPreview` and
+  rendered through the already-tested `ChatShell.wrapSpan`. The confirm button starts disabled and
+  only arms after 600ms (`wsDialogArmed`, topic 5) — a misclick cannot fire a wrap.
+- **Two counters**, visible next to the buttons: `🗜 N` compactions in the **current window** (resets
+  to 0 the moment a wrap commits — tracked on the client, incremented on `"compacted"`, reset on
+  `"rolling"`) and `⟳ N` wraps this **conversation** has ever had (cumulative, incremented once on
+  `"rolling"` — the one event that fires for both automatic and manual rolls, which is also why the
+  count is NOT incremented a second time on the manual-only `"wrapResult"` reply; that would have
+  double-counted every manual wrap).
+  Guarded by `lib/workspace.test.mjs` (+7 tests: manual rolls past/below the automatic threshold,
+  preview non-mutation and its numbering matching a real roll exactly, the full control-action wire
+  path via `handleIn`) and `lib/manualWrapUi.test.mjs` (9 wiring tests, including the single-increment
+  invariant that prevents double-counting).
+
+### Scope-locked — porting the Chat Shell Lab into production, both workspaces
+- ~48 rounds (1.5.96–1.5.144) of chat-UI design and behavior work happened entirely in
+  `dashboard/public/chat-shell-lab.html`, a standalone lab, against zero production risk. Nothing in that
+  arc has shipped to the real, running Core or Pact workspace yet except a handful of unrelated production
+  bugs found and fixed along the way (1.5.97, 1.5.98/100, 1.5.101, 1.5.123, 1.5.135).
+- **Decision: this migration is Claude-only.** OmniRoute/other-provider support is explicitly out of
+  scope — whatever exists for it in production today must keep working exactly as-is; nothing new needs
+  to account for it. Re-wiring OmniRoute into the redesigned shell is deferred to a later, separate pass
+  (tracked against `spec.md` §9's provider-axis proposal from round 26).
+- This entry opens the 1.6.0 line. It will accumulate one entry per wave as the migration lands in
+  production for Core and Pact — a staged plan for those waves is being written now
+  (`docs/work/chat-shell/migration-plan.md`) before any production file is touched, given the number of
+  silent-failure classes this same work surfaced repeatedly while it was still lab-only.
+
+## [1.5.144] - 2026-09-06
+### Decided — answer-arrival mode: **counter**, not calm
+- After comparing all three side by side in the lab, the call is **counter**: no streamed text, a
+  fixed-height bubble with a live glyph count, then one reveal. Reasoning given: calm still carries the
+  same underlying readability issue raw and calm share — reading partial, mid-sentence text as it grows —
+  where counter sidesteps it entirely by not showing partial text at all. `S.streamMode` default changed
+  from `calm` to `counter`; no test asserted a specific default, so nothing else needed to move.
+- This is a **lab decision, not yet a production change.** Porting it (and the reflow-fix, scroll-pin fix,
+  and turn-content-persistence work from 1.5.140–143) into `app.js`/`styles.css` is still open.
+
+## [1.5.143] - 2026-09-06
+### Fixed (lab) — the simulated answer vanished after arriving instead of staying in the chat
+- Reported directly: *"the answer actually simulated should appear in the chat."* Root cause: every
+  regular transcript turn is synthesized on the fly from its index — `"An assistant answer. ".repeat(...)`
+  — because no per-turn content store ever existed; only a bare `S.rounds` counter. So when the stream
+  finished, its cleanup did nothing but `S.rounds++`. The next render included that round, but rendered it
+  through the same generic template as every other synthetic turn — the real streamed markdown (headings,
+  bold, lists) was never written anywhere and was simply gone.
+- **Added `S.turnOverrides`** — a sparse `{ [round index]: { text } }` map. The stream's cleanup now
+  records the real text under the index the finishing round is about to occupy, *before* clearing
+  `S.stream`. The regular render loop checks it first and renders the real markdown via `mdRender()`;
+  everything else still falls back to the generic filler, since nothing ever recorded what those said
+  either.
+- Guarded with a test using Node's mock timers to fire the 900ms cleanup deterministically (rather than
+  racing a real timer), asserting the finished round shows the actual simulated content and never the
+  generic placeholder text.
+
+## [1.5.142] - 2026-09-06
+### Changed (lab) — the simulated answer is ~10x longer, on request
+- The old fake answer streamed in well under a second (402 chars at 22 chars/45ms) — too fast to actually
+  watch arrive. It's now **~4,075 chars (≈10x)**, built from repeated structured sections so raw mode
+  still has fresh headings/bold/lists to reformat no matter where its checkpoints land. At the same tick
+  rate the simulation now runs **~8 seconds**, long enough to actually observe.
+- Test loop guards (which drive ticks manually rather than the real interval) were tuned against the old,
+  much shorter length and had gone tight enough to risk future flakiness; both given real headroom.
+
+## [1.5.141] - 2026-09-06
+### Fixed (lab) — the transcript snapped back to the FIRST turn on every interaction
+- Reported directly: *"whenever I do something, it's always pushed in the beginning… the default state
+  should be last, not first."* Root cause: `build()` calls `shell.replaceChildren()` and constructs a
+  brand-new `.rg-core` transcript element on **every single `render()`** — a click, a checkbox, a tick of
+  the stream simulator. A freshly created element always starts at `scrollTop: 0`, and nothing restored
+  it, even though **`S.live` (follow-the-newest-turn) defaults to `true`.** The two existing scroll-sets
+  (the Live/Held bulb's click handler, and the mid-stream reflow jump) were opportunistic, not general —
+  neither fires on the vast majority of renders, so the transcript reset to the oldest turn constantly.
+  This is also why the answer-arrival simulator from 1.5.140 looked broken: every tick rebuilds the page.
+- **Fixed at the source, not with another one-off patch.** `build()` now snapshots the outgoing core's
+  scroll state (`scrollTop`, and whether it was at the very bottom) *before* wiping the shell, then — once
+  the new core is built and attached — restores it: pinned to the newest turn when `S.live` or the reader
+  was already at the bottom (the default, and now the correct behaviour on the very first paint too), or
+  the same held offset otherwise, so Held genuinely means "don't move me" across a rebuild, not just
+  across a scroll event.
+- Guarded with a test that renders repeatedly (including driving the stream simulator's ticks, the exact
+  scenario reported) and asserts the transcript never relocates to the top.
+
+## [1.5.140] - 2026-09-06
+### Fixed (lab) — raw and calm answer-arrival modes were indistinguishable
+- Asked to add a way to actually feel the three streaming modes, a check found the "simulate an answer
+  arriving" button and mode selector were already wired — but **raw and calm rendered through the
+  identical branch**: same plain-text block, no reflow, no markdown, ever. The fake answer text also had
+  no markdown in it at all, so even a correct implementation would have had nothing to reformat.
+  Comparing them side by side would have shown no difference, which defeats the entire point of the lab.
+- **Raw now genuinely reflows.** The simulated answer carries a heading, bold text and a list; raw mode
+  re-renders everything streamed so far into real markdown at three fixed checkpoints while still
+  arriving, then snaps the scroll to match — a faithful, felt version of what a naive per-delta markdown
+  re-render costs. A live **"reflows so far: N"** chip makes the cost a number, not just a feeling.
+- **Calm still never reflows before the terminal morph** — same fixed pre-wrap block as before, now
+  proven by a test that drives real ticks and asserts `reflows === 0` all the way to done, not just that
+  the CSS rule exists.
+- The streaming tick was pulled out of its `setInterval` closure into `advanceStream()` so a test can
+  drive it directly — calling the interval itself hangs the test process, a lesson from round 21.
+- Guarded with **real DOM tests**, not string-matching: clicking `#simStream` is asserted to actually
+  start a stream (and a second click while one runs is asserted to no-op), and raw vs. calm are asserted
+  by running real ticks and inspecting the rendered bubble — the two mode tests that existed before this
+  only grepped the page source and would have stayed green through this entire bug.
+- Also fixed a latent gap in the render-test DOM shim: attribute selectors (`[data-turn="…"]`) crashed
+  when the search tree contained text nodes, which carry no `.attrs`. Findable only once a test actually
+  queried by attribute past a text node — which none had, until now.
+
 ## [1.5.139] - 2026-09-06
 ### Added (lab) — three modes for how an answer arrives
 - The diagnosis was right: production streams raw characters into a live node, then **re-renders the

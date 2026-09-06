@@ -159,6 +159,9 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
    --revealed the single morph at the end: height and opacity settle together, once. */
 .msg.--live{transition:none}
 .msg.--calm .rawstream{white-space:pre-wrap;font:12px/1.55 ui-monospace,Consolas,monospace;color:var(--dim)}
+.md .mdh{margin:2px 0 4px;font-size:13px;color:var(--acc)}
+.md .mdl{margin:2px 0 4px 18px;padding:0}
+.md .mdp{margin:4px 0}
 .msg.--counter{min-height:46px;display:flex;align-items:center}
 .msg.--counter .ctr{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--dim)}
 .msg.--counter .ctrdot{width:7px;height:7px;border-radius:50%;background:var(--acc);animation:seampulse 1s ease-in-out infinite}
@@ -385,7 +388,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
 <div id="rail">
   <h1>Chat Shell Lab</h1>
   <p class="sub">Mockup only — production untouched. Runs the real <code>chat-shell.js</code> maths.<br>
-    <b id="buildstamp" style="color:var(--ok)">build 1.5.139</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
+    <b id="buildstamp" style="color:var(--ok)">build 1.5.144</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
 
   <div class="grp"><b>Workspace</b>
     <div class="row"><button id="wCore" class="on">Core</button><button id="wPact">Pact</button></div>
@@ -419,7 +422,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
     <div class="row"><button id="loadSim">▶ simulate a cold load</button></div>
     <div class="row"><button id="states" class="on">prompt states</button></div>
     <div class="row"><span class="sub">Answer arrival</span></div>
-    <div class="row"><button data-sm="raw">raw</button><button data-sm="calm" class="on">calm</button><button data-sm="counter">counter</button></div>
+    <div class="row"><button data-sm="raw">raw</button><button data-sm="calm">calm</button><button data-sm="counter" class="on">counter</button></div>
     <div class="row"><button id="simStream">▶ simulate an answer arriving</button></div>
     <div class="row"><span class="sub">Context events</span></div>
     <div class="row"><button id="simComp">🗜 compact now</button><button id="simWrap">⟳ wrap… (asks first)</button></div>
@@ -502,8 +505,11 @@ var S = {
   autoArm: null,       // { left } while an automatic wrap is counting down
   agentRows: [], agentsOpen: false, dismissed: {},   // background-agent panel
   multiChat: false,    // Core: one conversation per repository unless switched on
-  streamMode: "calm",  // raw | calm | counter
+  streamMode: "counter",  // raw | calm | counter — DEFAULT, chosen after comparing all three in the lab
   stream: null,        // { chars, total, text, done } while an answer is arriving
+  turnOverrides: {},   // { [0-based round index]: { text } } — a round whose REAL content must survive
+                        // past the simulation, instead of being replaced by the generic per-index filler
+                        // every other synthetic round uses.
   replies: [],        // pending reply references for the next prompt
   // Compaction/wrap MARKERS must be recorded to be renderable at all — a line can only be drawn where
   // an event says it happened. Each entry pins itself to the round it landed after.
@@ -535,6 +541,16 @@ function build() {
   var shell = $("#shell");
   shell.style.height = shellTargetH() + "px";
   shell.style.maxWidth = S.width ? S.width + "px" : "none";   // 0 = take everything on offer
+  // build() throws away and rebuilds .rg-core from scratch on EVERY call — a brand-new element always
+  // starts at scrollTop 0. Left alone, that snaps the transcript back to the FIRST turn on every single
+  // interaction (a click, a tick of the stream simulator, a checkbox), not just once. Snapshot the old
+  // core's position before it is destroyed so it can be restored below, once the new one exists.
+  var oldCore = shell.querySelector(".rg-core");
+  var stickToBottom = true, heldTop = 0;
+  if (oldCore) {
+    stickToBottom = (oldCore.scrollTop + oldCore.clientHeight) >= (oldCore.scrollHeight - 4);
+    heldTop = oldCore.scrollTop;
+  }
   shell.replaceChildren();
 
   /* ================= HEADER — fixed height, max 3 rows, transient status is a CHIP ============== */
@@ -699,7 +715,10 @@ function build() {
     core.appendChild(u);
     var a = el("div", { class: "msg --a", "data-turn": "R" + (i + 1) });
     a.appendChild(el("span", { class: "num num-r" }, ["R#" + (i + 1)]));
-    a.appendChild(el("div", {}, ["An assistant answer. ".repeat(3 + (i % 4) * 4)]));
+    // A round just simulated via "answer arriving" keeps its REAL text — every other synthetic round
+    // still uses the generic filler, since nothing recorded what THOSE ever "said" either.
+    if (S.turnOverrides[i]) a.appendChild(mdRender(S.turnOverrides[i].text));
+    else a.appendChild(el("div", {}, ["An assistant answer. ".repeat(3 + (i % 4) * 4)]));
     a.appendChild(mkMsgActs("R", i + 1));
     core.appendChild(a);
     // Any recorded compact/wrap that landed after this round gets its line here.
@@ -758,11 +777,14 @@ function build() {
     ]));
   }
   // THE ARRIVING ANSWER. Three modes, because they trade the same two things against each other:
-  //   raw     stream the characters, then re-render with markdown at the end. What production does —
-  //           and the re-render REFLOWS the whole bubble, which is the stutter, and the reflow is also
-  //           what makes the scroll jump.
-  //   calm    stream the characters into a FIXED, unformatted block that cannot reflow, then morph once
-  //           to the formatted answer. You can still read along; nothing jumps until the single morph.
+  //   raw     stream plain characters, but the arriving markdown (##, **bold**, "- " lists) is
+  //           re-rendered into real elements at fixed CHECKPOINTS while still streaming — exactly what
+  //           a naive per-delta markdown re-render costs. Each checkpoint REFLOWS the whole bubble and
+  //           snaps the scroll to match. "reflows so far" is shown live so the cost is a number, not
+  //           just a feeling.
+  //   calm    stream the same characters into a FIXED, unformatted pre-wrap block that cannot reflow —
+  //           the raw markdown syntax sits there as literal text — then morph ONCE to the formatted
+  //           answer when it completes. You can still read along; nothing moves until that single morph.
   //   counter no text at all, just a live glyph count in a fixed-height bubble, then reveal. The
   //           smoothest possible — a fixed height cannot move the scroll at all — but you give up
   //           reading along, and on a thirteen-minute answer that is a real loss, not a detail.
@@ -772,7 +794,7 @@ function build() {
       "data-turn": "R" + (S.rounds + 1) });
     bub.appendChild(el("span", { class: "num num-r" }, ["R#" + (S.rounds + 1)]));
     if (st.done) {
-      bub.appendChild(el("div", {}, [st.text]));
+      bub.appendChild(mdRender(st.text));
     } else if (S.streamMode === "counter") {
       bub.appendChild(el("div", { class: "ctr" }, [
         el("span", { class: "ctrdot" }, []),
@@ -780,8 +802,18 @@ function build() {
         " characters arriving\u2026 ",
         el("span", { class: "ctrpct" }, [Math.round(st.chars / st.total * 100) + "%"])
       ]));
+    } else if (S.streamMode === "raw") {
+      var lastCp = st._cpIdx > 0 ? st._cps[st._cpIdx - 1] : 0;
+      var rbox = el("div", { class: "rawstream" });
+      if (lastCp > 0) rbox.appendChild(mdRender(st.text.slice(0, lastCp)));
+      if (st.chars > lastCp) rbox.appendChild(el("span", {}, [st.text.slice(lastCp, st.chars)]));
+      bub.appendChild(rbox);
+      bub.appendChild(el("div", { class: "chip --warn", style: "margin-top:4px" },
+        ["reflows so far: " + st.reflows + " — each one re-lays-out everything above it"]));
     } else {
       bub.appendChild(el("div", { class: "rawstream" }, [st.text.slice(0, st.chars)]));
+      bub.appendChild(el("div", { class: "chip --ok", style: "margin-top:4px" },
+        ["reflows so far: 0 — nothing re-lays-out until the end"]));
     }
     core.appendChild(bub);
   }
@@ -1077,6 +1109,14 @@ function build() {
   });
   ta.value = S._text || "";
   layout();
+  // Restore the transcript's scroll position, since the rebuild above just reset it to 0. DEFAULT is
+  // the newest turn (S.live, or the reader was already at the bottom) — never the oldest, which is what
+  // "pushed to the beginning on every interaction" actually was. Held approximates the same offset so a
+  // re-render mid-read does not relocate the reader.
+  if (core.scrollHeight) {
+    core.scrollTop = (S.live || stickToBottom) ? core.scrollHeight
+      : Math.min(heldTop, Math.max(0, core.scrollHeight - core.clientHeight));
+  }
 }
 
 /* The ONLY place geometry is decided — by the shared pure module, from MEASURED input, not CSS luck. */
@@ -1186,6 +1226,39 @@ function openHist() {
 }
 
 function fmt(n) { return Number(n || 0).toLocaleString(); }
+// A tiny, deliberately dumb markdown renderer — just enough structure (##, **bold**, "- " lists) for the
+// answer-arrival simulator to have something worth reformatting. el() only accepts a FLAT array of
+// strings/elements (no nested arrays), so inline spans are appended directly rather than returned.
+function appendInline(parent, s) {
+  s.split(/(\*\*[^*]+\*\*)/).forEach(function (p) {
+    if (/^\*\*[^*]+\*\*$/.test(p)) parent.appendChild(el("b", {}, [p.slice(2, -2)]));
+    else if (p) parent.appendChild(document.createTextNode(p));
+  });
+}
+function mdRender(text) {
+  var wrap = el("div", { class: "md" });
+  text.split(/\n\n+/).forEach(function (block) {
+    block = block.trim();
+    if (!block) return;
+    if (block.indexOf("## ") === 0) {
+      wrap.appendChild(el("h4", { class: "mdh" }, [block.slice(3)]));
+    } else if (/^- /.test(block)) {
+      var ul = el("ul", { class: "mdl" });
+      block.split("\n").forEach(function (line) {
+        if (!/^- /.test(line)) return;
+        var li = el("li", {});
+        appendInline(li, line.slice(2));
+        ul.appendChild(li);
+      });
+      wrap.appendChild(ul);
+    } else {
+      var p = el("p", { class: "mdp" });
+      appendInline(p, block);
+      wrap.appendChild(p);
+    }
+  });
+  return wrap;
+}
 /* Jump to R#n / P#n. Accepts "R#35", "r35", "P#12", or a bare "35" (treated as a response).
    Scrolls the turn into view and flashes it, so you can see WHERE you landed. */
 function doJump(raw) {
@@ -1632,25 +1705,74 @@ function seedAgents() {
   pruneAgents();
 }
 
+// The fake answer carries real structure (a heading, bold, a list) so raw mode has something worth
+// reformatting mid-stream — plain sentences alone made raw and calm look identical, which was the bug.
+// ~10x the original length, on request — long enough to actually WATCH it arrive rather than blink
+// and miss it. Repeated sections so raw mode always has fresh structure to reformat at every
+// checkpoint, however far into the text that checkpoint lands.
+var STREAM_TEXT = (function () {
+  var sections = [];
+  for (var i = 1; i <= 14; i++) {
+    sections.push(
+      "## Section " + i + "\n\n"
+      + "Here is part " + i + " of the answer as it arrives, and it carries real **structure** so the "
+      + "reformatting is visible, not just longer.\n\n"
+      + "- point one of section " + i + " settles into place\n"
+      + "- point two of section " + i + " settles into place\n"
+      + "- point three of section " + i + " settles into place"
+    );
+  }
+  return sections.join("\n\n")
+    + "\n\nIt contains many sections so the reflow behaviour is felt rather than described, and enough "
+    + "length that raw, calm and counter are clearly different by the time it finishes.";
+})();
+
+/* One tick of the simulated stream. Pulled out of the setInterval closure so a TEST can drive it
+   directly — calling the interval itself from a test would hang the process, as round 21 found out. */
+function advanceStream() {
+  var st = S.stream;
+  if (!st) return;
+  st.chars = Math.min(st.total, st.chars + 22);
+  var justReflowed = false;
+  // RAW mode only: crossing a checkpoint re-renders everything already streamed as real markdown,
+  // which is the reflow the mode exists to demonstrate. calm/counter never touch _cpIdx, so they can
+  // never reflow before the terminal flip below.
+  if (S.streamMode === "raw" && st._cpIdx < st._cps.length && st.chars >= st._cps[st._cpIdx]) {
+    st._cpIdx++; st.reflows++; justReflowed = true;
+  }
+  if (st.chars >= st.total) {
+    clearInterval(st._timer); st._timer = null;
+    st.done = true;                                 // ONE terminal flip — the single morph
+    render();
+    setTimeout(function () {
+      // S.rounds has not been incremented yet here, so its CURRENT value is exactly the 0-based index
+      // the new round is about to occupy in the render loop above — store the real text under that key
+      // BEFORE nulling S.stream, or the answer just watched arriving vanishes into the generic filler.
+      S.turnOverrides[S.rounds] = { text: st.text };
+      S.stream = null; S.rounds++; render();
+    }, 900);
+    return;
+  }
+  render();
+  // The jump a mid-stream reflow causes — done AFTER render() so it acts on the live, just-rebuilt
+  // .rg-core rather than the node about to be replaced.
+  if (justReflowed) {
+    var cEl = document.querySelector(".rg-core");
+    if (cEl) cEl.scrollTop = cEl.scrollHeight;
+  }
+}
+
 /* Simulate an answer arriving, so the three modes can be compared on the same content. Deliberately
    drives the SAME state the real event stream would: characters accumulate, then one terminal flip. */
 function runStream() {
   if (S.stream) return;
-  var text = "Here is the answer as it arrives. " .repeat(14)
-    + "It contains several sentences so the reflow behaviour is visible, and enough length that the "
-    + "difference between the three modes is felt rather than described.";
-  S.stream = { chars: 0, total: text.length, text: text, done: false };
-  var t = setInterval(function () {
-    S.stream.chars = Math.min(S.stream.total, S.stream.chars + 22);
-    if (S.stream.chars >= S.stream.total) {
-      clearInterval(t);
-      S.stream.done = true;                         // ONE terminal flip — the single morph
-      render();
-      setTimeout(function () { S.stream = null; S.rounds++; render(); }, 900);
-      return;
-    }
-    render();
-  }, 45);
+  var text = STREAM_TEXT;
+  S.stream = {
+    chars: 0, total: text.length, text: text, done: false, reflows: 0, _cpIdx: 0,
+    _cps: [0.3, 0.6, 0.9].map(function (f) { return Math.round(text.length * f); }),
+    _timer: null
+  };
+  S.stream._timer = setInterval(advanceStream, 45);
   render();
 }
 

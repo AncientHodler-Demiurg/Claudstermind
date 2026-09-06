@@ -14,6 +14,19 @@
   --accent: #a21caf; --accent-dim: #7a1585; --danger: #d64550; --radius: 14px;
   --shadow: 0 6px 20px rgba(20,30,60,.10);
 }
+/* WORKSPACE IDENTITY — Core "Midnight Violet" vs Pact "Harbour Slate" (docs/work/chat-shell-migration/
+   themes/design.md). Additive to the light/dark axis above, not a replacement: only --accent/--accent-dim
+   shift, which 130 rules already build on (buttons, focus rings, links) — enough to read as a distinct
+   identity without re-touching --panel/--bg, whose light/dark contrast was carefully tuned separately
+   and is not being re-litigated here. Scoped to .ws-pane (Core's whole per-pane chat UI) and .pact-right
+   (Pact's whole chat+terminal panel) — the two "main working surface" containers, so this reaches
+   buttons/links/focus states throughout the chat experience, not just the message bubbles.
+   P#/R# addressing tag colours are DELIBERATELY untouched — they are an addressing scheme, not decor,
+   and must read identically in both workspaces or a user could never learn them once. */
+.ws-pane { --accent: #c77dff; --accent-dim: #9d5fd1; }
+.pact-right { --accent: #4ecdc4; --accent-dim: #2f9e97; }
+body[data-theme="light"] .ws-pane { --accent: #9d5fd1; --accent-dim: #7c3fae; }
+body[data-theme="light"] .pact-right { --accent: #14807a; --accent-dim: #0f645f; }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 /* Never let a stray wide element push the page past the viewport (which on a phone triggers the
@@ -551,6 +564,35 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .ws-pane.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .ws-pane.ro { opacity: .96; }
 .ws-pane-hd { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-bottom: 1px solid var(--line); background: var(--panel); }
+/* Core's multi-chat toggle + tab strip. OFF by default (one repo usually means one thread); the
+   `hidden` attribute (not just empty children) is set by wsPaintConvTabs so the row costs nothing
+   until turned on — the lab's "closed, the drawer does not exist" reasoning applied here. */
+.ws-multichat-label { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--ink-mute); cursor: pointer; white-space: nowrap; }
+.ws-multichat-cb { accent-color: var(--accent); cursor: pointer; }
+.ws-conv-tabs { display: flex; align-items: center; gap: 4px; padding: 4px 9px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+.ws-conv-tab { border: 1px solid var(--line); background: var(--chip); color: var(--ink-soft); border-radius: 8px;
+  padding: 3px 9px; font-size: 11px; cursor: pointer; }
+.ws-conv-tab.--act { border-color: var(--accent); color: var(--ink); background: color-mix(in srgb, var(--accent) 16%, var(--chip)); }
+.ws-conv-tab-star { color: #fbbf24; }
+.ws-conv-tab-add { border: 1px dashed var(--line); background: transparent; color: var(--ink-mute); border-radius: 8px;
+  width: 22px; height: 22px; font-size: 12px; line-height: 1; cursor: pointer; }
+.ws-conv-tab-add:hover { color: var(--accent); border-color: var(--accent); }
+/* Pane-scoped dialog — the confirmation surface for manual wrap and any future in-pane dialog.
+   Scoped to the PANE (.ws-pane / .pact-right), not the viewport — critical for the 4-pane cockpit,
+   where a viewport-fixed dialog would open nowhere near the pane that raised it. */
+.ws-pane-dialog-overlay { position: absolute; inset: 0; z-index: 80; display: flex; align-items: center;
+  justify-content: center; padding: 16px; background: rgba(0,0,0,.5); }
+.ws-pane-dialog { width: 100%; max-width: min(420px, 100%); max-height: 100%; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
+  padding: 14px 16px; }
+.ws-pane-dialog-hd { font-size: 14px; font-weight: 700; color: var(--ink); margin-bottom: 8px; }
+.ws-pane-dialog-body { font-size: 12.5px; color: var(--ink-soft); line-height: 1.5; }
+.ws-pane-dialog-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.ws-pane-dialog-btn { padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--chip);
+  color: var(--ink); font-size: 12.5px; cursor: pointer; }
+.ws-pane-dialog-btn:hover { filter: brightness(1.15); }
+.ws-pane-dialog-btn.--primary { background: var(--accent); border-color: var(--accent); color: #1a0b2e; font-weight: 700; }
+.ws-pane-dialog-btn:disabled { opacity: .5; cursor: not-allowed; filter: none; }
 /* The identity readout — plain text, always visible, never a control. What this pane is actually
    showing (repo@worktree) must never be in doubt, so this reads directly from the same p.repo/
    p.worktree the controls below (now moved near the compose row) do — see paintPane(). */
@@ -712,6 +754,24 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   color: var(--ink-mute); font-size: 15px; line-height: 1; cursor: pointer; padding: 0; }
 .ws-share-btn:hover { color: #34d399; filter: brightness(1.15); }
 .ws-share-btn.copied { color: #34d399; }
+/* ↩ Reply/quote — on a PROMPT it sits inline next to "you" (no star/share there to share the corner
+   with); on an ANSWER it joins the same floating corner row as ⤴/★, one slot further left. */
+.ws-reply-btn { background: transparent; border: none; color: var(--ink-mute); font-size: 13px; line-height: 1;
+  cursor: pointer; padding: 0 4px; vertical-align: middle; }
+.ws-reply-btn:hover { color: var(--accent); filter: brightness(1.15); }
+.ws-assistant .ws-reply-btn, .pc-asst .ws-reply-btn { position: absolute; top: -9px; right: 54px; z-index: 2;
+  width: 22px; height: 20px; padding: 0; }
+/* The removable chips shown above the compose box for pending reply references (round 22 design:
+   "reply to a turn the way a chat reply works"). Empty/absent when there is nothing pending — costs
+   no layout space until used. */
+.ws-reply-row-host:empty { display: none; }
+.ws-reply-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0; }
+.ws-reply-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 260px; padding: 3px 6px 3px 9px;
+  border-radius: 8px; background: var(--chip); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  font-size: 11px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ws-reply-chip-x { flex: 0 0 auto; border: none; background: transparent; color: var(--ink-mute); cursor: pointer;
+  font-size: 13px; line-height: 1; padding: 0 2px; }
+.ws-reply-chip-x:hover { color: var(--danger); }
 .ws-bm-wrap { position: relative; display: inline-flex; }
 .ws-bm-btn { background: var(--chip); border: 1px solid var(--line); color: #fbbf24; border-radius: 8px; padding: 6px 11px; cursor: pointer; font-size: 15px; line-height: 1; }
 .ws-bm-btn:hover { filter: brightness(1.2); }
@@ -1835,7 +1895,9 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .CodeMirror.mdl .cm-md-capG::before { background: #dcb64d; } .CodeMirror.mdl .cm-md-capG::after { background: #23200e; }
 .CodeMirror.mdl .cm-md-capK::before { background: #565b66; } .CodeMirror.mdl .cm-md-capK::after { background: #191b22; }
 
-.pact-right { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.pact-right { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 10px;
+  position: relative; /* containing block for .ws-pane-dialog-overlay — scopes new dialogs to THIS pane,
+  not the viewport. .ws-pane gets the same effect for free via its existing `contain: layout paint`. */ }
 /* Same fence for the chat/terminal zone: the compose box's per-keystroke autosize reflow now stays
    inside .pact-chat (a small, capped message list) instead of forcing a whole-page layout. Paired with
    the .pact-ed-group containment above, typing in the Pact chat no longer touches the editor grid. */
@@ -1942,6 +2004,15 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .mtest-pill.--bad { color: #f87171; border-color: color-mix(in srgb, #f87171 45%, transparent); }
 /* Compact buttons carry a text label, so let them size to content instead of the fixed icon-square. */
 .ws-compact, .pact-compact { width: auto; min-width: 0; padding: 0 8px; gap: 4px; font-size: 11px; white-space: nowrap; }
+/* Manual wrap — split from Compact, not styled identically: violet (the addressing/wrap accent used
+   throughout this migration) rather than the neutral chip look, so the two are visually distinct
+   even at a glance, matching that they carry genuinely different weight (Compact is cheap and
+   reversible; Wrap respawns the session and asks first). */
+.ws-wrap, .pact-wrap { width: auto; min-width: 0; padding: 0 8px; gap: 4px; font-size: 11px; white-space: nowrap;
+  border-color: #9d5fd166; color: #c77dff; }
+.ws-wrap:hover, .pact-wrap:hover { border-color: #c77dff; color: #e3c4ff; }
+.ws-wrap-counters { font-size: 10.5px; color: var(--ink-mute); white-space: nowrap; padding: 0 2px; font-family: ui-monospace, Consolas, monospace; }
+.ws-pane-dialog-note { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 11px; color: var(--ink-mute); }
 /* Plan usage-limits badge (5h/7d rolling rate-limit utilization) — mirrors the Core cockpit's
    .ws-usage-limits, tinted amber as it nears a limit and red when nearly capped. Full breakdown in title. */
 .pc-usage-limits { flex: 0 0 auto; font-size: 10.5px; color: var(--ink-dim); white-space: nowrap;

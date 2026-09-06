@@ -3170,9 +3170,36 @@ function pactOutboxAbsorbQueues() {
   }
 }
 // ===== end PACT CHAT OUTBOX =====
-// The workspace id a pane attaches to: repo + worktree. TWO terminals selecting the same repo
-// (and worktree) derive the SAME key, so they drive — and watch — the one shared conversation.
-const wsWorkspaceId = (repo, worktree) => (repo ? repo + "@" + (worktree || "main") : null);
+// ===== CORE MULTI-CHAT — pure conversation-slot helpers (sliced for unit tests; see lib/coreMultiChat.test.mjs)
+// Off by default (round 33 design: one repository usually means one thread, and tabs nobody asked for
+// are clutter). Slot 0 is always "Master" and always exists — mirrors Pact's own "first tab is prime,
+// can't be closed" rule, so the two workspaces' multi-conversation concepts read the same way once
+// Core has one at all.
+function wsDefaultConvSlots() { return [{ slot: 0, name: "Master" }]; }
+function wsNextConvSlot(slots) {
+  const list = Array.isArray(slots) && slots.length ? slots : wsDefaultConvSlots();
+  return list.reduce((m, s) => Math.max(m, s.slot), 0) + 1;
+}
+function wsAddConvSlotEntry(slots, name) {
+  const list = (Array.isArray(slots) && slots.length ? slots : wsDefaultConvSlots()).slice();
+  const slot = wsNextConvSlot(list);
+  list.push({ slot, name: name || ("Chat " + (list.length + 1)) });
+  return { slots: list, slot };
+}
+// The workspace id a pane attaches to: repo + worktree (+ an optional conversation SLOT). TWO
+// terminals selecting the same repo/worktree/slot derive the SAME key, so they drive — and watch —
+// the one shared conversation. Slot 0/falsy is BYTE-IDENTICAL to the id this always produced before
+// multi-chat existed — every bookmark, image path and saved session keyed on the old two-arg form
+// keeps resolving to exactly the same id, so turning multi-chat on cannot touch existing data. A
+// non-zero slot is a genuinely separate id/session/bookmark-namespace/image-folder — real isolation,
+// not a filtered view of one underlying conversation.
+function wsWorkspaceIdForSlot(repo, worktree, slot) {
+  if (!repo) return null;
+  const base = repo + "@" + (worktree || "main");
+  return slot ? base + "#" + slot : base;
+}
+// ===== end CORE MULTI-CHAT pure helpers =====
+const wsWorkspaceId = (repo, worktree, slot) => wsWorkspaceIdForSlot(repo, worktree, slot);
 // --- Restore diagnostic (temporary): a localStorage ring buffer that SURVIVES a reload, so we can see
 // exactly what happened during the boot where a conversation vanished. Read it via the 🐞 button on the
 // workspace mobile tab row, or window.wsDiagDump(). Wrapped so it can never break the app. ---
@@ -3293,6 +3320,91 @@ function wsShareBtn(rawMd) {
   b.addEventListener("click", (e) => { e.stopPropagation(); wsShareResponse(rawMd, b); });
   return b;
 }
+// ===== REPLY QUOTE — pending-reference pure helpers (sliced out for unit tests; see lib/replyQuote.test.mjs)
+// "Reply to a turn the way a chat reply works" — tap ↩ on ANY prompt or response, it queues onto the
+// pane's (Core) or tab's (Pact) `_replyRefs`, shown as removable chips above the compose box, and
+// prepended — VISIBLY, like a WhatsApp quote, not hidden like the discarded-message note — to the next
+// message actually sent. The quote text itself is capped/truncated/labelled by ChatShell.replyQuote /
+// buildReplyPreamble (dashboard/public/chat-shell.js, already tested by lib/chatShell.test.mjs) — these
+// three functions only manage the pending LIST and its chip label, nothing about wrap/context maths.
+function wsAddReplyRef(host, kind, number, text) {
+  if (!host) return;
+  host._replyRefs = Array.isArray(host._replyRefs) ? host._replyRefs : [];
+  if (host._replyRefs.some((r) => r.kind === kind && r.number === number)) return;   // already queued — no dupes
+  host._replyRefs.push({ kind, number, text: String(text || "") });
+}
+function wsRemoveReplyRef(host, kind, number) {
+  if (!host || !Array.isArray(host._replyRefs)) return;
+  host._replyRefs = host._replyRefs.filter((r) => !(r.kind === kind && r.number === number));
+}
+// A single-line, length-capped label for the removable chip — flattens newlines/whitespace runs so one
+// reply reference cannot blow out the compose row's height.
+function wsReplyChipLabel(ref) {
+  const r = ref || {};
+  const flat = String(r.text || "").replace(/\s+/g, " ").trim();
+  const snip = flat.length > 48 ? flat.slice(0, 48).trimEnd() + "…" : flat;
+  return r.kind + "#" + r.number + " " + snip;
+}
+// ===== end REPLY QUOTE pure helpers =====
+// The ↩ reply button that sits next to ★/⤴ on a response, and alone on a prompt (shared by Core + Pact).
+// `onReply` does the workspace-specific pane/tab lookup and owns where `_replyRefs` actually lives —
+// mirrors wsShareBtn/wsToggleBookmark's own split between shared UI and workspace-specific state.
+function wsReplyBtn(kind, number, text, onReply) {
+  const b = el("button", { class: "ws-reply-btn", type: "button",
+    title: "Reply — quote this " + (kind === "P" ? "prompt" : "response") + " in your next message" }, ["↩"]);
+  b.addEventListener("click", (e) => { e.stopPropagation(); onReply(); });
+  return b;
+}
+// The removable chip row shown above the compose box once there is at least one pending reply
+// reference. Returns null when there is nothing to show, so callers can skip appending it.
+function wsReplyChipRow(host, onChange) {
+  const refs = Array.isArray(host && host._replyRefs) ? host._replyRefs : [];
+  if (!refs.length) return null;
+  const chips = refs.map((r) => {
+    const x = el("button", { class: "ws-reply-chip-x", type: "button", title: "Remove this reply reference" }, ["×"]);
+    x.addEventListener("click", (e) => { e.stopPropagation(); wsRemoveReplyRef(host, r.kind, r.number); if (onChange) onChange(); });
+    return el("span", { class: "ws-reply-chip" }, [wsReplyChipLabel(r), x]);
+  });
+  return el("div", { class: "ws-reply-row" }, chips);
+}
+// ===== PANE DIALOG — pure arm-delay helper (sliced out for unit tests; see lib/paneDialog.test.mjs)
+// A confirm button armed with no delay is a misclick trap: double-clicking the button that OPENS a
+// dialog can land the second click on the button that CONFIRMS it, the instant it paints. Pure so the
+// timing logic itself is testable without a real clock.
+function wsDialogArmed(elapsedMs, armDelayMs) {
+  const delay = Number(armDelayMs) || 0;
+  return Number(elapsedMs) >= delay;
+}
+// ===== end PANE DIALOG pure helper =====
+/** A dialog scoped to the PANE that raised it (round-6-lab lesson: a viewport-fixed dialog in a
+ *  multi-pane cockpit opens nowhere near the pane that raised it, and dims the other three while it
+ *  does). `paneEl` must be a positioned/containing-block ancestor — .ws-pane already is one via its
+ *  `contain: layout paint`; .pact-right is given `position: relative` explicitly for the same reason.
+ *  Returns `{ close, box }`; the caller can grab `box` to insert its own content/buttons before the
+ *  dialog is shown, and call `close()` itself once its own action completes. */
+function wsOpenPaneDialog(paneEl, opts) {
+  if (!paneEl) return null;
+  opts = opts || {};
+  const overlay = el("div", { class: "ws-pane-dialog-overlay" }, []);
+  const box = el("div", { class: "ws-pane-dialog" }, []);
+  if (opts.title) box.appendChild(el("div", { class: "ws-pane-dialog-hd" }, [opts.title]));
+  overlay.appendChild(box);
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  function close() { overlay.remove(); document.removeEventListener("keydown", onKey); if (opts.onClose) opts.onClose(); }
+  document.addEventListener("keydown", onKey);
+  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });   // click the dimmed backdrop
+  paneEl.appendChild(overlay);
+  return { close, box, overlay };
+}
+// ===== LIVE COUNTER STYLE — pure display helper (sliced for unit tests; see lib/liveCounterStyle.test.mjs)
+// Answer-arrival style settled after comparing raw/calm/counter side by side in the lab: no partial
+// text while an answer streams, just a live glyph count, then one full reveal when the turn finishes.
+// Shared by Core's scheduleLiveRender and Pact's pactChatPaintLive — same string, one source.
+function wsLiveCounterText(text) {
+  const n = (text || "").length;
+  return n.toLocaleString() + " characters arriving…";
+}
+// ===== end LIVE COUNTER STYLE pure helper =====
 // ===== WS IMAGE — pure attach/encode helpers (sliced out for unit tests; see lib/wsImage.test.mjs)
 // Up to WS_IMG_MAX_COUNT images per prompt (Claude Code's own limit), riding the existing `prompt`
 // payload as `images: [{ mediaType, base64Data }, ...]` — see lib/workspace.mjs `_prompt`/`_saveImages`
@@ -7603,7 +7715,11 @@ function pactChatRoute({ kind, sessionKey, data }) {
     case "taskDone": exoIngestEvent(t, d); if (t.id === PACT_CHAT.activeId) pactChatPaint(t); return;
     // Threshold + recall cues. These frames carry NO inline sessionKey (CONTRACT §0) — they are
     // routed purely by the frame's key, which is how `t` was resolved above.
-    case "rolling":
+    // A roll (automatic OR manual — this fires for both) is the one moment a wrap actually commits;
+    // counted here so an automatic roll (which never gets a wrapResult reply) is still counted, and
+    // a manual one is never double-counted against the wrapResult handler below. Compactions belong
+    // to the WINDOW a roll just cleared, so they reset here too — see the "compacted" case.
+    case "rolling": t._wrapCount = (t._wrapCount || 0) + 1; t._compactCount = 0; exoIngestEvent(t, d); pactChatPaint(t); return;
     case "lookingUp":
     case "recall": exoIngestEvent(t, d); pactChatPaint(t); return;
     // Reconnect catch-up reply (see pactChatResyncAll + `_resync` server-side): the server's
@@ -7693,6 +7809,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
     // Compaction confirmation — the CLI actually ran `/compact`. Show it (with the token drop) and re-request
     // context usage so the header badge reflects the smaller window immediately (proof it worked).
     case "compacted": {
+      t._compactCount = (t._compactCount || 0) + 1;   // per-WINDOW — reset when "rolling" fires
       exoIngestEvent(t, d);
       const k = (n) => (n == null ? null : Math.round(n / 1000) + "k");
       const pre = k(d.preTokens), post = k(d.postTokens);
@@ -7701,6 +7818,15 @@ function pactChatRoute({ kind, sessionKey, data }) {
       if (t.key) wsPost("control", { action: "contextUsage", args: { sessionKey: t.key } });
       return;
     }
+    // Manual wrap, part 1: the read-only preview the confirm dialog is waiting on.
+    case "wrapPreview": pactFillWrapPreview(t, d.preview); return;
+    // Manual wrap, part 2: the outcome. Counters are NOT touched here — see the "rolling" case
+    // above, the one place both automatic and manual wraps are counted (so a manual one is never
+    // double-counted).
+    case "wrapResult":
+      if (t._wrapDialog) t._wrapDialog.close();
+      pactChatFlashNote(d.ok ? "⟳ Wrapped to a fresh context window" : "Could not wrap — " + (d.reason || "unknown reason"));
+      return;
     // A prompt sent while this session was still finishing its current turn is refused with `busy`
     // (see lib/workspace.mjs's single-writer turn lock). Normally pactChatSend already queues a
     // mid-turn message rather than POSTing it, so this only fires on a genuine race — a turn started
@@ -7808,6 +7934,14 @@ function pactPaintAttachment(t) {
   const imgs = t.attachedImages || [];
   wrap.hidden = !imgs.length;
   wrap.replaceChildren(...imgs.map((img, idx) => pactImgChip(t, img, idx)));
+}
+/** Mirrors pactPaintAttachment for the reply/quote chip row — see wsPaintReplyRow (Core's
+ *  equivalent) and wsReplyChipRow for the shared chip-building logic. */
+function pactPaintReplyRow(t) {
+  if (!PACT_CHAT || !t || t.id !== PACT_CHAT.activeId) return;
+  const wrap = PACT_CHAT.host.querySelector(".ws-reply-row-host"); if (!wrap) return;
+  const row = wsReplyChipRow(t, () => pactPaintReplyRow(t));
+  wrap.replaceChildren(...(row ? [row] : []));
 }
 // Serialize all attach ops for a tab through one promise chain so two entry points (e.g. a fast
 // double-paste) can't interleave their read-modify-write of t.attachedImages — same guarantee as
@@ -8187,8 +8321,15 @@ async function pactChatMergeReturn(t) {
 function pactChatSend(t) {
   if (!PACT_CHAT || !t) return;
   const ta = PACT_CHAT.host.querySelector(".pc-input");
-  const text = (ta ? ta.value : "").trim();
-  if (!text) return;
+  const typed = (ta ? ta.value : "").trim();
+  const pendingRefs = Array.isArray(t._replyRefs) ? t._replyRefs : [];
+  if (!typed && !pendingRefs.length) return;
+  // Reply/quote is prepended VISIBLY (like a WhatsApp quote) — see the matching Core comment in
+  // send() for why this differs from the discarded-message note, which rides the payload only.
+  const text = pendingRefs.length
+    ? window.ChatShell.buildReplyPreamble(pendingRefs) + (typed ? "\n" + typed : "")
+    : typed;
+  t._replyRefs = []; pactPaintReplyRow(t);   // one-shot per send, same as attached images below
   const attachedImages = t.attachedImages || [];
   // One-shot: clear the compose input + attachments up front. Neither path restores them — a queued
   // entry keeps its OWN copy, a dispatch already captured them — and the re-render rebuilds the (now
@@ -8626,7 +8767,8 @@ function pactChatMsgNode(m) {
       discard.addEventListener("click", (e) => { e.stopPropagation(); pactChatDiscardInterrupted(m); });
       extra.push(resume, discard);
     }
-    return el("div", { class: cls }, [pactNumBadge("P", m._pnum), ...kids, ...extra]);
+    const replyBtnP = wsReplyBtn("P", m._pnum, m.text, () => { const at = pactChatActive(); wsAddReplyRef(at, "P", m._pnum, m.text); pactPaintReplyRow(at); });
+    return el("div", { class: cls }, [pactNumBadge("P", m._pnum), replyBtnP, ...kids, ...extra]);
   }
   if (m.role === "assistant") {
     const kids = [];
@@ -8639,7 +8781,8 @@ function pactChatMsgNode(m) {
     kids.push(body);
     const star = el("button", { class: "ws-bm-star" + (m._bookmarked ? " on" : ""), title: m._bookmarked ? "Bookmarked — click to remove" : "Bookmark this response" }, [m._bookmarked ? "★" : "☆"]);
     star.addEventListener("click", (e) => { e.stopPropagation(); pactChatToggleBookmark(m); });
-    return el("div", { class: "pc-msg pc-asst" }, [pactNumBadge("R", m._rnum), wsShareBtn(m.text), star, ...kids]);
+    const replyBtnR = wsReplyBtn("R", m._rnum, m.text, () => { const at = pactChatActive(); wsAddReplyRef(at, "R", m._rnum, m.text); pactPaintReplyRow(at); });
+    return el("div", { class: "pc-msg pc-asst" }, [pactNumBadge("R", m._rnum), wsShareBtn(m.text), replyBtnR, star, ...kids]);
   }
   if (m.kind === "tool_use") {
     // Expandable, like the Core cockpit: the tool names show at a glance; tap to reveal each call's
@@ -8724,6 +8867,12 @@ function pactChatPaint(t) {
   // this tab has usage data.
   const usageEl = PACT_CHAT.host.querySelector(".pc-usage");
   if (usageEl) { const usg = wsUsageLabel(t.usage, t.contextUsage); usageEl.textContent = usg.text; usageEl.title = usg.title; usageEl.hidden = !usg.text; }
+  const wrapCountersEl = PACT_CHAT.host.querySelector(".ws-wrap-counters");
+  if (wrapCountersEl) {
+    wrapCountersEl.textContent = "🗜 " + (t._compactCount || 0) + " · ⟳ " + (t._wrapCount || 0);
+    wrapCountersEl.title = "🗜 " + (t._compactCount || 0) + " compaction(s) in this window (resets at every wrap) · ⟳ "
+      + (t._wrapCount || 0) + " wrap(s) this conversation has ever had (cumulative)";
+  }
   // Cache each message's rendered node on the message object. A message's content is immutable once
   // added (only `elapsedMs` is stamped once, on result — which clears `_node` there), so re-parsing its
   // markdown + code-highlighting on EVERY event (user echo / tool_use / assistant / result / status /
@@ -8780,7 +8929,7 @@ function pactChatPaint(t) {
     const en = exoEdgeNodes(t, xctx); if (en.below) nodes.push(en.below);
   }
   const timerSpan = () => el("span", { class: "pc-timer", title: "Time on this response" }, [t._turnStartedAt ? pactFmtDuration(Date.now() - t._turnStartedAt) : ""]);
-  if (t.live) nodes.push(el("div", { class: "pc-msg pc-asst pc-live" }, [el("div", { class: "pc-asst-body" }, [t.live]), el("div", { class: "pc-live-meta" }, ["▍ ", timerSpan()])]));
+  if (t.live) nodes.push(el("div", { class: "pc-msg pc-asst pc-live" }, [el("div", { class: "pc-asst-body" }, [wsLiveCounterText(t.live)]), el("div", { class: "pc-live-meta" }, ["▍ ", timerSpan()])]));
   else if (t.status === "thinking" || t.status === "deepwork") nodes.push(el("div", { class: "pc-think" }, [(t.status === "deepwork" ? "🔴 still producing… " : "● thinking… "), timerSpan()]));
   // Queued messages — typed while the agent was mid-turn, held (not yet sent) until this turn
   // finishes (see pactChatSend/pactChatDrainQueue). Rendered AFTER the live/thinking indicator, in a
@@ -8864,7 +9013,7 @@ function pactChatPaintLive(t) {
   if (!live) { pactChatPaint(t); return; }
   const stick = attachStickController(scroll, { wrapClass: "stick-wrap-pc", nearPx: 4 });
   const wasNearBottom = stick.sample();   // measure before the live text grows the node
-  live.textContent = t.live;
+  live.textContent = wsLiveCounterText(t.live);
   stick.apply(wasNearBottom);
 }
 // Turn an SDK model id ("claude-opus-4-1-20250805") into a short human label ("opus-4-1"). Empty in → "".
@@ -9225,6 +9374,57 @@ function pactCompact() {
   pactChatFlashNote("🗜 Compacting — summarising to shrink context…");
   pactChatDispatch(t, "/compact", []);
 }
+// Manual wrap for Pact — mirrors wsOpenWrapDialog/wsFillWrapPreview (Core's equivalent) exactly;
+// see those for the full reasoning. Split from Compact for the same reason: same question ("this is
+// getting heavy, what do I do?"), genuinely different tradeoffs (Compact keeps a summary IN the
+// window; Wrap starts fresh and archives the rest).
+const PACT_WRAP_ARM_MS = 600;
+function pactOpenWrapDialog(t) {
+  if (!t || !t.key) { pactChatFlashNote("Pick a repository for this chat first."); return; }
+  if (t._wrapDialog) return;
+  const paneEl = PACT_CHAT.host.querySelector(".pact-right"); if (!paneEl) return;
+  const usage = t.contextUsage || {};
+  const readiness = window.ChatShell.wrapReadiness({ tokens: Number(usage.totalTokens) || 0, ceiling: Number(usage.maxTokens) || 0 });
+  if (!readiness.canWrapManually) { pactChatFlashNote("⟳ " + readiness.reason); return; }
+
+  const dlg = wsOpenPaneDialog(paneEl, { title: "⟳ Wrap to a fresh context window" });
+  const body = el("div", { class: "ws-pane-dialog-body" }, ["Checking what this would archive…"]);
+  dlg.box.appendChild(body);
+  const cancelBtn = el("button", { class: "ws-pane-dialog-btn", type: "button" }, ["Cancel"]);
+  cancelBtn.addEventListener("click", () => close());
+  const confirmBtn = el("button", { class: "ws-pane-dialog-btn --primary", type: "button" }, ["Wrap now"]);
+  confirmBtn.disabled = true;
+  confirmBtn.addEventListener("click", () => {
+    if (confirmBtn.disabled) return;
+    confirmBtn.disabled = true; confirmBtn.textContent = "Wrapping…";
+    wsPost("control", { action: "wrapNow", args: { sessionKey: t.key } });
+  });
+  dlg.box.appendChild(el("div", { class: "ws-pane-dialog-btns" }, [cancelBtn, confirmBtn]));
+  const openedAt = Date.now();
+  const armTimer = setInterval(() => {
+    if (wsDialogArmed(Date.now() - openedAt, PACT_WRAP_ARM_MS)) { confirmBtn.disabled = false; clearInterval(armTimer); }
+  }, 100);
+  const close = () => { clearInterval(armTimer); dlg.close(); t._wrapDialog = null; };
+  t._wrapDialog = { close, body, confirmBtn };
+  wsPost("control", { action: "wrapPreview", args: { sessionKey: t.key } });
+}
+function pactFillWrapPreview(t, preview) {
+  if (!t._wrapDialog) return;
+  const body = t._wrapDialog.body; body.replaceChildren();
+  if (!preview || preview.empty) {
+    body.appendChild(el("div", {}, ["Too light to wrap yet — nothing has rolled off the live window."]));
+    if (t._wrapDialog.confirmBtn) { t._wrapDialog.confirmBtn.disabled = true; t._wrapDialog.confirmBtn.hidden = true; }
+    return;
+  }
+  const span = window.ChatShell.wrapSpan({
+    rFrom: preview.r.from, rTo: preview.r.to, pFrom: preview.p.from, pTo: preview.p.to,
+    rChars: preview.r.chars, pChars: preview.p.chars,
+  });
+  body.appendChild(el("div", {}, ["Responses  R#" + span.r.from + "–R#" + span.r.to + "  [" + span.r.count + "]"]));
+  body.appendChild(el("div", {}, ["Prompts    P#" + span.p.from + "–P#" + span.p.to + "  [" + span.p.count + "]"]));
+  body.appendChild(el("div", {}, [span.chars.toLocaleString() + " characters archived · last " + preview.keptTurns + " turns kept verbatim"]));
+  body.appendChild(el("div", { class: "ws-pane-dialog-note" }, ["Nothing is deleted — archived turns stay reachable via Recall."]));
+}
 function pactChatRender() {
   if (!PACT_CHAT) return;
   const host = PACT_CHAT.host;
@@ -9266,6 +9466,9 @@ function pactChatRender() {
   const sync = el("button", { class: "pact-ed-ico", title: "Sync now — re-fetch this conversation's authoritative state (fixes a desync between two open clients)" }, ["↻"]);
   const compactBtn = el("button", { class: "pact-ed-ico pact-compact", title: "Compact — summarise this conversation to shrink its context window. Sends /compact as the next turn." }, ["🗜 Compact"]);
   compactBtn.addEventListener("click", () => pactCompact());
+  const wrapBtn = el("button", { class: "pact-ed-ico pact-wrap", title: "Wrap — archive this conversation's head and start a fresh context window. Nothing is deleted; asks for confirmation first." }, ["⟳ Wrap"]);
+  wrapBtn.addEventListener("click", () => pactOpenWrapDialog(pactChatActive()));
+  const wrapCounters = el("span", { class: "ws-wrap-counters" }, []);
   sync.addEventListener("click", () => pactChatForceResync(sync));
   const bm = el("button", { class: "pact-ed-ico pc-bm-ico", title: "Bookmarked responses — jump to a starred answer" }, ["★"]);
   const bmPop = el("div", { class: "ws-bm-pop --down" }, []);   // opens downward (the head is at the top)
@@ -9339,7 +9542,7 @@ function pactChatRender() {
   const modelBar = mob ? null : el("div", { class: "pc-modelbar" }, [
     pactModelSel, modelNow, usageEl, swarmEl,
     el("span", { class: "ws-spacer" }, []),
-    headBulb, compactBtn, modeSel,
+    headBulb, wrapCounters, compactBtn, wrapBtn, modeSel,
   ]);
   const scroll = el("div", { class: "pc-scroll" }, []);
   const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (⌘/Ctrl+Enter to send)" });
@@ -9377,6 +9580,7 @@ function pactChatRender() {
     const files = [...items].filter((it) => it.kind === "file" && /^image\//.test(it.type)).map((it) => it.getAsFile()).filter(Boolean);
     if (files.length) { e.preventDefault(); pactAttachImageFiles(pactChatActive(), files); }
   });
+  const replyRowWrap = el("div", { class: "ws-reply-row-host" }, []);
   const imgPreview = el("div", { class: "pc-img-preview" }, []); imgPreview.hidden = true;
   const imgErr = el("div", { class: "pc-img-err" }, []); imgErr.hidden = true;
   const sendWrap = el("div", { class: "pc-send-wrap" }, [send]);   // relative host so the Live/Held bulb can dock above Send
@@ -9402,7 +9606,7 @@ function pactChatRender() {
     const files = e.dataTransfer && e.dataTransfer.files ? [...e.dataTransfer.files] : [];
     pactAttachImageFiles(pactChatActive(), files);
   });
-  const composeExtras = el("div", { class: "pc-compose-extras" }, [imgPreview, imgErr]);
+  const composeExtras = el("div", { class: "pc-compose-extras" }, [replyRowWrap, imgPreview, imgErr]);
   const suggest = el("div", { class: "pc-suggest" });   // idle "suggested next prompt" chip (populated by pactChatUpdateSuggest)
   // MOBILE: bake the worktree pill + the Auto/suggest controls into ONE row (pc-toolrow) to save a whole row of
   // vertical space. DESKTOP: worktree pill stays inline in the compose; the suggest bar sits on its own row.
@@ -10096,13 +10300,73 @@ function viewWorkspace() {
   // deliberately abandoned (cleared, or repointed to a different repo/worktree) — a
   // pendingOpens entry captures the pane's gen at request time, so a reply that arrives
   // after the pane moved on can tell it no longer applies (see beginPendingOpen).
-  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", worktree: "main", mode: st.defaultMode, model: routingDefaultModel(), effort: null, fastMode: false, transcript: [], usage: {}, status: "idle", readonly: false, resume: null, draft: "", _gen: 0, _expandedGroups: new Set(), attachedImages: [], contextUsage: null });
+  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", worktree: "main", mode: st.defaultMode, model: routingDefaultModel(), effort: null, fastMode: false, transcript: [], usage: {}, status: "idle", readonly: false, resume: null, draft: "", _gen: 0, _expandedGroups: new Set(), attachedImages: [], contextUsage: null, multiChat: false, convSlot: 0, convSlots: wsDefaultConvSlots() });
   let _draftTimer = 0;
   const saveDraftsSoon = () => { clearTimeout(_draftTimer); _draftTimer = setTimeout(saveLayout, 400); };   // persist typed-but-unsent compose text so a view switch doesn't lose it
   // Every pane with a repo runs under a shared, deterministic key (repo@worktree). Panes still
   // waiting for a repo keep their random placeholder so they never collide before use.
-  function keyForPane(p) { return p.repo ? wsWorkspaceId(p.repo, p.worktree) : p.sessionKey; }
-  function assignKey(p) { if (p.repo) p.sessionKey = wsWorkspaceId(p.repo, p.worktree); }
+  // multiChat OFF always resolves to slot 0 regardless of any stored p.convSlot — this is what makes
+  // "switching multi-chat off collapses to one conversation" true structurally, not just by convention.
+  function keyForPane(p) { return p.repo ? wsWorkspaceId(p.repo, p.worktree, p.multiChat ? p.convSlot : 0) : p.sessionKey; }
+  function assignKey(p) { if (p.repo) p.sessionKey = wsWorkspaceId(p.repo, p.worktree, p.multiChat ? p.convSlot : 0); }
+  // The one place "which slot is this pane actually on" is decided — assignKey/keyForPane and every
+  // other wsWorkspaceId(p.repo, p.worktree, …) call site (bookmarks, image lookups, transcript
+  // backfill) must all resolve the SAME id for the SAME pane, or a non-Master conversation's
+  // bookmarks/images would silently resolve against Master's instead.
+  function wsPaneSlot(p) { return (p && p.multiChat) ? (p.convSlot || 0) : 0; }
+  /** Switch a pane to a different conversation SLOT of the same repo/worktree. `fresh` skips the
+   *  "open" round-trip for a brand-new slot that has no history to load yet — exactly how picking a
+   *  new repo already starts a pane empty. An existing slot reuses the SAME restore mechanism
+   *  restorePanes() already relies on (beginPendingOpen + control "open"), just triggered live
+   *  instead of on boot. */
+  function wsSwitchConvSlot(p, slot, fresh) {
+    if (!p || !p.repo || p.convSlot === slot) return;
+    const newKey = wsWorkspaceId(p.repo, p.worktree, slot);
+    if (!fresh) beginPendingOpen(newKey, p, "conv-switch");   // reads p.sessionKey (still the OLD key) for priorKey
+    p.convSlot = slot; p.sessionKey = newKey;
+    p.transcript = []; p._turnCache = null; p._domLead = []; p.status = "idle"; p.readonly = false;
+    const ui = paneUI.get(p.id); if (ui) { ui._txRef = null; }
+    paintPane(p); saveLayout();
+    if (!fresh) wsPost("control", { action: "open", args: { sessionKey: newKey } });
+  }
+  /** Create a new conversation slot for a pane and switch to it immediately — the tab strip's "＋". */
+  function wsAddConvSlot(p) {
+    if (!p || !p.repo) return;
+    p.convSlots = Array.isArray(p.convSlots) && p.convSlots.length ? p.convSlots : wsDefaultConvSlots();
+    const { slots, slot } = wsAddConvSlotEntry(p.convSlots);
+    p.convSlots = slots;
+    wsSwitchConvSlot(p, slot, true);   // fresh — nothing to open, mirrors a brand-new repo pick
+  }
+  /** The multi-chat toggle itself. Turning it OFF collapses back to Master (slot 0) — the toggle is
+   *  a DISPLAY/identity choice, not a delete: existing extra slots stay in p.convSlots and reappear
+   *  if the toggle is switched back on, matching "nothing is created or split, this stops merging /
+   *  starts separating them for display" from the original design. */
+  function wsSetMultiChat(p, on) {
+    if (!p || p.multiChat === !!on) return;
+    p.multiChat = !!on;
+    if (!p.convSlots || !p.convSlots.length) p.convSlots = wsDefaultConvSlots();
+    if (!on && p.convSlot) wsSwitchConvSlot(p, 0);
+    else { assignKey(p); paintPane(p); saveLayout(); }
+  }
+  /** The tab strip: hidden entirely (not just empty) while multi-chat is off, so it costs nothing —
+   *  same "closed, the drawer does not exist" reasoning the lab settled on for its search drawer. */
+  function wsPaintConvTabs(p) {
+    const ui = paneUI.get(p.id); if (!ui || !ui.convTabsRow) return;
+    if (ui.multiChatCb) ui.multiChatCb.checked = !!p.multiChat;
+    if (!p.multiChat) { ui.convTabsRow.replaceChildren(); ui.convTabsRow.hidden = true; return; }
+    ui.convTabsRow.hidden = false;
+    const slots = Array.isArray(p.convSlots) && p.convSlots.length ? p.convSlots : wsDefaultConvSlots();
+    const activeSlot = p.convSlot || 0;
+    const tabs = slots.map((s) => {
+      const tab = el("button", { class: "ws-conv-tab" + (s.slot === activeSlot ? " --act" : ""), type: "button" },
+        [s.slot === 0 ? el("span", { class: "ws-conv-tab-star", title: "Master conversation" }, ["\u2605 "]) : "", s.name]);
+      tab.addEventListener("click", () => wsSwitchConvSlot(p, s.slot));
+      return tab;
+    });
+    const add = el("button", { class: "ws-conv-tab-add", type: "button", title: "New conversation for this repo" }, ["\uFF0B"]);
+    add.addEventListener("click", () => wsAddConvSlot(p));
+    ui.convTabsRow.replaceChildren(...tabs, add);
+  }
 
   // ---- layout + pane persistence -------------------------------------------------
   // Panes are views; conversations are files on the work machine. Without this, a refresh
@@ -10114,7 +10378,7 @@ function viewWorkspace() {
     try {
       localStorage.setItem(WS_STORE_KEY, JSON.stringify({
         v: 1, cols: st.cols, rows: st.rows, sidebarMode: st.sidebarMode, defaultMode: st.defaultMode, activeId: st.activeId,
-        panes: st.panes.map((p) => ({ id: p.id, sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree || "main", mode: p.mode, draft: p.draft || "", promptStates: p.promptStates || {}, bookmarks: Array.isArray(p.bookmarks) ? p.bookmarks : [] })),
+        panes: st.panes.map((p) => ({ id: p.id, sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree || "main", mode: p.mode, draft: p.draft || "", promptStates: p.promptStates || {}, bookmarks: Array.isArray(p.bookmarks) ? p.bookmarks : [], multiChat: !!p.multiChat, convSlot: p.convSlot || 0, convSlots: Array.isArray(p.convSlots) ? p.convSlots : wsDefaultConvSlots() })),
       }));
     } catch { /* private mode / quota — the workspace still works, it just forgets */ }
   }
@@ -10137,6 +10401,11 @@ function viewWorkspace() {
       mode: WS_MODE_IDS.has(p.mode) ? p.mode : st.defaultMode, draft: typeof p.draft === "string" ? p.draft : "",
       promptStates: (p.promptStates && typeof p.promptStates === "object" && !Array.isArray(p.promptStates)) ? p.promptStates : {},
       bookmarks: Array.isArray(p.bookmarks) ? p.bookmarks.filter((x) => typeof x === "number") : [],
+      multiChat: !!p.multiChat,
+      convSlot: typeof p.convSlot === "number" ? p.convSlot : 0,
+      convSlots: Array.isArray(p.convSlots) && p.convSlots.length
+        ? p.convSlots.filter((s) => s && typeof s.slot === "number" && typeof s.name === "string")
+        : wsDefaultConvSlots(),
     }));
     // If the saved grid can't hold all the panes (a mobile flat list), fall back to the flat 1×N shape that
     // addPaneMobile builds live, so no restored pane is orphaned. Otherwise pad an under-filled desktop grid.
@@ -10292,7 +10561,7 @@ function viewWorkspace() {
   let lastAttached = null;
   function reportAttach() {
     const p = activePane();
-    const wsId = p && p.repo ? wsWorkspaceId(p.repo, p.worktree) : null;
+    const wsId = p && p.repo ? wsWorkspaceId(p.repo, p.worktree, wsPaneSlot(p)) : null;
     if (wsId === lastAttached) return;
     lastAttached = wsId;
     wsPost("attach", { conn: CONN.id, workspaceId: wsId });
@@ -10557,7 +10826,7 @@ function viewWorkspace() {
   // conversation's entry, so a ★ set on the phone shows on the desktop and vice-versa. Falls back to the
   // local layout copy when offline / for a repo-less pane (which has no conversation identity yet).
   const WS_BM = Object.create(null);
-  const wsBmWorkspace = (p) => (p && p.repo) ? wsWorkspaceId(p.repo, p.worktree) : null;
+  const wsBmWorkspace = (p) => (p && p.repo) ? wsWorkspaceId(p.repo, p.worktree, wsPaneSlot(p)) : null;
   // Pull the server list into a pane that has a workspace identity. Returns true if p.bookmarks changed.
   function wsBmAdopt(p) {
     const id = wsBmWorkspace(p); if (!id) return false;
@@ -10658,7 +10927,9 @@ function viewWorkspace() {
   }
   function renderItem(m) {
     if (m.role === "user" || m.kind === "user") {
-      const kids = [wsNumBadge("P", m._pnum), el("b", {}, ["you  "])];
+      const kids = [wsNumBadge("P", m._pnum),
+        wsReplyBtn("P", m._pnum, m.text, () => { const rp = st.panes.find((x) => x.id === m._paneId); wsAddReplyRef(rp, "P", m._pnum, m.text); wsPaintReplyRow(rp); }),
+        el("b", {}, ["you  "])];
       // Root-caused a real "the image disappears from the UI the instant I hit send" report: the
       // image was always saved server-side and attached to the persisted turn — this pane just
       // never rendered it. `m.images`/`m.workspaceId` now ride the live "user" event AND the
@@ -10696,7 +10967,8 @@ function viewWorkspace() {
     if (m.role === "assistant" || m.kind === "assistant") {
       const star = el("button", { class: "ws-bm-star" + (m._bookmarked ? " on" : ""), title: m._bookmarked ? "Bookmarked — click to remove" : "Bookmark this response" }, [m._bookmarked ? "★" : "☆"]);
       star.addEventListener("click", (e) => { e.stopPropagation(); wsToggleBookmark(m); });
-      return line("ws-assistant", [wsNumBadge("R", m._rnum), wsShareBtn(m.text), star, ...renderAssistantText(m.text)]);
+      const replyBtn = wsReplyBtn("R", m._rnum, m.text, () => { const rp = st.panes.find((x) => x.id === m._paneId); wsAddReplyRef(rp, "R", m._rnum, m.text); wsPaintReplyRow(rp); });
+      return line("ws-assistant", [wsNumBadge("R", m._rnum), wsShareBtn(m.text), replyBtn, star, ...renderAssistantText(m.text)]);
     }
     if (m.kind === "tool_use") return line("ws-tool", [el("i", { class: "ti ti-tool" }, []), " ", (m.tools || []).map((t) => t.name).join(", ")]);
     if (m.kind === "tool_result") {
@@ -10997,6 +11269,14 @@ function viewWorkspace() {
     ui.imgPreviewWrap.hidden = !imgs.length;
     ui.imgPreviewWrap.replaceChildren(...imgs.map((img, idx) => wsImgChip(p, img, idx)));
   }
+  /** Sync the removable reply-reference chips above the compose box to p._replyRefs — called after
+   *  every ↩ tap, every × removal, and once a send actually goes out (which clears the list). */
+  function wsPaintReplyRow(p) {
+    if (!p) return;
+    const ui = paneUI.get(p.id); if (!ui || !ui.replyRowWrap) return;
+    const row = wsReplyChipRow(p, () => wsPaintReplyRow(p));
+    ui.replyRowWrap.replaceChildren(...(row ? [row] : []));
+  }
 
   // ---- one pane ------------------------------------------------------------------
   // ---- Exocortex (Phase 2) --------------------------------------------------------------
@@ -11009,7 +11289,7 @@ function viewWorkspace() {
       rows: () => (Array.isArray(p.transcript) ? p.transcript : []),
       repaint: () => paintPane(p),
       adopt: (w) => {
-        p.transcript = wsBackfillTurnWorkspace(w.rows, p.workspaceId || wsWorkspaceId(p.repo, p.worktree));
+        p.transcript = wsBackfillTurnWorkspace(w.rows, p.workspaceId || wsWorkspaceId(p.repo, p.worktree, wsPaneSlot(p)));
         p._promptOffset = w.promptOffset; p._responseOffset = w.responseOffset;
         p._transcriptTruncated = w.truncated;
         // A band is at most ~501 rows and the target turn may sit anywhere in it, so render the whole
@@ -11075,6 +11355,13 @@ function viewWorkspace() {
     const histBtn = el("button", { class: "ws-ico", title: "History for this repo" }, ["⏱"]);
     const compactBtn = el("button", { class: "ws-ico ws-compact", title: "Compact — summarise this conversation to shrink its context window. Sends /compact as the next turn." }, ["🗜 Compact"]);
     compactBtn.addEventListener("click", () => wsCompact(p));
+    // Manual wrap — confirmed absent before this (only the automatic threshold in lib/workspace.mjs
+    // existed). Split from Compact rather than replacing it: they answer the same question ("this is
+    // getting heavy, what do I do?") with genuinely different tradeoffs (Compact keeps a summary IN
+    // the window; Wrap starts a fresh one and archives the rest — see wsOpenWrapDialog).
+    const wrapBtn = el("button", { class: "ws-ico ws-wrap", title: "Wrap — archive this conversation's head and start a fresh context window. Nothing is deleted; asks for confirmation first." }, ["⟳ Wrap"]);
+    wrapBtn.addEventListener("click", () => wsOpenWrapDialog(p));
+    const wrapCounters = el("span", { class: "ws-wrap-counters" }, []);
     const transcriptEl = el("div", { class: "ws-transcript" }, []);
     const promptEl = el("textarea", { class: "ws-prompt", rows: String(WS_PROMPT_MIN_ROWS), placeholder: "Message Claude… (Ctrl+Enter)" });
     // Auto-resize on a rAF, not synchronously on every keystroke: wsAutoResizePrompt reads
@@ -11103,6 +11390,7 @@ function viewWorkspace() {
     const attachBtn = el("button", { class: "ws-ico ws-attach", type: "button", title: `Attach up to ${WS_IMG_MAX_COUNT} images — click, paste, or drag onto the box` }, ["📎"]);
     // Filled dynamically by wsPaintAttachment() — one chip (thumbnail + its own ×) per attached
     // image, up to WS_IMG_MAX_COUNT — not fixed single elements the way one-image-only used to be.
+    const replyRowWrap = el("div", { class: "ws-reply-row-host" }, []);
     const imgPreviewWrap = el("div", { class: "ws-img-preview" }, []);
     imgPreviewWrap.hidden = true;
     const imgErr = el("div", { class: "ws-img-err" }, []);
@@ -11123,7 +11411,7 @@ function viewWorkspace() {
     });
     const composeBtns = el("div", { class: "ws-compose-btns" }, [bmWrap, attachBtn, stopBtn, sendWrap]);
     const composeRow = el("div", { class: "ws-compose" }, [imgFileInput, promptEl, composeBtns]);
-    const composeExtras = el("div", { class: "ws-compose-extras" }, [imgPreviewWrap, imgErr]);
+    const composeExtras = el("div", { class: "ws-compose-extras" }, [replyRowWrap, imgPreviewWrap, imgErr]);
     // A slim, ALWAYS-visible identity readout — plain text, not a control — so which
     // repo@worktree this pane is actually showing is never in doubt regardless of scroll
     // position or which conversation was just resumed into it. Kept separate from the
@@ -11145,12 +11433,19 @@ function viewWorkspace() {
     // medallion"), where there's space, instead of the bottom controls row. Empty on desktop (docks above Send).
     const headBulb = el("div", { class: "ws-head-bulb" }, []);
     const topBar = el("div", { class: "ws-pane-hd" }, [dot, identityLabel, el("span", { class: "ws-spacer" }), headBulb, bgBadge, savedBadge, closeBtn]);
+    // Core's multi-chat toggle + tab strip (confirmed absent before this — Core has always been
+    // exactly one conversation per repo/worktree). OFF by default; the row itself is empty (so it
+    // takes no space) until toggled on. See wsSetMultiChat/wsSwitchConvSlot/wsAddConvSlot.
+    const multiChatCb = el("input", { type: "checkbox", class: "ws-multichat-cb" }, []);
+    const multiChatLabel = el("label", { class: "ws-multichat-label", title: "Off by default — one repository usually means one thread. On lets this pane hold several separate conversations of the same repo, switchable as tabs." }, [multiChatCb, " multi-chat"]);
+    multiChatCb.addEventListener("change", () => wsSetMultiChat(p, multiChatCb.checked));
+    const convTabsRow = el("div", { class: "ws-conv-tabs" }, []);
     // Unified with Pact: this is the MODEL BAR and it belongs at the BOTTOM of the box, under the composer
     // — same controls, same order, same place, so Core and Pact stop diverging. Readouts and pickers left,
     // Compact + the status badge right. (It kept its .ws-pane-controls class: the mobile sheet in
     // wsOpenControlsSheet() re-homes this exact node by that selector, and renaming it would break that.)
     const swarmEl = el("div", { class: "pc-swarm", title: "Subagents working right now" }, []);
-    const controlsBar = el("div", { class: "ws-pane-controls --modelbar" }, [repoSel, wtSel, modeSel, modelSel, modelNow, effortSel, fastModeLabel, swarmEl, histBtn, el("span", { class: "ws-spacer" }), compactBtn, badge]);
+    const controlsBar = el("div", { class: "ws-pane-controls --modelbar" }, [repoSel, wtSel, modeSel, modelSel, modelNow, effortSel, fastModeLabel, swarmEl, multiChatLabel, histBtn, el("span", { class: "ws-spacer" }), wrapCounters, compactBtn, wrapBtn, badge]);
     // The live "what's happening right now" feed — a single always-visible line (tap to expand
     // the full scrolling log) narrating every state transition: sending, thinking, streaming,
     // running a tool, waiting for permission, done, a connection hiccup — everything the orange
@@ -11164,7 +11459,7 @@ function viewWorkspace() {
     // the transcript. In flow (not an anchored popup) so its panels can never be clipped by the
     // pane's overflow on a narrow phone viewport.
     const exo = exoMountBar(p, wsExoCtx(p));
-    const paneRoot = el("div", { class: "ws-pane" }, [topBar, activityLine, activityLog, exo.root, transcriptEl, composeExtras, composeRow, controlsBar]);
+    const paneRoot = el("div", { class: "ws-pane" }, [topBar, convTabsRow, activityLine, activityLog, exo.root, transcriptEl, composeExtras, composeRow, controlsBar]);
 
     paneRoot.addEventListener("mousedown", () => setActive(p.id));
     // Repointing a pane to a different repo/worktree abandons its OLD identity — bump `_gen` so
@@ -11285,7 +11580,7 @@ function viewWorkspace() {
     // Desktop: dock the Live/Held bulb just above Send. Mobile: syncMobileBar homes it in the pane HEADER
     // instead (by the identity), so don't dock to the compose here — it would flash there before moving.
     if (!st.isMobile) stick.dockMode(sendWrap, "stick-mode--dock");
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, stick, promptEl, repoSel, wtSel, modeSel, modelSel, modelNow, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, stopBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, identityLabel, activityLine, activityLog, exo, _bmPop: bmPop, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
+    paneUI.set(p.id, { root: paneRoot, transcriptEl, stick, promptEl, repoSel, wtSel, modeSel, modelSel, modelNow, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, stopBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, replyRowWrap, multiChatCb, convTabsRow, wrapCounters, identityLabel, activityLine, activityLog, exo, _bmPop: bmPop, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
     if (p.draft) { promptEl.value = p.draft; wsAutoResizePrompt(promptEl); }   // restore the saved compose draft after a view switch / reload
     return paneRoot;
   }
@@ -11338,16 +11633,15 @@ function viewWorkspace() {
     if (_paintRAF) return;
     _paintRAF = (window.requestAnimationFrame || ((fn) => setTimeout(fn, 16)))(flushPaints);
   }
-  // The live-streaming preview shows only the TAIL of the in-progress reply, not the whole thing.
-  // A long reply (agent replies are often 50–150KB) in ONE `pre-wrap` text node is expensive to
-  // lay out (~7ms for 120KB, measured) — and any forced layout re-triggers it: e.g. typing in a
-  // SECOND pane reads that pane's textarea height, which flushes the whole document's layout and
-  // re-lays-out the giant node on EVERY keystroke (the "2 panes lag but 1 doesn't" report). Bound
-  // the rendered node to WS_LIVE_TAIL_CHARS so its layout stays cheap regardless of reply length;
-  // the COMPLETE text still lands as a normal transcript entry the moment the turn's real
-  // "assistant" event arrives and replaces this preview.
-  const WS_LIVE_TAIL_CHARS = 6000;
-  const liveTail = (s) => (s && s.length > WS_LIVE_TAIL_CHARS ? "…" + s.slice(-WS_LIVE_TAIL_CHARS) : (s || ""));
+  // The live-streaming preview used to show the TAIL of the in-progress reply, capped, because a long
+  // reply (often 50–150KB) in ONE `pre-wrap` text node was expensive to lay out (~7ms for 120KB,
+  // measured) and any forced layout re-triggered it — e.g. typing in a SECOND pane reads that pane's
+  // textarea height, flushing the whole document's layout and re-laying-out the giant node on EVERY
+  // keystroke (the "2 panes lag but 1 doesn't" report). wsLiveCounterText (shared module-scope helper)
+  // makes that cap unnecessary rather than just bounding it: a "1,234 characters arriving…" string is
+  // a few bytes regardless of how much has actually streamed, so the expensive-layout case this
+  // existed to prevent cannot occur at all. The COMPLETE text still lands as a normal transcript entry
+  // the moment the turn's real "assistant" event arrives and replaces this preview.
   const _raf = window.requestAnimationFrame || ((fn) => setTimeout(fn, 16));
   // Update the live node's (capped) text AND keep the transcript pinned to bottom — both at most
   // ONCE per animation frame, not once per streamed chunk. Per-chunk work is then just an O(1)
@@ -11358,7 +11652,7 @@ function viewWorkspace() {
     ui._liveRAF = _raf(() => {
       ui._liveRAF = 0;
       const t = ui.transcriptEl; if (!t || !ui._liveNode) return;
-      const text = liveTail(p._liveText);
+      const text = wsLiveCounterText(p._liveText);
       // Was the reader at the tail BEFORE this frame's text grew the node? Sample first, then apply
       // through the shared controller so a reader scrolled up keeps their spot (and sees the pill).
       const wasNearBottom = ui.stick ? ui.stick.sample() : (t.scrollHeight - t.scrollTop - t.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX);
@@ -11371,6 +11665,12 @@ function viewWorkspace() {
     const ui = paneUI.get(p.id); if (!ui) return;
     ui.root.classList.toggle("on", p.id === st.activeId);
     ui.root.classList.toggle("ro", !!p.readonly);
+    wsPaintConvTabs(p);
+    if (ui.wrapCounters) {
+      ui.wrapCounters.textContent = "🗜 " + (p._compactCount || 0) + " · ⟳ " + (p._wrapCount || 0);
+      ui.wrapCounters.title = "🗜 " + (p._compactCount || 0) + " compaction(s) in this window (resets at every wrap) · ⟳ "
+        + (p._wrapCount || 0) + " wrap(s) this conversation has ever had (cumulative)";
+    }
     // Keep the dropdown showing the pane's repo, injecting an option for a tree-picked
     // path that isn't a tracked repo.
     if (!Array.from(ui.repoSel.options).some((o) => o.value === (p.repo || ""))) fillRepoSelect(ui.repoSel, p.repo);
@@ -11484,7 +11784,7 @@ function viewWorkspace() {
       // onPayload's assistant_delta handling). The node reference is stashed on `ui` so the
       // assistant_delta handler can update just its textContent directly on every SUBSEQUENT chunk
       // of this turn (O(1)) instead of repainting — see the streaming-lag fix there.
-      if (p._liveText) { const liveNode = line("ws-assistant ws-live", [liveTail(p._liveText)]); tailExtras.push(liveNode); ui._liveNode = liveNode; ui._liveTextNode = liveNode.firstChild; }
+      if (p._liveText) { const liveNode = line("ws-assistant ws-live", [wsLiveCounterText(p._liveText)]); tailExtras.push(liveNode); ui._liveNode = liveNode; ui._liveTextNode = liveNode.firstChild; }
       else { ui._liveNode = null; ui._liveTextNode = null; }
       // Queued messages — typed while Claude was still working, "frozen in cache" until this
       // turn finishes (see send()/drainQueue()). Rendered distinctly (orange, or pink during
@@ -12162,7 +12462,7 @@ function viewWorkspace() {
         const others = data.workspacesOn.filter((w) => true);
         for (const p of st.panes) {
           if (p.repo !== data.workspacesOnRepo) continue;
-          const mine = wsWorkspaceId(p.repo, p.worktree);
+          const mine = wsWorkspaceId(p.repo, p.worktree, wsPaneSlot(p));
           const sharing = others.filter((w) => w.workspaceId === mine).length > 1;
           const otherWts = [...new Set(others.map((w) => w.worktree))].filter((w) => w !== p.worktree);
           if (sharing || otherWts.length) {
@@ -12231,7 +12531,7 @@ function viewWorkspace() {
         // OVER the rows only for a BAND (an `around`/`aroundTurn` answer, i.e. windowStart present);
         // a plain tail/full reply keeps the long-standing path below untouched.
         const _w = exoAbsorbWindow(p, data);
-        p.transcript = wsBackfillTurnWorkspace((_w && _w.isBand ? _w.rows : data.transcript) || [], data.workspaceId || wsWorkspaceId(data.repo || p.repo, data.worktree || p.worktree));
+        p.transcript = wsBackfillTurnWorkspace((_w && _w.isBand ? _w.rows : data.transcript) || [], data.workspaceId || wsWorkspaceId(data.repo || p.repo, data.worktree || p.worktree, wsPaneSlot(p)));
         p._transcriptTruncated = _w && _w.isBand ? _w.truncated : !!data.transcriptTruncated;   // server sent only the tail — more is fetchable via "Show earlier"
         p._promptOffset = (_w && _w.isBand ? _w.promptOffset : data.promptOffset) || 0; p._responseOffset = (_w && _w.isBand ? _w.responseOffset : data.responseOffset) || 0;   // absolute P#/R# numbering (counts the un-shipped ones)
         p._expandedGroups = new Set();   // a freshly-(re)opened transcript has no expand state yet
@@ -12341,7 +12641,7 @@ function viewWorkspace() {
           // Exocortex window model first — see the `transcript` branch above for why a BAND takes
           // over the rows while a tail/full reply does not.
           const _w = exoAbsorbWindow(p, data);
-          if (Array.isArray(data.transcript)) { p.transcript = wsBackfillTurnWorkspace((_w && _w.isBand ? _w.rows : data.transcript), data.workspaceId || wsWorkspaceId(p.repo, p.worktree)); p._transcriptTruncated = _w && _w.isBand ? _w.truncated : !!data.transcriptTruncated; p._promptOffset = (_w && _w.isBand ? _w.promptOffset : data.promptOffset) || 0; p._responseOffset = (_w && _w.isBand ? _w.responseOffset : data.responseOffset) || 0;
+          if (Array.isArray(data.transcript)) { p.transcript = wsBackfillTurnWorkspace((_w && _w.isBand ? _w.rows : data.transcript), data.workspaceId || wsWorkspaceId(p.repo, p.worktree, wsPaneSlot(p))); p._transcriptTruncated = _w && _w.isBand ? _w.truncated : !!data.transcriptTruncated; p._promptOffset = (_w && _w.isBand ? _w.promptOffset : data.promptOffset) || 0; p._responseOffset = (_w && _w.isBand ? _w.responseOffset : data.responseOffset) || 0;
             // Initial load (this pane was empty until now — the app-open path fills it via resync on `hello`,
             // AFTER the grid was built): land at the bottom (latest), not scrolled up at the top.
             if (prevLen === 0 && p.transcript.length > 0 && !(_w && _w.isBand)) p._scrollBottomNext = true;
@@ -12394,6 +12694,11 @@ function viewWorkspace() {
       // Exocortex indicator/recall cues. These frames carry NO inline sessionKey (CONTRACT §0), so
       // they are routed purely by the frame's key — which `targets` already is.
       if (data.kind === "rolling" || data.kind === "lookingUp" || data.kind === "recall") {
+        // A roll — automatic OR manual, this event fires for both — is the ONE moment a wrap
+        // actually commits. Counted HERE, not on the manual "wrapResult" reply, so an automatic
+        // roll (which never sends wrapResult) is still counted, and a manual one is never double
+        // counted. Compactions belong to the WINDOW a roll just cleared, so they reset here too.
+        if (data.kind === "rolling") { for (const p of targets) { p._wrapCount = (p._wrapCount || 0) + 1; p._compactCount = 0; } }
         for (const p of targets) { exoIngestEvent(p, data); paintPane(p); }
         return;
       }
@@ -12425,9 +12730,23 @@ function viewWorkspace() {
         const k = (n) => (n == null ? null : Math.round(n / 1000) + "k");
         const pre = k(data.preTokens), post = k(data.postTokens);
         for (const p of targets) {
+          p._compactCount = (p._compactCount || 0) + 1;   // per-WINDOW — reset when "rolling" fires
           exoIngestEvent(p, data);
           logActivity(p, "🗜 Context compacted" + (pre && post ? " — " + pre + " → " + post + " tokens" : ""));
           if (p.sessionKey && !p.readonly) wsPost("control", { action: "contextUsage", args: { sessionKey: p.sessionKey } });
+          paintPane(p);   // reflect the new count on the 🗜/⟳ badge immediately, not on the next unrelated repaint
+        }
+        return;
+      }
+      // Manual wrap, part 1: the read-only preview the confirm dialog is waiting on.
+      if (data.kind === "wrapPreview") { for (const p of targets) wsFillWrapPreview(p, data.preview); return; }
+      // Manual wrap, part 2: the outcome. The counters themselves are NOT updated here — see the
+      // "rolling" handler above, which fires for this same successful wrap and is the one place
+      // both automatic and manual wraps are counted, so a manual one is never double-counted.
+      if (data.kind === "wrapResult") {
+        for (const p of targets) {
+          if (p._wrapDialog) p._wrapDialog.close();
+          logActivity(p, data.ok ? "⟳ Wrapped to a fresh context window" : "Could not wrap — " + (data.reason || "unknown reason"));
         }
         return;
       }
@@ -12730,8 +13049,18 @@ function viewWorkspace() {
   }
   async function send(p) {
     if (p.readonly) return;
-    const ui = paneUI.get(p.id); const text = ui.promptEl.value.trim(); if (!text) return;
+    const ui = paneUI.get(p.id); const typed = ui.promptEl.value.trim();
+    const pendingRefs = Array.isArray(p._replyRefs) ? p._replyRefs : [];
+    if (!typed && !pendingRefs.length) return;
     if (!p.repo) { note("Pick a repository for this pane first."); return; }
+    // Reply/quote is prepended VISIBLY (like a WhatsApp quote), not hidden the way the
+    // discarded-message note rides the payload only — this is content the user chose to attach, not
+    // an instruction to the agent about prior turns. window.ChatShell is loaded before app.js (see
+    // index.html); buildReplyPreamble caps/truncates each quote and marks archived ones as such.
+    const text = pendingRefs.length
+      ? window.ChatShell.buildReplyPreamble(pendingRefs) + (typed ? "\n" + typed : "")
+      : typed;
+    p._replyRefs = []; wsPaintReplyRow(p);   // one-shot per send, same treatment as attached images
     // Same "clear optimistically, restore on failure" treatment either way — the attached images
     // (if any) are a one-shot per send, never left over for the next message.
     const attachedImages = p.attachedImages || [];
@@ -12758,6 +13087,63 @@ function viewWorkspace() {
     if (paneBusy(p)) { p._queue = p._queue || []; p._queue.push({ text: "/compact", images: [] }); paintPane(p); note("⏳ Compact queued — runs when the current turn finishes."); return; }
     logActivity(p, "🗜 Compacting — summarising the conversation to shrink context…");
     dispatchPrompt(p, "/compact", []);
+  }
+  // A confirm button armed with no delay is a misclick trap (double-clicking the button that OPENS
+  // a dialog can land the second click on the button that CONFIRMS it, the instant it paints) — see
+  // wsDialogArmed. 600ms is long enough to require a second, deliberate click.
+  const WS_WRAP_ARM_MS = 600;
+  /** Manual wrap: gate on the SAME 60%-of-context threshold the (currently unused) rollup bar math
+   *  defines (ChatShell.wrapReadiness) — a wrap below that discards a warm prompt cache for nothing.
+   *  Fetches a live preview from the server (never mutates anything) before the user can confirm;
+   *  the confirm button itself stays disabled until WS_WRAP_ARM_MS has passed. */
+  function wsOpenWrapDialog(p) {
+    if (p.readonly) { note("This pane is read-only — Resume the conversation first, then Wrap."); return; }
+    if (!p.sessionKey) { note("Pick a repository for this pane first."); return; }
+    if (p._wrapDialog) return;   // already open — the button click that reopened it is a no-op
+    const ui = paneUI.get(p.id); if (!ui) return;
+    const usage = p.contextUsage || {};
+    const readiness = window.ChatShell.wrapReadiness({ tokens: Number(usage.totalTokens) || 0, ceiling: Number(usage.maxTokens) || 0 });
+    if (!readiness.canWrapManually) { note("⟳ " + readiness.reason); return; }
+
+    const dlg = wsOpenPaneDialog(ui.root, { title: "⟳ Wrap to a fresh context window" });
+    const body = el("div", { class: "ws-pane-dialog-body" }, ["Checking what this would archive…"]);
+    dlg.box.appendChild(body);
+    const cancelBtn = el("button", { class: "ws-pane-dialog-btn", type: "button" }, ["Cancel"]);
+    cancelBtn.addEventListener("click", () => close());
+    const confirmBtn = el("button", { class: "ws-pane-dialog-btn --primary", type: "button" }, ["Wrap now"]);
+    confirmBtn.disabled = true;
+    confirmBtn.addEventListener("click", () => {
+      if (confirmBtn.disabled) return;
+      confirmBtn.disabled = true; confirmBtn.textContent = "Wrapping…";
+      wsPost("control", { action: "wrapNow", args: { sessionKey: p.sessionKey } });
+    });
+    dlg.box.appendChild(el("div", { class: "ws-pane-dialog-btns" }, [cancelBtn, confirmBtn]));
+    const openedAt = Date.now();
+    const armTimer = setInterval(() => {
+      if (wsDialogArmed(Date.now() - openedAt, WS_WRAP_ARM_MS)) { confirmBtn.disabled = false; clearInterval(armTimer); }
+    }, 100);
+    const close = () => { clearInterval(armTimer); dlg.close(); p._wrapDialog = null; };
+    p._wrapDialog = { close, body, confirmBtn };
+    wsPost("control", { action: "wrapPreview", args: { sessionKey: p.sessionKey } });
+  }
+  /** Fill the open wrap dialog with a real preview (or explain why there's nothing to show) —
+   *  called from the wrapPreview event handler once the server answers. */
+  function wsFillWrapPreview(p, preview) {
+    if (!p._wrapDialog) return;
+    const body = p._wrapDialog.body; body.replaceChildren();
+    if (!preview || preview.empty) {
+      body.appendChild(el("div", {}, ["Too light to wrap yet — nothing has rolled off the live window."]));
+      if (p._wrapDialog.confirmBtn) { p._wrapDialog.confirmBtn.disabled = true; p._wrapDialog.confirmBtn.hidden = true; }
+      return;
+    }
+    const span = window.ChatShell.wrapSpan({
+      rFrom: preview.r.from, rTo: preview.r.to, pFrom: preview.p.from, pTo: preview.p.to,
+      rChars: preview.r.chars, pChars: preview.p.chars,
+    });
+    body.appendChild(el("div", {}, ["Responses  R#" + span.r.from + "–R#" + span.r.to + "  [" + span.r.count + "]"]));
+    body.appendChild(el("div", {}, ["Prompts    P#" + span.p.from + "–P#" + span.p.to + "  [" + span.p.count + "]"]));
+    body.appendChild(el("div", {}, [span.chars.toLocaleString() + " characters archived · last " + preview.keptTurns + " turns kept verbatim"]));
+    body.appendChild(el("div", { class: "ws-pane-dialog-note" }, ["Nothing is deleted — archived turns stay reachable via Recall."]));
   }
 
   // ---- toolbar controls ----------------------------------------------------------

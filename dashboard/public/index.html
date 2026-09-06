@@ -85,6 +85,10 @@
        Classic script → window.EXO, loaded before app.js. Regenerate with
        `node dashboard/public/exocortex.gen.mjs`; lib/exocortexBundle.test.mjs fails if it is stale. -->
   <script src="/exocortex.js"></script>
+  <!-- Chat Shell pure layout/wrap/reply maths (docs/work/chat-shell/spec.md) — classic script → window.ChatShell,
+       same loading precedent as md-mini.js / deploy-helpers.js above. Loaded before app.js, which is the first
+       real production consumer; previously only dashboard/public/chat-shell-lab.html loaded this file. -->
+  <script src="/chat-shell.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
