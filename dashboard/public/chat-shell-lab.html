@@ -260,7 +260,12 @@ button:disabled{opacity:.4;cursor:not-allowed}
 .popbox{width:min(460px,calc(100% - 20px));max-height:calc(100% - 20px);overflow:auto;
   background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 14px 46px #000b}
 .pophd{padding:9px 12px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center;font-weight:600}
-.popbody{padding:10px 12px;display:flex;flex-direction:column;gap:7px}
+.popbody{padding:10px 12px;display:flex;flex-direction:column;gap:7px;min-width:0}
+/* A .chip is white-space:nowrap by design, which is right for a badge and wrong for a paragraph — a
+   long note inside a dialog forced a horizontal scrollbar across the whole box. Notes wrap. */
+.popbody .chip{white-space:normal;line-height:1.5;text-align:left}
+.popbody .kv{gap:10px;min-width:0}
+.popbody .kv .v{text-align:right;white-space:nowrap}
 .kv{display:flex;gap:8px;font-size:12px}.kv .k{color:var(--dim);flex:1}.kv .v{font-weight:600}
 .ctxrow{display:flex;align-items:center;gap:7px;font-size:12px}
 .ctxsw{width:11px;height:11px;border-radius:3px;flex:0 0 auto}
@@ -353,7 +358,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
 <div id="rail">
   <h1>Chat Shell Lab</h1>
   <p class="sub">Mockup only — production untouched. Runs the real <code>chat-shell.js</code> maths.<br>
-    <b id="buildstamp" style="color:var(--ok)">build 1.5.131</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
+    <b id="buildstamp" style="color:var(--ok)">build 1.5.132</b> — if this does not match what I just shipped, you are on a cached copy (Ctrl+Shift+R).</p>
 
   <div class="grp"><b>Workspace</b>
     <div class="row"><button id="wCore" class="on">Core</button><button id="wPact">Pact</button></div>
@@ -464,6 +469,7 @@ var S = {
   autoWrap: true, wraps: 0, live: true, bm: {}, maxTurns: 1000, jumpText: "", states: true,
   effort: "high", ultracode: false, width: 0, perm: "bypassPermissions",
   searchOpen: false,   // the jump/recall drawer is closed until asked for
+  autoArm: null,       // { left } while an automatic wrap is counting down
   replies: [],        // pending reply references for the next prompt
   // Compaction/wrap MARKERS must be recorded to be renderable at all — a line can only be drawn where
   // an event says it happened. Each entry pins itself to the round it landed after.
@@ -641,6 +647,32 @@ function build() {
   if (!S.rounds) core.appendChild(el("div", { class: "chip" }, ["no turns — use “+ 6 turns”"]));
   // A compact or a wrap is a pause you should be able to SEE — otherwise the session just goes quiet
   // and you cannot tell it apart from a hang. In flow at the bottom of Core, never a floating dialog.
+  // AUTOMATIC WRAP. A modal is the wrong instrument here: an automatic action that stops to ask is not
+  // automatic, and cancelling one would only re-arm it a moment later — a nag loop. The tick IS the
+  // consent, so an automatic wrap ANNOUNCES itself with a countdown you can stop, in flow, without
+  // blocking anything. Cancelling also UNTICKS auto-wrap, because otherwise it fires again immediately
+  // and "cancel" would have meant nothing.
+  if (S.autoArm) {
+    var band = el("div", { class: "busyband --wrap" }, [
+      el("div", { class: "bt" }, ["\u27f3 Auto-wrap in " + S.autoArm.left + "s \u2014 the window is "
+        + Math.round(S.ctxTok / S.ctxMax * 100) + "% full"]),
+      el("div", { class: "bs" }, ["Nothing is deleted. Stopping this also turns auto-wrap OFF, so it will not simply fire again."])
+    ]);
+    var stop = el("button", { class: "btn-stop", style: "margin-top:6px" }, ["\u2715 Stop and turn auto-wrap off"]);
+    stop.onclick = function () {
+      if (S._autoTimer) { clearInterval(S._autoTimer); S._autoTimer = null; }
+      S.autoArm = null; S.autoWrap = false;
+      flashMsg("Auto-wrap cancelled and switched OFF \u2014 leaving it on would have re-armed it immediately.", true);
+      render();
+    };
+    var now = el("button", { class: "btn-send", style: "margin-top:6px;margin-left:6px" }, ["\u27f3 Wrap now"]);
+    now.onclick = function () {
+      if (S._autoTimer) { clearInterval(S._autoTimer); S._autoTimer = null; }
+      S.autoArm = null; S.wraps++; runEvent("wrap");
+    };
+    band.appendChild(el("div", { class: "row" }, [stop, now]));
+    core.appendChild(band);
+  }
   if (S.busy) {
     var isW = S.busy.kind === "wrap";
     core.appendChild(el("div", { class: "busyband " + (isW ? "--wrap" : "--compact") }, [
@@ -872,7 +904,7 @@ function build() {
   var awCb2 = el("input", { type: "checkbox", id: "f-autowrap",
     title: "Automatically wrap to a fresh window at " + Math.round(wr2.autoAt * 100) + "%" });
   awCb2.checked = S.autoWrap;
-  awCb2.onchange = function () { S.autoWrap = this.checked; render(); };
+  awCb2.onchange = function () { S.autoWrap = this.checked; render(); if (S.autoWrap) armAutoWrap(); };
   mb.appendChild(el("label", { class: "autolbl" }, [awCb2, "auto-wrap"]));
   var fill2 = el("i"); fill2.style.width = Math.min(100, wr2.pct) + "%";
   mb.appendChild(el("span", { class: "bar", id: "f-wrapmeter",
@@ -1235,7 +1267,20 @@ function openWrapInner() {
   b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Kept verbatim"]), el("span", { class: "v" }, ["the last " + TAIL + " rounds"])]));
   // A wrap does NOT start from zero. Say where the new window actually begins, and warn when the
   // carried tail is so large that a wrap barely helps — which is what happens on a 200k window.
-  var seed = CS.wrapSeedEstimate({ tailTurns: TAIL * 2, charsPerTurn: S.charsPerRound / 2, ceiling: S.ctxMax });
+  // Derived from THIS conversation, not from the module's defaults. Using a fixed chars-per-turn gave
+  // the same seed figure whatever was actually being wrapped, which is meaningless — and it could even
+  // exceed the whole conversation. The per-round cost is the context we are ACTUALLY carrying divided
+  // by the rounds carrying it, and the kept tail can never be longer than the conversation itself.
+  var keptRounds = Math.min(TAIL, S.rounds);
+  var tokPerRound = S.rounds ? S.ctxTok / S.rounds : 0;
+  var seed = CS.wrapSeedEstimate({
+    tailTurns: keptRounds * 2,                       // a round is two turns
+    charsPerTurn: (tokPerRound / 2) * 4,             // …so half a round's tokens, back to chars
+    headPrompts: Math.max(0, S.rounds - keptRounds),
+    ceiling: S.ctxMax
+  });
+  b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Kept verbatim"]),
+    el("span", { class: "v" }, [fmt(keptRounds) + " of " + fmt(S.rounds) + " rounds"])]));
   b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["New window starts at"]),
     el("span", { class: "v", style: seed.worthwhile ? "" : "color:var(--warn)" },
       ["~" + fmt(seed.seedTokens) + " tok \u00b7 " + seed.pctOfCeiling + "% of " + fmt(S.ctxMax)])]));
@@ -1366,10 +1411,29 @@ $("#nearTurns").onclick = function () {
   render();
 };
 $("#liveBtn").onclick = function () { S.live = !S.live; render(); };
-$("#ctxr").oninput = function () { S.ctxTok = Math.round(S.ctxMax * this.value / 100); render(); };
+$("#ctxr").oninput = function () { S.ctxTok = Math.round(S.ctxMax * this.value / 100); render(); armAutoWrap(); };
 $("#states").onclick = function () { S.states = S.states ? false : true; this.classList.toggle("on", !!S.states); render(); };
 // Run a compact or a wrap for real (in mock time), so the band, the marker line and the counters can
 // all be judged in motion rather than described.
+/* Arm the automatic wrap: a countdown, not a dialog. Idempotent — re-entering the threshold while it
+   is already armed must not stack timers. */
+function armAutoWrap() {
+  if (S.autoArm || S.busy || !S.autoWrap) return;
+  var wr = CS.wrapReadiness({ tokens: S.ctxTok, ceiling: S.ctxMax });
+  if (!wr.autoWouldFire) return;
+  S.autoArm = { left: 10 }; render();
+  S._autoTimer = setInterval(function () {
+    if (!S.autoArm) { clearInterval(S._autoTimer); S._autoTimer = null; return; }
+    S.autoArm.left--;
+    if (S.autoArm.left <= 0) {
+      clearInterval(S._autoTimer); S._autoTimer = null;
+      S.autoArm = null; S.wraps++; runEvent("wrap");
+      return;
+    }
+    render();
+  }, 1000);
+}
+
 function runEvent(kind) {
   if (S.busy) return;
   S.busy = { kind: kind, pct: 4 }; render();

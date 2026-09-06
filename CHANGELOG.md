@@ -4,6 +4,31 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.132] - 2026-09-06
+### Fixed (lab)
+- **"New window starts at" was a constant, not a measurement.** It used the module's default
+  chars-per-turn, so it printed the same figure whatever was actually being wrapped — and could even
+  exceed the whole conversation. It is now derived from **this** conversation: the per-round cost is the
+  context actually in use divided by the rounds carrying it, and the kept tail can never be longer than
+  the conversation itself. The dialog also states **"kept verbatim: 40 of 60 rounds"**, so the figure
+  can be checked rather than trusted.
+- **The wrap dialog had a horizontal scrollbar.** `.chip` is `white-space: nowrap` — correct for a badge,
+  wrong for a paragraph — so the long explanatory note forced the whole box sideways. Notes inside a
+  dialog wrap now.
+### Added — automatic wrap, resolving the conflict with confirmation
+- Raised by the boss: *if a wrap needs confirming, what does auto-wrap do — and doesn't cancelling just
+  re-trigger it?* Both halves are real, so a modal is the wrong instrument:
+  **an automatic action that stops to ask is not automatic**, and cancelling a modal would only re-arm it
+  moments later — a nag loop.
+- **The tick is the consent.** An automatic wrap now **announces itself with a 10-second countdown in
+  flow** — no modal, nothing blocked — offering **"⟳ Wrap now"** or **"✕ Stop and turn auto-wrap off"**.
+- **Cancelling also unticks auto-wrap**, exactly as the boss reasoned, and says why: leaving it on would
+  re-arm it immediately and "cancel" would have meant nothing. The button states that side effect
+  **before** it is pressed rather than surprising you with it.
+- Arming is idempotent, so re-crossing the threshold cannot stack timers. A test asserts a wrap is
+  counted on exactly **three** legitimate paths (manual confirm, countdown's "wrap now", countdown
+  expiry) and that each count is immediately followed by the wrap actually running.
+
 ## [1.5.131] - 2026-09-06
 ### Fixed (lab)
 - **Dialogs stopped appearing at all.** Scoping them to the chat box had been done by **re-parenting**
