@@ -4,6 +4,32 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.120] - 2026-09-06
+### Added (lab)
+- **Compact and Wrap are now one split control** on the rollup bar, sharing a divider so they read as
+  two halves of a single decision rather than unrelated adjacent buttons. They are the two answers to
+  the same question — *"this is getting heavy, what do I do?"* — and they differ in cost and in what
+  they discard, so putting them side by side makes the choice explicit instead of hiding compaction in
+  another corner of the UI.
+  - **Compact** is never gated: it is cheap and always valid (production sends `/compact` as the next
+    turn). **Wrap** stays refused while the conversation is light, and says why.
+- **The wrap preview now states what a wrap actually is**, because the word could plausibly mean "close
+  this and start a new chat" — and it does not.
+### Documented — how a wrap really works (read from `workspace.mjs _maybeRoll`)
+- It stays **ONE conversation**. The store remains keyed by the same conversation, so the display and
+  the P#/R# numbering are unbroken. Only the underlying **SDK session** is respawned — onto a fresh,
+  tiny one, which is what keeps `--resume` fast forever.
+- The new session is **seeded with a summary plus the last 40 turns verbatim**, so the model keeps
+  context across the boundary.
+- The head is **archived verbatim** to `<workspace>/_segments/` as `<conv>#segN`, with **absolute**
+  P#/R# ranges so recall of a late turn cannot answer with an early one.
+- Those segments **do not appear as separate conversations** in the repository's history — they are
+  deliberately archived *inside* the workspace directory rather than the transcript root, precisely so
+  the conversation list does not treat each segment as its own chat.
+- **Worth knowing:** the carry-forward summary is **mechanical**, not model-written — the first line of
+  each of the head's user prompts. That is deliberate (a roll must never stall on summary quality) but
+  it means the seed is a list of what you asked, not a synthesis of what was concluded.
+
 ## [1.5.119] - 2026-09-06
 ### Fixed
 - **Dialogs were centred on the page, not on the chat box.** `.pop` and `#hist` were `position: fixed;

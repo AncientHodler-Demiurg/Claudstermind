@@ -1,6 +1,6 @@
 {
   "name": "claudstermind",
-  "version": "1.5.119",
+  "version": "1.5.120",
   "private": true,
   "type": "module",
   "description": "Claudstermind workspace root — shared test/runtime deps for the online relay tunnel.",

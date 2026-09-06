@@ -210,6 +210,13 @@ body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr
 .roll .bar i{display:block;height:100%;background:var(--ok)}
 .roll.--warn .bar i{background:var(--warn)} .roll.--err .bar i{background:var(--err)}
 button:disabled{opacity:.4;cursor:not-allowed}
+/* A single split control: two related actions, one object. The divider is a shared border, so they
+   read as halves of one decision rather than two unrelated buttons that happen to be adjacent. */
+.split{display:inline-flex;align-items:stretch}
+.split .splitL{border-radius:6px 0 0 6px;border-right-width:0}
+.split .splitR{border-radius:0 6px 6px 0;border-left:1px solid var(--line)}
+.split .splitL:hover:not(:disabled){border-color:#5aa8f0;color:#8fc3ff}
+.split .splitR:hover:not(:disabled){border-color:var(--acc);color:var(--acc)}
 /* Popups are scoped to the CHAT BOX, not the page. `position: fixed` centred them on the viewport, so
    in a multi-pane cockpit a pane's own dialog would appear miles from the pane that raised it — and even
    here it sat off-centre over the transcript. They are re-parented into #shell on every build and
@@ -519,10 +526,19 @@ function build() {
       ["\uD83D\uDDDC " + nComp + " compacted"]));
     if (S.wraps) bar.appendChild(el("span", { class: "chip" }, ["\u27f3 " + S.wraps + " wrapped"]));
     bar.appendChild(el("span", { class: "spacer" }));
-    var wbtn = el("button", { title: wr.reason }, ["\u27f3 Wrap now"]);
+    // ONE split control, because these are the two answers to the same question — "this is getting
+    // heavy, what do I do?" — and they differ in cost and in what they discard. Sitting side by side
+    // makes the choice explicit instead of hiding compaction in another corner of the UI.
+    //   COMPACT  cheap, keeps one session, replaces earlier turns with a summary that STILL occupies
+    //            the window. Available at any size (production: sends /compact as the next turn).
+    //   WRAP     respawns onto a fresh session seeded with a summary + the last 40 turns; the head is
+    //            archived verbatim and stays searchable. Refused while the conversation is light.
+    var cbtn = el("button", { class: "splitL", title: "Compact \u2014 summarise earlier turns to shrink the context window. Cheap, keeps this session, but the summary itself stays in the window." }, ["\uD83D\uDDDC Compact"]);
+    cbtn.onclick = function () { runEvent("compact"); };
+    var wbtn = el("button", { class: "splitR", title: wr.reason }, ["\u27f3 Wrap"]);
     wbtn.disabled = !wr.canWrapManually;
     wbtn.onclick = openWrap;
-    bar.appendChild(wbtn);
+    bar.appendChild(el("span", { class: "split" }, [cbtn, wbtn]));
     hdr.appendChild(bar);
   }
   // LOADING STRIP — a real progress bar for a cold load / catch-up, in flow so it cannot overlap
@@ -1010,7 +1026,13 @@ function openWrap() {
   b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Numbering after wrap"]),
     el("span", { class: "v" }, ["CONTINUES \u2014 next is ", el("span", { class: "tR" }, ["R#" + fmt(nResponses() + 1)]),
       " / ", el("span", { class: "tP" }, ["P#" + fmt(nPrompts() + 1)])])]));
-  b.appendChild(el("div", { class: "chip" }, ["Nothing is deleted. The wrap starts a fresh context window; the wrapped turns stay searchable in the archive and keep their original numbers."]));
+  // Spell out what a wrap actually IS, since "wrap" could plausibly mean "close and start a new chat".
+  // It does not: workspace.mjs _maybeRoll keeps the store keyed by the same conversation.
+  b.appendChild(el("div", { class: "chip" }, [
+    "This stays ONE conversation. The display and the numbering are unbroken \u2014 only the underlying "
+    + "engine session is respawned, seeded with a summary plus the last " + TAIL + " rounds, so the model keeps context. "
+    + "The earlier turns are archived verbatim as segment #" + (S.wraps + 1) + " and stay searchable via Recall. "
+    + "They do NOT become a separate conversation in this repository's history."]));
   var go = el("button", { class: "btn-send" }, ["\u27f3 Wrap now"]);
   go.onclick = function () {
     S.wraps++; S.ctxTok = Math.round(S.ctxTok * 0.12);   // a fresh window keeps only a carried summary
