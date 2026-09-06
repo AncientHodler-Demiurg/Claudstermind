@@ -236,24 +236,21 @@ because tests prove a module works, never that anything *calls* it. Wiring it is
       either a reference-counted sweep — an image is dead when no live transcript *and no archived
       segment* references its hash — or an explicit "this is by design, images are permanent" decision.
       Found while answering "what happens to attachments when a conversation wraps?".
-- [ ] **4.14** ⇉ **Document attachments — a gap in OUR code, not a platform limit.** *(corrected)*
-      The first version of this item said documents were "unsupported" and implied that was upstream.
-      **It is not.** The Agent SDK's own typing of a user message reads: *"a MessageParam with role
-      'user' whose content is a string or an array of content blocks (text, image, **document**,
-      tool_result, …)"* — so the API takes them and the SDK passes them through. Claude Desktop and DMP
-      both use that path.
-      **We simply never send one.** Two places decide it:
-      - `lib/workspaceStore.mjs` — `IMAGE_EXT` whitelists `png|jpeg|webp` and `saveImage` throws on
-        anything else, so a PDF cannot even be stored.
-      - `lib/claudeSession.mjs:373` — `_input()` only ever builds `{ type: "image", … }` blocks.
-      So the work is: widen storage past the image whitelist (a `documents/` sibling, same
-      content-addressing), emit a `document` block alongside the text, and render the attachment row.
-      **Note the context cost differs from an image**: a PDF is charged by its extracted pages, so a
-      long document can consume the window on its own — the attachment strip should show an estimate
-      before sending, not after.
-      ⚠️ Related but distinct: Claude Code's usual way of "attaching" a local file is for the agent to
-      **read it with a tool**, which stores nothing and costs context only while it is in the window.
-      That path already works here. Uploading is what is missing.
+- [~] **4.14** ⇉ **Document attachments — ENGINE DONE (1.5.135), UI still to wire.**
+      The claim that these were "unsupported" was wrong and is corrected: the SDK types a user message
+      as a Messages API `MessageParam` whose content may hold *"text, image, **document**, tool_result,
+      …"*, so the platform always accepted them. Claude Desktop and DMP both use that path; we simply
+      never emitted the block.
+      **Done:** `workspaceStore.saveDocument()` stores documents content-addressed under
+      `<workspace>/documents/` (pdf, txt, md, csv, json), `attachmentKind()` classifies what is
+      accepted, and `claudeSession._input()` now emits `document` blocks — base64 source for PDF (native
+      PDF handling), `text` source for the text formats, with an optional `title` so the model can refer
+      to the file by name. Images are untouched and keep their own path space, so the `IMAGE_PATH_RE`
+      security guard is unaffected. 7 tests.
+      **Left:** the upload UI (file picker accepting the new types), the attachment strip showing
+      documents distinctly from images, and — the part that genuinely differs from images — a
+      **context estimate before sending**, since a PDF is charged by its extracted pages and a long one
+      can fill the window on its own.
 - [ ] **4.4** ⇉ Commit cadence: stop accumulating 39-version piles. Checkpoint commit per phase.
 
 ---

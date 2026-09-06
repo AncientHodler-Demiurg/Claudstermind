@@ -4,6 +4,30 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.135] - 2026-09-06
+### Added — engine: document attachments
+- **`document` content blocks are now emitted.** `claudeSession._input()` builds a `document` block for
+  a document attachment: **base64** source for PDF (the API's native PDF handling) and a **text** source
+  for `txt`/`md`/`csv`/`json`, with an optional `title` so the model can refer to the file by name.
+  Images are unchanged and mixed attachments keep their order — asserted by 5 tests, including that a
+  text-only prompt still sends a plain string rather than becoming an array.
+- **`workspaceStore.saveDocument()`** stores documents content-addressed under
+  `<workspace>/documents/`, exactly like images (identical bytes stored once), refusing unknown media
+  types rather than inventing an extension. Images keep their own path space so the `IMAGE_PATH_RE`
+  security guard is untouched. **`attachmentKind()`** classifies what the engine will accept.
+- **Still to wire:** the upload UI, and a **context estimate before sending** — the one place documents
+  genuinely differ from images, since a PDF is charged by its extracted pages.
+### Fixed — a finished agent's clock kept running
+- The background-agents panel reported `elapsedMs = now − startedAt` **whatever the status**, so a
+  four-second task read **"9h 17m"** nine hours later. That is not a duration — it is "how long ago it
+  began", growing forever, under a label that says otherwise. Three separate facts are now three
+  separate fields: **`elapsedMs`** (live time, **null** once it is not running — a stopped clock must
+  not tick), **`durationMs`** (how long it took, fixed forever), **`finishedAgoMs`** (how long ago it
+  ended).
+- `finishedAt` defaults to **null, not `Date.now()`**. Stamping the moment we happen to process the
+  event would invent a finish time, and the reducer can run well after the fact (a replay, a reconnect
+  catch-up) — so the invented number would be confidently wrong. Unknown stays unknown.
+
 ## [1.5.134] - 2026-09-06
 ### Corrected
 - **"Document attachments are unsupported" was wrong, and wrong in a misleading way.** It described our
