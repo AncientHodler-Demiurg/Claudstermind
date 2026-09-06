@@ -484,10 +484,23 @@ function build() {
   r2.appendChild(jgo);
   r2.appendChild(el("span", { class: "jstat", id: "h-jstat" }, []));
   var rec = el("button", { title: "Search the ARCHIVE — turns already wrapped out of the live window. Jump only reaches loaded turns; Recall reaches the ones that are not." }, ["⌕ Recall"]);
+  // RECALL has TWO modes, exactly as lib/conversationArchive.mjs does — the lab previously implied a
+  // single text search, which misrepresented it.
+  //   recallByNumber(kind, n) -> ONE archived turn, fetched in full by its absolute P#/R#
+  //   recallByQuery(text)     -> substring hits across archived segments, newest segment first
+  // Both search the ARCHIVE — turns already wrapped OUT of the live window. Jump only reaches turns
+  // still loaded; Recall is the only way back to the rest.
   rec.onclick = function () {
     var q = (jin.value || "").trim();
-    flashMsg(q ? "Recall: searching the archive for \u201c" + q + "\u201d — " + fmt(Math.max(0, nResponses() - 40)) + " wrapped answers to scan"
-               : "Type some text first — Recall searches wrapped turns by content, not by number.", !!q);
+    if (!q) { flashMsg("Type a turn number (R#46) to fetch it, or any text to search wrapped turns.", false); return; }
+    var m = q.match(/^([rRpP])?\s*#?\s*(\d+)$/);
+    var wrapped = Math.max(0, nResponses() - 40);
+    if (m) {
+      var kind = (m[1] || "R").toUpperCase(), n = +m[2];
+      openRecall("number", kind, n, wrapped);
+    } else {
+      openRecall("query", null, q, wrapped);
+    }
   };
   r2.appendChild(rec);
   hdr.appendChild(r2);
@@ -496,10 +509,6 @@ function build() {
   if (S.cue) {
     var wr = CS.wrapReadiness({ tokens: S.ctxTok, ceiling: S.ctxMax });
     var bar = el("div", { class: "roll --" + wr.tone });
-    var awCb = el("input", { type: "checkbox", title: "Automatically wrap to a fresh window at " + Math.round(wr.autoAt * 100) + "%" });
-    awCb.checked = S.autoWrap;
-    awCb.onchange = function () { S.autoWrap = this.checked; render(); };
-    bar.appendChild(el("label", { class: "autolbl" }, [awCb, "auto-wrap"]));
     var fill = el("i"); fill.style.width = Math.min(100, wr.pct) + "%";
     bar.appendChild(el("span", { class: "bar" }, [fill]));
     // Only ceilings that can plausibly bind (see chat-shell.js rollTriggers relevance). The 25MB byte
@@ -523,32 +532,15 @@ function build() {
                     : c.label + " is at " + c.pct + "% \u2014 far from binding; context will get there first"
       }, [(near ? "\u25b8 " : "") + label + " \u00b7 " + c.pct + "%"]));
     });
-    // WHAT THE WRAP WOULD TAKE, right here — the actual question you are asking when you look at this bar.
-    var sp = CS.wrapSpan({ rFrom: 1, rTo: Math.max(0, nResponses() - 40), pFrom: 1, pTo: Math.max(0, nPrompts() - 40) });
-    bar.appendChild(el("span", { class: "m", title: "What a wrap right now would take (the last 40 turns are always kept verbatim)" },
-      ["would wrap ", el("span", { class: "tR" }, ["R#1\u2013R#" + fmt(sp.r.to) + " [" + fmt(sp.r.count) + "]"]),
-       " \u00b7 ", el("span", { class: "tP" }, ["P#1\u2013P#" + fmt(sp.p.to) + " [" + fmt(sp.p.count) + "]"])]));
-    // COMPACTS carried by this session. Each one leaves summarised luggage in the window that a wrap
-    // would clear, so the count is the honest answer to "why is this still heavy after compacting?".
     var nComp = S.marks.filter(function (mk) { return mk.kind === "compact"; }).length;
     if (nComp) bar.appendChild(el("span", { class: "chip", style: "color:#8fc3ff;border-color:#5aa8f055",
       title: nComp + " compaction" + (nComp === 1 ? "" : "s") + " in this session. Each replaced earlier turns with a summary that still occupies the window \u2014 wrapping is what actually clears it." },
       ["\uD83D\uDDDC " + nComp + " compacted"]));
     if (S.wraps) bar.appendChild(el("span", { class: "chip" }, ["\u27f3 " + S.wraps + " wrapped"]));
     bar.appendChild(el("span", { class: "spacer" }));
-    // ONE split control, because these are the two answers to the same question — "this is getting
-    // heavy, what do I do?" — and they differ in cost and in what they discard. Sitting side by side
-    // makes the choice explicit instead of hiding compaction in another corner of the UI.
-    //   COMPACT  cheap, keeps one session, replaces earlier turns with a summary that STILL occupies
-    //            the window. Available at any size (production: sends /compact as the next turn).
-    //   WRAP     respawns onto a fresh session seeded with a summary + the last 40 turns; the head is
-    //            archived verbatim and stays searchable. Refused while the conversation is light.
-    var cbtn = el("button", { class: "splitL", title: "Compact \u2014 summarise earlier turns to shrink the context window. Cheap, keeps this session, but the summary itself stays in the window." }, ["\uD83D\uDDDC Compact"]);
-    cbtn.onclick = function () { runEvent("compact"); };
-    var wbtn = el("button", { class: "splitR", title: wr.reason }, ["\u27f3 Wrap"]);
-    wbtn.disabled = !wr.canWrapManually;
-    wbtn.onclick = openWrap;
-    bar.appendChild(el("span", { class: "split" }, [cbtn, wbtn]));
+    // The upper bar is READ-ONLY STATS now. The controls moved to the footer, where the other actions
+    // already live and where there is room. A stats strip you read while scrolling is the wrong place
+    // to put an irreversible action.
     hdr.appendChild(bar);
   }
   // LOADING STRIP — a real progress bar for a cold load / catch-up, in flow so it cannot overlap
@@ -662,6 +654,27 @@ function build() {
   }
   // The pasted-image strip collapses to a single count chip rather than a whole row.
   var imgChip = el("span", { class: "chip --gone", id: "f-imgchip" }, ["\uD83D\uDDBC " + S.imgs]);
+
+  // CONTEXT ACTIONS — moved down from the stats bar. Actions live in the footer with the other
+  // controls; the upper bar keeps only the numbers.
+  var ctxRow = el("div", { class: "frow", id: "f-ctxrow" });
+  var wr2 = CS.wrapReadiness({ tokens: S.ctxTok, ceiling: S.ctxMax });
+  var awCb2 = el("input", { type: "checkbox", id: "f-autowrap",
+    title: "Automatically wrap to a fresh window at " + Math.round(wr2.autoAt * 100) + "%" });
+  awCb2.checked = S.autoWrap;
+  awCb2.onchange = function () { S.autoWrap = this.checked; render(); };
+  ctxRow.appendChild(el("label", { class: "autolbl" }, [awCb2, "auto-wrap"]));
+  var cbtn2 = el("button", { class: "splitL", title: "Compact \u2014 summarise earlier turns to shrink the context window. Cheap, keeps this session, but the summary itself stays in the window." }, ["\uD83D\uDDDC Compact"]);
+  cbtn2.onclick = function () { runEvent("compact"); };
+  var wbtn2 = el("button", { class: "splitR", title: wr2.reason }, ["\u27f3 Wrap"]);
+  wbtn2.disabled = !wr2.canWrapManually;
+  wbtn2.onclick = openWrap;
+  ctxRow.appendChild(el("span", { class: "split" }, [cbtn2, wbtn2]));
+  ctxRow.appendChild(el("span", { class: "spacer" }));
+  ctxRow.appendChild(el("span", { class: "chip", title: "What a wrap would take right now" },
+    ["would wrap ", el("span", { class: "tR" }, ["R#1\u2013R#" + fmt(Math.max(0, nResponses() - 40))]),
+     " \u00b7 ", el("span", { class: "tP" }, ["P#1\u2013P#" + fmt(Math.max(0, nPrompts() - 40))])]));
+  ftr.appendChild(ctxRow);
 
   // TYPE BOX + ghost suggestion. The old "continuation line" row is GONE: the suggested next prompt is
   // ghost text inside the box, Tab to accept. That reclaims a whole row and puts the suggestion where
@@ -1012,7 +1025,42 @@ function paintBulb() {
 
 /* Context breakdown — what the ctx medallion opens. Percentages are summed from the parts so the
    slices genuinely account for the whole; "free" is shown as its own row, never implied. */
+/* The recall RESULT, shown in the same dialog frame as the other panels. by-number fetches one
+   archived turn in full; by-query lists snippets, newest segment first. Both make plain that they
+   searched the archive, not the loaded window — that distinction is the whole reason Recall exists
+   alongside Jump. */
+function openRecall(mode, kind, arg, wrapped) {
+  var b = $("#ctxbody"); b.replaceChildren();
+  $("#ctxpop").querySelector(".pophd span").textContent = "\u2312 Recall \u2014 the archive";
+  b.appendChild(el("div", { class: "chip" }, [
+    "Searching " + fmt(wrapped) + " turns that have been wrapped OUT of the live window. Jump only reaches "
+    + "loaded turns; these are the ones it cannot see."]));
+  if (!wrapped) {
+    b.appendChild(el("div", { class: "chip", style: "color:var(--warn);border-color:#ffb45466" },
+      ["Nothing has been wrapped yet, so the archive is empty \u2014 everything is still reachable with Go."]));
+  } else if (mode === "number") {
+    var tag = kind === "R" ? "tR" : "tP";
+    b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Fetched"]),
+      el("span", { class: "v " + tag }, [kind + "#" + fmt(arg)])]));
+    b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["From segment"]), el("span", { class: "v" }, ["#" + Math.max(1, S.wraps)])]));
+    b.appendChild(el("div", { class: "msg --a", style: "max-width:none;align-self:stretch" },
+      ["(the full original text of " + kind + "#" + fmt(arg) + ", returned verbatim from the archive \u2014 "
+       + "including any images it carried, which is why a recall hit carries its workspace id)"]));
+  } else {
+    b.appendChild(el("div", { class: "kv" }, [el("span", { class: "k" }, ["Query"]), el("span", { class: "v" }, ["\u201c" + arg + "\u201d"])]));
+    [3, 2, 1].forEach(function (seg) {
+      var row = el("div", { class: "kv" }, [el("span", { class: "k tR" }, ["R#" + fmt(Math.max(1, wrapped - seg * 7))]),
+        el("span", { class: "v" }, ["\u2026 a snippet containing \u201c" + arg + "\u201d \u2026"])]);
+      row.appendChild(el("button", {}, ["open"]));
+      b.appendChild(row);
+    });
+    b.appendChild(el("div", { class: "chip" }, ["Newest segment first \u2014 a substring scan, not a ranked search."]));
+  }
+  $("#ctxpop").classList.add("--open");
+}
+
 function openCtx() {
+  $("#ctxpop").querySelector(".pophd span").textContent = "\u25d0 Context breakdown";
   var parts = [
     { n: "Messages", t: Math.round(S.ctxTok * 0.72), c: "#c77dff" },
     { n: "System prompt", t: Math.round(S.ctxTok * 0.06), c: "#5aa8f0" },

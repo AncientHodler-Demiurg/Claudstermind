@@ -4,6 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.5.124] - 2026-09-06
+### Changed (lab)
+- **Every context ACTION moved out of the stats bar and into the footer.** The auto-wrap tick and the
+  Compact│Wrap split control now sit on their own footer row with the other controls; the upper bar is
+  **read-only statistics**. A strip you skim while reading is the wrong place for an irreversible
+  action, and the footer had the room. The duplicated "would wrap" chip moved down with them.
+### Fixed (lab)
+- **Recall was misrepresenting itself.** It printed *"searching the archive for R#46"* for any input,
+  implying a single text search. The engine has **two** modes (`lib/conversationArchive.mjs`):
+  - **`recallByNumber`** — fetch **one** archived turn *in full* by its absolute `P#`/`R#`
+  - **`recallByQuery`** — substring hits across archived segments, **newest segment first**
+  The lab now routes to the right one, shows a real result panel, and states plainly that it searched
+  **the archive** — turns already wrapped *out* of the live window — which is the entire reason Recall
+  exists alongside Jump. It also says *"a substring scan, not a ranked search"* rather than implying
+  relevance ranking, and explains an **empty archive** instead of showing zero hits.
+
 ## [1.5.123] - 2026-09-06
 ### Changed — engine
 - **`ROLL_DEFAULTS.tailTurns` 40 → 200, `maxTurns` 400 → 1000**, on measured evidence.
