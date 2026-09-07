@@ -15,7 +15,19 @@ Second pass, commit `2159190` — **the hover panel and the long view**:
   wrapper did not) + a hand-rolled `@keyframes` — no tailwindcss-animate in this project.
 - The bar states **"Interval N of 990,000"** and counts the ceiling down in **years/days/hh:mm:ss**, plus a
   hairline second track for the whole ~339-year climb.
-- Tests: `lib/gas-floor.spec.ts` (23) + a new jsdom render spec `components/GasFloorBar.spec.tsx` (4).
+- Tooltip trigger is the **medallion only** (a real `<button>`, so keyboard-reachable and Radix opens on focus);
+  the surrounding card is deliberately NOT a trigger. The circle **sizes itself to its label** via
+  `lib/medallion-size.ts::medallionDiameterEm()` — real geometry, not a guessed padding: the value row sits above
+  centre (the ANU label hangs below), so it spans a CHORD; `halfChord >= textWidth/2 + pad` solved for `r` gives
+  `r = hypot(textWidth/2 + 0.5, 0.5)` in em, floored at 5.25em (the original 72/84px). Mono advance = 0.6em. The
+  unit is **em**, so the responsive step is a single `text-sm sm:text-base` and one number serves both
+  breakpoints. The floor grows 5 -> 7 digits over the schedule, so the circle widens twice.
+- Tests: `lib/gas-floor.spec.ts` (23) + jsdom render spec `components/GasFloorBar.spec.tsx` (8, incl. a negative
+  test that hovering the bar does NOT open the tooltip, and the em-unit assertion).
+- Wording gotcha caught by the owner: the footer said "computed locally **from** `coin.UC_MinimumGasPriceANU` ·
+  no chain read" — self-contradictory ("from" implies invoking it). Now "computed locally, **mirroring** ...".
+- The ceiling lands **2364-12-18T18:00:00Z** (pinned in the spec). An earlier prose estimate of "~2365-04-19" was
+  wrong — don't eyeball 338.82 mean years, compute it.
 
 STOA-ONLY — Kadena has no such rule, and it is not on the Ouronet explorer (owner asked, not yet answered).
 Verified live by grepping the running `explorer_frontend_prod` bundle for "Minimum gas price schedule" / "Steps
