@@ -4,6 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.12.8] - 2026-09-07
+### Fixed — the wrap preview printed a backwards range when one side was empty
+
+On screen: `would wrap R#702–R#846 [145] · P#15–P#14 [0]`. The second half is backwards, and reads as
+a broken number rather than as what it means.
+
+It is the NORMAL case, not an edge one: the tail a wrap always keeps is counted in **turns**, and
+prompts are far rarer than responses — so a window with 145 archivable responses can easily have zero
+archivable prompts. 1.11.5 handled only the case where BOTH sides were empty. Each side is now
+decided on its own: a side with nothing to archive reads **`P# none yet`**.
+
+### Diagnostic — this had happened to more than one conversation
+Swept every conversation's stored resume id against the SDK's session store: **23 with a resume id,
+21 present, 2 missing** — `LocalHost@main` and `Tools/AncientWisdom@main`, besides Khronoton. All
+three would have been permanently dead in exactly the same silent way; all three now recover on their
+next prompt. Khronoton itself is healthy again on session `7c20edd9…`.
+
 ## [1.12.7] - 2026-09-07
 ### Fixed — a pane whose conversation no longer exists sat empty forever
 

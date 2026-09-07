@@ -436,14 +436,22 @@
     // The next wrap starts where the LAST one ended, not at the first turn of the conversation.
     var sp = wrapSpan({ rFrom: rFrom, rTo: Math.max(rFrom - 1, num(o.responses, 0) - tailRounds),
                         pFrom: pFrom, pTo: Math.max(pFrom - 1, num(o.prompts, 0) - tailRounds) });
+    // ONE SIDE CAN BE EMPTY WHILE THE OTHER IS NOT — and it is the normal case, because the tail a
+    // wrap keeps is counted in TURNS: a window with 145 archivable responses can easily have zero
+    // archivable prompts, since prompts are far rarer. Printed as a range that came out backwards
+    // ("P#15–P#14 [0]"), which reads as a broken number rather than as "none of these yet".
+    var side = function (tag, r, f) {
+      return r.count ? tag + "#" + f(r.from) + "–" + tag + "#" + f(r.to) + " [" + f(r.count) + "]"
+                     : tag + "# none yet";
+    };
     // NOTHING TO WRAP YET is a real, common state — a fresh window is entirely inside the tail that a
     // wrap always keeps verbatim — and it needs saying in words. Printed as a range it came out
     // backwards ("R#6,896–R#6,895 [0]"), which reads as a broken number rather than as "not yet".
     var span = sp.r.count || sp.p.count
       ? el("span", { class: chipClass,
           title: "Approximate — the last ~" + tailTurns + " turns are always kept verbatim. The Wrap dialog shows the exact figures." },
-          ["would wrap ", el("span", { class: o.rTagClass || "tR" }, ["R#" + fmtNum(sp.r.from) + "–R#" + fmtNum(sp.r.to) + " [" + fmtNum(sp.r.count) + "]"]),
-           " · ", el("span", { class: o.pTagClass || "tP" }, ["P#" + fmtNum(sp.p.from) + "–P#" + fmtNum(sp.p.to) + " [" + fmtNum(sp.p.count) + "]"])])
+          ["would wrap ", el("span", { class: o.rTagClass || "tR" }, [side("R", sp.r, fmtNum)]),
+           " · ", el("span", { class: o.pTagClass || "tP" }, [side("P", sp.p, fmtNum)])])
       : el("span", { class: chipClass + " " + mutedClass,
           title: "A wrap always keeps the last ~" + tailTurns + " turns verbatim, and this window is still inside that tail — "
                + "so there is nothing it could archive yet. The count above shows how far into the window you are." },
