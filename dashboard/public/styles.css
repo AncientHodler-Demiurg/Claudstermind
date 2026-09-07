@@ -1,3 +1,5 @@
+/* The Core/Pact chat box — every pixel of it — is @ancientpantheon/claude-chat-shell, linked from
+   index.html as /chat-shell/chat-shell.css. Nothing about the chat shell is styled in this file. */
 :root {
   /* Canonical Pantheonic tokens (names fixed across sites; these are Claudstermind's values). */
   --bg: #0b1020; --bg-2: #0e1530; --panel: #121933; --panel-2: #1a2444; --line: #24304f;
@@ -14,19 +16,11 @@
   --accent: #a21caf; --accent-dim: #7a1585; --danger: #d64550; --radius: 14px;
   --shadow: 0 6px 20px rgba(20,30,60,.10);
 }
-/* WORKSPACE IDENTITY — Core "Midnight Violet" vs Pact "Harbour Slate" (docs/work/chat-shell-migration/
-   themes/design.md). Additive to the light/dark axis above, not a replacement: only --accent/--accent-dim
-   shift, which 130 rules already build on (buttons, focus rings, links) — enough to read as a distinct
-   identity without re-touching --panel/--bg, whose light/dark contrast was carefully tuned separately
-   and is not being re-litigated here. Scoped to .ws-pane (Core's whole per-pane chat UI) and .pact-right
-   (Pact's whole chat+terminal panel) — the two "main working surface" containers, so this reaches
-   buttons/links/focus states throughout the chat experience, not just the message bubbles.
-   P#/R# addressing tag colours are DELIBERATELY untouched — they are an addressing scheme, not decor,
-   and must read identically in both workspaces or a user could never learn them once. */
-.ws-pane { --accent: #c77dff; --accent-dim: #9d5fd1; }
-.pact-right { --accent: #4ecdc4; --accent-dim: #2f9e97; }
-body[data-theme="light"] .ws-pane { --accent: #9d5fd1; --accent-dim: #7c3fae; }
-body[data-theme="light"] .pact-right { --accent: #14807a; --accent-dim: #0f645f; }
+/* WORKSPACE IDENTITY (Core "Midnight Violet" / Pact "Harbour Slate") — accent, full dark palette and
+   bubble tokens all belong to the chat-shell package now; index.html links its one stylesheet and
+   that pulls them in. Nothing about the chat box is declared in this file. P#/R# addressing tag
+   colours ship with the package too, deliberately identical in both workspaces: they are an
+   addressing scheme, not decor, and must be learnable once. */
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 /* Never let a stray wide element push the page past the viewport (which on a phone triggers the
@@ -559,11 +553,23 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    the whole grid; now it repaints only its own pane. (Not `size`/`strict` containment — the grid
    still sizes the panes; only their internal layout+paint is fenced off. Native <select> popups and
    tooltips render outside the box and are unaffected.) */
-.ws-pane { display: flex; flex-direction: column; min-width: 0; background: var(--panel2); border: 1px solid var(--line);
+/* The frame reads --edge, the SAME token chat-shell-theme.css gives the shell's header/footer seams,
+   so "the border around the chat box" and "the border between its regions" are one value: a focused
+   pane's pink frame gets pink seams for free, and neither can drift from the other. Focus therefore
+   sets the TOKEN rather than border-color directly — setting border-color alone would have left the
+   seams behind on the old colour, which is exactly the mismatch being fixed. */
+.ws-pane { display: flex; flex-direction: column; min-width: 0; background: var(--panel2); border: var(--seam-w, 1px) solid var(--edge, var(--line));
   border-radius: 12px; overflow: hidden; min-height: 300px; contain: layout paint; }
-.ws-pane.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+/* --edge for a focused pane is set in chat-shell-theme.css, at a specificity that can actually win
+   against the theme blocks there (see its own comment) — not here, where it silently lost. */
+.ws-pane.on { box-shadow: 0 0 0 1px var(--accent); }
 .ws-pane.ro { opacity: .96; }
 .ws-pane-hd { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border-bottom: 1px solid var(--line); background: var(--panel); }
+/* The header's second row — size/wrap stats as chips, built live in wsPaintStatsRow(). Wraps onto a
+   second line rather than clipping/scrolling on a narrow pane; zero bottom padding when empty costs
+   nothing extra since the row still renders (chips are always present, even at zero — see comment in
+   wsPaintStatsRow for why "none yet" must not look like "not tracked"). */
+.ws-hstats { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 5px 9px 7px; border-bottom: 1px solid var(--line); background: var(--panel); }
 /* Core's multi-chat toggle + tab strip. OFF by default (one repo usually means one thread); the
    `hidden` attribute (not just empty children) is set by wsPaintConvTabs so the row costs nothing
    until turned on — the lab's "closed, the drawer does not exist" reasoning applied here. */
@@ -597,17 +603,31 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    showing (repo@worktree) must never be in doubt, so this reads directly from the same p.repo/
    p.worktree the controls below (now moved near the compose row) do — see paintPane(). */
 .ws-identity { font-size: 12px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The live activity feed — "what's happening right now", separate from the chat transcript.
-   Always-visible single line by default (tap to expand the full scrolling log) — everything the
-   orange Send button alone couldn't tell you: sending, thinking, streaming, a tool running,
-   waiting for permission, done, a connection hiccup. See logActivity()/renderActivityLog(). */
-.ws-activity { padding: 4px 9px; font-size: 11px; color: var(--ink-dim); background: var(--panel2);
-  border-bottom: 1px solid var(--line); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ws-activity:hover { color: var(--ink); }
+/* The live activity feed — "what's happening right now", separate from the chat transcript. Chat
+   Shell Lab parity: this is a CHIP in the header row (like the lab's agents/recon chips), not a
+   permanent full-width row the lab never had — everything the orange Send button alone couldn't
+   tell you: sending, thinking, streaming, a tool running, waiting for permission, done, a
+   connection hiccup. See logActivity()/renderActivityLog(). */
+/* The cap is a LENGTH, never a percentage. `max-width: 34%` resolved against the shrink-to-fit slot
+   this chip lives in, and that slot sizes itself to its own max-content — so the slot was first sized
+   to fit the FULL activity text, then the chip capped itself at 34% of that width, leaving the
+   difference as dead space INSIDE the slot. Measured live: a 273px slot holding 125px of controls,
+   which parked the × button 148px short of the header's right edge while the stats row below it ended
+   flush — the visible "these are not aligned to the right" report. A length has no such circularity,
+   and flex-shrink still lets it give way on a narrow pane. */
+.ws-activity-wrap { position: relative; flex: 0 1 auto; min-width: 0; max-width: 260px; }
+.ws-activity { border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; font-size: 11px;
+  color: var(--ink-dim); background: var(--chip); cursor: pointer; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; display: block; }
+.ws-activity:hover { color: var(--ink); border-color: var(--accent); }
 .ws-activity.ws-act-ok { color: #34d399; }
 .ws-activity.ws-act-err { color: #f87171; }
-.ws-activity-log { max-height: 160px; overflow-y: auto; background: var(--panel2); border-bottom: 1px solid var(--line);
-  padding: 4px 9px; display: flex; flex-direction: column; gap: 2px; }
+/* The expanded log docks BELOW its chip as an anchored dropdown (like the bookmark popover) rather
+   than an in-flow sibling row that always costs height, even collapsed. */
+.ws-activity-log { position: absolute; top: calc(100% + 4px); right: 0; z-index: 40; width: max(240px, 100%);
+  max-height: 220px; overflow-y: auto; background: var(--panel2); border: 1px solid var(--line);
+  border-radius: 8px; box-shadow: var(--shadow); padding: 4px 9px; display: flex; flex-direction: column; gap: 2px; }
+.ws-activity-log[hidden] { display: none; }
 .ws-activity-item { font-size: 10.5px; color: var(--ink-dim); display: flex; gap: 6px; }
 .ws-activity-item.ws-act-ok { color: #34d399; }
 .ws-activity-item.ws-act-err { color: #f87171; }
@@ -648,7 +668,13 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    container sat, so the "↓ New output" pill can float over the viewport instead of scrolling away
    with the content. The scroll element fills the wrapper; the wrapper carries its old flex sizing. */
 .stick-wrap { position: relative; display: flex; flex-direction: column; min-width: 0; }
-.stick-wrap-ws { flex: 1; min-height: 220px; max-height: 60vh; }
+/* CORE IS THE ONLY FLEXING REGION (chat-shell.js's model: "FOOTER grows with the type box, taking
+   height FROM Core"). A 220px floor here contradicted that: once the footer grew past what was left,
+   the pane's `overflow: hidden` clipped the BOTTOM of the footer — the model row with Compact│Wrap
+   and the context readout simply vanished below the pane's edge. Measured on a real 1×1 pane: header
+   84 + floor 220 + footer 185 = 489 inside a 472px pane. The transcript yields instead; the Lab does
+   the same thing (it hides Core outright at full expand). */
+.stick-wrap-ws { flex: 1; min-height: 0; max-height: 60vh; }
 .stick-wrap-ws > .ws-transcript { flex: 1; min-height: 0; max-height: none; }
 .stick-wrap-pc { flex: 1; min-height: 0; }
 .stick-wrap-pc > .pc-scroll { flex: 1; min-height: 0; }
@@ -683,6 +709,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 /* --head: inline inside the chat/pane HEADER (mobile) — the Live/Held bulb lives up by the workspace
    title/medallion, not the bottom controls row. Compact so it fits the header. */
 .stick-mode--head { position: static; font-size: 10px; padding: 2px 9px 2px 7px; }
+/* --seam: centred on the SEAM between the transcript and the footer (desktop) — matching the Chat
+   Shell Lab's placement exactly, the middle of Core's lowest border, not a corner near Send. */
+.stick-mode--seam { position: static; }
+.ws-seam-bulb { display: flex; justify-content: center; padding: 3px 0; background: var(--panel);
+  border-bottom: 1px solid var(--line); min-height: 22px; }
 /* Header dock hosts — mobile only; empty (and hidden) on desktop, where the bulb docks above Send. */
 .pc-head-bulb, .ws-head-bulb { display: none; align-items: center; flex: 0 0 auto; margin: 0 2px; }
 /* The Pact mobile "drawer" strip that hosts the mode bulb, directly under the control bar. */
@@ -725,16 +756,23 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   border-radius: 999px; padding: 4px 14px; font-size: 12px; cursor: pointer; margin-bottom: 2px; }
 .ws-show-earlier:hover { color: var(--ink); border-color: var(--accent); }
 .ws-line { white-space: pre-wrap; word-break: break-word; }
-/* A fixed hex, not a theme variable: this bubble is its own solid color of ink regardless of
-   light/dark theme (same reasoning as the queued-orange and error-red below), so white text on
-   it stays legible either way — unlike `var(--chip)`, which is near-white in the light theme. */
-.ws-line.ws-user { color: #fff; background: #2f6feb; border-radius: 8px; padding: 7px 10px; align-self: flex-end; max-width: 90%; position: relative; }
+/* Exact match to the chat-shell lab's own bubble colours (--bub-u/-line/-fg, --bub-a/-line, set per
+   workspace above) — not merely a derived approximation. This replaced a color-mix() formula that was
+   only theme-CONSISTENT (picked up the right accent) but not colour-IDENTICAL to the lab; "same
+   colours" means the literal hex, so the lab's own flat values are used directly, with the old
+   color-mix as a graceful fallback for light mode (no lab light design exists to copy) and any other
+   context these tokens aren't defined in. */
+.ws-line.ws-user { color: var(--bub-u-fg, #fff); background: var(--bub-u, color-mix(in srgb, var(--accent) 26%, var(--panel-2))); border: 1px solid var(--bub-u-line, color-mix(in srgb, var(--accent) 40%, var(--line))); border-radius: 8px; padding: 7px 10px; align-self: flex-end; max-width: 90%; position: relative; }
 /* Absolute prompt/response number tags (P#n / R#n) — a non-interactive corner label you can refer to.
    Counts the whole conversation, including turns not currently on screen (see server promptOffset). */
 .ws-num { position: absolute; top: -10px; z-index: 1; font: 700 11.5px ui-monospace, monospace; line-height: 1.5;
   padding: 1px 7px; border-radius: 8px; letter-spacing: .4px; pointer-events: none; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
 .ws-num-p { right: 6px; background: #1b4fc4; color: #dbe6ff; border: 1px solid rgba(255,255,255,.30); }
-.ws-num-r { left: 6px; background: var(--accent); color: #1a0a1e; }
+/* FIXED violet, not var(--accent) — this is the P#/R# addressing scheme (comment above the workspace
+   identity block, line ~24, already says so); it must read identically in Core, Pact, and light mode or
+   a user could never learn it. Was riding --accent, which drifts per workspace/theme — a real bug: R#
+   stopped being the same color the moment Pact's teal or light mode was in play. */
+.ws-num-r { left: 6px; background: #c77dff; color: #1a0a1e; }
 /* Interrupted prompt = DARK BLUE / Discarded = RED, with ▶ resume (green, left) · ✕ discard (red, right). */
 .ws-line.ws-interrupted { background: #172554; box-shadow: inset 0 0 0 1px #3b5bbf; }
 .ws-line.ws-discarded { background: #3a0d0d; color: #fca5a5; box-shadow: inset 0 0 0 1px #7f1d1d; }
@@ -821,7 +859,7 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    so a reply reads as distinctly "Claude" at a glance, the same way the user's own text reads as
    distinctly "you" against its solid blue bubble above. */
 .ws-line.ws-assistant { color: var(--accent); align-self: flex-start; max-width: 90%; position: relative;
-  background: var(--chip); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }   /* boxed like a prompt: one response = one rectangle */
+  background: var(--bub-a, var(--chip)); border: 1px solid var(--bub-a-line, var(--line)); border-radius: 8px; padding: 7px 10px; }   /* boxed like a prompt: one response = one rectangle; --bub-a matches the lab exactly */
 /* A fenced code block within a reply — its own bordered "copy paste window", separate from the
    surrounding prose. Matches Claude's own code-block rendering: a small header (language +
    copy) above the monospaced body. Only a FENCED block gets the copy button — the prose around
@@ -876,12 +914,46 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 /* Action cluster (attach / stop / send). A horizontal group on desktop; the phone block below turns
    it into a vertical column of round icon buttons so a full-width text box can sit beside it. */
 .ws-compose-btns { display: flex; align-items: flex-end; gap: 7px; flex: 0 0 auto; }
+/* "N lines" — the honest signal of how big the prompt has gotten once the 40% cap hides the rest. */
+.ws-lines-chip { font-size: 10.5px; color: var(--ink-mute); white-space: nowrap; padding: 0 2px; align-self: center; }
+/* Ultracode — same "autolbl" checkbox-with-caption look used by fast-mode/multi-chat elsewhere. */
+.ws-ultracode-label { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--ink-dim); cursor: pointer; white-space: nowrap; }
 /* Grows with what you type — up to WS_PROMPT_MAX_ROWS lines (app.js's wsAutoResizePrompt), then
    scrolls — matching Claude Code's own desktop compose box instead of staying a fixed 2-line box.
    `resize: none`: manual drag-resize would just fight the auto-grow on the next keystroke. */
-.ws-prompt { flex: 1; background: var(--chip); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 8px 11px;
+.ws-prompt { flex: 1; background: var(--chip); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 8px 30px 8px 11px;
   font-family: inherit; font-size: 13px; resize: none; min-height: 40px; overflow-y: hidden; }
 .ws-prompt:disabled { opacity: .5; }
+/* The jump/recall search toggle — pinned to the compose field's right edge, mirroring the lab
+   (chat-shell-lab.html's #f-search). ws-prompt reserves right padding above so typed text can never
+   run under it. */
+.ws-tawrap { flex: 1; position: relative; min-width: 0; }
+.ws-tawrap .ws-prompt { width: 100%; }
+/* LINE-NUMBER GUTTER — matches chat-shell-lab.html's .gutter exactly. Absolutely positioned,
+   deliberately: as a flex sibling with align-items:stretch it would take its height FROM the
+   textarea, which the textarea's own height depends on (via the padding-left it reserves for the
+   gutter) — a circular dependency. Taking the gutter out of the sizing path breaks that: the
+   textarea's height is driven only by its own content, and the gutter just stretches to match via
+   top/bottom. Width is set from JS (wsPaintGutter) to the measured digit count; this is only the
+   initial/fallback value. */
+.ws-gutter { position: absolute; left: 1px; top: 1px; bottom: 1px; padding: 7px 8px 7px 4px; text-align: right;
+  font: 11px/18px ui-monospace, Consolas, monospace; color: var(--ink-mute); overflow: hidden; pointer-events: none;
+  border-right: 1px solid var(--line); width: 22px; }
+.ws-gutter b { display: block; font-weight: 400; color: var(--ink-mute); opacity: .55; }
+.ws-gutter b.--on { color: var(--ink); opacity: 1; font-weight: 600; }
+/* ⇕ Expand — same icon-button treatment as attach/compact/wrap; toggled state has no separate look
+   because the label itself already states the action (see app.js's expandBtn: "⇕ 40%" / "⇕ Full"
+   is the destination, not the current state — matching the lab's f-expand). */
+.ws-expand { font-size: 11px; }
+.ws-search-toggle { position: absolute; right: 6px; bottom: 8px; width: 20px; height: 20px; padding: 0;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--panel2); color: var(--ink-mute);
+  font-size: 12px; line-height: 1; cursor: pointer; }
+.ws-search-toggle:hover { color: var(--ink); border-color: var(--accent); }
+/* The drawer itself — closed, it isn't rendered at all (see searchDrawer.hidden in app.js), so it
+   costs nothing when unused. Reuses the exocortex's REAL .exo-jump/.exo-jump-in/.exo-btn controls,
+   just re-homed here instead of a separate bar above the transcript. */
+.ws-search-drawer { display: flex; align-items: center; gap: 6px; padding: 6px 9px; border-top: 1px solid var(--line); }
+.ws-search-drawer[hidden] { display: none; }
 .ws-send { padding: 8px 16px; }
 /* "■ Stop" — interrupt the in-flight response. A distinct red so it reads as "halt", shown only
    while a turn is working (see paintPane). Sits next to Send in the compose row. */
@@ -1192,6 +1264,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .ws-compose-btns .ws-send::after { content: "➤"; font-size: 19px; line-height: 1; }
   .ws-compose-btns .ws-stop::after { content: "■"; font-size: 15px; line-height: 1; }
   .ws-compose-btns .ws-attach { font-size: 21px; line-height: 1; }
+  /* At this narrow width the compose row is the WhatsApp-style round-icon column (above) — repo/
+     worktree/lines moved here from the model row for desktop parity, but a round-icon column has no
+     room for two selects and a text chip. History stays (it's a single compact icon, same footprint
+     as attach/expand, which already shared this column). */
+  .ws-compose-btns select, .ws-compose-btns .ws-lines-chip { display: none; }
   .ws-pane-controls { gap: 5px; }
   .wsel, .wsel-sm { font-size: 12.5px; }   /* keep selects legible + tappable */
 
@@ -1397,7 +1474,25 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 /* Zone A = a Save-All toolbar over rows of editor boxes (up to 8), stacked per the split ladder
    (pactEdLayout). editor:right = 4:1 → the chat+repl zone is ⅕ of the space after the tree.
    Draggable gutters resize boxes/rows. */
-.pact-editor-wrap { flex: 4 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+/* 3:1, not 4:1 — the chat column was a fifth of the work area, which is narrower than the chat shell
+   wants on any real desktop ("I need the width of the Pact workspace to be a bit bigger"). The share
+   only decides the DEFAULT now; `.pact-wgrip` between the two lets you set it exactly, and the choice
+   is remembered (PACT_CHAT_W_KEY). */
+.pact-editor-wrap { flex: 3 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+/* The resize grip. Deliberately a thin visible bar rather than an invisible hot zone: a control you
+   cannot see is one nobody discovers. It widens its hit area with a padded ::before so it is easy to
+   grab without making the gap between the columns any bigger. */
+.pact-wgrip { flex: 0 0 6px; align-self: stretch; position: relative; cursor: col-resize;
+  border-radius: 3px; background: var(--line); transition: background .12s; touch-action: none; }
+.pact-wgrip::before { content: ""; position: absolute; inset: 0 -5px; }
+.pact-wgrip::after { content: ""; position: absolute; left: 2px; top: 50%; width: 2px; height: 26px;
+  margin-top: -13px; border-radius: 1px; background: var(--ink-mute); opacity: .5; }
+.pact-wgrip:hover, .pact-wgrip.--drag { background: var(--acc); }
+.pact-wgrip:hover::after, .pact-wgrip.--drag::after { opacity: .9; }
+/* While dragging, nothing else may take the pointer or start a text selection. */
+body.pact-wgrip-dragging { cursor: col-resize; user-select: none; }
+body.pact-wgrip-dragging .pact-work * { pointer-events: none; }
+body.pact-wgrip-dragging .pact-wgrip { pointer-events: auto; }
 .pact-ed-toolbar { flex: 0 0 auto; display: flex; flex-direction: row; align-items: center; gap: 10px; }
 /* The one shared band legend sits INLINE on the toolbar row — drop its per-box divider/padding to read as
    a strip, and let it flex + scroll horizontally so it stays on one line even when the row gets tight. */
@@ -1519,6 +1614,13 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   border: 1px solid var(--line); color: var(--ink-dim); font-size: 13px; cursor: pointer; }
 .pact-ed-ico:hover { color: var(--ink); }
 .pact-ed-ico.--on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+/* SNAP-TO-DEFAULT buttons. Disabled means "already at default" — the layout is tidy and there is
+   nothing for the click to do — so they dim rather than disappear: a control that vanishes when it
+   is not needed can't tell you the layout IS default, which is half of what these are for. */
+.pact-snap { white-space: nowrap; }
+.pact-snap:disabled { opacity: .38; cursor: default; }
+.pact-snap:not(:disabled) { color: #8fc3ff; border-color: #5aa8f055; }
+.pact-snap:not(:disabled):hover { color: #d8e9ff; border-color: #5aa8f0; }
 /* Per-box worktree selector (Stage-1 worktree binding) — ties a box to a checkout; only shown when a
    worktree beyond main exists. A non-main binding is accented so an isolated box is obvious at a glance. */
 .pact-wt-sel { flex: 0 0 auto; font-size: 11px; max-width: 130px; background: var(--chip); color: var(--ink);
@@ -1826,6 +1928,17 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 /* a source line that WRAPPED onto >1 visual line — subtle wash + a left accent on the code so it's clearly one line */
 .pact-medallion-pre .pml-row.--wrapped { background: rgba(120, 160, 255, .05); }
 .pact-medallion-pre .pml-row.--wrapped .pml-code { box-shadow: inset 2px 0 0 rgba(120, 160, 255, .45); }
+/* CLICK-TO-COPY: the line number of a module/interface opener copies that whole block. Marked so you
+   can find the two numbers that do something among a thousand that don't — and only the NUMBER, so
+   selecting code by hand still works everywhere else. */
+.pact-medallion-pre .pml-ln.--copyblk { color: #8fc3ff; font-weight: 700; cursor: pointer; }
+.pact-medallion-pre .pml-ln.--copyblk:hover { color: #d8e9ff; background: #17224a; }
+/* Confirmation shows the EXTENT, not just a tick: the block's own rows wash for a moment, so you can
+   see the module ended where you expected without pasting it somewhere to find out. */
+.pact-medallion-pre .pml-row.--copied { background: rgba(110, 231, 168, .13); }
+.pact-medallion-pre .pml-row.--copied .pml-ln { background: #10301f; color: #6ee7a8; }
+.pact-medallion-pre .pml-row.--copyfail { background: rgba(248, 113, 113, .13); }
+.pact-medallion-pre .pml-row.--copyfail .pml-ln { background: #3a1418; color: #f87171; }
 /* read-only search: the matched line, scrolled into view + tinted */
 .pact-medallion-pre .pml-row.--rohit { background: rgba(250, 214, 90, .16); }
 .pact-medallion-pre .pml-row.--rohit .pml-ln { background: #2c2a17; }
@@ -1895,14 +2008,23 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .CodeMirror.mdl .cm-md-capG::before { background: #dcb64d; } .CodeMirror.mdl .cm-md-capG::after { background: #23200e; }
 .CodeMirror.mdl .cm-md-capK::before { background: #565b66; } .CodeMirror.mdl .cm-md-capK::after { background: #191b22; }
 
-.pact-right { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 10px;
+/* A FLOOR ON THE CHAT COLUMN. `min-width: 0` let the file editor squeeze this column to ~215px
+   (measured, with four editor tab columns open) — far narrower than the chat shell is designed for,
+   so every header and footer row stacked vertically and the model row fell off the bottom of
+   `.pact-chat`'s `overflow: hidden`. Measured across widths, holding everything else fixed:
+     380px  header 235 + footer 340 in a 512px zone → transcript 0px, model row clipped by 63px
+     420px  header 208 + footer 301                → transcript 2px, nothing clipped
+     600px  header 181 + footer 231                → transcript 99px, and it can actually be read
+   600 is the first width where the transcript — the whole point of the pane — survives, so that is
+   the floor. `min(...)` keeps it from overflowing a genuinely small window; the editor yields. */
+.pact-right { flex: 1 1 0; min-width: min(600px, 40vw); display: flex; flex-direction: column; gap: 10px;
   position: relative; /* containing block for .ws-pane-dialog-overlay — scopes new dialogs to THIS pane,
   not the viewport. .ws-pane gets the same effect for free via its existing `contain: layout paint`. */ }
 /* Same fence for the chat/terminal zone: the compose box's per-keystroke autosize reflow now stays
    inside .pact-chat (a small, capped message list) instead of forcing a whole-page layout. Paired with
    the .pact-ed-group containment above, typing in the Pact chat no longer touches the editor grid. */
 .pact-chat, .pact-term { flex: 1; min-height: 0; display: flex; flex-direction: column; contain: layout paint;
-  background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  background: var(--panel2); border: var(--seam-w, 1px) solid var(--edge, var(--line)); border-radius: 12px; overflow: hidden; }
 .pact-zone-hd { display: flex; align-items: center; gap: 8px; padding: 8px 10px; font-weight: 700; font-size: 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
 /* Collapse a pane to just its header bar so the sibling fills the column. */
 .pact-collapse { flex: 0 0 auto; }
@@ -1947,7 +2069,12 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pc-tab-mkprime:hover { opacity: 1; color: var(--amber, #fbbf24); }
 .pactm-frow-tail { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
 .pc-mode { flex: 0 0 auto; max-width: 96px; }
-.pc-usage { flex: 0 0 auto; font-size: 10.5px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+/* Scoped to the MOBILE head, where this readout is a small text span competing with the tab strip
+ * and a 150px ellipsis is the right call. On desktop `.pc-usage` is now an alias carried by the chat
+ * shell package's OWN context chip, which lives in the header stats row with room to breathe — and
+ * where this cap silently ate the percentage ("167,501 / 1,000,000 tok …"), i.e. the one figure the
+ * chip exists to report. */
+.pc-head .pc-usage { flex: 0 0 auto; font-size: 10.5px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
 .pc-usage[hidden] { display: none; }
 /* The "· <model>" readout in the Pact head — the model THIS conversation actually runs (see prettyModel). */
 .pc-model-now { flex: 0 0 auto; font-size: 10.5px; color: var(--accent, #c77dff); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; font-weight: 600; }
@@ -2011,7 +2138,21 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .ws-wrap, .pact-wrap { width: auto; min-width: 0; padding: 0 8px; gap: 4px; font-size: 11px; white-space: nowrap;
   border-color: #9d5fd166; color: #c77dff; }
 .ws-wrap:hover, .pact-wrap:hover { border-color: #c77dff; color: #e3c4ff; }
-.ws-wrap-counters { font-size: 10.5px; color: var(--ink-mute); white-space: nowrap; padding: 0 2px; font-family: ui-monospace, Consolas, monospace; }
+/* Compact│Wrap joined into ONE split control — a shared border, radius only on the outer edges, a
+   single divider between them — so the two read as one decision with two options ("shrink now" vs.
+   "start fresh"), not two unrelated buttons. Matches the chat-shell lab's original design
+   (docs/work/chat-shell/migration-plan.md); Core wires this now, Pact is the next pass. */
+.ws-split, .pact-split { display: inline-flex; align-items: stretch; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.ws-split > button, .pact-split > button { border: none; border-radius: 0; margin: 0; }
+.ws-split > button:first-child, .pact-split > button:first-child { border-right: 1px solid var(--line); }
+/* Auto-wrap checkbox + meter, built by window.ChatShell.buildWrapControls (chat-shell.js) — matches
+   the Chat Shell Lab's .autolbl/.bar exactly (same visual language, shared class NAMES this time, not
+   just matching hex values re-typed twice). Without this rule the meter existed in the DOM (real width,
+   real percentage) but had no track/background to actually render against — invisible, not missing. */
+.ws-autowrap { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--ink-mute); white-space: nowrap; cursor: pointer; }
+.ws-autowrap input { margin: 0; }
+.ws-wrapmeter { display: inline-block; flex: 0 1 70px; min-width: 36px; height: 6px; border-radius: 3px; background: #0a1020; overflow: hidden; border: 1px solid var(--line); }
+.ws-wrapmeter i { display: block; height: 100%; background: #34d399; }
 .ws-pane-dialog-note { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 11px; color: var(--ink-mute); }
 /* Plan usage-limits badge (5h/7d rolling rate-limit utilization) — mirrors the Core cockpit's
    .ws-usage-limits, tinted amber as it nears a limit and red when nearly capped. Full breakdown in title. */
@@ -2046,8 +2187,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .pc-hist-actions .ws-ico.--nodelete:hover, .pc-hist-actions .ws-ico:disabled:hover { border-color: transparent; color: #f87171; }
 .pc-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; line-height: 1.5; }
 .pc-msg { max-width: 92%; border-radius: 9px; padding: 7px 10px; word-break: break-word; }
-.pc-user { align-self: flex-end; background: #2f6feb; color: #fff; white-space: pre-wrap; position: relative; }   /* keep the line breaks / spacing the user typed */
-.pc-asst { align-self: flex-start; background: var(--chip); position: relative; border: 1px solid var(--line); }   /* boxed like a prompt, so one response = one rectangle */
+/* Same fix as Core's .ws-line.ws-user (this rule was missed in the earlier passes — still the old
+   fixed loud blue with no relation to either workspace's identity). Exact lab colours via --bub-u/-a,
+   set per workspace above; falls back to the old fixed blue only where those tokens aren't defined. */
+.pc-user { align-self: flex-end; background: var(--bub-u, #2f6feb); color: var(--bub-u-fg, #fff); border: 1px solid var(--bub-u-line, transparent); white-space: pre-wrap; position: relative; }   /* keep the line breaks / spacing the user typed */
+.pc-asst { align-self: flex-start; background: var(--bub-a, var(--chip)); position: relative; border: 1px solid var(--bub-a-line, var(--line)); }   /* boxed like a prompt, so one response = one rectangle */
 /* Absolute position number for each prompt (P#n) and response (R#n) — a non-interactive corner tag you can
    refer to ("re-read R#34"). Counts the whole conversation, including messages not currently on screen. */
 .pc-num { position: absolute; top: -10px; z-index: 1; font: 700 11.5px ui-monospace, monospace; line-height: 1.5;
@@ -2151,15 +2295,9 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    when a turn starts or ends and the Send button never jumps under the cursor. */
 .pc-actionbar .pc-stop { display: inline-flex !important; }
 .pc-actionbar .pc-stop:disabled { opacity: .38; cursor: default; }
-/* The model bar: the bottom row. Readouts left, actions right. */
-.pc-modelbar { display: flex; align-items: center; gap: 9px; padding: 6px 10px 7px;
-  background: var(--panel2); border-top: 1px solid var(--line); flex-wrap: wrap; }
-.pc-modelbar .pc-model-now { font-size: 11.5px; color: var(--ink-dim); white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
-.pc-modelbar .pc-usage { font-size: 11.5px; color: var(--ink-dim); white-space: nowrap; }
-/* Continuation line: suggested-next chip + the ★ bookmark control. */
-.pc-contline { display: flex; align-items: center; gap: 8px; padding: 0 8px; }
-.pc-contline .pc-suggest { flex: 1 1 auto; min-width: 0; margin: 0 0 6px; }
+/* (The old `.pc-modelbar` rules lived here. Dead since Pact's desktop chat became the shared chat
+   shell package: nothing carries that class any more — the model row is the package's `.frow
+   --modelbar`, styled by chat-shell components.css, which both workspaces and the Lab share.) */
 /* Agent swarm: one figure per live subagent, lighting up as they spawn. */
 .pc-swarm { display: inline-flex; align-items: center; gap: 3px; min-height: 14px; }
 .pc-swarm-fig { width: 5px; height: 12px; border-radius: 2px; background: var(--line);
@@ -2248,7 +2386,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .pact-ed-row { flex-direction: column; }                 /* split boxes stack on a phone */
   .pact-ed-row > .pact-ed-group { min-height: 160px; }
   .pact-ed-gutter-x, .pact-ed-gutter-y { display: none; }  /* no drag-resize on touch */
-  .pact-right { flex: 0 0 auto; }
+  /* The columns are stacked here, so a horizontal resize grip has nothing to resize — and any width
+     the desktop drag saved must not survive into the stacked layout. `!important` because that width
+     is applied as an inline style. */
+  .pact-wgrip { display: none; }
+  .pact-right { flex: 0 0 auto !important; min-width: 0 !important; }
   .pact-chat, .pact-term { flex: 0 0 auto; min-height: 140px; }
   /* Compose buttons collapse to glyphs so Stop + Send don't crush the text box on a phone (mirrors
      the Core cockpit's mobile compose). The busy/deep-work background colors still show through. */
@@ -2464,8 +2606,11 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    :has) so every browser honours it; .exo is always a previous sibling of the scroller. */
 .exo.--open ~ .ws-transcript { min-height: 90px; }
 .exo.--open ~ .pc-scroll { min-height: 0; }
-.exo-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 8px;
-  background: var(--panel2); border-bottom: 1px solid var(--line); min-width: 0; }
+/* No background/border of its own any more. This row used to carry ctx/agents/jump chips too, which
+   made it read as a second, differently-styled bar stacked on the header (see CHANGELOG 1.6.2) — those
+   moved into the header/search-drawer, in app.js's buildPane. What's left here (mainly ⤓ Latest,
+   usually hidden) should sit in the flow, not announce itself as its own block. */
+.exo-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 2px 8px; min-width: 0; }
 .exo-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; line-height: 1.5;
   background: var(--chip); color: var(--ink-dim); border: 1px solid var(--line); border-radius: 999px;
   padding: 2px 9px; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
@@ -2487,11 +2632,9 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   background: var(--chip); color: var(--ink-dim); border: 1px solid var(--line); white-space: nowrap; }
 .exo-btn:hover { color: var(--ink); border-color: var(--accent); }
 .exo-btn:disabled { opacity: .5; cursor: default; }
-.exo-edges { display: flex; justify-content: center; padding: 3px 8px; background: var(--panel2);
-  border-bottom: 1px solid var(--line); }
+.exo-edges { display: flex; justify-content: center; padding: 3px 8px; }
 .exo-edges .exo-edge { margin-bottom: 0; }
-.exo-cues { display: flex; flex-direction: column; gap: 3px; padding: 4px 8px; background: var(--panel2);
-  border-bottom: 1px solid var(--line); }
+.exo-cues { display: flex; flex-direction: column; gap: 3px; padding: 4px 8px; }
 .exo-cue { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 11px; color: var(--ink-dim); }
 .exo-cue.--ok { color: #34d399; }
 .exo-cue.--notice { color: #7aa2f7; }
@@ -2516,6 +2659,12 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    compose box off a phone screen. */
 .exo-panel { max-height: 42vh; overflow: auto; -webkit-overflow-scrolling: touch;
   background: var(--panel2); border-bottom: 1px solid var(--line); }
+/* POPOVER MODE. The chip that opens this panel (the context readout) lives in the footer's model row
+   while the panel's own bar lives in the header — so in flow the breakdown appeared at the far end of
+   the pane from the click and read as "nothing happened". As a popover it opens AT the control, above
+   it when there is no room below (exoMountBar's placePanel does the maths against the real rect). */
+.exo-panel--pop { position: fixed; z-index: 90; max-height: 60vh; border: 1px solid var(--line);
+  border-radius: 10px; box-shadow: 0 14px 40px rgba(0, 0, 0, .55); background: var(--panel2); }
 .exo-panel-in { display: flex; flex-direction: column; gap: 5px; padding: 8px 10px; min-width: 0; }
 .exo-ctxhead { font-size: 12px; color: var(--ink); }
 .exo-unavail, .exo-empty { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--ink); }

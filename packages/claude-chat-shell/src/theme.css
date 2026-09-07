@@ -1,0 +1,107 @@
+/* CHAT SHELL THEME — the single source of truth for the Core/Pact chat visual palette.
+ *
+ * Loaded by BOTH the chat-shell lab (chat-shell-lab.html, via <link>) and production
+ * (dashboard/public/styles.css, via @import) — a value changed here changes both, because it is the
+ * SAME FILE, not two files a person has to remember to keep in sync. That was the actual complaint:
+ * matching hex values copied into two places is not "the same code", it is two copies that happen to
+ * agree today and will silently drift the next time either side is edited alone.
+ *
+ * The lab and production use different attribute values on the SAME `data-theme` attribute for two
+ * different axes — production's is light/dark, the lab's is core/pact (it has no light design) — so
+ * both are matched here as one selector list; they can never collide because they live in different
+ * HTML documents. Production's real class names (.ws-pane / .pact-right) are the canonical ones (they
+ * carry real behavior + ~1400 tests); the lab keeps its own shorter token names (--acc, --dim, --hdr,
+ * --bg, --chip, --field, --seam, --panel2) as ALIASES of the canonical tokens, defined only here — so
+ * chat-shell-lab.html's existing rules (which already read var(--acc)/var(--panel)/var(--bub-u) etc.)
+ * needed NO changes at all beyond deleting the hardcoded values they used to define themselves.
+ */
+/* ===== ADDRESSING-SCHEME INVARIANTS + STATUS COLOURS =====
+ * The P#/R# turn tags use the SAME two colours in BOTH workspaces, because they are an addressing
+ * scheme, not decoration — if R# changed colour per workspace you could not learn it once. Declared
+ * OUTSIDE the theme blocks for exactly that reason (chat-shell-lab.html's own words, and its own
+ * :root block, which now lives here so production's chat shell gets the identical values).
+ * --ok/--warn/--err are the shell's three status colours, likewise workspace-independent. */
+:root {
+  --tag-p-bg: #1b4fc4; --tag-p-fg: #dbe6ff;      /* P# — blue, right corner  */
+  --tag-r-bg: #c77dff; --tag-r-fg: #1a0a1e;      /* R# — violet, left corner */
+  --ok: #3ddc97; --warn: #ffb454; --err: #ff6b81;
+  /* WORKING / DEEP WORK. Same reasoning as --ok/--warn/--err: "a turn is running" and "the visible
+   * turn ended but Claude is still producing" are STATES, not decoration, so they read identically in
+   * both workspaces. The hexes are production's own long-standing amber/red (styles.css .ws-send.busy
+   * / .ws-send.busy.deepwork), moved here so the Lab has them too instead of only production. */
+  --work: #f59e0b; --work-fg: #1a1400;
+  --work-deep: #f87171; --work-deep-fg: #2a0a0a;
+  /* ONE seam thickness for every workspace. It was already 1px on both sides, but it was written out
+   * twice as a literal, so "why does Pact's look thinner than Core's?" could not be answered by
+   * reading the values — now there is a single number to look at. (The answer was contrast, not
+   * width: see --edge.) */
+  --seam-w: 1px;
+}
+
+body[data-theme="dark"] .ws-pane, body[data-theme="core"] {
+  --accent: #c77dff; --accent-dim: #9d5fd1;
+  --panel: #080c18; --bg-2: #1a2440; --panel-2: #131d34; --line: #22304a; --ink: #e7ecff; --ink-soft: #9aa6c7;
+  --bub-a: #121b30; --bub-a-line: #ffffff1a; --bub-u: #243059; --bub-u-line: #3a4a7a; --bub-u-fg: #eaf0ff;
+  /* lab-native aliases (see header comment) */
+  --acc: var(--accent); --dim: var(--ink-soft); --hdr: var(--panel); --ftr: var(--panel);
+  --bg: var(--bg-2); --panel2: var(--bg-2); --chip: var(--panel-2);
+  --field: var(--panel-2); --field-line: var(--line); --seam: var(--line);
+  /* THE READING SURFACE. This file's own stated design — "CORE = the reading surface, the LIGHTEST
+   * thing in the shell; HEADER/FOOTER = chrome, clearly DARKER" (components.css) — was never actually
+   * expressed in values: --hdr, --ftr and the core's background all resolved to --panel, so all three
+   * regions painted the identical colour (measured rgb(8,12,24) for all three in Core, rgb(19,27,38)
+   * in Pact). That is the "they have the same background colour" report. --core-bg is the tone step
+   * the comment always described. Derived from --panel rather than hard-coded so light mode gets a
+   * step too, in the right direction, without a second palette to maintain. */
+  --core-bg: color-mix(in srgb, var(--panel) 94%, var(--ink) 6%);
+  /* THE SHELL'S EDGE — the colour of the box the chat lives in. The region seams read the SAME token
+   * as the outer frame, so the line between header/core/footer can never disagree with the line
+   * around the whole thing; a workspace changes one value and both follow. Core's focused pane
+   * overrides it to the accent (styles.css .ws-pane.on), which is the pink edge you see. */
+  --edge: var(--line);
+}
+/* THE FOCUSED EDGE. A Core pane you are working in takes the accent as its edge — the pink border
+ * around the box, and now the pink seams inside it too, because both read this one token.
+ *
+ * It has to be declared HERE, not next to .ws-pane's border in styles.css, and the reason is worth
+ * writing down: the theme blocks above are `body[data-theme="dark"] .ws-pane` — specificity (0,2,1) —
+ * which quietly beats a plain `.ws-pane.on` (0,2,0). Declaring the focus override in styles.css
+ * looked right, tested green, and computed to the UNFOCUSED colour in a real browser (measured:
+ * --edge = #22304a on a pane whose class list included `on`). One token, one owner, matched
+ * specificity. The Lab has no focus concept and previews the focused pane, which is the state you
+ * actually sit in front of. */
+body[data-theme="dark"] .ws-pane.on, body[data-theme="light"] .ws-pane.on,
+.ws-pane.on, body[data-theme="core"] { --edge: var(--accent); }
+body[data-theme="dark"] .pact-right, body[data-theme="pact"] {
+  --accent: #4ecdc4; --accent-dim: #2f9e97;
+  --panel: #131b26; --bg-2: #25303f; --panel-2: #1c2634; --line: #3a4757; --ink: #eef4fa; --ink-soft: #a8b6c6;
+  --bub-a: #1d2735; --bub-a-line: #ffffff1f; --bub-u: #2b4152; --bub-u-line: #4a6a80; --bub-u-fg: #f2f8fc;
+  --acc: var(--accent); --dim: var(--ink-soft); --hdr: var(--panel); --ftr: var(--panel);
+  --bg: var(--bg-2); --panel2: var(--bg-2); --chip: var(--panel-2);
+  --field: var(--panel-2); --field-line: var(--line); --seam: var(--line);
+  --core-bg: color-mix(in srgb, var(--panel) 94%, var(--ink) 6%);
+  --edge: var(--line);          /* Pact's frame is its dark grey --line, and so are its seams */
+}
+.ws-pane, .pact-right {
+  /* lab-native aliases, theme-independent: they resolve THROUGH the canonical tokens above, so a
+   * light-mode pane gets light-mode values from the same names the shared component stylesheet
+   * reads. Without this the aliases existed only under body[data-theme="dark"] and every
+   * chat-shell-components.css rule reading var(--chip)/var(--field)/var(--seam) fell back to
+   * nothing in light mode. */
+  --acc: var(--accent); --dim: var(--ink-soft); --hdr: var(--panel); --ftr: var(--panel);
+  --bg: var(--bg-2); --panel2: var(--bg-2); --chip: var(--panel-2);
+  --field: var(--panel-2); --field-line: var(--line); --seam: var(--line);
+  --core-bg: color-mix(in srgb, var(--panel) 94%, var(--ink) 6%); --edge: var(--line);
+}
+/* Accent-only fallback (production's light mode has no lab design to copy — see above — so light
+ * mode keeps just its own distinct accent, same as before this file existed). */
+.ws-pane { --accent: #c77dff; --accent-dim: #9d5fd1; }
+.pact-right { --accent: #4ecdc4; --accent-dim: #2f9e97; }
+body[data-theme="light"] .ws-pane { --accent: #9d5fd1; --accent-dim: #7c3fae; }
+body[data-theme="light"] .pact-right { --accent: #14807a; --accent-dim: #0f645f; }
+
+/* No component rules are duplicated here on purpose. Both sides ALREADY read these same token names
+ * in their own, independently-shaped markup (the lab's .msg.--u / production's .ws-line.ws-user and
+ * .pc-user all already say `background: var(--bub-u)`, etc.) — the thing that was NOT shared was the
+ * hex values themselves, which is exactly what this file now is the one place for. Duplicating the
+ * component rules here too would just be a second copy of what each side already has correctly. */

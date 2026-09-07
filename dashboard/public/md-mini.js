@@ -52,7 +52,30 @@
       if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { out.push('<hr class="md-hr">'); i++; continue; }  // hr
       // table: a `| … |` header row immediately followed by a `|---|---|` separator (the worksheets are tables).
       if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < n && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]) && lines[i + 1].indexOf("-") >= 0) {
-        var cells = function (l) { return l.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|").map(function (c) { return inline(esc(c.trim())); }); };
+        // SPLIT ON UNESCAPED PIPES ONLY. `\\|` is how GFM puts a literal pipe inside a table cell, and
+        // it is the ONLY way to write one — including inside a code span, because the table grid is
+        // parsed before any inline syntax. A plain .split("|") tore those cells in half: a real
+        // conversation rendered `` `ATS\|C_ColdRecovery` `` as two cells, `` `ATS\ `` and
+        // `` C_ColdRecovery` ``, so the code span never closed, the backticks showed up literally,
+        // and every column after it was shifted by one. The engine's markdown was correct; this was.
+        var cells = function (l) {
+          var t = l.trim().replace(/^\|/, "");
+          // A trailing pipe closes the row — unless it is itself escaped. An ODD number of
+          // backslashes before it means the pipe is content, not the row's edge.
+          var tail = t.match(/\\*\|$/);
+          if (tail && (tail[0].length - 1) % 2 === 0) t = t.slice(0, -1);
+          var out = [], cur = "", bs = false;
+          for (var k = 0; k < t.length; k++) {
+            var ch = t.charAt(k);
+            if (bs) { cur += (ch === "|" ? "|" : "\\" + ch); bs = false; continue; }   // \| -> a literal pipe
+            if (ch === "\\") { bs = true; continue; }
+            if (ch === "|") { out.push(cur); cur = ""; continue; }
+            cur += ch;
+          }
+          if (bs) cur += "\\";                                   // a lone trailing backslash is content
+          out.push(cur);
+          return out.map(function (c) { return inline(esc(c.trim())); });
+        };
         var head = cells(line); i += 2;   // consume header + separator
         var body = [];
         while (i < n && /^\s*\|.*\|\s*$/.test(lines[i])) { body.push(cells(lines[i])); i++; }

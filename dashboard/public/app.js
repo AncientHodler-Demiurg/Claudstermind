@@ -1,4 +1,129 @@
 // Claudstermind Dashboard — renders the master map from /api/map.
+
+/* ===== PERF — a profiler for the cockpit, in the session that is actually slow ==================
+ *
+ * WHY THIS EXISTS. "Eight coding chat windows open and typing stalls; hovering the Send button takes
+ * seconds to become a hand." Cursor lag that long means the main thread is BLOCKED for seconds at a
+ * time, which is a different problem from the per-keystroke costs already fixed — and it could not be
+ * reproduced here: eight panes on the eight largest real conversations (18 MB of transcript, 18k DOM
+ * nodes) produced three long tasks totalling 205 ms over thirty seconds, because those panes were
+ * IDLE. The load only exists when eight agents are actually streaming, and guessing further from a
+ * fast machine is how time gets wasted.
+ *
+ * So: measure it where it happens. Zero cost when off — one boolean test per wrapped call, and the
+ * long-task observer is a browser-side callback that only fires for tasks over 50 ms.
+ *
+ *   Turn on:  Ctrl+Alt+P   (or load with ?perf=1)
+ *   Console:  CMPERF.report()   → the same numbers as text, to paste back
+ *
+ * The overlay ranks the last 5 seconds by TOTAL time, which is what actually competes with your
+ * keystrokes — a function costing 0.3 ms is irrelevant until you learn it ran 400 times. */
+const PERF = (() => {
+  const st = { on: false, calls: new Map(), ms: new Map(), long: [], since: performance.now() };
+  try {
+    new PerformanceObserver((l) => {
+      for (const e of l.getEntries()) {
+        const d = Math.round(e.duration);
+        st.long.push({ d, at: e.startTime });
+        if (st.on) { st.tLong.n++; st.tLong.blocked += d; st.tLong.worst = Math.max(st.tLong.worst, d); }
+      }
+      if (st.long.length > 400) st.long.splice(0, st.long.length - 400);
+    }).observe({ entryTypes: ["longtask"] });
+  } catch { /* Safari/Firefox have no longtask observer — the counters below still work */ }
+
+  // Two accumulators on purpose: the 1-second window the overlay ranks by (what is happening RIGHT
+  // now, while you are typing), and a running TOTAL since you switched it on (what to paste back
+  // after a stall — a freeze that happens every eight seconds is invisible in any one-second window).
+  st.tCalls = new Map(); st.tMs = new Map(); st.tLong = { n: 0, blocked: 0, worst: 0 }; st.t0 = performance.now();
+  const bump = (name, ms) => {
+    st.calls.set(name, (st.calls.get(name) || 0) + 1);
+    st.tCalls.set(name, (st.tCalls.get(name) || 0) + 1);
+    if (ms) { st.ms.set(name, (st.ms.get(name) || 0) + ms); st.tMs.set(name, (st.tMs.get(name) || 0) + ms); }
+  };
+  /** Call `fn` with timing when the profiler is on, and straight through when it is not. */
+  const run = (name, fn, self, args) => {
+    if (!st.on) return fn.apply(self, args);
+    const t0 = performance.now();
+    try { return fn.apply(self, args); } finally { bump(name, performance.now() - t0); }
+  };
+  const reset = () => { st.calls.clear(); st.ms.clear(); st.long.length = 0; st.since = performance.now(); };
+
+  function snapshot(windowMs = 5000) {
+    const now = performance.now();
+    const span = Math.max(1, Math.min(now - st.since, windowMs)) / 1000;
+    const rows = [...st.ms.entries()].map(([k, ms]) => ({ name: k, ms, n: st.calls.get(k) || 0 }))
+      .sort((a, b) => b.ms - a.ms);
+    const cut = now - windowMs;
+    const long = st.long.filter((e) => e.at >= cut);
+    return { span, rows,
+      long: { n: long.length, worst: long.reduce((m, e) => Math.max(m, e.d), 0),
+              blocked: long.reduce((a, e) => a + e.d, 0) } };
+  }
+  /** Everything since the profiler was switched on. This is the one to paste back. */
+  function totals() {
+    const rows = [...st.tMs.entries()].map(([k, ms]) => ({ name: k, ms, n: st.tCalls.get(k) || 0 }))
+      .sort((a, b) => b.ms - a.ms);
+    return { seconds: (performance.now() - st.t0) / 1000, rows, long: st.tLong };
+  }
+  function report() {
+    // The overlay resets its window every second, so a bare snapshot taken from the console lands in
+    // a window that is milliseconds old and looks empty. Fall back to the last COMPLETED window —
+    // which is what is on screen, and what you are being asked to paste back.
+    const cur = snapshot();
+    const s = cur.rows.length ? cur : (st.lastSnap || cur);
+    const T = totals();
+    const L = [`--- Claudstermind perf, ${T.seconds.toFixed(0)}s since switched on ---`,
+      `main thread BLOCKED ${T.long.blocked}ms in ${T.long.n} long task(s), worst ${T.long.worst}ms`];
+    for (const r of T.rows.slice(0, 14))
+      L.push(`${r.ms.toFixed(0).padStart(7)}ms  ${String(r.n).padStart(6)}x  ${(r.ms / Math.max(1, r.n)).toFixed(2).padStart(7)}ms avg  ${r.name}`);
+    L.push(`--- last ${s.span.toFixed(1)}s ---`);
+    for (const r of s.rows.slice(0, 6))
+      L.push(`${r.ms.toFixed(0).padStart(7)}ms  ${String(r.n).padStart(6)}x  ${(r.ms / Math.max(1, r.n)).toFixed(2).padStart(7)}ms avg  ${r.name}`);
+    return L.join("\n");
+  }
+
+  let box = null, timer = 0;
+  function paint() {
+    if (!box) return;
+    const s = snapshot();
+    const bar = s.long.blocked > 1000 ? "#f87171" : s.long.blocked > 300 ? "#f59e0b" : "#3ddc97";
+    const rows = s.rows.slice(0, 8).map((r) =>
+      `<div style="display:flex;gap:8px"><b style="color:#8fc3ff;min-width:52px;text-align:right">${r.ms.toFixed(0)}ms</b>`
+      + `<span style="opacity:.6;min-width:44px;text-align:right">${r.n}x</span>`
+      + `<span style="opacity:.6;min-width:56px;text-align:right">${(r.ms / Math.max(1, r.n)).toFixed(2)}avg</span>`
+      + `<span>${r.name}</span></div>`).join("");
+    box.innerHTML = `<div style="font-weight:700;margin-bottom:4px">perf · last ${s.span.toFixed(1)}s`
+      + `<span style="float:right;color:${bar}">blocked ${s.long.blocked}ms / ${s.long.n} tasks / worst ${s.long.worst}ms</span></div>`
+      + (rows || '<div style="opacity:.6">no instrumented work yet…</div>')
+      + '<div style="opacity:.45;margin-top:5px">Ctrl+Alt+P to hide · CMPERF.report() to copy</div>';
+    st.lastSnap = s;
+    reset();
+  }
+  function toggle(force) {
+    st.on = force == null ? !st.on : !!force;
+    if (st.on && !box) {
+      box = document.createElement("div");
+      box.style.cssText = "position:fixed;right:10px;bottom:10px;z-index:99999;background:#0b1020ee;color:#e7ecff;"
+        + "font:11px/1.5 ui-monospace,Consolas,monospace;padding:9px 11px;border:1px solid #3a4870;border-radius:9px;"
+        + "min-width:430px;pointer-events:none;box-shadow:0 10px 30px #000a";
+      document.body.appendChild(box);
+    }
+    if (box) box.style.display = st.on ? "block" : "none";
+    clearInterval(timer); timer = 0;
+    if (st.on) {
+      reset();
+      st.tCalls.clear(); st.tMs.clear(); st.tLong = { n: 0, blocked: 0, worst: 0 }; st.t0 = performance.now();
+      timer = setInterval(paint, 1000);
+    }
+    return st.on;
+  }
+  return { run, toggle, report, snapshot, totals, get on() { return st.on; } };
+})();
+window.CMPERF = PERF;
+window.addEventListener("keydown", (e) => {
+  if (e.ctrlKey && e.altKey && (e.key === "p" || e.key === "P")) { e.preventDefault(); PERF.toggle(); }
+});
+try { if (new URLSearchParams(location.search).get("perf") === "1") window.addEventListener("load", () => PERF.toggle(true)); } catch {}
 let MAP = null;
 // A safe empty map so a failed/offline /api/map never aborts boot with a blank page (see boot()).
 const MAP_FALLBACK = { repos: [], orgs: {}, meta: { model: "—", generated: "—" } };
@@ -3224,32 +3349,119 @@ function wsBackfillTurnWorkspace(transcript, wid) {
   return Array.isArray(transcript) ? transcript : [];
 }
 // ===== WS USAGE — pure token/context formatter (sliced out for unit tests; see lib/wsUsage.test.mjs)
-// The compact "N tok · P% ctx" readout shared by BOTH the Core pane badge (paintPane) and the Pact
-// chat header (pactChatPaint) — one formatter so the two surfaces never drift. `usage` carries the
-// running input/output token totals; `contextUsage` (requested per-turn) carries the context-window
-// percentage + totals. Returns { text, ctxPct, title } — `text` is "" when there's no usage yet
-// (each caller decides its own placeholder), `title` is the hover breakdown.
+// ONE QUANTITY PER READOUT. This used to print `${input+output} tok · ${ctx.percentage}% ctx` — the
+// NUMBER being the turn's billed tokens and the PERCENTAGE being how full the context window is: two
+// unrelated measurements in one sentence, read as one. Live example that made it obvious:
+// "1,600 tok · 94% of 1000k ctx", whose own tooltip said "942,664 / 1,000,000 (94%)". 1,600 is not
+// 94% of anything here. A context readout now reports the CONTEXT, both halves from `contextUsage`,
+// and turn usage appears only as its own labelled fallback when no context reading exists at all.
+// Returns { text, ctxPct, title } — `text` is "" when nothing is known (each caller owns its own
+// placeholder), `title` is the full breakdown including the turn figure.
 function wsUsageLabel(usage, contextUsage) {
   const u = usage || {};
   const ctx = contextUsage;
   const ctxPct = ctx && typeof ctx.percentage === "number" ? Math.round(ctx.percentage <= 1 ? ctx.percentage * 100 : ctx.percentage) : null;
-  // Show the context-window SIZE alongside the fill %, so "how full / of how big" is readable at a glance
-  // (e.g. "34% of 200k ctx"), not just a bare percentage. maxTokens 0/absent → omit the size.
-  const maxK = ctx && ctx.maxTokens ? Math.round(ctx.maxTokens / 1000) + "k" : null;
-  const ctxSuffix = ctxPct !== null ? ` · ${ctxPct}%${maxK ? " of " + maxK : ""} ctx` : "";
-  const text = (u.inputTokens || u.outputTokens)
-    ? `${((u.inputTokens || 0) + (u.outputTokens || 0)).toLocaleString()} tok` + ctxSuffix
-    : "";
-  const title = ctx ? `Context window: ${(ctx.totalTokens || 0).toLocaleString()} / ${(ctx.maxTokens || 0).toLocaleString()} tokens (${ctxPct ?? "—"}%)` : "";
-  return { text, ctxPct, title };
+  const total = ctx && ctx.totalTokens ? ctx.totalTokens : 0;
+  const max = ctx && ctx.maxTokens ? ctx.maxTokens : 0;
+  const turn = (u.inputTokens || 0) + (u.outputTokens || 0);
+  const maxK = max ? Math.round(max / 1000) + "k" : null;
+  // A percentage we can derive from real totals beats one we were handed only when we were handed
+  // none — but we never INVENT a total from a percentage, which would be a made-up number.
+  const pct = ctxPct !== null ? ctxPct : (total && max ? Math.round(total / max * 100) : null);
+  let text = "";
+  if (total && max) text = `${total.toLocaleString()} / ${max.toLocaleString()} tok · ${pct}%`;
+  else if (total) text = `${total.toLocaleString()} tok in context`;
+  else if (pct !== null) text = `${pct}%${maxK ? " of " + maxK : ""} ctx`;
+  else if (turn) text = `last turn: ${turn.toLocaleString()} tok`;   // LABELLED: it is not the window
+  const parts = [];
+  if (ctx) {
+    parts.push(total || max
+      ? `Context window: ${total.toLocaleString()} / ${max.toLocaleString()} tokens${pct !== null ? ` (${pct}%)` : ""}`
+      : `Context window: ${pct !== null ? pct + "% full" : "no reading"} — no token totals reported`);
+  }
+  if (turn) parts.push(`Last turn: ${turn.toLocaleString()} tokens in + out (billed for that turn — not the window)`);
+  return { text, ctxPct, title: parts.join("\n") };
 }
 // ===== end WS USAGE pure helper =====
+// ONE painter for the context readout, because there were three copies of these four lines (the Core
+// pane, Core's live-event path, and Pact's) and three copies is how "no reading yet" ends up phrased
+// two different ways.
+// ===== ENGINE STATE — sliced for lib/engineStateReadouts.test.mjs ==============================
+// THE ONE STATE BEHIND THREE "not reported" READOUTS.
+//
+// A conversation that is open but has never been prompted has NO `claude` process: workspace.mjs
+// calls `s.start()` only from _prompt. So `getContextUsage()`, `getSupportedModels()` and the `init`
+// event that names the running model all have nothing to answer with — and the UI reported that one
+// ordinary state as three unrelated-looking malfunctions ("model not reported yet", "context: no
+// reading yet", a model picker offering only aliases). Reported, in those words: "why is the context
+// not being reported? in pact the model is also not reported".
+//
+// `engineLive` comes from the server (the contextUsage reply's `live` flag — the only place that
+// fact is knowable), and is `undefined` until the first reply lands. Three states, said three ways:
+//   false     → nothing is running. Name what WILL run, and when it will start.
+//   true      → a process exists but has not answered yet. "Not reported yet" is now literally true.
+//   undefined → we have not asked/heard yet. Say the least, claim nothing.
+function wsUsageReadout(usage, contextUsage, engineLive) {
+  const usg = wsUsageLabel(usage, contextUsage);
+  if (usg.text) return { text: usg.text, title: usg.title, known: true };
+  if (engineLive === false) {
+    return { known: false, text: "context: starts on your first message",
+      title: "Nothing is running for this conversation yet — the engine starts when you send, and reports "
+           + "the context window from that point on. This is not an error and no reading was lost." };
+  }
+  return { known: false, text: "context: no reading yet",
+    title: "No context reading for this conversation yet — one arrives when a turn completes. Click to ask for it now." };
+}
+/** The "what is ACTUALLY running" chip beside the model picker. Same three states, same vocabulary —
+ *  `plannedLabel` is what the picker is set to, which is a real, useful answer while nothing runs. */
+function wsModelNowReadout(readout, engineLive, plannedLabel) {
+  const r = readout || { text: "", title: "" };
+  if (r.text) return { text: "\u00b7 running " + r.text, title: r.title, known: true };
+  if (engineLive === false) {
+    return { known: false, text: plannedLabel ? "\u00b7 will run " + plannedLabel : "\u00b7 engine not started",
+      title: "Nothing is running for this conversation yet. " + (plannedLabel
+        ? "Your next message starts it on " + plannedLabel + " \u2014 this is the pick, not a report."
+        : "Your next message starts it, and it reports the model it actually ran then.") };
+  }
+  return { known: false, text: "\u00b7 model not reported yet", title: r.title };
+}
+function wsPaintUsage(node, usage, contextUsage, engineLive) {
+  if (!node) return;
+  const usg = wsUsageReadout(usage, contextUsage, engineLive);
+  node.textContent = usg.text;
+  node.title = usg.title;
+  node.classList.toggle("--far", !usg.known);
+  node.hidden = false;
+}
+// ===== end ENGINE STATE =========================================================================
 // ===== WS WHATSAPP — Markdown → WhatsApp-formatting converter (unit-tested; see lib/wsWhatsApp.test.mjs)
 // A response is stored as Markdown, but WhatsApp only understands a small, DIFFERENT set: *bold*, _italic_,
 // ~strike~, ```monospace```, "- "/"1." lists, "> " quotes — and NO headings, NO [text](url) links, NO tables.
 // Copying raw Markdown would paste literal "## Heading" / "[x](url)" junk, so this maps Markdown onto what
 // WhatsApp actually renders: headings → bold, **x**/__x__ → *x*, *x* → _x_, ~~x~~ → ~x~, links → "text (url)",
 // code fences kept (language tag dropped), tables flattened. Pure + side-effect-free so the test can eval it.
+/** A markdown table row's cells, splitting on UNESCAPED pipes only and turning `\|` back into a
+ *  literal pipe. `\|` is the ONLY way GFM lets you put a pipe inside a cell — including inside a
+ *  code span, because the table grid is parsed before any inline syntax — so a plain split("|")
+ *  tears those cells in half. Seen in a real conversation: `` `ATS\|C_ColdRecovery` `` became two
+ *  cells, `` `ATS\ `` and `` C_ColdRecovery` ``, leaving an unclosed code span, literal backticks on
+ *  screen and every later column shifted by one. Mirrors md-mini.js's splitter exactly. */
+function wsMdTableCells(line) {
+  let t = line.trim().replace(/^\|/, "");
+  // A trailing pipe closes the row — unless it is itself escaped (an ODD run of backslashes).
+  const tail = t.match(/\\*\|$/);
+  if (tail && (tail[0].length - 1) % 2 === 0) t = t.slice(0, -1);
+  const out = []; let cur = "", bs = false;
+  for (const ch of t) {
+    if (bs) { cur += ch === "|" ? "|" : "\\" + ch; bs = false; continue; }
+    if (ch === "\\") { bs = true; continue; }
+    if (ch === "|") { out.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  if (bs) cur += "\\";
+  out.push(cur);
+  return out;
+}
 function wsMdInlineToWa(s) {
   const codes = [];
   // Protect inline `code` spans FIRST (park each as U+0003<index>U+0003) so their * _ ~ aren't read as
@@ -3286,7 +3498,9 @@ function mdToWhatsApp(md) {
     const nl = line.match(/^(\s*)(\d+)\.\s+(.*)$/);
     if (nl) { out.push(nl[1] + nl[2] + ". " + wsMdInlineToWa(nl[3])); continue; }       // numbered
     if (line.trim().startsWith("|") && /\|/.test(line)) {                              // table row → flatten to " a | b "
-      out.push(line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => wsMdInlineToWa(c.trim())).join(" | ")); continue;
+      // Same escaped-pipe rule as the markdown renderer (md-mini.js): `\|` is CONTENT, not a column
+      // break. Splitting on it flattened `` `ATS\|C_ColdRecovery` `` into two bogus columns here too.
+      out.push(wsMdTableCells(line).map((c) => wsMdInlineToWa(c.trim())).join(" | ")); continue;
     }
     out.push(wsMdInlineToWa(line));
   }
@@ -3686,6 +3900,16 @@ function exoIsPinned(conv) { const s = conv && conv._exo; return !!(s && s.pinne
 function exoResyncArgs(conv, args) {
   const out = args || {};
   if (exoIsPinned(conv)) { out.around = conv._exo.pinnedAround; delete out.full; delete out.limit; }
+  // Tell the server what we already hold, so a watchdog resync that finds nothing missing can answer
+  // in a few hundred bytes instead of re-sending our own transcript back to us. A transcript is
+  // append-only, so the row count plus the last row's timestamp is proof of being up to date.
+  // Measured before this: one resync of a 250-row window is 158 KB, fired per pane every 8 seconds.
+  // Deliberately NOT sent for a jump/band request (`around`), where the server must choose the rows.
+  const tx = conv && (Array.isArray(conv.transcript) ? conv.transcript : (Array.isArray(conv.msgs) ? conv.msgs : null));
+  if (tx && out.around == null && out.aroundTurn == null) {
+    const last = tx[tx.length - 1];
+    out.have = { n: tx.length, at: last && typeof last === "object" ? last.at : undefined };
+  }
   return out;
 }
 
@@ -4245,13 +4469,15 @@ function exoMountBar(conv, ctx) {
   const latestBtn = el("button", { class: "exo-chip exo-chip-latest", type: "button", title: "Stop looking at history and follow the live end of the conversation" }, ["⤓ Latest"]);
   const bar = el("div", { class: "exo-bar" }, [ctxChip, agentsChip, el("span", { class: "exo-jump" }, [jumpInput, jumpBtn, recallBtn]), latestBtn]);
   const cues = el("div", { class: "exo-cues" }, []);
-  // The "N earlier turns" affordance lives HERE rather than inside the transcript: the Core
-  // renderer's untouched-prefix fast path keys on node identity, and a rebuilt node at the head of
-  // the transcript would force a full replaceChildren on every paint.
-  const edges = el("div", { class: "exo-edges" }, []);
+  // The "N earlier turns" affordance USED to live here, as its own full-width row in the header.
+  // It no longer does: a permanent header line spent on a number you act on once is a line the
+  // conversation never gets back (reported). It is now the chat shell package's own medallion,
+  // floating at the top of the CORE region (ChatShellUI's `els.coreTop`), driven by exoAboveState()
+  // below — same numbers, no row. The package holds it as a STABLE node so Core's untouched-prefix
+  // transcript cache (the original reason it was hoisted out of the transcript) still holds.
   const panel = el("div", { class: "exo-panel" }, []);
   panel.hidden = true;
-  root.replaceChildren(bar, edges, cues, panel);
+  root.replaceChildren(bar, cues, panel);
 
   const state = () => exoState(conv);
 
@@ -4274,6 +4500,69 @@ function exoMountBar(conv, ctx) {
   });
   latestBtn.addEventListener("click", () => exoBackToLatest(conv, ctx));
   const togglePanel = (which) => { const s = state(); if (!s) return; s.openPanel = s.openPanel === which ? "" : which; sync(); };
+
+  // ---- THE PANEL IS A POPOVER, ANCHORED TO THE CHIP THAT OPENED IT -------------------------------
+  // It used to render in flow, inside `root` — which now lives in the HEADER, while the control you
+  // actually click (the context readout) sits in the FOOTER'S model row. So clicking it dropped the
+  // breakdown at the opposite end of the pane from the cursor, behind the transcript: indistinguishable
+  // from "the click did nothing". Anchored to the real rect of the visible control, flipped above when
+  // there is no room below, clamped to the viewport, and dismissed by an outside click or Escape.
+  //
+  // `_visProxy` is how a workspace says "this chip is hidden, THIS node is the one the user sees and
+  // clicks" (Core's context badge, Pact's .pc-usage readout) — both proxy their click onto ctxChip,
+  // so without it the popup would anchor to a zero-size hidden node in the wrong region.
+  const anchorFor = (which) => {
+    const c = which === "agents" ? agentsChip : ctxChip;
+    if (!c) return null;
+    const proxy = c._visProxy;
+    if ((c.hidden || !c.isConnected) && proxy && proxy.isConnected) return proxy;
+    return c.isConnected ? c : (proxy && proxy.isConnected ? proxy : null);
+  };
+  function placePanel(which) {
+    if (!which || panel.hidden) {
+      panel.classList.remove("exo-panel--pop");
+      panel.style.left = panel.style.top = panel.style.width = "";
+      if (panel.parentNode !== root) root.appendChild(panel);   // home again, in flow, when closed
+      return false;
+    }
+    const a = anchorFor(which);
+    if (!a) { panel.classList.remove("exo-panel--pop"); return false; }   // no visible anchor → stay in flow
+    // PORTAL TO <body> WHILE OPEN. `position: fixed` resolves against the nearest ancestor that
+    // establishes a containing block — and BOTH hosts have one (`.ws-pane` and `.pact-chat` carry
+    // `contain: layout paint`, deliberately, so their internals can't leak). Left inside the pane, a
+    // "fixed" popup is therefore positioned against the PANE, so viewport coordinates land somewhere
+    // else entirely: measured live at x=1583 in a 1600px window, i.e. mostly off-screen. Moving it to
+    // the body for the duration is what makes the anchor maths mean what it says.
+    if (document.body && panel.parentNode !== document.body) document.body.appendChild(panel);
+    panel.classList.add("exo-panel--pop");
+    const vw = window.innerWidth || 1280, vh = window.innerHeight || 800;
+    const r = a.getBoundingClientRect();
+    const w = Math.min(440, vw - 16);
+    panel.style.width = w + "px";
+    panel.style.left = Math.max(8, Math.min(r.left, vw - w - 8)) + "px";
+    // Measure only AFTER the width is applied — the panel's height depends on how its text wraps, so
+    // reading it before would flip the popup on a height it never has.
+    const h = Math.min(panel.offsetHeight, Math.round(vh * 0.6));
+    const roomBelow = vh - r.bottom - 10;
+    const top = roomBelow >= h || roomBelow >= r.top - 10 ? r.bottom + 6 : r.top - h - 6;
+    panel.style.top = Math.max(8, Math.min(top, vh - h - 8)) + "px";
+    return true;
+  }
+  // One document-level dismisser per bar, registered once and self-cleaning when the bar is detached.
+  const onDocDown = (e) => {
+    const s = state(); if (!s || !s.openPanel) return;
+    if (!root.isConnected) { document.removeEventListener("mousedown", onDocDown, true); return; }
+    if (panel.contains(e.target)) return;
+    const a = anchorFor(s.openPanel);
+    if (a && (a === e.target || a.contains(e.target))) return;   // the anchor's own click toggles it
+    s.openPanel = ""; sync();
+  };
+  document.addEventListener("mousedown", onDocDown, true);
+  document.addEventListener("keydown", (e) => {
+    const s = state(); if (!s || !s.openPanel || e.key !== "Escape" || !root.isConnected) return;
+    s.openPanel = ""; sync();
+  });
+  window.addEventListener("resize", () => { const s = state(); if (s && s.openPanel && root.isConnected) placePanel(s.openPanel); });
   ctxChip.addEventListener("click", () => {
     const s = state(); if (!s) return;
     // Poll on OPEN — CONTRACT §1 is explicit that context usage is never pushed.
@@ -4313,9 +4602,6 @@ function exoMountBar(conv, ctx) {
     const affTxt = exoAffordanceText(aff);
     latestBtn.hidden = !exoIsPinned(conv) && affTxt.atEnd;
     latestBtn.className = "exo-chip exo-chip-latest" + (exoIsPinned(conv) ? " --warn" : "");
-    const en = exoEdgeNodes(conv, ctx);
-    edges.replaceChildren.apply(edges, en.above ? [en.above] : []);
-    edges.hidden = !en.above;
 
     // --- T3.3 cue strip ------------------------------------------------------------
     const shaped = L.ind.shapeIndicators(s.ind, { now, popover: pv });
@@ -4360,10 +4646,14 @@ function exoMountBar(conv, ctx) {
     // Both panes and Pact tabs live in a FIXED-height box with overflow:hidden, so an unbounded
     // panel would push the compose row off the bottom — the exact mobile regression class that keeps
     // recurring here. A plain sibling selector (no :has()) so it works on every browser.
-    root.classList.toggle("--open", !!s.openPanel);
     if (s.openPanel === "ctx") { panel.hidden = false; panel.replaceChildren(exoRenderContextPanel(conv)); }
     else if (s.openPanel === "agents") { panel.hidden = false; panel.replaceChildren(exoRenderAgentsPanel(conv, now)); }
     else { panel.hidden = true; panel.replaceChildren(); }
+    // `--open` is the concession the INLINE panel needs (it releases the transcript's min-height so the
+    // compose row can't be pushed off a phone screen). A popover costs the shell no height at all, so
+    // taking that concession anyway would jolt the transcript on every open for no reason.
+    const popped = placePanel(s.openPanel);
+    root.classList.toggle("--open", !!s.openPanel && !popped);
 
     // The fleet clock has to be driven — nothing about elapsed/staleness moves on its own.
     if (!s._ticker && (avm.running > 0 || s.openPanel === "agents")) {
@@ -4375,7 +4665,27 @@ function exoMountBar(conv, ctx) {
   return { root, sync };
 }
 
-/** The two honest edge affordances, as transcript nodes. `above` carries an EXACT turn count;
+/** The "N earlier turns" medallion's STATE — a plain object, not a node, because the chat shell
+ *  package owns how it looks and where it sits (floating at the top of the core region). Carries an
+ *  EXACT count: these are the turns above the rendered window, and the server counted them.
+ *  Returns { shown:false } when the whole conversation is already in view. */
+function exoAboveState(conv) {
+  const L = exoLib(); const s = exoState(conv);
+  if (!L || !s || !s.view || !s.view.total) return { shown: false };
+  const txt = exoAffordanceText(L.win.viewAffordances(s.view));
+  if (!txt.hasAbove) return { shown: false };
+  // Strip the leading ▲: that glyph was the OLD button's own decoration, and the medallion now
+  // supplies its own (▲ at rest, ⟳ while loading). Leaving it produced a literal "▲ ▲ 248 earlier
+  // turns" — caught by looking at the running page, not by any test.
+  return { shown: true, text: String(txt.above).replace(/^[\u25b2\u25bc]\s*/, ""), loading: s.extending === "up",
+    title: "This conversation is longer than what is rendered right now. " + txt.above
+         + " sit above the top of the transcript \u2014 nothing is lost, they are stored and searchable "
+         + "(and reachable by Recall). Click to load the next block into view." };
+}
+/** The honest BELOW edge affordance, as a transcript node. Carries NO count (see exoAffordanceText):
+ *  the conversation total counts ROWS, tool output included, so any number here would be invented.
+ *  `above` is still returned for callers that want it as a node (see exoAboveState for the medallion). */
+/** (legacy shape) The two edge affordances as transcript nodes. `above` carries an EXACT turn count;
  *  `below` carries NONE (see exoAffordanceText). Returns { above, below } — either may be null. */
 function exoEdgeNodes(conv, ctx) {
   const L = exoLib(); const s = exoState(conv);
@@ -4384,7 +4694,13 @@ function exoEdgeNodes(conv, ctx) {
   const txt = exoAffordanceText(aff);
   let above = null, below = null;
   if (txt.hasAbove) {
-    const btn = el("button", { class: "ws-show-earlier exo-edge", type: "button" }, [
+    // The count needs to say what it COUNTS, or it reads as an error. This conversation is longer
+    // than the window currently rendered; these are the turns above what you can see, still stored
+    // and still searchable, and the button fetches the next block of them into view.
+    const btn = el("button", { class: "ws-show-earlier exo-edge", type: "button",
+      title: "This conversation is longer than what is rendered right now. " + txt.above
+           + " sit above the top of the transcript — nothing is lost, they are stored and searchable "
+           + "(and reachable by Recall). Click to load the next block into view." }, [
       txt.above + (s.extending === "up" ? "  ·  loading…" : "  ·  load earlier"),
     ]);
     if (s.extending === "up") btn.disabled = true;
@@ -5221,6 +5537,30 @@ function pactEdClearDropCue() {
 // The split ladder (point 6): how the N boxes distribute into rows. Each entry is the box count per
 // row, top-to-bottom. Under-filled last rows (5→[3,2], 7→[4,3]) simply share their row equally.
 const PACT_ED_ROWS = { 1: [1], 2: [2], 3: [3], 4: [4], 5: [3, 2], 6: [3, 3], 7: [4, 3], 8: [4, 4] };
+// ===== PACT LAYOUT SNAP — pure helpers (sliced by lib/pactSnap.test.mjs; keep the markers) =====
+// The workspace has exactly two things you can drag out of shape: the viewer boxes (each box's
+// share of its row, and each row's share of the height — `g.flex` / `PACT_ED.rowFlex`) and the chat
+// column's width (`cm.pact.chatw.v1`). "Default" is the same for both and is not a stored number:
+// every weight is 1 — equal shares — and the chat column has no explicit width at all, so it falls
+// back to the stylesheet's share. That is why snapping is a matter of CLEARING state, never of
+// restoring a remembered layout.
+//
+// The ladder is passed in rather than read from the module scope so these stay pure and testable.
+/** Equal row weights for a layout of `n` boxes: one `1` per row of the split ladder. */
+function pactSnapRowFlex(n, ladder) {
+  const dist = (ladder || {})[n] || [4, 4];
+  return dist.map(() => 1);
+}
+/** Is every viewer box already at its default equal share? (Both axes: boxes within a row, and rows.) */
+function pactSnapBoxesAreDefault(rowFlex, flexes) {
+  const one = (v) => Number(v) === 1;
+  return (rowFlex || []).every(one) && (flexes || []).every(one);
+}
+/** …and, for the master button, is the chat column ALSO at its default (i.e. no explicit width set)? */
+function pactSnapAllIsDefault(rowFlex, flexes, chatW) {
+  return pactSnapBoxesAreDefault(rowFlex, flexes) && !(Number(chatW) > 0);
+}
+// ===== end PACT LAYOUT SNAP pure helpers =====
 // A draggable gutter between two flex siblings. `axis` "x" resizes the two groups within a row (via
 // each group's flex-grow), "y" resizes two rows (via PACT_ED.rowFlex). Equal by default; weights live
 // on the group objects / PACT_ED.rowFlex so they survive re-renders (tab switches) but reset when the
@@ -5248,16 +5588,34 @@ function pactEdGutter(axis, getA, getB, container, onApply) {
       document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up);
       document.body.style.cursor = ""; document.body.style.userSelect = "";
       pactStateSave();   // persist the new box/row weights
+      pactSnapRefresh(); // …and light up the snap buttons, since the layout is now off-default
     };
     document.addEventListener("mousemove", move); document.addEventListener("mouseup", up);
   });
   return gut;
 }
+/** Put every box and row back on an equal share. The ONE reset — used by the "snap boxes" button and
+ *  by the box-count change below, which used to inline its own copy of the same three assignments. */
+function pactEdResetWeights() {
+  PACT_ED.rowFlex = pactSnapRowFlex(PACT_ED.groups.length, PACT_ED_ROWS);
+  for (const g of PACT_ED.groups) g.flex = 1;
+}
+/** Write the current weights onto the live elements. Deliberately NOT pactEdLayout(): that rebuilds
+ *  every box's DOM and re-renders its editor, throwing away scroll position and caret in all eight
+ *  of them to change two numbers. This is the same thing the drag handler does, just applied to
+ *  every box at once. */
+function pactEdApplyWeights() {
+  for (const g of PACT_ED.groups) if (g.el) g.el.style.flex = (g.flex || 1) + " 1 0";
+  const host = PACT_ED.host;
+  if (!host) return;
+  const rows = [...host.children].filter((c) => c.classList && c.classList.contains("pact-ed-row"));
+  rows.forEach((rowEl, ri) => { rowEl.style.flex = ((PACT_ED.rowFlex || [])[ri] || 1) + " 1 0"; });
+}
 function pactEdLayout() {
   const host = PACT_ED.host, n = PACT_ED.groups.length;
   const dist = PACT_ED_ROWS[n] || [4, 4];
   // Equal by default: reset the resize weights whenever the box count changes.
-  if (PACT_ED.layoutN !== n) { PACT_ED.layoutN = n; PACT_ED.rowFlex = dist.map(() => 1); for (const g of PACT_ED.groups) g.flex = 1; }
+  if (PACT_ED.layoutN !== n) { PACT_ED.layoutN = n; pactEdResetWeights(); }
   for (const g of PACT_ED.groups) {
     g.tabsEl = el("div", { class: "pact-ed-hd" });
     g.bodyEl = el("div", { class: "pact-ed-body" });
@@ -5305,6 +5663,7 @@ function pactEdLayout() {
   host.replaceChildren(...hostKids);
   for (const g of PACT_ED.groups) pactEdRenderGroup(g);
   pactStateSave();
+  pactSnapRefresh();   // adding/closing a box resets the weights, so the buttons must dim again
 }
 function pactEdRenderGroup(g) {
   const tabs = g.tabs.map((tb) => {
@@ -5776,6 +6135,62 @@ function pactEdSyncSearchPanel(g, focus) {
   pactEdSearchApply(g);
   if (focus) { findIn.focus(); findIn.select(); }   // prefilled text is selected so you can retype over it immediately
 }
+// ===== READ-ONLY VIEW: click a module's line number to copy the whole module =====================
+// Reported: ".pact files open read-only. If a module starts at line 82, clicking that line number
+// copies the whole module — same for interfaces — so I can bring it to the deployer. I used to
+// collapse the module and select it by hand, but collapsing isn't available in view mode any more."
+//
+// Only module/interface openers are marked (see pactCopyBlocks): marking every foldable block would
+// turn a real contract's gutter into a wall of buttons. The block's extent comes from the SAME
+// string/comment-aware scanner the fold view uses, so a ")" inside an @doc string or a comment can
+// never end the copy early — the failure that would quietly hand you half a module.
+//
+// The code column is deliberately left alone: only the NUMBER is a button, so selecting code by hand
+// still works exactly as before.
+function pactWireCopyGutter(box, content) {
+  const blocks = pactCopyBlocks(content);
+  if (!blocks.length) return;
+  const rows = box.children;
+  const byStart = new Map();
+  for (const b of blocks) {
+    const row = rows[b.start]; if (!row) continue;
+    const ln = row.firstElementChild; if (!ln) continue;
+    byStart.set(b.start, b);
+    ln.classList.add("--copyblk");
+    const n = b.end - b.start + 1;
+    ln.title = "Copy the whole " + b.kind + (b.name ? " " + b.name : "")
+      + " — lines " + (b.start + 1) + "–" + (b.end + 1) + " (" + n + " line" + (n === 1 ? "" : "s") + "). Click to copy.";
+  }
+  box.addEventListener("click", (e) => {
+    const ln = e.target && e.target.closest && e.target.closest(".pml-ln.--copyblk");
+    if (!ln || !box.contains(ln)) return;
+    const idx = Array.prototype.indexOf.call(rows, ln.parentElement);
+    const blk = byStart.get(idx); if (!blk) return;
+    // From the RAW source, never the rendered HTML — what lands on the clipboard has to be the text
+    // a deployer will accept, not the highlighted markup that happens to be on screen.
+    const text = pactFoldCopyText(content, blk.start, blk.end);
+    const done = (ok) => pactFlashCopied(box, ln, blk, ok);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => done(true), () => wsCopyFallback(text, done));
+    } else wsCopyFallback(text, done);   // http on a LAN IP has no async clipboard — the old execCommand path
+  });
+}
+// What you copied, shown where you clicked: the number becomes a ✓ and the block's own rows wash
+// green for a moment. Seeing the EXTENT matters as much as the tick — the whole point is trusting
+// that the module ended where you thought it did, without pasting it somewhere to find out.
+function pactFlashCopied(box, ln, blk, ok) {
+  const cls = ok ? "--copied" : "--copyfail";
+  const rows = [];
+  for (let i = blk.start; i <= blk.end && i < box.children.length; i++) rows.push(box.children[i]);
+  rows.forEach((r) => r.classList.add(cls));
+  const was = ln.textContent;
+  ln.textContent = ok ? "✓" : "✕";
+  setTimeout(() => {
+    rows.forEach((r) => r.classList.remove(cls));
+    if (ln.isConnected) ln.textContent = was;
+  }, ok ? 950 : 1800);
+}
+
 function pactEdRenderBody(g, tab) {
   if (!tab) { g.bodyEl.replaceChildren(el("div", { class: "pact-editor-empty hint" }, ["Empty box — pick a file from the tree."])); return; }
   if (tab.error) { g.bodyEl.replaceChildren(el("div", { class: "hint", style: "padding:10px;color:#f87171" }, ["⚠ " + tab.error])); return; }
@@ -5827,6 +6242,9 @@ function pactEdRenderBody(g, tab) {
     // word-wrap) instead of scrolling horizontally; the number appears once per source line so a wrapped line
     // reads as one unit, and rows that actually wrapped get a `--wrapped` accent (marked below).
     box.innerHTML = lines.map((ln, i) => '<div class="pml-row"><span class="pml-ln">' + (i + 1) + '</span><span class="pml-code">' + ln + "</span></div>").join("");
+    // A module/interface opener's line NUMBER copies that whole block — the read-only replacement
+    // for "collapse it, then select the collapsed form", which view mode has no fold control for.
+    pactWireCopyGutter(box, String(tab.content));
     g._cm = null;   // no live editor in read-only mode; a font/search re-render rebuilds as needed
     // Kill any pending cursor-reveal from a prior EDIT session on this tab (or its diff) — read-only has no
     // caret, so nothing may auto-scroll it after you stop scrolling.
@@ -6181,18 +6599,26 @@ function pactFindOverlaySegs(text, matches, curIdx) {
 // ===== end PACT FIND/REPLACE pure helpers =====
 
 // ===== PACT FOLD — string/comment-aware fold-range finder for the read/fold view. =====
-// pactFoldRanges(content) → [{ start, end }] 0-based line indices, one per foldable block whose
-// opener (`(module`/`(interface`/`(def*`) is the first non-whitespace token on its line and whose
-// matching close paren lands on a LATER line (single-line forms don't fold). String- and comment-
-// aware — parens inside "…" strings (with \" escapes; strings may span lines) or after `;` comments
-// don't count — mirroring pact-highlight.js's scanner. Nested blocks each get their own range;
-// unbalanced/partial parens never throw (an unclosed opener simply yields no range). Pure/DOM-free —
-// unit-tested via lib/pactFold.test.mjs (same sentinel-slice-and-eval pattern as the find helpers).
-function pactFoldRanges(content) {
+// pactBlockRanges(content) → [{ start, end, kind, name }] 0-based line indices, one per foldable
+// block whose opener (`(module`/`(interface`/`(def*`) is the first non-whitespace token on its line
+// and whose matching close paren lands on a LATER line (single-line forms don't fold). String- and
+// comment-aware — parens inside "…" strings (with \" escapes; strings may span lines) or after `;`
+// comments don't count — mirroring pact-highlight.js's scanner. Nested blocks each get their own
+// range; unbalanced/partial parens never throw (an unclosed opener simply yields no range).
+// Pure/DOM-free — unit-tested via lib/pactFold.test.mjs (same sentinel-slice-and-eval pattern as the
+// find helpers).
+//
+// ONE scanner, three consumers. `pactFoldRanges` (the fold view / CodeMirror) projects away the
+// kind+name it does not need, so its shape is unchanged and every existing caller and test is
+// untouched; `pactCopyBlocks` (the read-only view's click-to-copy gutter) keeps them, because it has
+// to know a module from a defun and wants the name for the label. Adding a second scanner for that
+// would be a second set of string/comment/line-counting rules to keep in step — the exact
+// duplication this file has been unpicking everywhere else.
+function pactBlockRanges(content) {
   const FOLD = new Set(["module", "interface", "defun", "defcap", "defconst", "defschema", "deftable", "defpact"]);
   const s = String(content), n = s.length;
   const isWord = (ch) => /[A-Za-z0-9_|<>.\-]/.test(ch);
-  const ranges = [], stack = [];   // stack entry: { line, foldable }
+  const ranges = [], stack = [];   // stack entry: { line, foldable, kind, name }
   let line = 0, lineHasNonWs = false, i = 0;
   while (i < n) {
     const c = s[i];
@@ -6217,18 +6643,37 @@ function pactFoldRanges(content) {
       const firstOnLine = !lineHasNonWs; lineHasNonWs = true;
       let j = i + 1; while (j < n && (s[j] === " " || s[j] === "\t")) j++;
       let k = j; while (k < n && isWord(s[k])) k++;
-      stack.push({ line, foldable: firstOnLine && FOLD.has(s.slice(j, k)) });
+      const kind = s.slice(j, k);
+      // The NAME token after the keyword — `(module coin GOVERNANCE` → "coin". Spaces and tabs only,
+      // never a newline: a name on the next line leaves this empty rather than reaching down and
+      // grabbing whatever the following line starts with. Labels only; nothing depends on it.
+      let p = k; while (p < n && (s[p] === " " || s[p] === "\t")) p++;
+      let q = p; while (q < n && isWord(s[q])) q++;
+      stack.push({ line, foldable: firstOnLine && FOLD.has(kind), kind, name: s.slice(p, q) });
       i++; continue;
     }
     if (c === ")") {
       lineHasNonWs = true;
       const o = stack.pop();
-      if (o && o.foldable && line > o.line) ranges.push({ start: o.line, end: line });
+      if (o && o.foldable && line > o.line) ranges.push({ start: o.line, end: line, kind: o.kind, name: o.name });
       i++; continue;
     }
     lineHasNonWs = true; i++;
   }
   return ranges;
+}
+// The fold view's shape, unchanged: { start, end } and nothing else, so every existing caller and
+// assertion keeps working while the scanner above grew richer.
+function pactFoldRanges(content) {
+  return pactBlockRanges(content).map((r) => ({ start: r.start, end: r.end }));
+}
+// pactCopyBlocks(content) → the blocks the READ-ONLY view offers as click-to-copy: modules and
+// interfaces only. Not every foldable block — marking all ~200 defuns in coin.pact would turn the
+// whole gutter into buttons and bury the two lines you actually want. A module or an interface is
+// the unit you move to a deployer, which is the job this exists for.
+const PACT_COPY_KINDS = new Set(["module", "interface"]);
+function pactCopyBlocks(content) {
+  return pactBlockRanges(content).filter((r) => PACT_COPY_KINDS.has(r.kind));
 }
 // pactFoldHidden(ranges, folded, total) → { hidden:boolean[], feet:Map<endLine,startLine> }.
 // Which source lines vanish when the given opener start-lines are collapsed: we hide start+1 .. end-1
@@ -6890,7 +7335,7 @@ function pactStateSnapshot() {
     rowFlex: Array.isArray(PACT_ED.rowFlex) ? PACT_ED.rowFlex.slice() : null,
   };
   const chat = {
-    tabs: PACT_CHAT.tabs.map((t) => ({ key: t.key, name: t.name, draft: t.draft || "", resume: t.resume || null, prime: !!t.prime, worktree: t.worktree || null, model: t.model || null, migrations: t.migrations || [], promptStates: t.promptStates || {}, bookmarks: Array.isArray(t.bookmarks) ? t.bookmarks : [], autoContinue: !!t._autoContinue, autoCount: t._autoCount || 0, autoCap: t._autoCap || PACT_AUTO_CAP })),
+    tabs: PACT_CHAT.tabs.map((t) => ({ key: t.key, name: t.name, draft: t.draft || "", resume: t.resume || null, prime: !!t.prime, worktree: t.worktree || null, model: t.model || null, effort: t.effort || null, ultracode: !!t.ultracode, migrations: t.migrations || [], promptStates: t.promptStates || {}, bookmarks: Array.isArray(t.bookmarks) ? t.bookmarks : [], autoContinue: !!t._autoContinue, autoCount: t._autoCount || 0, autoCap: t._autoCap || PACT_AUTO_CAP })),
     activeIndex: Math.max(0, PACT_CHAT.tabs.findIndex((t) => t.id === PACT_CHAT.activeId)),
   };
   const right = document.querySelector(".pact-right");
@@ -6968,6 +7413,9 @@ function pactRestoreChat(ch) {
       // Auto-continue survives reloads: the state + round count are restored so the bar shows "Auto on" again
       // and the loop re-arms (and you can still switch it off). Otherwise a reload silently killed the loop.
       _autoContinue: !!ts.autoContinue, _autoCount: (typeof ts.autoCount === "number" ? ts.autoCount : 0), _autoCap: (typeof ts.autoCap === "number" && ts.autoCap > 0 ? ts.autoCap : PACT_AUTO_CAP),
+      // Effort / ultracode are per-tab settings like model and draft, so they survive a reload too —
+      // otherwise ticking ultracode and coming back would silently drop you to the default level.
+      effort: ts.effort || null, ultracode: !!ts.ultracode,
       // the prime (undeletable) conversation flag survives reloads; ensurePrime backfills older layouts
       prime: !!ts.prime };
   });
@@ -7107,6 +7555,110 @@ function pactDeriveChatName(text) {
   return name.length > 40 ? name.slice(0, 40).trim() + "…" : name;
 }
 // ===== end PACT CHAT NAME pure helper =====
+
+// ===== PACT CHAT COLUMN WIDTH — sliced for lib/pactChatWidth.test.mjs =========================
+const PACT_CHAT_W_KEY = "cm.pact.chatw.v1";
+// 420px is the measured width at which nothing in the chat shell is clipped any more (below it the
+// model row falls out of `.pact-chat`'s overflow: hidden — see the floor comment in styles.css), so
+// it is the hard minimum however far you drag. The upper bound is a share of the work area rather
+// than a pixel: the editor must survive too.
+const PACT_CHAT_W_MIN = 420;
+function pactClampChatW(px, workW) {
+  const max = Math.max(PACT_CHAT_W_MIN, Math.round(workW * 0.75));
+  return Math.max(PACT_CHAT_W_MIN, Math.min(Math.round(px), max));
+}
+function pactReadChatW() { const n = Number(localStorage.getItem(PACT_CHAT_W_KEY)); return Number.isFinite(n) && n >= PACT_CHAT_W_MIN ? n : 0; }
+/** Apply an explicit width, or clear it to fall back to the CSS default share. `min-width` has to be
+ *  dropped alongside: the stylesheet's `min(600px, 40vw)` floor would otherwise silently refuse any
+ *  width the user drags below 600, which reads as the drag being broken rather than clamped. */
+function pactApplyChatW(rightEl, px) {
+  if (!rightEl) return;
+  if (px > 0) { rightEl.style.flex = "0 0 " + px + "px"; rightEl.style.minWidth = "0"; }
+  else { rightEl.style.flex = ""; rightEl.style.minWidth = ""; }
+}
+function pactWireChatGrip(grip, rightEl) {
+  pactApplyChatW(rightEl, pactReadChatW());
+  let dragging = false;
+  grip.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    dragging = true;
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add("--drag");
+    document.body.classList.add("pact-wgrip-dragging");
+  });
+  grip.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    const work = grip.parentElement; if (!work) return;
+    const workRect = work.getBoundingClientRect();
+    // Width measured from the pointer to the RIGHT edge of the work area — the column's own right
+    // edge never moves, so this is the width directly, with no accumulated-delta drift.
+    pactApplyChatW(rightEl, pactClampChatW(workRect.right - e.clientX, workRect.width));
+  });
+  const end = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    try { grip.releasePointerCapture(e.pointerId); } catch {}
+    grip.classList.remove("--drag");
+    document.body.classList.remove("pact-wgrip-dragging");
+    const w = Math.round(rightEl.getBoundingClientRect().width);
+    try { localStorage.setItem(PACT_CHAT_W_KEY, String(w)); } catch {}
+    pactChatRelayout();
+    pactSnapRefresh();   // the chat column is now off-default — "Snap all" becomes live
+  };
+  grip.addEventListener("pointerup", end);
+  grip.addEventListener("pointercancel", end);
+  grip.addEventListener("dblclick", () => {
+    try { localStorage.removeItem(PACT_CHAT_W_KEY); } catch {}
+    pactApplyChatW(rightEl, 0);
+    pactChatRelayout();
+    pactSnapRefresh();
+  });
+}
+/* ===== THE TWO SNAP BUTTONS =====================================================================
+ * Asked for: "a button that snaps the text viewer boxes to their default sizes, which are the equal
+ * sizes. There should be 2: one Master Snap that snaps everything including the size of the chat
+ * space, and a secondary one that snaps only the viewer boxes within their given space, leaving the
+ * Pact chat box as is."
+ *
+ * They are two buttons rather than one with a modifier because the distinction is the whole point:
+ * you tune the chat column once for a screen and then keep it, while the boxes get dragged around
+ * all day. Having to re-drag the chat column every time you tidy the boxes is exactly the thing
+ * being complained about, one level up.
+ *
+ * Both are CLEARING operations (see the pure helpers by PACT_ED_ROWS): default is "equal weights"
+ * and "no explicit chat width", never a remembered layout. */
+
+/** Secondary: the viewer boxes go back to equal shares. The chat column is not touched. */
+function pactSnapBoxes() {
+  pactEdResetWeights();
+  pactEdApplyWeights();
+  pactStateSave();      // the weights are persisted layout, like a drag
+  pactSnapRefresh();
+}
+/** Master: the above, AND the chat column gives up its explicit width and falls back to the
+ *  stylesheet's default share — the same thing double-clicking the chat grip does. */
+function pactSnapAll(rightEl) {
+  try { localStorage.removeItem(PACT_CHAT_W_KEY); } catch {}
+  pactApplyChatW(rightEl, 0);
+  pactChatRelayout();   // the chat shell measures its own host, so a width change must be announced
+  pactSnapBoxes();      // …which also saves and refreshes the buttons
+}
+/** Both buttons dim when there is nothing left to snap, so they answer "is my layout still default?"
+ *  without being clicked — and a click can never look like it did nothing. */
+function pactSnapRefresh() {
+  const flexes = (PACT_ED.groups || []).map((g) => g.flex || 1);
+  const rowFlex = PACT_ED.rowFlex || [];
+  const boxesOk = pactSnapBoxesAreDefault(rowFlex, flexes);
+  if (PACT_ED.snapBoxBtn) PACT_ED.snapBoxBtn.disabled = boxesOk;
+  if (PACT_ED.snapAllBtn) PACT_ED.snapAllBtn.disabled = pactSnapAllIsDefault(rowFlex, flexes, pactReadChatW());
+}
+/** The chat shell sizes itself from its host's measured height/width, so a width change has to be
+ *  announced — its ResizeObserver covers the common case, but calling relayout directly means the
+ *  footer never lags a frame behind the drag. */
+function pactChatRelayout() {
+  if (PACT_CHAT && PACT_CHAT._view && typeof PACT_CHAT._view.relayout === "function") PACT_CHAT._view.relayout();
+}
+// ===== end PACT CHAT COLUMN WIDTH =============================================================
 // A saved transcript turn → the chat's own message shape (drop store bookkeeping; keep conversation).
 function pactTranscriptToMsgs(transcript) {
   const out = [];
@@ -7121,6 +7673,12 @@ function pactTranscriptToMsgs(transcript) {
     else if (m.role === "assistant") out.push({ role: "assistant", text: m.text || "", elapsedMs: (typeof m.durationMs === "number" ? m.durationMs : (typeof m.elapsedMs === "number" ? m.elapsedMs : undefined)), at: at(m) });
     else if (m.kind === "tool_use") out.push({ kind: "tool_use", tools: m.tools || [], at: at(m) });
     else if (m.kind === "tool_result" && Array.isArray(m.results)) out.push({ kind: "tool_result", results: m.results, at: at(m) });
+    // The compaction bar is PERSISTED conversation, not a transient notice — it has to survive the
+    // rehydrate or it would vanish on the first resync and the /compact prompt would go back to
+    // looking interrupted.
+    else if (m.kind === "compacted") out.push({ kind: "compacted", trigger: m.trigger || "manual", preTokens: m.preTokens ?? null, postTokens: m.postTokens ?? null, at: at(m) });
+    else if (m.kind === "wrapped") out.push({ kind: "wrapped", segment: m.segment, sourceRef: m.sourceRef, at: at(m) });
+    else if (m.kind === "turnError") out.push({ kind: "turnError", message: m.message || "", subtype: m.subtype || null, at: at(m) });
   }
   return out;
 }
@@ -7301,26 +7859,28 @@ function pactHistDelete(r) {
   delete PACT_CHAT_NAMES[r.sessionId];
   pactChatRenderHistory(); pactStateSave();
 }
-// Grow the compose textarea to fit its content, up to 80% of the chat box height; beyond that it
-// scrolls internally. Called on input, on draft restore, and after send (which resets it).
-let PACT_AS_RAF = 0, PACT_AS_TA = null;
-function pactChatAutosize(ta, now) {
+// LINE-NUMBER GUTTER — Pact's own copy of Core's wsPaintGutter (same math, kept separate: Core/Pact
+// are independently-coded implementations throughout this file, e.g. wsStampNumbers/pactStampNumbers,
+// wsCompact/pactCompact — a shared extraction would be the first cross-workspace dependency of its
+// kind and isn't worth introducing for ~15 lines of pure DOM painting).
+// Shared verbatim with Core and the Chat Shell Lab — see chat-shell.js's paintGutter.
+
+// Grow the compose textarea to fit its content, capped by chat-shell.js's swallowCap (percentage of
+// .pc-scroll — the CORE region — never the whole .pact-chat box; that "80% of the container" rule was
+// one of the two divergent geometries the chat-shell migration unified, the other being Core's old
+// "40% of the viewport"). Falls back to the old container-relative rule only if ChatShell or the
+// scroll region isn't reachable yet. Called on input, on draft restore, and after send (which resets it).
+
+// Pact's compose geometry is the PACKAGE's job on desktop (it owns the whole footer and sizes the
+// type box from chat-shell.js's maths against the real Core height). This survives as the address
+// the several call sites already use — a restored draft, a "use this suggestion" click, a send
+// clearing the box — and simply asks the shell that owns this textarea to re-measure itself.
+// Mobile has no mounted view, so its own single-row compose keeps the small height rule below.
+function pactChatAutosize(ta) {
   if (!ta) return;
-  // Coalesce to ONE resize per animation frame, OFF the keystroke path. Doing it synchronously in the
-  // input handler forced a full layout flush (measuring .pact-chat + height:auto→scrollHeight) BEFORE
-  // the typed character could paint — cheap on the light Core page, but laggy on the heavy Pact page
-  // (editor grid of highlighted files + long message list). Deferring lets the character paint first.
-  if (!now) {
-    PACT_AS_TA = ta;
-    if (PACT_AS_RAF) return;
-    PACT_AS_RAF = (window.requestAnimationFrame || ((fn) => setTimeout(fn, 16)))(() => { PACT_AS_RAF = 0; pactChatAutosize(PACT_AS_TA, true); });
-    return;
-  }
-  const box = ta.closest(".pact-chat");
-  const avail = (box && box.clientHeight) || (ta.closest(".pact-right")?.clientHeight) || Math.round(window.innerHeight * 0.6);
-  const cap = Math.max(72, Math.round(avail * 0.8));
-  ta.style.maxHeight = cap + "px";
-  ta.style.height = "auto";                                  // measure the true content height from a clean baseline
+  if (ta._csView) { ta._csView.relayout(); return; }
+  ta.style.height = "auto";
+  const cap = Math.max(72, Math.round((window.innerHeight || 800) * 0.35));
   const sh = ta.scrollHeight;
   ta.style.height = Math.min(sh, cap) + "px";
   ta.style.overflowY = sh > cap ? "auto" : "hidden";
@@ -7542,7 +8102,7 @@ function pactChatNewTab() {
   // `_queue`/`_pendingText` start empty and are only ever tied to THIS fresh session key — every tab
   // is a new object with its own key, so a message queued mid-turn can never fire into another
   // session (the Core cockpit resets p._queue on repo/worktree switch for the same reason).
-  PACT_CHAT.tabs.push({ id, name: pactNextChatName(PACT_CHAT.tabs), key: wsUuid(), msgs: [], live: "", status: "idle", started: false, perm: null, draft: "", attachedImages: [], model: routingDefaultModel(), _queue: null, _pendingText: null, _pendingImages: null });
+  PACT_CHAT.tabs.push({ id, name: pactNextChatName(PACT_CHAT.tabs), key: wsUuid(), msgs: [], live: "", status: "idle", started: false, perm: null, draft: "", attachedImages: [], model: routingDefaultModel(), autoWrap: true, _queue: null, _pendingText: null, _pendingImages: null });
   PACT_CHAT.activeId = id;
   pactChatRender();
   pactStateSave();
@@ -7719,7 +8279,10 @@ function pactChatRoute({ kind, sessionKey, data }) {
     // counted here so an automatic roll (which never gets a wrapResult reply) is still counted, and
     // a manual one is never double-counted against the wrapResult handler below. Compactions belong
     // to the WINDOW a roll just cleared, so they reset here too — see the "compacted" case.
-    case "rolling": t._wrapCount = (t._wrapCount || 0) + 1; t._compactCount = 0; exoIngestEvent(t, d); pactChatPaint(t); return;
+    case "rolling":
+      t._wrapCount = (t._wrapCount || 0) + 1; t._compactCount = 0;
+      if (Array.isArray(t.msgs)) t.msgs.push({ kind: "wrapped", segment: d.segment, sourceRef: d.sourceRef, at: d.at });
+      exoIngestEvent(t, d); pactChatPaint(t); return;
     case "lookingUp":
     case "recall": exoIngestEvent(t, d); pactChatPaint(t); return;
     // Reconnect catch-up reply (see pactChatResyncAll + `_resync` server-side): the server's
@@ -7798,7 +8361,17 @@ function pactChatRoute({ kind, sessionKey, data }) {
     // Context-window usage answer for this tab's session — store + repaint the header indicator.
     // CONTRACT §1: `contextBreakdown` is the field new code reads; `ok:false` means UNAVAILABLE,
     // never "0% used". The raw `usage` stays for the legacy header badge.
-    case "contextUsage": t.contextUsage = d.usage; exoNoteContext(t, d); if (d.usage && d.usage.model) { t.activeModel = d.usage.model; pactUpdateModelNow(t); } pactUpdateUsageNow(t); if (PACT_CHAT._exo && PACT_CHAT._exoTabId === t.id) PACT_CHAT._exo.sync(); return;
+    case "contextUsage":
+      t.contextUsage = d.usage;
+      // Whether a `claude` process exists at all for this tab — the one fact that separates "nothing
+      // is running yet" from "running and silent", and the reason both readouts used to describe an
+      // ordinary state as a malfunction. See wsUsageReadout.
+      if (typeof d.live === "boolean") t._engineLive = d.live;
+      exoNoteContext(t, d);
+      if (d.usage && d.usage.model) t.activeModel = d.usage.model;
+      pactUpdateModelNow(t); pactUpdateUsageNow(t);
+      if (PACT_CHAT._exo && PACT_CHAT._exoTabId === t.id) PACT_CHAT._exo.sync();
+      return;
     // Cold-load telemetry (see workspace.mjs): the engine is loading a large conversation's history on resume —
     // show "Loading… (N MB)" (not "stuck") until it flips to done + normal output. Both drive pactChatTickTimer.
     case "loadingHistory": exoIngestEvent(t, d); coldLoadBegin(t, d.bytes, Date.now()); pactChatMarkTurnBusy(t); pactChatPaint(t); return;
@@ -7813,11 +8386,21 @@ function pactChatRoute({ kind, sessionKey, data }) {
       exoIngestEvent(t, d);
       const k = (n) => (n == null ? null : Math.round(n / 1000) + "k");
       const pre = k(d.preTokens), post = k(d.postTokens);
+      // The mark in the conversation itself. The server records the same row with this exact `at`
+      // (workspace.mjs _onEvent), so a later resync replaces this optimistic copy instead of
+      // doubling it.
+      if (Array.isArray(t.msgs)) t.msgs.push({ kind: "compacted", trigger: d.trigger || "manual", preTokens: d.preTokens ?? null, postTokens: d.postTokens ?? null, at: d.at });
       pactChatPaint(t);
       pactChatFlashNote("🗜 Context compacted" + (pre && post ? " — " + pre + " → " + post + " tokens" : ""));
       if (t.key) wsPost("control", { action: "contextUsage", args: { sessionKey: t.key } });
       return;
     }
+    // A TURN THAT FAILED — see Core's identical handling for why this is a durable row, not a cue.
+    case "turnError":
+      if (Array.isArray(t.msgs)) t.msgs.push({ kind: "turnError", message: d.message || "", subtype: d.subtype || null, at: d.at });
+      pactChatPaint(t);
+      pactChatFlashNote((d.subtype === "resume-missing" ? "↻ " : "⚠ Turn failed — ") + (d.message || "the engine ended the turn with an error"));
+      return;
     // Manual wrap, part 1: the read-only preview the confirm dialog is waiting on.
     case "wrapPreview": pactFillWrapPreview(t, d.preview); return;
     // Manual wrap, part 2: the outcome. Counters are NOT touched here — see the "rolling" case
@@ -8107,7 +8690,7 @@ async function pactChatDispatch(t, text, images, opts) {
   // Stage-2 worktree binding: the agent runs with cwd = this tab's worktree, so its Edit/Bash act on
   // that isolated checkout (and an editor box bound to the same worktree shows those edits). Fixed per
   // conversation — the head selector only lets you set it before the first message.
-  const body = { sessionKey: t.key, repo: PACT_REPO, worktree: t.worktree || "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id, resume: t.resume || undefined, fresh: firstMsg, scoped: true, model: t.model || undefined };
+  const body = { sessionKey: t.key, repo: PACT_REPO, worktree: t.worktree || "main", text: payload, mode: PACT_CHAT.mode, by: PACT_CHAT.conn.id, resume: t.resume || undefined, fresh: firstMsg, scoped: true, model: t.model || undefined, effort: t.effort || undefined };
   if (images.length) body.images = images.map((a) => ({ mediaType: a.mediaType, base64Data: a.base64Data }));
   const r = await wsPost("prompt", body);
   if (!r || r.ok === false) {
@@ -8430,7 +9013,14 @@ function pactSuggestNext(t) {
   if (m && /[A-Za-z]/.test(m[1])) return { text: "Continue with " + m[1] + "." };
   m = txt.match(/continue\s+with\s+([A-Za-z][A-Za-z0-9_|>.\-]{1,40})/i);
   if (m) return { text: "Continue with " + m[1] + "." };
-  return { text: "Continue where you left off." };
+  // NO GENERIC FALLBACK. This used to return "Continue where you left off." for every conversation
+  // that had ever had a reply — so a whole row was permanently parked above the compose box offering
+  // a "suggestion" that was not read from anything the agent said. A suggestion nobody suggested is
+  // noise occupying the one place the real next prompt goes ("there still is a suggested continue
+  // line that probably shouldn't be here"). The bar now appears only when the reply genuinely named
+  // a next step. Auto-continue keeps its own fallback text — see pactAutoNextText — because the loop
+  // has to send SOMETHING; that is a different question from what to advertise.
+  return null;
 }
 function pactAutoNextText(t) { return ((pactSuggestNext(t) || {}).text) || "Continue where you left off."; }
 function pactAutoStop(t) { if (t && t._autoTimer) { clearInterval(t._autoTimer); t._autoTimer = null; } if (t) t._autoDeadline = 0; }
@@ -8466,18 +9056,49 @@ function pactAutoEnsure(t) {
 }
 function pactAutoTick(t) {
   const d = pactAutoEnsure(t);
-  const cd = PACT_CHAT && PACT_CHAT.host && PACT_CHAT.host.querySelector(".pc-suggest-count");
-  if (cd) cd.textContent = (d && d.arm && !d.fire) ? " · sending in " + Math.max(1, Math.ceil(d.msLeft / 1000)) + "s" : "";
+  pactPaintAutoControl(t, d);   // the countdown lives ON the switch that owns it (the shell's send group)
   if (d && !d.arm) pactChatUpdateSuggest(t);   // the reason changed (busy / cap / you started typing) — redraw once
+}
+/** Push one auto-continue decision onto the shell's own control. The ticker used to live in the
+ *  suggest bar — a different row, a different shape — so the countdown and the switch that stops it
+ *  were in two places, and the switch looked inert while the loop was counting. The Chat Shell Lab
+ *  puts both inside the send group; this is what makes Pact actually do that. */
+function pactPaintAutoControl(t, d) {
+  if (!PACT_CHAT || !PACT_CHAT._view || !d) return;
+  PACT_CHAT._view.setState({ autoContinue: {
+    on: d.on, n: d.autoCount, max: d.autoCap,
+    in: d.arm && !d.fire ? Math.max(1, Math.ceil(d.msLeft / 1000)) : null,
+    note: pactAutoWhy(d) || "",
+  } });
 }
 function pactChatUpdateSuggest(t) {
   if (!PACT_CHAT || !PACT_CHAT.host) return;
+  const d = pactAutoEnsure(t);   // ONE evaluation drives both the loop and every surface that reflects it —
+  // this must run regardless of which UI (desktop ghost text vs. mobile's own bar) ends up drawing it.
+  // The shell's send-group control shows the same decision's round count, so it can never disagree
+  // about how many rounds the loop has spent.
+  pactPaintAutoControl(t, d);
+  const mob = pactIsMobile();
+  if (!mob) {
+    // DESKTOP: no separate bar any more. It used to sit permanently above the compose box reading
+    // "🔁 Auto-continue" whether or not there was anything to say — reported as noise ("there still is
+    // a suggested continue line that probably shouldn't be here"). Its two real jobs move onto
+    // controls that already exist rather than disappearing: the suggested text becomes GHOST TEXT
+    // inside the compose box itself (Tab, on an empty box, accepts it — the same mechanism the Chat
+    // Shell Lab uses), and the round count + "why it's paused" reason both ride the shell's own
+    // auto-continue control (pactPaintAutoControl's `note`, above).
+    if (PACT_CHAT._view) {
+      const sug = (!d || !d.show || d.fire || d.busy) ? null : pactSuggestNext(t);
+      PACT_CHAT._view.setState({ compose: { suggest: sug ? sug.text : "" } });
+    }
+    return;
+  }
+  // MOBILE keeps its own bar — it has no shell control for auto-continue yet (that pass is deferred,
+  // same as every other mobile gap in this migration), so the checkbox, countdown and suggestion
+  // controls below all still live here, exactly as before.
   const box = PACT_CHAT.host.querySelector(".pc-suggest"); if (!box) return;
-  const d = pactAutoEnsure(t);   // ONE evaluation drives both the loop and this drawing
   if (!d || !d.show) { box.hidden = true; box.replaceChildren(); box.classList.remove("--running"); return; }
   if (d.fire) return;            // ensure just dispatched — that path repaints; don't draw a stale frame
-  const ta = PACT_CHAT.host.querySelector(".pc-input");
-  const mob = pactIsMobile();    // on mobile this bar shares a compact row with the worktree pill (pc-toolrow)
   const autoCap = d.autoCap, capReached = d.capReached;
   box.hidden = false;
   box.classList.toggle("--running", d.busy && d.on);
@@ -8489,24 +9110,17 @@ function pactChatUpdateSuggest(t) {
     t._autoDeadline = 0;   // a deliberate toggle always starts a fresh countdown
     pactChatUpdateSuggest(t); pactStateSave();
   });
-  // DUPLICATE-LABEL BUG (fixed 1.5.101): every desktop branch below renders a descriptive lead span that
-  // already says "Auto-continue" (or "Auto-continue on"), and then rendered this checkbox label which said
-  // "Auto-continue" AGAIN — so the bar read "🔁 Auto-continue on … ☐ Auto-continue (4/10)". The checkbox is
-  // adjacent to the words, so repeating them carries zero information. When a lead span is present the
-  // checkbox shows ONLY the round counter; it keeps the full wording when it stands alone (mobile, where
-  // there is no lead span). The title always carries the full explanation either way.
   const AUTO_TITLE = "Auto-continue: automatically send the next prompt when idle (up to " + PACT_AUTO_CAP + " rounds per batch). Toggle any time — including WHILE a round is running.";
   const autoCountTxt = d.autoCount ? " (" + d.autoCount + "/" + autoCap + ")" : "";
-  const mkAutoLbl = (hasLead) => el("label", { class: "pc-suggest-auto" + (d.on ? " --on" : ""), title: AUTO_TITLE },
-    [autoCb, document.createTextNode(hasLead ? (autoCountTxt || " on") : (" " + (mob ? "Auto" : "Auto-continue") + autoCountTxt))]);
-  const autoLbl = mkAutoLbl(false);
+  const autoLbl = el("label", { class: "pc-suggest-auto" + (d.on ? " --on" : ""), title: AUTO_TITLE },
+    [autoCb, document.createTextNode(" Auto" + autoCountTxt)]);
   const cd = el("span", { class: "pc-suggest-count" }, [d.arm ? " · sending in " + Math.max(1, Math.ceil(d.msLeft / 1000)) + "s" : ""]);
   const why = pactAutoWhy(d);
   const whyEl = why ? el("span", { class: "pc-suggest-sub" }, [" — " + why]) : "";   // "" (never null) — el() appends kids verbatim
   if (d.busy) {
     // Mid-round: state + the toggle. On → offer Stop; off → the toggle lets you turn it on right now.
-    const parts = mob ? [autoLbl] : [el("span", { class: "pc-suggest-lbl" }, d.on ? ["🔁 ", el("b", {}, ["Auto-continue on"]), whyEl] : ["🔁 Auto-continue"]), mkAutoLbl(true)];
-    if (d.on) { const stop = el("button", { class: "pc-suggest-btn pc-suggest-stopauto", type: "button", title: "Turn auto-continue off now (the running round still finishes)" }, [mob ? "■" : "■ Stop auto"]); stop.addEventListener("click", () => { t._autoContinue = false; pactAutoStop(t); pactChatUpdateSuggest(t); pactStateSave(); }); parts.push(stop); }
+    const parts = [autoLbl];
+    if (d.on) { const stop = el("button", { class: "pc-suggest-btn pc-suggest-stopauto", type: "button", title: "Turn auto-continue off now (the running round still finishes)" }, ["■"]); stop.addEventListener("click", () => { t._autoContinue = false; pactAutoStop(t); pactChatUpdateSuggest(t); pactStateSave(); }); parts.push(stop); }
     box.replaceChildren(...parts);
     return;
   }
@@ -8518,15 +9132,9 @@ function pactChatUpdateSuggest(t) {
     sendBtn.addEventListener("click", () => { if ((t._autoCount || 0) >= autoCap) t._autoCap = (t._autoCount || 0) + PACT_AUTO_CAP; pactChatDispatchSuggest(t, sug.text); });
     const dismiss = el("button", { class: "pc-suggest-x", type: "button", title: "Dismiss the suggestion (Auto-continue keeps running)" }, ["✕"]);
     dismiss.addEventListener("click", () => { t._suggestDismissed = true; pactChatUpdateSuggest(t); });
-    if (mob) {
-      parts.push(autoLbl, cd, sendBtn, dismiss);   // compact: drop the verbose "Suggested next: …" text + Use
-    } else {
-      const useBtn = el("button", { class: "pc-suggest-btn", type: "button", title: "Put it in the compose box to edit" }, ["↳ Use"]);
-      useBtn.addEventListener("click", () => { if (ta) { ta.value = sug.text; t.draft = sug.text; pactChatAutosize(ta); ta.focus(); } pactChatUpdateSuggest(t); });
-      parts.push(el("span", { class: "pc-suggest-lbl" }, [capReached ? "Auto limit reached — " : "Suggested next: ", el("b", {}, [sug.text])]), useBtn, sendBtn, autoLbl, cd, dismiss);
-    }
+    parts.push(autoLbl, cd, sendBtn, dismiss);   // compact: drop the verbose "Suggested next: …" text + Use
   } else {
-    parts.push(...(mob ? [autoLbl, cd] : [el("span", { class: "pc-suggest-lbl" }, ["🔁 Auto-continue"]), mkAutoLbl(true), cd]));
+    parts.push(autoLbl, cd);
   }
   if (whyEl) parts.push(whyEl);   // idle + paused (cap / composing): say so, never fail silently
   box.replaceChildren(...parts);
@@ -8642,8 +9250,32 @@ function pactStampNumbers(t) {
 }
 // Format a position number with thousand separators (locale-independent): 1349 → "1,349".
 function wsNumFmt(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+// Binary byte formatter (MiB, not MB) — 25 * 1024 * 1024 must read "25 MiB", not print as "26.2MB"
+// under a decimal formatter (that exact mislabel shipped once in the chat-shell lab; see CHANGELOG).
+function wsFmtBytes(n) {
+  n = Number(n) || 0;
+  const units = ["B", "KiB", "MiB", "GiB"];
+  let u = 0;
+  while (n >= 1024 && u < units.length - 1) { n /= 1024; u++; }
+  return (u === 0 ? String(Math.round(n)) : n.toFixed(1)) + " " + units[u];
+}
+// A conversation MARK (compaction / wrap) as a transcript node. The look, the wording and the
+// tooltips are the chat shell package's — the SAME window.ChatShell.buildMark the Chat Shell Lab
+// draws, which is where this design has lived unrendered by production all along. Core and Pact both
+// come through here so the bar cannot end up looking like two different things in two workspaces.
+function wsMarkNode(m) {
+  // `resume-missing` is a RECOVERY, not a failure — the turn ran. It gets the amber notice bar; a
+  // genuine engine error gets the red one.
+  if (m && m.kind === "turnError") return window.ChatShell.buildMark({ kind: "error", message: m.message, at: m.at,
+    tone: m.subtype === "resume-missing" ? "notice" : "error" });
+  return window.ChatShell.buildMark({
+    kind: (m && m.kind === "wrapped") ? "wrap" : "compact",
+    preTokens: m && m.preTokens, postTokens: m && m.postTokens,
+    trigger: (m && m.trigger) || "manual", at: m && m.at, fmtNum: wsNumFmt,
+  });
+}
 // A corner badge: P#12 on a prompt, R#1,349 on a response. Non-interactive — just a positional label.
-function pactNumBadge(kind, n) { return (typeof n === "number") ? el("span", { class: "pc-num pc-num-" + kind.toLowerCase(), title: (kind === "P" ? "Prompt" : "Response") + " #" + wsNumFmt(n) + " in this conversation" }, [kind + "#" + wsNumFmt(n)]) : ""; }
+function pactNumBadge(kind, n) { return (typeof n === "number") ? el("span", { class: "pc-num num num-" + kind.toLowerCase() + " pc-num-" + kind.toLowerCase(), title: (kind === "P" ? "Prompt" : "Response") + " #" + wsNumFmt(n) + " in this conversation" }, [kind + "#" + wsNumFmt(n)]) : ""; }
 // ===== INTERRUPTED PROMPTS =====================================================================
 // A prompt whose turn never produced a reply (an engine restart / dropped connection cut it off) is an
 // INTERRUPTED prompt: the tab is IDLE and this user message is the trailing one with no assistant reply after
@@ -8655,7 +9287,9 @@ function pactNumBadge(kind, n) { return (typeof n === "number") ? el("span", { c
 // dark-blue "was interrupted" record stays.
 function pactInterruptedIdx(t) {   // index of the trailing unanswered user prompt on an idle tab, or -1
   if (!t || pactChatBusy(t) || !Array.isArray(t.msgs)) return -1;
-  for (let i = t.msgs.length - 1; i >= 0; i--) { const m = t.msgs[i]; if (!m) continue; if (m.role === "assistant") return -1; if (m.role === "user") return i; }
+  // A `compacted` row counts as an answer — `/compact` produces no assistant reply, and without this
+  // a SUCCESSFUL compaction left its own prompt painted as interrupted (dark blue, ▶/✕ buttons).
+  for (let i = t.msgs.length - 1; i >= 0; i--) { const m = t.msgs[i]; if (!m) continue; if (m.role === "assistant" || m.kind === "compacted" || m.kind === "wrapped") return -1; if (m.role === "user") return i; }
   return -1;
 }
 function pactMarkInterrupt(t) {
@@ -8749,7 +9383,7 @@ function pactChatMsgNode(m) {
     const imgs = m.images || (m.image ? [m.image] : []);
     const kids = [];
     if (imgs.length) {
-      kids.push(el("div", { class: "pc-user-images" }, imgs.map((img) => {
+      kids.push(el("div", { class: "pc-user-images msgimgs" }, imgs.map((img) => {
         const src = img.dataUrl || (img.path && m.workspaceId ? `/api/workspace/image?workspaceId=${encodeURIComponent(m.workspaceId)}&path=${encodeURIComponent(img.path)}` : null);
         if (!src) return el("span", {}, []);
         return el("a", { href: src, target: "_blank", rel: "noopener noreferrer", class: "pc-user-image-link" }, [
@@ -8758,7 +9392,10 @@ function pactChatMsgNode(m) {
       })));
     }
     kids.push(m.text);
-    const cls = "pc-msg pc-user" + (m._intrState === "d" ? " pc-discarded" : m._intrState === "i" ? " pc-interrupted" : "");
+    // …plus the Chat Shell Lab's own bubble classes (see Core's WS_LAB_LINE_CLASS for why these are
+    // additive rather than a rename): .msg.--u and the prompt-state modifier, styled by the shared
+    // chat-shell-components.css so Pact renders the identical bubble design.
+    const cls = "pc-msg pc-user msg --u" + (m._intrState === "d" ? " pc-discarded --discarded" : m._intrState === "i" ? " pc-interrupted --dead" : "");
     const extra = [];
     if (m._intrBtns) {
       const resume = el("button", { class: "pc-intr-btn pc-intr-resume", title: "Resume — tell the agent this prompt was interrupted and to continue it (no re-paste)" }, ["▶"]);
@@ -8782,7 +9419,7 @@ function pactChatMsgNode(m) {
     const star = el("button", { class: "ws-bm-star" + (m._bookmarked ? " on" : ""), title: m._bookmarked ? "Bookmarked — click to remove" : "Bookmark this response" }, [m._bookmarked ? "★" : "☆"]);
     star.addEventListener("click", (e) => { e.stopPropagation(); pactChatToggleBookmark(m); });
     const replyBtnR = wsReplyBtn("R", m._rnum, m.text, () => { const at = pactChatActive(); wsAddReplyRef(at, "R", m._rnum, m.text); pactPaintReplyRow(at); });
-    return el("div", { class: "pc-msg pc-asst" }, [pactNumBadge("R", m._rnum), wsShareBtn(m.text), replyBtnR, star, ...kids]);
+    return el("div", { class: "pc-msg pc-asst msg --a" }, [pactNumBadge("R", m._rnum), wsShareBtn(m.text), replyBtnR, star, ...kids]);
   }
   if (m.kind === "tool_use") {
     // Expandable, like the Core cockpit: the tool names show at a glance; tap to reveal each call's
@@ -8817,6 +9454,8 @@ function pactChatMsgNode(m) {
     return el("div", { class: "pc-err" }, kids);
   }
   if (m.kind === "note") return el("div", { class: "pc-note" }, [m.text]);
+  // THE COMPACTION BAR — same shared wording and the same package class Core uses (cs-compacted).
+  if (m.kind === "compacted" || m.kind === "wrapped" || m.kind === "turnError") return wsMarkNode(m);
   // A worktree-migration separator: a full-width labeled line marking where this conversation moved
   // between checkouts (main ⇄ a worktree). Context is unbroken across it — only the agent's cwd changed.
   if (m.kind === "migration") {
@@ -8858,21 +9497,96 @@ function pactExoCtx(t) {
     newChat: () => pactChatNewTab(),
   };
 }
+// Pact's header stats row — mirrors Core's wsPaintStatsRow exactly (turns/rounds/%, size, compacted-
+// this-window, wrapped-this-conversation, an approximate "would wrap" preview), queried by class since
+// Pact re-queries its DOM by selector rather than holding element refs (same pattern the old
+// wrapCountersEl lookup used). Built from the SAME shared, tested pure math Core uses — never a
+// second, driftable computation.
+// Built through the SAME chat-shell.js function Core and the Lab use (CS.buildStatsChips) — see the
+// comment on wsPaintStatsRow. This used to be a third independent hand-copy of the same row.
+function pactPaintStatsRow(t) {
+  if (!PACT_CHAT || !PACT_CHAT._view) return;
+  const msgs = Array.isArray(t.msgs) ? t.msgs : [];
+  // Window-scoped, for the same reason and by the same rule as Core's wsPaintStatsRow: the ceilings
+  // are per-window, the transcript keeps every wrapped turn, and the boundary is the last `wrapped`
+  // mark — the same one workspace.mjs `_rollFrom` reads.
+  let lastWrap = -1, nWraps = 0;
+  for (let i = 0; i < msgs.length; i++) if (msgs[i] && msgs[i].kind === "wrapped") { lastWrap = i; nWraps++; }
+  let bytes = 0, nP = t._promptOffset || 0, nR = t._responseOffset || 0;
+  let pFrom = 0, rFrom = 0;
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
+    if (!m) continue;
+    if (i === lastWrap + 1) { pFrom = nP + 1; rFrom = nR + 1; bytes = 0; }
+    const text = typeof m.text === "string" ? m.text : (typeof m.content === "string" ? m.content : "");
+    bytes += text.length;
+    if (m.role === "user") nP++; else if (m.role === "assistant") nR++;
+  }
+  if (!pFrom) { pFrom = (t._promptOffset || 0) + 1; rFrom = (t._responseOffset || 0) + 1; }
+  const usage = t.contextUsage || {};
+  // Through the package's own patch, exactly like Core's wsPaintStatsRow — NOT a second hand-rolled
+  // `buildStatsChips(...) + replaceChildren` (which is what this was). That mattered the moment the
+  // context readout moved into this row: it is a stable node the package re-appends across repaints,
+  // and a caller clearing the row itself would have dropped it on the first paint after mount.
+  PACT_CHAT._view.setState({
+    stats: { prompts: nP, responses: nR, bytes, tokens: Number(usage.totalTokens) || 0,
+      ceiling: Number(usage.maxTokens) || 1000000, maxTurns: 1000, maxBytes: 25 * 1024 * 1024,
+      pFrom, rFrom,
+      compactCount: t._compactCount || 0, wrapCount: Math.max(nWraps, t._wrapCount || 0), tailTurns: 200,
+      // The Lab's own class names (see Core's identical call) — one chip system, not two.
+      chipClass: "chip", warnClass: "--warn", mutedClass: "--far",
+      fmtNum: wsNumFmt, fmtBytes: wsFmtBytes },
+  });
+}
+// Compact/Wrap/auto-wrap, built through the SAME shared function Core and the Chat Shell Lab use
+// (window.ChatShell.buildWrapControls). Repainted on every pactChatPaint() — the meter and Wrap's
+// disabled state depend on this tab's LIVE context usage, not just whatever it was at tab creation.
+// The permission mode's colour-coding lives in the package (it is the same control, in the same
+// place, in both workspaces and in the Lab) and applies to whatever element occupies the role — so
+// Pact publishes the VALUE and the shell does the painting, rather than Pact styling its own select.
+function pactPaintPermission() {
+  const pv = PACT_CHAT && PACT_CHAT._view;
+  if (pv) pv.setState({ permission: { value: PACT_CHAT.mode } });
+}
+function pactPaintWrapControls(t) {
+  if (!PACT_CHAT) return;
+  const wrap = PACT_CHAT.host.querySelector(".pact-wrapwrap"); if (!wrap) return;
+  const usage = (t && t.contextUsage) || {};
+  const wc = window.ChatShell.buildWrapControls({
+    autoWrap: !t || t.autoWrap !== false, tokens: Number(usage.totalTokens) || 0, ceiling: Number(usage.maxTokens) || 1000000,
+    compactClass: "pact-compact splitL", wrapClass: "pact-wrap splitR", splitClass: "pact-split split",
+    autoLabelClass: "ws-autowrap autolbl", meterClass: "ws-wrapmeter bar",
+    compactLabel: "🗜 Compact", wrapLabel: "⟳ Wrap",
+    compactTitle: "Compact — summarise this conversation to shrink its context window. Sends /compact as the next turn.",
+    onToggleAutoWrap: (on) => {
+      if (!t) return;
+      t.autoWrap = on;
+      wsPost("control", { action: "setAutoWrap", args: { sessionKey: t.key, enabled: on } });
+      pactStateSave();
+    },
+    onCompact: () => pactCompact(),
+    onWrap: () => pactOpenWrapDialog(pactChatActive()),
+  });
+  // The wrap controls are a STACKED group in the shell (tick+meter over Compact|Wrap), and where the
+  // pieces land is the shell's business — replacing the group's children directly here is what
+  // flattened that stack into a three-row column. One owner: ChatShell.fillWrapGroup.
+  window.ChatShell.fillWrapGroup(wrap, wc);
+}
 function pactChatPaint(t) {
   if (!PACT_CHAT || t.id !== PACT_CHAT.activeId) return;
   const scroll = PACT_CHAT.host.querySelector(".pc-scroll");
   const compose = PACT_CHAT.host.querySelector(".pc-compose");
   if (!scroll) { pactChatRender(); return; }
-  // Token/context indicator — shared formatter with the Core cockpit (wsUsageLabel); hidden until
-  // this tab has usage data.
-  const usageEl = PACT_CHAT.host.querySelector(".pc-usage");
-  if (usageEl) { const usg = wsUsageLabel(t.usage, t.contextUsage); usageEl.textContent = usg.text; usageEl.title = usg.title; usageEl.hidden = !usg.text; }
-  const wrapCountersEl = PACT_CHAT.host.querySelector(".ws-wrap-counters");
-  if (wrapCountersEl) {
-    wrapCountersEl.textContent = "🗜 " + (t._compactCount || 0) + " · ⟳ " + (t._wrapCount || 0);
-    wrapCountersEl.title = "🗜 " + (t._compactCount || 0) + " compaction(s) in this window (resets at every wrap) · ⟳ "
-      + (t._wrapCount || 0) + " wrap(s) this conversation has ever had (cumulative)";
-  }
+  // Token/context indicator. This used to be a THIRD hand-written copy of the same paint, and the
+  // copy disagreed with the other two: `hidden = !usg.text` made "no reading yet" render as no
+  // control at all — the opposite of what wsPaintUsage exists to guarantee. It goes through the one
+  // painter now, which is also what asks the server for a reading the first time (and so learns
+  // whether an engine is even running).
+  pactUpdateUsageNow(t);
+  pactUpdateModelNow(t);
+  pactPaintStatsRow(t);
+  pactPaintWrapControls(t);
+  pactPaintPermission();
   // Cache each message's rendered node on the message object. A message's content is immutable once
   // added (only `elapsedMs` is stamped once, on result — which clears `_node` there), so re-parsing its
   // markdown + code-highlighting on EVERY event (user echo / tool_use / assistant / result / status /
@@ -8928,8 +9642,16 @@ function pactChatPaint(t) {
     const rn = exoRecallNode(t, xctx); if (rn) nodes.push(rn);
     const en = exoEdgeNodes(t, xctx); if (en.below) nodes.push(en.below);
   }
+  // "N earlier turns" is the package's medallion at the top of the core region, NOT a header row
+  // (see exoMountBar). It is a child of .pc-scroll — this function owns that element's children, so
+  // it goes back at the head of the list every paint; it is the same node each time.
+  if (PACT_CHAT._view) {
+    PACT_CHAT._view.setState({ earlier: exoAboveState(t) });
+    const ct = PACT_CHAT._view.els && PACT_CHAT._view.els.coreTop;
+    if (ct) nodes.unshift(ct);
+  }
   const timerSpan = () => el("span", { class: "pc-timer", title: "Time on this response" }, [t._turnStartedAt ? pactFmtDuration(Date.now() - t._turnStartedAt) : ""]);
-  if (t.live) nodes.push(el("div", { class: "pc-msg pc-asst pc-live" }, [el("div", { class: "pc-asst-body" }, [wsLiveCounterText(t.live)]), el("div", { class: "pc-live-meta" }, ["▍ ", timerSpan()])]));
+  if (t.live) nodes.push(el("div", { class: "pc-msg pc-asst pc-live msg --a --live" }, [el("div", { class: "pc-asst-body" }, [wsLiveCounterText(t.live)]), el("div", { class: "pc-live-meta" }, ["▍ ", timerSpan()])]));
   else if (t.status === "thinking" || t.status === "deepwork") nodes.push(el("div", { class: "pc-think" }, [(t.status === "deepwork" ? "🔴 still producing… " : "● thinking… "), timerSpan()]));
   // Queued messages — typed while the agent was mid-turn, held (not yet sent) until this turn
   // finishes (see pactChatSend/pactChatDrainQueue). Rendered AFTER the live/thinking indicator, in a
@@ -8941,14 +9663,14 @@ function pactChatPaint(t) {
     const tag = many
       ? "queued — will be merged with the other" + (t._queue.length - 1 > 1 ? "s" : "") + " into one message once this turn finishes"
       : "queued — sending once this turn finishes";
-    const cls = "pc-msg pc-user pc-queued" + (t.status === "deepwork" ? " pc-queued-deep" : "");
+    const cls = "pc-msg pc-user msg --u --queued" + (t.status === "deepwork" ? " pc-queued-deep --deep" : "");
     for (const q of t._queue) {
       const kids = [];
       // A × to delete this queued message before it sends — for a mis-sent / no-longer-wanted one.
       const del = el("button", { class: "pc-queued-x", type: "button", title: "Remove this queued message" }, ["×"]);
       del.addEventListener("click", (e) => { e.stopPropagation(); pactChatUnqueue(t, q); });
-      if (q.images && q.images.length) kids.push(el("div", { class: "pc-user-images" }, q.images.map((img) => el("img", { class: "pc-user-image", src: img.dataUrl, alt: "attached image (queued)" }, []))));
-      kids.push(del, q.text, el("span", { class: "pc-queued-tag" }, [tag]));
+      if (q.images && q.images.length) kids.push(el("div", { class: "pc-user-images msgimgs" }, q.images.map((img) => el("img", { class: "pc-user-image", src: img.dataUrl, alt: "attached image (queued)" }, []))));
+      kids.push(del, q.text, el("span", { class: "pc-queued-tag qtag" }, [tag]));
       nodes.push(el("div", { class: cls }, kids));
     }
   }
@@ -8970,26 +9692,56 @@ function pactChatPaint(t) {
   // paintPane: label Send/Working…/Deep Work…, the amber `busy` / red `deepwork` treatment, the
   // `work-pulse` ring, and the Stop button shown only while busy. Send stays enabled while busy so a
   // mid-turn send still queues (v1.2.4).
+  // WORK STATE ON THE SEND/STOP BUTTONS — label, the amber `busy` / red `deepwork` treatment, the
+  // `work-pulse` ring, and Stop's enabled/pending state.
+  //
+  // THIS WAS ENTIRELY DEAD ON DESKTOP, in two independent ways, which is why Send stayed
+  // accent-coloured through a whole turn while the agent was visibly working:
+  //   1. `.pc-compose` does not exist on desktop at all (Pact builds it with no children unless
+  //      mobile — the package owns the compose area), so the `if (compose)` guard around all of this
+  //      was false and none of it ran.
+  //   2. Even inside it, Send/Stop were looked up by `.pc-send`/`.pc-stop`. On desktop they are the
+  //      PACKAGE's buttons — Pact does not substitute them — so they carry `btn-send`/`btn-stop` and
+  //      the lookups returned null, silently, behind `if (send)`.
+  // Pact aliases `.pc-input`, `.pc-usage`, `.pc-model-now` and `.pact-wrapwrap` onto the package's
+  // nodes for exactly this reason; Send and Stop were the two it never did. Rather than add a third
+  // and fourth alias, the state goes through the shell's own API — one vocabulary, and the Lab shows
+  // these states too. MOBILE keeps its own buttons inside .pc-compose (no package there), so the
+  // class-based path below stays and simply finds nothing on desktop.
+  const busy = pactChatBusy(t);
+  const deep = t.status === "deepwork";
+  // A press of ■ Stop is acknowledged instantly and stays acknowledged: while `_stopping` is set the Send
+  // label reads "Stopping…" and the Stop button goes disabled+dimmed, so the click is never ambiguous even
+  // though the engine's interrupt can take seconds. Cleared when the turn actually ends (status/interrupted).
+  if (!busy) t._stopping = 0;   // safety net: any non-busy repaint drops a stale cue
+  const stopping = !!t._stopping;
+  const pv = PACT_CHAT && PACT_CHAT._view;
+  if (pv) {
+    // Desktop: Stop ALWAYS occupies its slot and switches enabled/disabled, so the row never
+    // reflows when a turn starts or ends (Send would otherwise jump sideways under the cursor).
+    // ONE decision, shared with Core (ChatShell.sendPresentation) — these were two separate chains
+    // of ternaries that had drifted: Pact stopped pulsing for background work, and dropped its
+    // working colour the moment Stop was pressed.
+    const pres = window.ChatShell.sendPresentation({
+      busy, deep, stopping, background: ((t && t._background) || []).length > 0,
+    });
+    pv.setState({ sending: { ...pres, sendDisabled: false } });   // a mid-turn send still queues (v1.2.4)
+  }
   if (compose) {
-    // Scope the lookup to the HOST, not the compose: on desktop Send/Stop now live in .pc-actionbar
-    // BELOW the type box, so a compose-scoped query would silently find nothing and the buttons would
-    // never update. Mobile still has them inside the compose — host covers both.
+    // MOBILE only — see above. Scoped to the HOST rather than the compose because mobile's own
+    // Send/Stop have moved between the two over time.
     const scopeEl = (PACT_CHAT && PACT_CHAT.host) || compose;
     const send = scopeEl.querySelector(".pc-send");
     const stop = scopeEl.querySelector(".pc-stop");
-    const busy = pactChatBusy(t);
-    const deep = t.status === "deepwork";
-    // A press of ■ Stop is acknowledged instantly and stays acknowledged: while `_stopping` is set the Send
-    // label reads "Stopping…" and the Stop button goes disabled+dimmed, so the click is never ambiguous even
-    // though the engine's interrupt can take seconds. Cleared when the turn actually ends (status/interrupted).
-    if (!busy) t._stopping = 0;   // safety net: any non-busy repaint drops a stale cue
-    const stopping = !!t._stopping;
     if (send) {
+      // Mobile does not mount the shell, so it applies the shared decision itself — but it is the
+      // SAME decision (`pres`, computed above), not a third chain of ternaries. That third chain is
+      // how mobile came to drop its working colour on a pressed Stop while desktop kept it.
       send.disabled = false;
-      send.classList.toggle("busy", busy);
-      send.classList.toggle("deepwork", deep && !stopping);
-      send.classList.toggle("work-pulse", busy && !stopping);
-      send.textContent = stopping ? "Stopping…" : deep ? "Deep Work…" : busy ? "Working…" : "Send";
+      send.classList.toggle("busy", pres.state === "busy" || pres.state === "deep");
+      send.classList.toggle("deepwork", pres.state === "deep");
+      send.classList.toggle("work-pulse", pres.pulse);
+      send.textContent = pres.sendLabel;
     }
     if (stop) {
       // Desktop: Stop ALWAYS occupies its slot and switches enabled/disabled, so the row never reflows
@@ -8997,9 +9749,9 @@ function pactChatPaint(t) {
       // hide-when-idle behavior, where horizontal space is the binding constraint.
       const inBar = !!stop.closest(".pc-actionbar");
       stop.hidden = inBar ? false : !busy;
-      stop.disabled = inBar ? (!busy || stopping) : stopping;
-      stop.classList.toggle("pc-stop--pending", stopping);
-      stop.textContent = stopping ? "■ Stopping…" : "■ Stop";
+      stop.disabled = inBar ? pres.stopDisabled : stopping;
+      stop.classList.toggle("pc-stop--pending", pres.stopPending);
+      stop.textContent = pres.stopLabel;
     }
   }
   // Sync the mobile control bar's send/stop + chat count to this tab (no-op on desktop).
@@ -9131,14 +9883,18 @@ function modelRowLabel(row) {
   const declared = (typeof row.displayName === "string" && row.displayName.trim()) || "";
   const exact = modelExactId(row);
   const human = humanModelName(exact);
-  const isAlias = MODEL_ALIASES.has(String(row.value || "").toLowerCase());
   if (!human) return (declared || String(row.value || "")) + " — exact model unknown";
   // NOT an Anthropic coordinate (an OmniRoute combo, a third-party model) and the catalogue gave it a
   // curated name — that name is better than anything we can derive from the id ("Auto · best coding"
   // beats "best-coding"). Only Anthropic's own family-version ids are ours to parse.
   if (!parseModelId(exact).family && declared) return declared;
-  // An alias row: say what it actually is, and which alias got you there.
-  if (isAlias) return human + " (" + String(row.value) + ")";
+  // An alias row names a FAMILY, not a build, so the label is the model it resolves to — "Opus 5",
+  // exactly as Claude Code's own picker says it. It used to append the alias ("Sonnet 5 (default)",
+  // "Opus 5 (opus)"), which put the word `default` in front of you on every paint while adding
+  // nothing you can act on: the alias is an implementation detail of how the pick is spelled on the
+  // wire, and the exact wire id is already in the option's title. Duplicate rows that this collapses
+  // (the catalogue really does ship `default` AND `sonnet` both resolving to claude-sonnet-5) are
+  // removed by dedupeModelRows, so the list reads as one entry per actual model.
   return human;
 }
 // Tooltip: the FULL wire id, unshortened, plus whatever the SDK says the model is for.
@@ -9181,6 +9937,14 @@ function modelSwitchWarning(fromId, toId, tokens) {
 // The "· <model>" readout next to a model control. Shows the EXACT build (date suffix and all) because
 // "opus-5" does not distinguish two Opus 5 builds, and knowing which one you are on is the entire point.
 // Returns { text, title } — never a bare "" title, so hovering always explains something.
+// The Claude subscription aliases, valid regardless of what the model catalogue has reported. TOP
+// LEVEL on purpose: this list is the fallback for BOTH selector builders, and one of them
+// (buildMobileModelSelect — which despite its name builds Pact's desktop selector too) is a
+// top-level function. Declared inside the Core view's closure, as it was, that reference resolved to
+// nothing and threw `WS_FALLBACK_MODELS is not defined` — taking the whole Pact view down with it,
+// but ONLY on the path that reaches the fallback: a cold load whose model catalogue is still empty.
+// Any browser session that had already answered "models" never touched the line.
+
 function chatModelReadout(list, picked, activeModel) {
   const exact = resolveModelExact(list, picked, activeModel);
   const p = parseModelId(exact);
@@ -9208,8 +9972,39 @@ function chatModelReadout(list, picked, activeModel) {
 // collapses back. Pure over plain data — no DOM — so the split logic itself is unit-tested.
 const OMNI_MORE_VALUE = "__omni_more__";
 const OMNI_LESS_VALUE = "__omni_less__";
+// ONE ENTRY PER ACTUAL MODEL. The SDK's catalogue lists the subscription ALIASES as rows of their own
+// alongside the concrete ones, and they collide: measured live, it ships
+//   { value: "default", resolvedModel: "claude-sonnet-5" }  AND  { value: "sonnet", resolvedModel: "claude-sonnet-5" }
+// — the same model, twice, which is exactly why the picker read "Sonnet 5 (default)" / "Sonnet 5 (sonnet)"
+// and why the word `default` was unavoidable. Collapsed by the wire id they resolve to.
+//
+// WHICH ONE SURVIVES matters, because the survivor's `value` is what gets sent when you pick it: a
+// CONCRETE id beats an alias (it can never drift), and among aliases anything beats `default` (which
+// names no model at all). Rows whose exact id is unknown are never merged — "unknown" is not a key,
+// and two different unknowns are not the same model.
+function dedupeModelRows(rows) {
+  const items = Array.isArray(rows) ? rows.filter((m) => m && typeof m.value === "string") : [];
+  const rank = (m) => {
+    const v = String(m.value || "").toLowerCase();
+    if (v === "default") return 2;                       // worst: names no model
+    return MODEL_ALIASES.has(v) ? 1 : 0;                 // concrete id wins outright
+  };
+  const byId = new Map(), out = [];
+  for (const m of items) {
+    const id = modelExactId(m);
+    if (!id) { out.push(m); continue; }                  // unknown exact id — never merged
+    const seen = byId.get(id);
+    if (!seen) { byId.set(id, m); out.push(m); continue; }
+    if (rank(m) < rank(seen)) {                          // a better spelling of a model already listed
+      byId.set(id, m);
+      out[out.indexOf(seen)] = m;
+    }
+  }
+  return out;
+}
+
 function modelOptionGroups(list) {
-  const items = Array.isArray(list) ? list.filter((m) => m && typeof m.value === "string") : [];
+  const items = dedupeModelRows(list);
   const isOmni = (m) => m.value.startsWith("omni/");
   // label/title come from the MODEL IDENTITY helpers so no option can render a bare "Default"/"Opus"
   // without the exact wire id it resolves to sitting right next to it.
@@ -9234,6 +10029,117 @@ function modelOptionGroups(list) {
   };
 }
 // ===== end MODEL OPTION GROUPS pure helper =====
+// ===== MODEL SELECT FILL — sliced for lib/modelSelectFill.test.mjs ============================
+// Offered only when the catalogue has not loaded. No `default` entry: it names no model, so it can
+// only ever tell you less than the three below, each of which is a real, accepted subscription alias.
+const WS_FALLBACK_MODELS = [
+  { value: "opus", label: "Opus" }, { value: "sonnet", label: "Sonnet" }, { value: "haiku", label: "Haiku" },
+];
+// Fill ANY model <select> from a catalogue list. One implementation, called by both builders
+// (fillModelSelect for the Core desktop pane, buildMobileModelSelect for mobile AND Pact's desktop
+// row) so the two can never drift again.
+//
+// Reported, and the reason this was extracted: the dropdown offered exactly ONE entry — the model
+// already running — so a conversation on Sonnet could not be moved to Opus at all. The mechanism:
+// when the catalogue is empty (a cold load, or a cached catalogue that holds only omni/* entries
+// while OmniRoute is off) `groups` comes out empty, and the "keep the current pick visible" branch
+// below then injects the ACTIVE model as a lone option. A select with one option is not a blank
+// control, so the existing "no options at all" fallback never fired — and the picker was a dead end
+// that named the right model and could do nothing else.
+//
+// The rule now: the subscription aliases are offered whenever the catalogue has no real Anthropic
+// entry to offer, regardless of whether an active model was injected alongside them. A picker must
+// always be able to reach every model the account can run.
+function wsFillModelSelectFrom(sel, list, shown, requestRefresh, sig) {
+  // REBUILD ONLY WHEN SOMETHING CHANGED. This runs from paintPane, so it fired on every event in
+  // every pane — and it processes the WHOLE catalogue each time (dedupe, group, parse every model id
+  // into a human name) to produce the same handful of <option>s it already had. Measured against the
+  // real cached catalogue on this machine: 468 models, 14 options built, **1.13 ms per call**. With
+  // eight live panes repainting on their agents' events that is ~90 ms/sec of pure waste, which is
+  // exactly the kind of cost that turns typing into a stutter.
+  //
+  // The signature covers everything that can change the OPTIONS or the SELECTION; `syncSelect` in
+  // the package has used the same guard for its own selects all along. `_fillOk` makes the fast path
+  // conditional on having actually built something, so a cold load that produced nothing still
+  // retries (and still asks for the real catalogue).
+  if (sig != null && sel._fillSig === sig && sel._fillOk) return;
+  // A build that fell back to the bare aliases is NOT a good enough answer to cache: the real
+  // catalogue has not arrived, and the retry that asks for it lives on this path. Caching it would
+  // have left a pane showing three aliases forever if the first request came back empty.
+  let usedFallback = false;
+  const g = modelOptionGroups(list);
+  // Every value we actually render, tracked as we go. The alternative — assigning `sel.value` and
+  // inspecting what the browser did with it — leans on a <select> silently rejecting a value no
+  // <option> carries. That is true of a real <select>, but it makes "did this pick survive?"
+  // unanswerable without a live DOM, and the answer decides which model the picker CLAIMS to be on.
+  const rendered = new Set();
+  const mkOpt = (o) => { rendered.add(String(o.value)); return el("option", { value: o.value, title: o.title || "" }, [o.label]); };
+  const groups = [];
+  if (g.anthropic.length) groups.push(el("optgroup", { label: "Anthropic" }, g.anthropic.map(mkOpt)));
+  else {
+    // The catalogue named no Anthropic model. Offer the aliases the SDK always accepts so Opus/Sonnet/
+    // Haiku stay reachable, and ask the server for the real catalogue now — on a cold load the first
+    // "models" request went out before any session existed, so the answer was legitimately empty and
+    // nothing ever asked again.
+    groups.push(el("optgroup", { label: "Anthropic" }, WS_FALLBACK_MODELS.map((m) => {
+      rendered.add(String(m.value));
+      return el("option", { value: m.value, title: "A subscription alias the SDK always accepts \u2014 offered because the model catalogue has not loaded yet." }, [m.label]);
+    })));
+    if (typeof requestRefresh === "function") requestRefresh();
+    usedFallback = true;
+  }
+  if (g.combos.length) groups.push(el("optgroup", { label: "OmniRoute" }, g.combos.map(mkOpt)));
+  if (sel._omniShowAll && g.individualGroups.length) {
+    for (const grp of g.individualGroups) groups.push(el("optgroup", { label: grp.label }, grp.options.map(mkOpt)));
+    if (g.lessOption) groups.push(el("optgroup", { label: "OmniRoute" }, [mkOpt(g.lessOption)]));
+  } else if (g.moreOption) {
+    groups.push(el("optgroup", { label: "OmniRoute" }, [mkOpt(g.moreOption)]));
+  }
+  // A pane's already-chosen (or currently-active-but-uncataloged) model may not be in a freshly-
+  // (re)fetched catalog — inject a plain option so the dropdown still SHOWS it rather than silently
+  // showing nothing. Skipped when an alias group above already carries that exact value.
+  if (shown && !list.some((m) => m.value === shown) && !WS_FALLBACK_MODELS.some((m) => m.value === shown)) {
+    rendered.add(String(shown));
+    groups.push(el("option", { value: shown, title: "Currently running \u2014 shown so the pick is never silently lost." },
+                   [humanModelName(shown) || shown]));
+  }
+  sel.replaceChildren(...groups);
+  let want = shown ? String(shown) : "";
+  // A pane whose stored pick is an alias that dedupeModelRows collapsed away — `default` is the one
+  // that matters, since it was the shipped default — matches no <option> now. Re-point it at the
+  // option carrying the SAME wire id, which is the identical model by definition (measured: `default`
+  // and `sonnet` both resolve to claude-sonnet-5). Without this the browser leaves selectedIndex at
+  // -1 and the blank-fallback below would silently show the FIRST model in the list instead — a pane
+  // running Sonnet claiming to be on Opus, which is precisely the "the picker lies about what is
+  // running" class of bug. The stored pick is not rewritten here; only what the control displays.
+  if (want && !rendered.has(want)) {
+    const exact = resolveModelExact(list, want, "");
+    const same = exact ? list.find((m) => m && m.value !== want && modelExactId(m) === exact && rendered.has(String(m.value))) : null;
+    if (same) want = String(same.value);
+  }
+  sel.value = rendered.has(want) ? want : "";
+
+  // With OmniRoute off (routingDefaultModel() -> null) a fresh pane/tab carries NO model pick, and no
+  // active model is reported until a turn answers — so `shown` is "", no <option> matches it, and the
+  // browser leaves selectedIndex at -1: the control renders BLANK. Fall back to the first real option.
+  if (!sel.value) { const first = sel.querySelector("option"); if (first) sel.value = first.value; }
+  sel._fillSig = sig; sel._fillOk = rendered.size > 0 && !usedFallback;
+}
+// One shared, debounced "ask the server for the real model catalogue" — see wsFillModelSelectFrom.
+// Debounced because every pane's selector repaints independently and would otherwise each fire one.
+let WS_MODELS_REFRESH_AT = 0;
+function wsRequestModelCatalogue() {
+  const now = Date.now();
+  if (now - WS_MODELS_REFRESH_AT < 10000) return;   // at most one probe per 10s across all panes
+  WS_MODELS_REFRESH_AT = now;
+  // No sessionKey on purpose. The server can only read the real catalogue off a RUNNING `claude`
+  // process — which is exactly why the connect-time request came back empty (it fired before any
+  // session existed) — and workspace.mjs _models already falls back to "any live session" when it
+  // is given no key. Passing one from here would mean reaching into the Core view's own closure
+  // state from module scope, which is the shape of bug lib/appScopeLeaks.test.mjs exists to stop.
+  wsPost("control", { action: "models", args: {} });
+}
+// ===== end MODEL SELECT FILL ===================================================================
 // Shared MOBILE model picker for BOTH workspaces (Core + Pact). Desktop has per-pane selectors; mobile had
 // none. Reads the ONE global cached catalog (cm_models — refreshed whenever any session answers "models",
 // mirrors the server cross-session cache) and applies the pick to the LIVE session immediately via the same
@@ -9249,21 +10155,7 @@ function buildMobileModelSelect(hooks) {
     // No synthetic "Default" entry (see fillModelSelect for the desktop rationale) — with no explicit pick,
     // show/select the REAL model actually running, grouped Anthropic vs OmniRoute (combos only by default).
     const list = readCachedModels().filter((m) => m && typeof m.value === "string" && (routingOmniVisible() || !m.value.startsWith("omni/")));
-    const g = modelOptionGroups(list);
-    const mkOpt = (o) => el("option", { value: o.value, title: o.title || "" }, [o.label]);
-    const groups = [];
-    if (g.anthropic.length) groups.push(el("optgroup", { label: "Anthropic" }, g.anthropic.map(mkOpt)));
-    if (g.combos.length) groups.push(el("optgroup", { label: "OmniRoute" }, g.combos.map(mkOpt)));
-    if (sel._omniShowAll && g.individualGroups.length) {
-      for (const grp of g.individualGroups) groups.push(el("optgroup", { label: grp.label }, grp.options.map(mkOpt)));
-      if (g.lessOption) groups.push(el("optgroup", { label: "OmniRoute" }, [mkOpt(g.lessOption)]));
-    } else if (g.moreOption) {
-      groups.push(el("optgroup", { label: "OmniRoute" }, [mkOpt(g.moreOption)]));
-    }
-    const shown = value || active || "";
-    if (shown && !list.some((m) => m.value === shown)) groups.push(el("option", { value: shown, title: "Not in the current catalogue — shown so the pick is never silently lost." }, [humanModelName(shown) || shown]));
-    sel.replaceChildren(...groups);
-    sel.value = shown;
+    wsFillModelSelectFrom(sel, list, value || active || "", wsRequestModelCatalogue);
   };
   sel._fill();
   sel.addEventListener("change", () => {
@@ -9282,9 +10174,25 @@ function pactUpdateModelNow(t) {
   if (!span) return;
   // EXACT build, not the date-stripped short label — "which Opus am I on?" is only answerable with the date.
   const r = t ? chatModelReadout(readCachedModels(), t.model, t.activeModel) : { text: "", title: "" };
-  span.textContent = r.text ? "· " + r.text : "· model unreported";
-  span.title = r.title;
-  span.classList.toggle("--unknown", !r.text);
+  // The SAME shared readout Core's wsPaintModelNow uses: the selector says what was PICKED, this says
+  // what the engine reported is actually RUNNING — and, when nothing is running, says that and names
+  // what will. One function, so "which model is working" cannot be worded two ways in two workspaces.
+  const planned = t ? chatModelReadout(readCachedModels(), t.model, "").text : "";
+  const out = wsModelNowReadout(r, t && (t.key ? t._engineLive : false), planned);
+  // On DESKTOP this span IS the package's chip, and the package hides it whenever `activeLabel` is
+  // empty — so writing textContent onto it directly left the right text on an invisible node, the
+  // exact bug Core hit and was fixed for. Publish through setState, as Core does. Mobile keeps the
+  // direct write: it never mounts the package, so there is no state to publish into.
+  if (PACT_CHAT._view && span === PACT_CHAT._view.els.modelNow) {
+    // `shown: false` rides along deliberately: the package's `model` patch also toggles the model
+    // SELECT, and Pact substitutes its own for that role — omitting it here would flip the package's
+    // (unmounted) native back on and lose Pact's stated intent on the next patch that reads it.
+    PACT_CHAT._view.setState({ model: { shown: false, activeLabel: out.text.replace(/^\u00b7\s*/, "") } });
+  } else {
+    span.textContent = out.text;
+  }
+  span.title = out.title;
+  span.classList.toggle("--unknown", !out.known);
 }
 /** Model-bar swarm indicator: one small figure per LIVE subagent, lit while it works. In-place like
  *  pactUpdateModelNow — never repaints the transcript. Renders nothing at all when no subagents are
@@ -9362,7 +10270,22 @@ function swarmState(tasks) {
 function pactUpdateUsageNow(t) {
   if (!PACT_CHAT || !PACT_CHAT.host || !t || t.id !== PACT_CHAT.activeId) return;
   const usageEl = PACT_CHAT.host.querySelector(".pc-usage");
-  if (usageEl) { const usg = wsUsageLabel(t.usage, t.contextUsage); usageEl.textContent = usg.text; usageEl.title = usg.title; usageEl.hidden = !usg.text; }
+  if (usageEl) {
+    // Hiding it entirely made "no reading yet" indistinguishable from "this control does not exist".
+    // Same treatment as Core's: say what is actually true, and stay clickable so you can ask for one.
+    // No key at all means the conversation has never been opened on the engine, so there is certainly
+    // nothing running — knowable here, without a round-trip, and the single commonest case of the
+    // reported "why is the context not being reported".
+    wsPaintUsage(usageEl, t.usage, t.contextUsage, t.key ? t._engineLive : false);
+  }
+  // ASK ONCE, exactly as Core's paintPane does. Pact only ever requested a context reading after a
+  // `result`, a compaction or a resync — so a tab reopened or resumed without sending anything never
+  // asked at all and sat on "no reading yet" indefinitely, with no way to tell that from a broken
+  // readout. This is also what delivers the `live` flag both readouts now depend on.
+  if (t.key && !t.contextUsage && t._ctxAsked !== t.key) {
+    t._ctxAsked = t.key;
+    wsPost("control", { action: "contextUsage", args: { sessionKey: t.key } });
+  }
 }
 // Compact the ACTIVE Pact conversation: send `/compact` as the next turn (the CLI summarises + shrinks the
 // context window). Gated so it only runs on a conversation that has actually started — sending it as a tab's
@@ -9464,14 +10387,21 @@ function pactChatRender() {
   const hist = el("button", { class: "pact-ed-ico", title: "Pact chat history — resume a past conversation" }, ["🕐"]);
   hist.addEventListener("click", () => pactChatToggleHistory());
   const sync = el("button", { class: "pact-ed-ico", title: "Sync now — re-fetch this conversation's authoritative state (fixes a desync between two open clients)" }, ["↻"]);
+  // MOBILE keeps its own standalone Compact button (the mobile pass is deliberately deferred, same as
+  // everywhere else in this migration — see the `mob` branch below).
   const compactBtn = el("button", { class: "pact-ed-ico pact-compact", title: "Compact — summarise this conversation to shrink its context window. Sends /compact as the next turn." }, ["🗜 Compact"]);
   compactBtn.addEventListener("click", () => pactCompact());
-  const wrapBtn = el("button", { class: "pact-ed-ico pact-wrap", title: "Wrap — archive this conversation's head and start a fresh context window. Nothing is deleted; asks for confirmation first." }, ["⟳ Wrap"]);
-  wrapBtn.addEventListener("click", () => pactOpenWrapDialog(pactChatActive()));
-  const wrapCounters = el("span", { class: "ws-wrap-counters" }, []);
+  // DESKTOP: Compact/Wrap/the auto-wrap checkbox+meter, built through the SAME shared function the
+  // Chat Shell Lab and Core use (window.ChatShell.buildWrapControls) — see pactPaintWrapControls,
+  // called on every pactChatPaint() since the meter and Wrap's gating depend on LIVE context usage.
+  const wrapWrap = el("span", { class: "pact-wrapwrap" }, []);
   sync.addEventListener("click", () => pactChatForceResync(sync));
   const bm = el("button", { class: "pact-ed-ico pc-bm-ico", title: "Bookmarked responses — jump to a starred answer" }, ["★"]);
-  const bmPop = el("div", { class: "ws-bm-pop --down" }, []);   // opens downward (the head is at the top)
+  // Which way this opens depends on where the star ends up: MOBILE keeps it in the head row (top
+  // of the screen), so it must open downward (`--down`) or it goes off-screen above the viewport.
+  // DESKTOP substitutes it into the package's FOOTER action row (bookmarks role substitution, same
+  // position Core's own bmPop uses) — opening upward, the package's default with no `--down`.
+  const bmPop = el("div", { class: "ws-bm-pop" + (pactIsMobile() ? " --down" : "") }, []);
   const bmWrap = el("span", { class: "ws-bm-wrap" }, [bm, bmPop]);
   bm.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -9483,12 +10413,15 @@ function pactChatRender() {
   const modeSel = el("select", { class: "wsel wsel-sm pc-mode", title: "Permission mode for these Pact sessions" },
     WS_MODES.map((m) => el("option", { value: m.id }, [m.short])));
   modeSel.value = PACT_CHAT.mode;
-  modeSel.addEventListener("change", () => { PACT_CHAT.mode = modeSel.value; });
+  modeSel.addEventListener("change", () => { PACT_CHAT.mode = modeSel.value; pactPaintPermission(); });
   const chatCollapse = el("button", { class: "pact-ed-ico pact-collapse pcx-chat" }, ["▾"]);
   chatCollapse.addEventListener("click", () => pactToggleCollapse("chat"));
   // A subtle "N tok · P% ctx" readout for the active tab — same formatter/format as the Core pane
   // badge (wsUsageLabel). Hidden until this tab actually has usage data; filled by pactChatPaint.
-  const usageEl = el("span", { class: "pc-usage" }, []);
+  // `let`, not const: on DESKTOP this is replaced below by the chat shell package's own context chip
+  // (so it renders identically to Core's) and this locally-built node is used only by the mobile
+  // header, which does not mount the package. Same for `modelNow`.
+  let usageEl = el("span", { class: "pc-usage" }, []);
   usageEl.hidden = true;
   // Account-wide plan usage limits now live in the dedicated Workspace → Usage tab (multi-key + failover),
   // so the Pact head no longer carries a usage badge. The Pact stream still requests `usageLimits` on
@@ -9503,8 +10436,12 @@ function pactChatRender() {
   const headBulb = el("div", { class: "pc-head-bulb" }, []);
   // Live readout of the model THIS conversation actually runs (captured from the agent's `init`/`model`
   // events — see the `case "init"` in pactChatRoute). "Default" no longer hides which model that is.
-  const modelNow = el("span", { class: "pc-model-now", title: "The model this conversation is actually running" }, []);
-  { const _a = PACT_CHAT.tabs.find((x) => x.id === PACT_CHAT.activeId); const _lbl = _a ? chatModelLabel(null, _a.activeModel, _a.model) : ""; if (_lbl) modelNow.textContent = "· " + _lbl; }
+  let modelNow = el("span", { class: "pc-model-now", title: "The model this conversation is actually running" }, []);
+  // Never built EMPTY: an empty readout is indistinguishable from "there is no such readout". The full
+  // in-place updater (pactUpdateModelNow) refines this the moment the engine reports a model.
+  // Never built EMPTY (an empty readout is indistinguishable from "there is no such readout") — and
+  // never with its own wording either: pactUpdateModelNow, which shares Core's phrasing, fills it.
+  modelNow.textContent = "\u00b7 model not reported yet";
   // DESKTOP model picker for Pact. Pact only ever had the read-only `.pc-model-now` readout, so a Pact
   // conversation was stuck on whatever it defaulted to (typically Sonnet) with no way to move it to Opus —
   // Core had a selector, Pact didn't. Same catalog + same live `setModel` control action as Core/mobile, so
@@ -9532,26 +10469,33 @@ function pactChatRender() {
   const headKids = mob
     ? [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, compactBtn, bmWrap, el("span", { class: "ws-spacer" }, []), headBulb, modelNow, pactModelSel, usageEl, modeSel, chatCollapse]
     : [el("div", { class: "pc-tabs" }, tabs), el("span", { class: "ws-spacer" }, []), headActions, chatCollapse];
-  const head = el("div", { class: "pact-zone-hd pc-head" }, headKids);
   // ── The model bar (desktop): every model/session control in one place, below the composer.
   // Left → right: model selector · what's ACTUALLY running · context · agent swarm ··· Compact · Bypass.
   // Readouts left, actions right. `modelNow` and `usageEl` are the SAME nodes the existing update paths
   // (pactUpdateModelNow / pactUpdateUsageNow) already query by class, so re-parenting them here keeps every
   // live update working without touching those functions.
   const swarmEl = el("div", { class: "pc-swarm", title: "Subagents working right now" }, []);
-  const modelBar = mob ? null : el("div", { class: "pc-modelbar" }, [
-    pactModelSel, modelNow, usageEl, swarmEl,
-    el("span", { class: "ws-spacer" }, []),
-    headBulb, wrapCounters, compactBtn, wrapBtn, modeSel,
-  ]);
+  // Hoisted above the head/pactFrame construction below (was declared further down, after this
+  // point, with zero dependents in between) — buildShellFrame's existingCore needs the real .pc-scroll
+  // node to already exist so frame.core can BE it, not a discarded stand-in never mounted anywhere.
   const scroll = el("div", { class: "pc-scroll" }, []);
-  const input = el("textarea", { class: "pc-input", rows: "1", placeholder: "Message the Pact agent… (⌘/Ctrl+Enter to send)" });
-  const send = el("button", { class: "pc-send" }, ["Send"]);
+  // DESKTOP ONLY: head (identity row1 + stats row2) and the model bar are built through the SAME
+  // window.ChatShell.buildShellFrame the Chat Shell Lab and Core use — the piece that was still
+  // missing after leaf widgets were already shared. Mobile keeps its own single-row `head` and no
+  // model bar at all, completely untouched — the mobile pass is deliberately deferred, same as
+  // every other Pact desktop-only feature in this migration.
+  // Live/Held bulb, centred on the SEAM between transcript and footer — matching Core's fix and the
+  // Chat Shell Lab exactly (previously docked above Send instead, a corner no one asked for).
+  let pactSeamBulb = el("div", { class: "ws-seam-bulb seambulb" }, []);
+  // Mobile builds its own compose field; on desktop these four are re-pointed at the package's
+  // equivalents right after mount(), which is why they are `let`.
+  let input = el("textarea", { class: "pc-input rg-typebox", rows: "1", placeholder: "Message the Pact agent… (⌘/Ctrl+Enter to send)" });
+  let send = el("button", { class: "pc-send btn-send" }, ["Send"]);
   // "■ Stop" — interrupt the active tab's in-flight turn without ending the conversation, mirroring
   // the Core cockpit's stop button (same "stop" control → SDK interrupt in lib/workspace.mjs).
   // Hidden unless the active tab is busy (driven in pactChatPaint). Send stays clickable while busy
   // so a mid-turn send still queues (v1.2.4).
-  const stop = el("button", { class: "pc-stop", title: "Stop the current response (keeps the conversation)" }, ["■ Stop"]);
+  let stop = el("button", { class: "pc-stop btn-stop", title: "Stop the current response (keeps the conversation)" }, ["■ Stop"]);
   stop.hidden = true;
   // Flip to "stopping…" LOCALLY on click — never wait for the round-trip. The engine's interrupt can take
   // seconds on a wedged turn, and an unchanged button reads as "the press did nothing".
@@ -9583,7 +10527,7 @@ function pactChatRender() {
   const replyRowWrap = el("div", { class: "ws-reply-row-host" }, []);
   const imgPreview = el("div", { class: "pc-img-preview" }, []); imgPreview.hidden = true;
   const imgErr = el("div", { class: "pc-img-err" }, []); imgErr.hidden = true;
-  const sendWrap = el("div", { class: "pc-send-wrap" }, [send]);   // relative host so the Live/Held bulb can dock above Send
+  const sendWrap = el("div", { class: "pc-send-wrap sendgrp" }, [stop, send]);   // ONE bordered object, like the Lab's .sendgrp   // relative host so the Live/Held bulb can dock above Send
   // Always-visible worktree pill (compose bar, lower-LEFT): shows which checkout THIS conversation runs in
   // (⌂ main by default) and, clicked, opens the state-aware worktree menu — bind (before first message),
   // migrate, or merge-&-return (after). Visible even before any worktree exists, so it's always discoverable.
@@ -9596,9 +10540,12 @@ function pactChatRender() {
   // it move to a dedicated bar BELOW it (pc-actionbar): upload · worktree · repo/workspace · repo-history
   // toggle · live/held on the left, and ■ Stop + Send right-aligned. Stop is ALWAYS present and toggles
   // enabled/disabled rather than appearing and vanishing, so the row never reflows mid-turn.
-  const compose = mob
-    ? el("div", { class: "pc-compose" }, [imgFileInput, attach, input, stop, sendWrap])
-    : el("div", { class: "pc-compose --stacked" }, [imgFileInput, input]);
+  // The type box, its gutter, the jump/recall drawer and the ⇕ Expand toggle are all the package's
+  // on desktop — built by mount() below, with Pact's per-tab expand choice pushed in as state and
+  // read back through `on.expand`. Mobile keeps its own single-row compose, untouched.
+  const pactSearchDrawer = el("div", { class: "ws-search-drawer frow searchrow" }, []);
+  pactSearchDrawer.hidden = true;
+  const compose = el("div", { class: "pc-compose" }, mob ? [imgFileInput, attach, input, stop, sendWrap] : []);
   compose.addEventListener("dragover", (e) => { e.preventDefault(); compose.classList.add("pc-drag"); });
   compose.addEventListener("dragleave", () => compose.classList.remove("pc-drag"));
   compose.addEventListener("drop", (e) => {
@@ -9607,17 +10554,12 @@ function pactChatRender() {
     pactAttachImageFiles(pactChatActive(), files);
   });
   const composeExtras = el("div", { class: "pc-compose-extras" }, [replyRowWrap, imgPreview, imgErr]);
-  const suggest = el("div", { class: "pc-suggest" });   // idle "suggested next prompt" chip (populated by pactChatUpdateSuggest)
+  const suggest = el("div", { class: "pc-suggest chip" });   // idle "suggested next prompt" chip (populated by pactChatUpdateSuggest)
   // MOBILE: bake the worktree pill + the Auto/suggest controls into ONE row (pc-toolrow) to save a whole row of
   // vertical space. DESKTOP: worktree pill stays inline in the compose; the suggest bar sits on its own row.
   // DESKTOP action bar — the line directly BENEATH the type box. Left: upload · worktree · repo/workspace ·
   // repo-history toggle. Right: ■ Stop (always present; enabled only mid-turn) then Send. Stop keeps its slot
   // whatever the turn state, so nothing shifts under the cursor when a turn starts or ends.
-  const actionBar = mob ? null : el("div", { class: "pc-actionbar" }, [
-    attach, wtPill, el("span", { class: "pc-repo-lbl", title: PACT_REPO }, [PACT_REPO.split("/").pop()]),
-    el("span", { class: "ws-spacer" }, []),
-    stop, sendWrap,
-  ]);
   // DESKTOP order, top → bottom: header (tabs + actions) · transcript · pasted-image strip · continuation
   // line (suggest + ★ bookmark) · type box · action bar (upload/repo/worktree ··· Stop · Send) · model bar.
   // Mobile keeps its existing compact composition untouched — that pass comes after this one is confirmed.
@@ -9628,22 +10570,201 @@ function pactChatRender() {
   const exoMount = active ? exoMountBar(active, pactExoCtx(active)) : null;
   PACT_CHAT._exo = exoMount; PACT_CHAT._exoTabId = active ? active.id : null;
   const exoNode = exoMount ? exoMount.root : el("span", {}, []);
-  if (mob) host.replaceChildren(head, exoNode, scroll, composeExtras, el("div", { class: "pc-toolrow" }, [suggest, wtPill]), compose);
-  else {
-    // ★ Bookmark moves onto the continuation line, beside the suggested-next chip.
-    const contLine = el("div", { class: "pc-contline" }, [suggest, bmWrap]);
-    host.replaceChildren(head, exoNode, scroll, composeExtras, contLine, compose, actionBar, modelBar);
+  // Same re-homing as Core (see wsPaintStatsRow's neighbour in buildPane): the exocortex's REAL
+  // ctx/agents/jump chips move into the lab-matching slots instead of stacking a second bar above the
+  // transcript. Desktop only — mob keeps the old single exoNode, matching every other deferred-mobile spot.
+  // `let`, and declared out here, because the context chip's wiring can only be completed AFTER the
+  // mount below: the node the user actually sees is the PACKAGE's chip (`pv.els.contextBtn`), which
+  // does not exist yet at this point. Wiring it here — which is what this did — pointed both the
+  // click proxy and the popover's anchor at the local `usageEl` that the mount then replaces, so on
+  // desktop the breakdown had no reachable anchor at all, and `on.context` (`usageEl.click()`) had
+  // become a button clicking ITSELF once usageEl was reassigned: unbounded recursion, not a readout.
+  let exoCtxChip = null;
+  if (exoMount && !mob) {
+    const exoAgentsChip = exoMount.root.querySelector(".exo-chip-agents");
+    exoCtxChip = exoMount.root.querySelector(".exo-chip-ctx");
+    const exoJumpGroup = exoMount.root.querySelector(".exo-jump");
+    if (exoAgentsChip) { exoAgentsChip.classList.add("chip"); headActions.insertBefore(exoAgentsChip, add); }
+    if (exoJumpGroup) pactSearchDrawer.appendChild(exoJumpGroup);
+    // The package's own chip already shows the raw "N / M tok · P%" readout — a second,
+    // percentage-only chip beside it would duplicate, not match, the Lab. exoCtxChip stays alive but
+    // hidden: its click is what actually polls the server for a fresh reading and opens the panel.
+    if (exoCtxChip) exoCtxChip.hidden = true;
   }
+  let head, modelBar;
+  if (mob) {
+    head = el("div", { class: "pact-zone-hd pc-head" }, headKids);
+    modelBar = null;
+    host.replaceChildren(head, exoNode, scroll, composeExtras, el("div", { class: "pc-toolrow" }, [suggest, wtPill]), compose);
+  } else {
+    // DESKTOP PACT IS THE PACKAGE, exactly like Core and the Chat Shell Lab — same mount(), same
+    // three regions, same controls. Pact keeps only what is genuinely Pact's: its conversation tabs
+    // (with their own rename/close/sync behaviour), its worktree pill, its routing-aware model
+    // select, and its own transcript renderer. Everything else is the package's.
+    // Mobile is untouched and stays on its own compact single-row composition — that pass is
+    // deliberately deferred, same as every other Pact desktop-only feature.
+    const pv = window.ChatShellUI.mount(host, {
+      kind: "pact",
+      core: scroll,
+      slots: {
+        headExtra: [headActions, chatCollapse],
+        composeExtra: [imgFileInput, composeExtras],
+        // ROLE SUBSTITUTION, not a trailing slot. Each of these IS the package's control for that
+        // role, so it is mounted where that role belongs — repo/worktree before 🕐/☆/⇕Full, the model
+        // picker first on the model row, the bookmark star where the Lab's own ⭐ sits (between 🕐
+        // and ⇕Full) — giving Pact the Lab's row order rather than its own.
+        // These four are Pact's because they are genuinely richer than the package's natives: the
+        // worktree menu binds/migrates/merges, the model picker is routing-aware, the permission
+        // selector carries Pact's own mode set, and the bookmark star opens Pact's own per-response
+        // popup (bmPop) rather than a generic list.
+        bookmarks: bmWrap,
+        //
+        // modelNow and the context readout are NOT substituted any more, and that was a real,
+        // visible bug: Pact was handing over a bare `span.pc-model-now` / `span.pc-usage` where Core
+        // uses the package's `chip --far` / `chip --acc` button, so the same two readouts rendered as
+        // plain grey text in one workspace and as chips in the other. Reported as "why isn't this
+        // looking similar between the two places". Pact now uses the package's own nodes and simply
+        // ALIASES its class names onto them below — the same trick that keeps `.pc-input` working —
+        // so pactUpdateModelNow/pactUpdateUsageNow keep finding them by class, unchanged.
+        meta: el("span", { class: "cs-meta" },
+          [wtPill, el("span", { class: "pc-repo-lbl chip", title: PACT_REPO }, [PACT_REPO.split("/").pop()])]),
+        modelPick: pactModelSel,
+        permission: modeSel,
+        modelExtra: [swarmEl],
+      },
+      on: {
+        send: () => { pactChatSend(pactChatActive()); return false; },   // pactChatSend clears the box itself
+        stop: () => { const a = pactChatActive(); if (!a || !a.key) return; a._stopping = Date.now(); pactChatPaint(a); wsPost("stop", { sessionKey: a.key }); },
+        input: (v) => { const a = pactChatActive(); if (a) { a.draft = v; pactStateSave(); pactChatUpdateSuggest(a); } },
+        attach: () => imgFileInput.click(),
+        drop: (files) => pactAttachImageFiles(pactChatActive(), files),
+        paste: (e) => {
+          const items = e.clipboardData && e.clipboardData.items; if (!items) return;
+          const files = [...items].filter((it) => it.kind === "file" && /^image\//.test(it.type)).map((it) => it.getAsFile()).filter(Boolean);
+          if (files.length) { e.preventDefault(); pactAttachImageFiles(pactChatActive(), files); }
+        },
+        expand: (on) => { const a = pactChatActive(); if (a) { a.expanded = on; pactStateSave(); } },
+        history: () => hist.click(),
+        bookmarks: () => bm.click(),
+        autoWrap: (on) => {
+          const a = pactChatActive(); if (!a) return;
+          a.autoWrap = on;
+          wsPost("control", { action: "setAutoWrap", args: { sessionKey: a.key, enabled: on } });
+          pactStateSave();
+        },
+        effort: (v) => {
+          const a = pactChatActive(); if (!a) return;
+          a.effort = v || null;
+          if (a.key) wsPost("control", { action: "setEffort", args: { sessionKey: a.key, effort: a.effort } });
+          pactStateSave();
+        },
+        ultracode: (v) => {
+          const a = pactChatActive(); if (!a) return;
+          a.ultracode = v;
+          if (v) { a.effort = "xhigh"; if (a.key) wsPost("control", { action: "setEffort", args: { sessionKey: a.key, effort: "xhigh" } }); }
+          pactStateSave();
+        },
+        autoContinue: (v) => {
+          const a = pactChatActive(); if (!a) return;
+          a._autoContinue = v;
+          // Re-ticking at the ceiling grants the next batch, exactly as the suggest bar's own toggle
+          // does — otherwise switching it back on at the cap would look like it did nothing.
+          const cap = a._autoCap || PACT_AUTO_CAP;
+          if (v && (a._autoCount || 0) >= cap) a._autoCap = (a._autoCount || 0) + PACT_AUTO_CAP;
+          a._autoDeadline = 0;             // a deliberate toggle always starts a fresh countdown
+          if (!v) pactAutoStop(a);
+          pactChatUpdateSuggest(a);
+          pactStateSave();
+        },
+        compact: () => pactCompact(),
+        wrap: () => pactOpenWrapDialog(pactChatActive()),
+        // Onto the hidden REAL exocortex chip (Core's `on.context` does exactly this) — never onto
+        // `usageEl`, which IS the package's own button and would re-enter this handler forever.
+        context: () => { if (exoCtxChip) exoCtxChip.click(); },
+        earlier: () => { const a = pactChatActive(); if (a) exoExtend(a, "up", pactExoCtx(a)); },
+      },
+    });
+    PACT_CHAT._view = pv;
+    // Pact's conversation medallions ARE its identity slot — the package treats an array of nodes as
+    // identity content, so the tabs keep every handler they were built with.
+    pv.setState({
+      identity: tabs.concat([add]),
+      multiChat: { shown: false },          // Pact is always multi-conversation; a toggle would be a lie
+      // `model` stays hidden because Pact fills its own picker for that role and the native one is
+      // never mounted. `permission` is NOT hidden any more, and that matters: `shown` now applies to
+      // whatever element OCCUPIES the role, so with a substituted control this line was an
+      // instruction to hide Pact's own permission select. It was harmless only for as long as the
+      // package painted a node Pact never mounts — which was the same reason Bypass never turned red.
+      // `context` likewise stopped hiding once the package's chip became the real control.
+      model: { shown: false },
+      permission: { value: PACT_CHAT.mode },
+      fast: { shown: false },
+      // Effort and ultracode are Pact's now too — the `setEffort` control action was already there,
+      // Pact simply never offered the control. Per-tab, like model and draft, and persisted with them.
+      effort: { value: (pactChatActive() && pactChatActive().effort) || "", disabled: !!(pactChatActive() && pactChatActive().ultracode) },
+      ultracode: { checked: !!(pactChatActive() && pactChatActive().ultracode) },
+      repo: { shown: false }, worktree: { shown: false },
+      history: false,   // `bookmarks` is not set here any more: it's a role substitution (slots.bookmarks
+      // above), so the package's own bmBtn is never mounted at all — nothing to hide.
+      // AUTO-CONTINUE, on the control the design puts it on: inside the send group, beside Stop/Send,
+      // showing the real round count against the real cap. It drives Pact's existing engine
+      // (pactAutoEnsure / pactAutoDecide) — this is a relocation of a working feature onto the
+      // shell's own control, not a second switch for the same flag.
+      autoContinue: { on: !!(pactChatActive() && pactChatActive()._autoContinue),
+                      n: (pactChatActive() && pactChatActive()._autoCount) || 0,
+                      max: (pactChatActive() && pactChatActive()._autoCap) || PACT_AUTO_CAP },
+      compose: { placeholder: "Message the Pact agent… (⌘/Ctrl+Enter to send)",
+                 value: (pactChatActive() && pactChatActive().draft) || "",
+                 expanded: !!(pactChatActive() && pactChatActive().expanded) },
+      saved: false,
+    });
+    // Alias Pact's own names onto the package's nodes, so every paint path below reads unchanged.
+    input = pv.els.typebox;
+    input._csView = pv;
+    // `.pc-input` IS Pact's name for "the live compose box", and SEVEN independent code paths find it
+    // by that class rather than through a variable: pactChatSend (reads what you typed), the tab-switch
+    // draft save, the focus/caret restore across a rebuild, the auto-continue "are you mid-typing" gate,
+    // and the offline refill. Handing them the package's textarea without this class made every one of
+    // them resolve to null — silently, because they all guard with `if (ta)`. The visible symptom was
+    // that Pact could not send at all (pactChatSend read "" from a null box and returned), which is
+    // exactly the bug this fixes. Aliasing the class is what keeps those seven lookups honest.
+    input.classList.add("pc-input");
+    // Same aliasing, same reason, for the two readouts Pact stopped substituting: they are the
+    // PACKAGE's chips now (so they look identical to Core's, which was the report), and Pact's
+    // pactUpdateModelNow / pactUpdateUsageNow find them by these class names.
+    modelNow = pv.els.modelNow; modelNow.classList.add("pc-model-now");
+    usageEl = pv.els.contextBtn; usageEl.classList.add("pc-usage");
+    // …and NOW the exocortex knows which node the user actually sees, so the breakdown popover
+    // anchors to the real, visible chip instead of to a hidden one (or to a node that was replaced
+    // at mount and is no longer in the document at all).
+    if (exoCtxChip) exoCtxChip._visProxy = usageEl;
+    stop = pv.els.stopBtn;
+    send = pv.els.sendBtn;
+    pactSeamBulb = pv.els.seamBulb;
+    pv.els.attachBtn.title = `Attach up to ${WS_IMG_MAX_COUNT} images — click, paste, or drag onto the box`;
+    pv.els.wrapWrap.classList.add("pact-wrapwrap");   // pactPaintWrapControls finds it by this class
+    pv.statsRow.classList.add("ws-hstats");           // …and pactPaintStatsRow by this one
+    head = pv.header;
+    modelBar = pv.footer;
+    head.appendChild(exoNode);                        // the exocortex cue strip is a header ROW
+  }
+  pactPaintStatsRow(pactChatActive() || {});
+  pactPaintWrapControls(pactChatActive());
   pactChatUpdateSuggest(pactChatActive());
   pactUpdateSwarm(pactChatActive());   // a rebuild mints a fresh .pc-swarm — repaint from the tab's live set
   // Re-focus the freshly-mounted compose + restore the caret if the user was typing when this rebuild ran
   // (see the capture at the top) — so a background rebuild never interrupts typing. `input` IS the new node.
   if (_keepFocus && input) { input.focus(); try { input.setSelectionRange(_selStart == null ? input.value.length : _selStart, _selEnd == null ? input.value.length : _selEnd); } catch { /* detached/unsupported — ignore */ } }
   const pcStick = attachStickController(scroll, { wrapClass: "stick-wrap-pc", nearPx: 4 });   // wrap now so the pill exists from the first paint
-  // Desktop docks the Live/Held bulb just above Send. On mobile the compose is full-width and Send is hidden,
-  // so docking it here overlapped the prompt text — leave it undocked on mobile; the mobile chatStage homes
-  // it into the modebar row (centered, between the Conversations + Bookmarks buttons) instead.
-  if (!pactIsMobile()) pcStick.dockMode(sendWrap, "stick-mode--dock");
+  // Desktop docks the Live/Held bulb centred on the seam between transcript and footer, matching the
+  // Chat Shell Lab exactly. On mobile the compose is full-width and Send is hidden, so docking it here
+  // would overlap the prompt text — leave it undocked on mobile; the mobile chatStage homes it into the
+  // modebar row (centered, between the Conversations + Bookmarks buttons) instead.
+  // Desktop: the package already centres its own Live/Held marker on the transcript/footer seam and
+  // drives it from the real scroll position, so the stick controller's duplicate bulb is retired
+  // rather than re-homed. Mobile still docks it in the modebar, where the seam has no room.
+  if (pactIsMobile()) pcStick.dockMode(pactSeamBulb, "stick-mode--seam");
+  else pcStick.modeTag.classList.add("--gone");
   requestAnimationFrame(() => pactChatAutosize(input));   // size to any restored draft once the pane has real layout
   pactSyncCollapseBtns();
   pactRenderUsageLimits();   // the head was just rebuilt — restore the plan-usage badge from PACT_CHAT.usageLimits
@@ -9703,6 +10824,12 @@ function viewPact() {
     termOut,
   ]);
   const rightEl = el("div", { class: "pact-right" }, [chatEl, termEl]);
+  // THE CHAT COLUMN IS TUNABLE. It was a fixed 4:1 share of the work area with a 600px floor — one
+  // number, chosen once, for every screen and every job. Reported: "I need the width of the Pact
+  // workspace to be a bit bigger on desktop, or rather make it manually tunable."
+  // Drag the grip to set it exactly; double-click to go back to the default share.
+  const rightGrip = el("div", { class: "pact-wgrip", title: "Drag to resize the chat column · double-click to reset" }, []);
+  pactWireChatGrip(rightGrip, rightEl);
   const saveBtn = el("button", { class: "pact-save-all", title: "Save every changed file (Ctrl/⌘-S). Files also autosave 5 min after you stop typing." }, ["💾 Saved"]);
   saveBtn.disabled = true;
   saveBtn.addEventListener("click", () => pactEdSaveAll());
@@ -9710,20 +10837,33 @@ function viewPact() {
   // agent's changes is now the per-box "✓ Keep (N)" button in each box footer PLUS the per-worktree
   // "Acknowledge" rows in the tree footer (which also show the +/− diffstat). See pactEdRenderAckFooter.
   const saveStatus = el("span", { class: "pact-save-status" }, []);
+  // SNAP TO DEFAULTS — two buttons, because the chat column and the viewer boxes are tuned on
+  // completely different timescales (see pactSnapAll/pactSnapBoxes). Both dim when there is nothing
+  // left to snap, so they double as "is my layout still default?".
+  const snapAllBtn = el("button", { class: "pact-ed-ico pact-snap", type: "button",
+    title: "Snap the WHOLE layout back to default — viewer boxes to equal sizes AND the chat column to its default width." },
+    ["⛶ Snap all"]);
+  const snapBoxBtn = el("button", { class: "pact-ed-ico pact-snap", type: "button",
+    title: "Snap only the viewer boxes back to equal sizes, within the space they have now. The chat column keeps the width you set." },
+    ["⊞ Snap boxes"]);
+  snapAllBtn.addEventListener("click", () => pactSnapAll(rightEl));
+  snapBoxBtn.addEventListener("click", () => pactSnapBoxes());
   // Toolbar = ONE row: the action controls (Save All / status) and the ONE shared StoicSyntax band legend
   // inline, so the color key reads as a single global key without wasting a second line. The legend flexes
   // and scrolls horizontally if the row gets tight; the autosave hint stays on the right.
-  const toolbar = el("div", { class: "pact-ed-toolbar" }, [saveBtn, phCollapseBtn("pact-ed-ico"), saveStatus, pactLegend(),
+  const toolbar = el("div", { class: "pact-ed-toolbar" }, [saveBtn, phCollapseBtn("pact-ed-ico"), snapAllBtn, snapBoxBtn, saveStatus, pactLegend(),
     el("span", { class: "pact-save-hint" }, ["autosaves 5 min after you stop typing"])]);
   // The "files changed by the agent" list no longer lives here — it moved into the left tree column as
   // a "Changed (N)" tab (see treeEl above), so the editor grid keeps its full vertical space.
   const editorWrap = el("div", { class: "pact-editor-wrap" }, [toolbar, editorEl]);
-  const workEl = el("div", { class: "pact-work" }, [editorWrap, rightEl]);
+  const workEl = el("div", { class: "pact-work" }, [editorWrap, rightGrip, rightEl]);
   const root = el("div", { class: "pact-ide" }, [treeEl, workEl]);
   PACT_STATE_READY = false;   // suppress persistence until the saved layout has been read + rebuilt
   pactEdInstallFindShortcut();   // global Ctrl/⌘-F/H → in-app find (bound once; self-guards to VIEW==="pact")
   pactEdInit(editorEl);
   PACT_ED.saveBtn = saveBtn; PACT_ED.saveStatus = saveStatus;
+  PACT_ED.snapAllBtn = snapAllBtn; PACT_ED.snapBoxBtn = snapBoxBtn;
+  pactSnapRefresh();   // a restored layout may already be off-default, so the buttons start correct
   PACT_ED.treeBody = treeBody; PACT_ED.changedList = changedList; PACT_ED.tabFilesBtn = tabFilesBtn; PACT_ED.tabChangedBtn = tabChangedBtn; PACT_ED.treeTab = "files";
   PACT_ED.treeHdWt = treeHdWt;   // wired here — PACT_ED only exists after pactEdInit above (see the shell-build note)
   PACT_ED.ackFooter = ackFooter;
@@ -10245,6 +11385,9 @@ function viewWorkspace() {
     // (mirrors the server's own cross-session _modelsCache — see lib/workspace.mjs). Seeded from the browser
     // cache so the dropdown is populated immediately, even before/without a live session answering.
     models: readCachedModels(),
+    // Bumped on every catalogue replacement. The model selector's rebuild is keyed to it, so a paint
+    // that changes nothing about the catalogue does no work at all (see wsFillModelSelectFrom).
+    modelsRev: 1,
     // claude.ai plan rate-limit utilization (5h/7d/per-model) — also account-wide, not per-pane.
     // EXPERIMENTAL per the SDK's own naming (see claudeSession.mjs getUsageLimits) — null until the
     // first live session answers, and may simply never populate on a non-claude.ai-subscriber build.
@@ -10300,7 +11443,7 @@ function viewWorkspace() {
   // deliberately abandoned (cleared, or repointed to a different repo/worktree) — a
   // pendingOpens entry captures the pane's gen at request time, so a reply that arrives
   // after the pane moved on can tell it no longer applies (see beginPendingOpen).
-  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", worktree: "main", mode: st.defaultMode, model: routingDefaultModel(), effort: null, fastMode: false, transcript: [], usage: {}, status: "idle", readonly: false, resume: null, draft: "", _gen: 0, _expandedGroups: new Set(), attachedImages: [], contextUsage: null, multiChat: false, convSlot: 0, convSlots: wsDefaultConvSlots() });
+  const newPane = () => ({ id: wsUuid(), sessionKey: wsUuid(), repo: "", worktree: "main", mode: st.defaultMode, model: routingDefaultModel(), effort: null, fastMode: false, transcript: [], usage: {}, status: "idle", readonly: false, resume: null, draft: "", _gen: 0, _expandedGroups: new Set(), attachedImages: [], contextUsage: null, multiChat: false, convSlot: 0, convSlots: wsDefaultConvSlots(), expanded: false, autoWrap: true });
   let _draftTimer = 0;
   const saveDraftsSoon = () => { clearTimeout(_draftTimer); _draftTimer = setTimeout(saveLayout, 400); };   // persist typed-but-unsent compose text so a view switch doesn't lose it
   // Every pane with a repo runs under a shared, deterministic key (repo@worktree). Panes still
@@ -10378,7 +11521,11 @@ function viewWorkspace() {
     try {
       localStorage.setItem(WS_STORE_KEY, JSON.stringify({
         v: 1, cols: st.cols, rows: st.rows, sidebarMode: st.sidebarMode, defaultMode: st.defaultMode, activeId: st.activeId,
-        panes: st.panes.map((p) => ({ id: p.id, sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree || "main", mode: p.mode, draft: p.draft || "", promptStates: p.promptStates || {}, bookmarks: Array.isArray(p.bookmarks) ? p.bookmarks : [], multiChat: !!p.multiChat, convSlot: p.convSlot || 0, convSlots: Array.isArray(p.convSlots) ? p.convSlots : wsDefaultConvSlots() })),
+        panes: st.panes.map((p) => ({ id: p.id, sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree || "main", mode: p.mode, draft: p.draft || "", promptStates: p.promptStates || {}, bookmarks: Array.isArray(p.bookmarks) ? p.bookmarks : [], multiChat: !!p.multiChat, convSlot: p.convSlot || 0, convSlots: Array.isArray(p.convSlots) ? p.convSlots : wsDefaultConvSlots(),
+          // Auto-continue survives a reload, like Pact's: the flag AND the round count, so a reload
+          // cannot silently kill a running loop or quietly reset a ceiling you had already spent.
+          autoContinue: !!p._autoContinue, autoCount: p._autoCount || 0, autoCap: p._autoCap || PACT_AUTO_CAP,
+          expanded: !!p.expanded, autoWrap: p.autoWrap !== false })),
       }));
     } catch { /* private mode / quota — the workspace still works, it just forgets */ }
   }
@@ -10406,6 +11553,13 @@ function viewWorkspace() {
       convSlots: Array.isArray(p.convSlots) && p.convSlots.length
         ? p.convSlots.filter((s) => s && typeof s.slot === "number" && typeof s.name === "string")
         : wsDefaultConvSlots(),
+      // Auto-continue, the expand choice and the auto-wrap setting are per-pane and survive a reload,
+      // the same way Pact's per-tab equivalents do.
+      _autoContinue: !!p.autoContinue,
+      _autoCount: typeof p.autoCount === "number" ? p.autoCount : 0,
+      _autoCap: (typeof p.autoCap === "number" && p.autoCap > 0) ? p.autoCap : PACT_AUTO_CAP,
+      expanded: !!p.expanded,
+      autoWrap: p.autoWrap !== false,
     }));
     // If the saved grid can't hold all the panes (a mobile flat list), fall back to the flat 1×N shape that
     // addPaneMobile builds live, so no restored pane is orphaned. Otherwise pad an under-filled desktop grid.
@@ -10601,12 +11755,15 @@ function viewWorkspace() {
     const list = st.worktrees[p.repo] || [{ name: "main", isMain: true }];
     const names = list.map((w) => w.name);
     if (!names.includes(p.worktree)) names.unshift(p.worktree || "main");   // keep the pane's own value shown
-    const opts = [...new Set(names)].map((n) => {
-      const w = list.find((x) => x.name === n);
-      return el("option", { value: n }, [n + (w?.needsInstall ? "  ⚠ needs install" : "")]);
+    const uniq = [...new Set(names)];
+    wsSyncOptions(sel, uniq.map((n) => n + (list.find((x) => x.name === n)?.needsInstall ? "!" : "")).join("|"), () => {
+      const opts = uniq.map((n) => {
+        const w = list.find((x) => x.name === n);
+        return el("option", { value: n }, [n + (w?.needsInstall ? "  ⚠ needs install" : "")]);
+      });
+      opts.push(el("option", { value: "__new__" }, ["+ new worktree…"]));
+      return opts;
     });
-    opts.push(el("option", { value: "__new__" }, ["+ new worktree…"]));
-    sel.replaceChildren(...opts);
     sel.value = p.worktree || "main";
     sel.hidden = !p.repo;   // only meaningful once a repo is picked
   }
@@ -10615,44 +11772,84 @@ function viewWorkspace() {
   // st.models is ONE global catalog (mirrors the server's cross-session cache — see
   // lib/workspace.mjs _models): a property of the CLI build/account, not per-pane, so every
   // pane's selector reads from the same list once any session anywhere has answered it.
-  function modelInfoFor(value) { return st.models.find((m) => m.value === value) || null; }
+  /** ONE GUARD FOR EVERY REBUILT <select>. Each of these is called from paintPane, so it fires on
+   *  every event in every pane; rebuilding a list of <option>s that is identical to the one already
+   *  there is DOM churn plus a layout invalidation for nothing, multiplied by the number of open
+   *  panes. The chat-shell package has used exactly this signature guard for its own selects
+   *  (`syncSelect._sig`) since it was written — this is that idea, for production's own selectors. */
+  function wsSyncOptions(sel, sig, build) {
+    if (sel._optSig === sig) return false;
+    sel._optSig = sig;
+    sel.replaceChildren(...build());
+    return true;
+  }
+  // A linear scan of the whole catalogue (468 models on this machine), called several times per
+  // paint per pane. Indexed once per catalogue revision instead.
+  function modelInfoFor(value) {
+    if (st._miRev !== st.modelsRev) { st._miRev = st.modelsRev; st._miMap = new Map(st.models.map((m) => [m && m.value, m])); }
+    return st._miMap.get(value) || null;
+  }
   function fillModelSelect(sel, value, activeModel) {
     // No synthetic "Default" entry — it hid which model was ACTUALLY running behind a vague label. With no
     // explicit pick, the dropdown instead shows/selects the REAL model currently active (resolved by id
     // against the catalog below), same as Claude Code's own picker always naming the concrete model.
     // Grouped Anthropic-key vs OmniRoute (combos only, by default) — see modelOptionGroups.
-    const list = st.models.filter((m) => routingOmniVisible() || !(m && typeof m.value === "string" && m.value.startsWith("omni/")));
-    const g = modelOptionGroups(list);
-    const mkOpt = (o) => el("option", { value: o.value, title: o.title || "" }, [o.label]);
-    const groups = [];
-    if (g.anthropic.length) groups.push(el("optgroup", { label: "Anthropic" }, g.anthropic.map(mkOpt)));
-    if (g.combos.length) groups.push(el("optgroup", { label: "OmniRoute" }, g.combos.map(mkOpt)));
-    if (sel._omniShowAll && g.individualGroups.length) {
-      for (const grp of g.individualGroups) groups.push(el("optgroup", { label: grp.label }, grp.options.map(mkOpt)));
-      if (g.lessOption) groups.push(el("optgroup", { label: "OmniRoute" }, [mkOpt(g.lessOption)]));
-    } else if (g.moreOption) {
-      groups.push(el("optgroup", { label: "OmniRoute" }, [mkOpt(g.moreOption)]));
+    // The FILTERED list is cached too: it is derived purely from the catalogue and one boolean, and
+    // rebuilding a 468-element array per pane per paint costs as much as some of the work it feeds.
+    const omniOn = routingOmniVisible();
+    if (st._mlCache?.rev !== st.modelsRev || st._mlCache?.omni !== omniOn) {
+      st._mlCache = { rev: st.modelsRev, omni: omniOn,
+        list: st.models.filter((m) => omniOn || !(m && typeof m.value === "string" && m.value.startsWith("omni/"))) };
     }
+    const list = st._mlCache.list;
     const shown = value || activeModel || "";
-    // A pane's already-chosen (or currently-active-but-uncataloged) model may not be in a freshly-(re)fetched
-    // catalog — inject a plain option so the dropdown still shows it rather than silently showing nothing.
-    if (shown && !list.some((m) => m.value === shown)) groups.push(el("option", { value: shown, title: "Not in the current catalogue — shown so the pick is never silently lost." }, [humanModelName(shown) || shown]));
-    sel.replaceChildren(...groups);
-    sel.value = shown;
+    wsFillModelSelectFrom(sel, list, shown, wsRequestModelCatalogue,
+      st.modelsRev + "|" + (omniOn ? 1 : 0) + "|" + shown + "|" + (sel._omniShowAll ? 1 : 0));
   }
   // Effort options depend on the CURRENTLY selected model — rebuilt every paint, not just on
   // model change, since st.models itself can arrive/refresh asynchronously after the pane exists.
+  // The SDK's ModelInfo.supportedEffortLevels contract, verbatim. Used when the catalogue has not
+  // reported this model's capability yet — which is most of the time on a cold load or a resumed
+  // session, and used to hide the selector completely. "I can't set effort" was the report; the
+  // levels are a fixed SDK enum, so the honest default is to offer them, not to vanish.
+  const WS_SDK_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
   function fillEffortSelect(sel, p) {
     const info = modelInfoFor(p.model);
-    const levels = info?.supportsEffort ? (info.supportedEffortLevels || []) : [];
-    sel.hidden = !levels.length;
-    if (!levels.length) return;
-    sel.replaceChildren(el("option", { value: "" }, ["Default effort"]), ...levels.map((lv) => el("option", { value: lv }, [lv[0].toUpperCase() + lv.slice(1)])));
-    sel.value = levels.includes(p.effort) ? p.effort : "";
+    // Three states, and they are genuinely different: the model SAYS it supports effort (use its own
+    // list), the model SAYS it does not (hide), or nothing is known yet (offer the SDK's levels and
+    // say so in the tooltip, rather than pretending the control does not exist).
+    const known = !!info;
+    const levels = info?.supportsEffort ? (info.supportedEffortLevels || WS_SDK_EFFORT_LEVELS) : [];
+    const unknown = !known;
+    sel.hidden = known && !levels.length;
+    sel.classList.toggle("--gone", sel.hidden);
+    if (sel.hidden) return;
+    const use = levels.length ? levels : WS_SDK_EFFORT_LEVELS;
+    sel.title = unknown
+      ? "Reasoning effort. This model has not reported its supported levels yet, so the SDK's own five are offered."
+      : "Reasoning effort (SDK: " + use.join(" | ") + ")";
+    wsSyncOptions(sel, use.join("|"), () =>
+      [el("option", { value: "" }, ["Default effort"]), ...use.map((lv) => el("option", { value: lv }, ["effort: " + lv]))]);
+    sel.value = use.includes(p.effort) ? p.effort : "";
   }
 
   // ---- transcript rendering (handles both live {kind} and saved {role} items) ----
-  function line(cls, kids) { return el("div", { class: "ws-line " + cls }, kids); }
+  // Production's transcript classes → the Chat Shell Lab's own bubble classes, added ALONGSIDE them.
+  // The Lab's `.msg.--u`/`.msg.--a` (and the four prompt states) are what chat-shell-components.css
+  // styles; production's `.ws-user`/`.ws-assistant` rules stay in place but lose on specificity
+  // (`.cs-shell .msg.--u` = 0,3,0 vs `.ws-line.ws-user` = 0,2,0), so a live transcript renders in the
+  // Lab's design without renaming a class the rest of the app and ~1400 tests are keyed to.
+  const WS_LAB_LINE_CLASS = {
+    "ws-user": "msg --u", "ws-assistant": "msg --a", "ws-live": "--live",
+    "ws-queued": "--queued", "ws-queued-deep": "--deep", "ws-deepwork-risk": "--risk",
+    "ws-interrupted": "--dead", "ws-discarded": "--discarded",
+  };
+  function wsLabLineClass(cls) {
+    const out = [];
+    String(cls).split(/\s+/).forEach((c) => { const m = WS_LAB_LINE_CLASS[c]; if (m) out.push(m); });
+    return out.length ? " " + out.join(" ") : "";
+  }
+  function line(cls, kids) { return el("div", { class: "ws-line " + cls + wsLabLineClass(cls) }, kids); }
   // A small always-visible (not hover-only — this has to work on touch) copy button, matching
   // the copy affordance on every Claude response elsewhere. `getText` is a thunk rather than a
   // plain string so it's evaluated at click time, not render time.
@@ -10776,14 +11973,16 @@ function viewWorkspace() {
       else if (m.role === "assistant" || m.kind === "assistant") m._rnum = ++rn;
     }
   }
-  function wsNumBadge(kind, n) { return (typeof n === "number") ? el("span", { class: "ws-num ws-num-" + kind.toLowerCase(), title: (kind === "P" ? "Prompt" : "Response") + " #" + wsNumFmt(n) }, [kind + "#" + wsNumFmt(n)]) : ""; }
+  function wsNumBadge(kind, n) { return (typeof n === "number") ? el("span", { class: "ws-num num num-" + kind.toLowerCase() + " ws-num-" + kind.toLowerCase(), title: (kind === "P" ? "Prompt" : "Response") + " #" + wsNumFmt(n) }, [kind + "#" + wsNumFmt(n)]) : ""; }
   // Interrupted-prompt handling (mirrors the Pact chat — see pactMarkInterrupt): recognise a prompt whose
   // turn never replied (idle pane, trailing user message, no assistant after) → DARK BLUE, persisted in
   // p.promptStates by `at`. "i" = interrupted (dark blue), "d" = discarded (red). Buttons only on the
   // still-trailing interrupted one: ▶ resume (continue it) · ✕ discard (mark dead; excluded from next prompt).
   function wsInterruptedIdx(p) {
     if (!p || paneBusy(p) || !Array.isArray(p.transcript)) return -1;
-    for (let i = p.transcript.length - 1; i >= 0; i--) { const m = p.transcript[i]; if (!m) continue; if (m.role === "assistant" || m.kind === "assistant") return -1; if (m.role === "user" || m.kind === "user") return i; }
+    // A `compacted` row counts as an answer: `/compact` never produces an assistant reply, so without
+    // this a SUCCESSFUL compaction left its own prompt looking interrupted (dark blue, ▶/✕).
+    for (let i = p.transcript.length - 1; i >= 0; i--) { const m = p.transcript[i]; if (!m) continue; if (m.role === "assistant" || m.kind === "assistant" || m.kind === "compacted" || m.kind === "wrapped") return -1; if (m.role === "user" || m.kind === "user") return i; }
     return -1;
   }
   function wsMarkInterrupt(p) {
@@ -10929,7 +12128,7 @@ function viewWorkspace() {
     if (m.role === "user" || m.kind === "user") {
       const kids = [wsNumBadge("P", m._pnum),
         wsReplyBtn("P", m._pnum, m.text, () => { const rp = st.panes.find((x) => x.id === m._paneId); wsAddReplyRef(rp, "P", m._pnum, m.text); wsPaintReplyRow(rp); }),
-        el("b", {}, ["you  "])];
+        el("b", { class: "who" }, ["you"])];
       // Root-caused a real "the image disappears from the UI the instant I hit send" report: the
       // image was always saved server-side and attached to the persisted turn — this pane just
       // never rendered it. `m.images`/`m.workspaceId` now ride the live "user" event AND the
@@ -10938,7 +12137,7 @@ function viewWorkspace() {
       // written before this feature landed keep rendering, never rewritten on disk.
       const imgs = m.images || (m.image ? [m.image] : []);
       if (imgs.length && m.workspaceId) {
-        kids.push(el("div", { class: "ws-user-images" }, imgs.map((img) => {
+        kids.push(el("div", { class: "ws-user-images msgimgs" }, imgs.map((img) => {
           const src = `/api/workspace/image?workspaceId=${encodeURIComponent(m.workspaceId)}&path=${encodeURIComponent(img.path)}`;
           return el("a", { href: src, target: "_blank", rel: "noopener noreferrer", class: "ws-user-image-link" }, [
             el("img", { class: "ws-user-image", src, alt: "attached image" }, []),
@@ -10988,6 +12187,10 @@ function viewWorkspace() {
     // turn failure.
     if (m.kind === "warning") return line("ws-err", ["⚠ " + (m.message || m.text || "Engine warning") + " — the turn continued."]);
     if (m.kind === "created") return line("ws-note", [`created ${m.what}: ${m.path}`]);
+    // THE COMPACTION BAR — a full-width rule marking where the context window was summarised.
+    // Rendered from a PERSISTED row (see workspace.mjs _onEvent), so it survives a reload and shows
+    // on every device; the activity-rail line this replaces did neither.
+    if (m.kind === "compacted" || m.kind === "wrapped" || m.kind === "turnError") return wsMarkNode(m);
     return null;
   }
   // Cache each item's rendered node on the message. Transcript items are immutable once added
@@ -11083,6 +12286,19 @@ function viewWorkspace() {
   // `lead` = the optional show-earlier button + the finalized turn containers (the stable prefix);
   // `tailExtras` = the live-typing preview + queued-message nodes that trail the real turns. Falls
   // back to a full replaceChildren whenever the stable prefix can't be trusted.
+  /** What makes two transcripts "the same conversation, rendered the same way" for cache purposes.
+   *  Deliberately cheap — O(1), three sampled rows — because it runs on every paint: the conversation
+   *  it belongs to, and the HEAD of the window, since every cache key is an index measured from that
+   *  head. A row's identity is its role, its timestamp and its length; append-only growth changes
+   *  none of them for rows already rendered. */
+  function wsTranscriptIdentity(p) {
+    const tx = Array.isArray(p.transcript) ? p.transcript : [];
+    const k = (r) => (!r || typeof r !== "object") ? "-"
+      : (r.role || r.kind || "?") + ":" + (r.at || 0) + ":" + (typeof r.text === "string" ? r.text.length : 0);
+    return [p.sessionKey || "", p.convSlot || 0, p._revealAll ? 1 : 0, tx.length ? k(tx[0]) : "",
+            tx.length > 1 ? k(tx[1]) : ""].join("\u0001");
+  }
+
   function renderTranscriptInto(ui, p, tailExtras) {
     const t = ui.transcriptEl;
     wsStampNumbers(p);   // assign each prompt/response its absolute P#/R# before turns render
@@ -11101,11 +12317,36 @@ function viewWorkspace() {
     // While parked on a historical band (a jump-to-#N), the exocortex edge affordances own "there is
     // more" in BOTH directions; the legacy chip would fetch the TAIL and silently undo the jump.
     const moreOnServer = !!p._transcriptTruncated && !exoIsPinned(p);
-    // Invalidate all cached nodes if the transcript array itself was swapped (resync/reopen give a
-    // brand-new array) — reused nodes from a different conversation would be flat-out wrong.
-    if (ui._txRef !== p.transcript) { ui._txRef = p.transcript; ui._turnCache = new Map(); ui._domLead = []; ui._showEarlierNode = null; }
+    // INVALIDATE ON CONTENT, NOT ON ARRAY IDENTITY.
+    //
+    // This used to drop the whole render cache whenever `p.transcript` was a different OBJECT — and
+    // a resync always builds a fresh array, even when it carries byte-for-byte the same rows. The
+    // self-heal fires one resync per pane every 8 seconds (WS_HEAL_ACTIVE_QUIET_MS), so every pane
+    // re-rendered its ENTIRE transcript from scratch — markdown, syntax highlighting, every node —
+    // eight times a minute, for nothing. With one pane showing twenty turns that is 1.7 ms and
+    // invisible. With eight panes that have loaded their history it is linear in rendered nodes and
+    // lands as a multi-second freeze every few seconds: typing stalls, and the cursor takes seconds
+    // to change shape over a button, because the main thread is simply not free.
+    //
+    // The cache key is `turn.start + ":" + turn.items.length` — derived from CONTENT and stable
+    // across a re-parse — so a new array carrying the same conversation is perfectly reusable. What
+    // genuinely invalidates it is a different conversation, a different HEAD (a jump-to-#N band, or
+    // "load earlier" prepending rows, both of which shift every turn's start index), or a transcript
+    // that SHRANK. Those are exactly the cases tested below; everything else keeps its nodes.
+    const txSig = wsTranscriptIdentity(p);
+    const shrank = (p.transcript || []).length < (ui._txLen || 0);
+    if (ui._txRef !== p.transcript && (ui._txSig !== txSig || shrank)) {
+      ui._turnCache = new Map(); ui._domLead = []; ui._showEarlierNode = null;
+    }
+    ui._txRef = p.transcript; ui._txSig = txSig; ui._txLen = (p.transcript || []).length;
     const cache = ui._turnCache;
     const lead = [];
+    // The chat shell package's "N earlier turns" medallion is a CHILD OF THE CORE (it is sticky —
+    // it has to be inside the scroller to pin to the top of the viewport), and this renderer owns
+    // the core's children. Re-include it at the head every paint. It is the same node every time,
+    // so the untouched-prefix fast path below still recognises the prefix and leaves it alone.
+    const coreTop = ui.view && ui.view.els && ui.view.els.coreTop;
+    if (coreTop) lead.push(coreTop);
     // The show-earlier button — cached and reused across paints (stable node ⇒ the fast path can
     // keep it in place), rebuilt only when the hidden-count changes so its label stays accurate.
     if (hidden > 0 || moreOnServer) {
@@ -11175,29 +12416,21 @@ function viewWorkspace() {
   // so a future CSS tweak to .ws-prompt can't silently desync the cap from what's actually drawn.
   const WS_PROMPT_MIN_ROWS = 2;
   const WS_PROMPT_MAX_ROWS = 10;
+  // LINE NUMBERS in their own column — matching the chat-shell lab exactly (paintGutter). At a
+  // capped height you cannot see the whole prompt at once, so the count is the only honest signal
+  // of how big it has actually become. Width follows the widest number shown (one glyph costs one
+  // glyph); a fixed column wasted space on short prompts and clipped the numbers on long ones.
+  // The numbering column's actual logic now lives in chat-shell.js's paintGutter, shared verbatim with
+  // the Chat Shell Lab and Pact — this wrapper exists only because it's called as a bare `wsPaintGutter`
+  // from several sites below; kept so none of those call sites needed to change.
+  function wsPaintGutter(ta, gut) { return window.ChatShell.paintGutter(ta, gut); }
+  // The compose box's geometry is the PACKAGE's job now (@ancientpantheon/claude-chat-shell owns the
+  // whole footer, and sizes the type box from chat-shell.js's maths against the real Core height).
+  // This remains only as the address for the several call sites that hold a textarea and want it
+  // re-measured — a session restore, a queued prompt landing, a send clearing the box. Each mounted
+  // view tags its own textarea at construction, so the right shell relayouts itself.
   function wsAutoResizePrompt(el) {
-    const cs = getComputedStyle(el);
-    const lineHeight = parseFloat(cs.lineHeight) || 18;
-    const extra = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
-    // Cap at WS_PROMPT_MAX_ROWS lines — but never let the box grow past ~40% of the viewport
-    // height. On a phone, 10 lines could otherwise push the Send button (bottom of the compose
-    // row) out of the fixed-height pane and off-screen; this keeps it visible and scrolls the
-    // text instead. On a normal desktop the row cap is far smaller than 40vh, so nothing changes.
-    const rowCap = lineHeight * WS_PROMPT_MAX_ROWS + extra;
-    const maxHeight = Math.min(rowCap, Math.round((window.innerHeight || 900) * 0.4));
-    const minFloor = lineHeight * WS_PROMPT_MIN_ROWS + extra;
-    el.style.height = "auto";   // collapse first — scrollHeight only shrinks correctly measured from a fresh baseline
-    const needed = el.scrollHeight;
-    if (needed <= minFloor) {
-      // Empty / short: clear the inline height so CSS takes over — on mobile that lets the box
-      // stretch to fill the button column's height (a big, inviting typing area) instead of being
-      // pinned to a fixed inline pixel value that leaves an awkward gap next to the round buttons.
-      el.style.height = "";
-      el.style.overflowY = "hidden";
-    } else {
-      el.style.height = Math.min(needed, maxHeight) + "px";
-      el.style.overflowY = needed > maxHeight ? "auto" : "hidden";
-    }
+    if (el && el._csView) el._csView.relayout();
   }
   /** Attach a whole batch (a multi-select from the file picker, a multi-file drop, or several
    *  clipboard image items) ONE AT A TIME, awaiting each before starting the next — wsAttachImageFile
@@ -11323,143 +12556,244 @@ function viewWorkspace() {
   }
 
   function buildPane(p) {
-    const repoSel = el("select", { class: "wsel wsel-sm" }, []); fillRepoSelect(repoSel, p.repo);
-    const wtSel = el("select", { class: "wsel wsel-sm wsel-wt", title: "Worktree — a separate checkout for a parallel workspace on this repo" }, []);
+    // THE CHAT BOX IS THE PACKAGE. @ancientpantheon/claude-chat-shell builds the header, the
+    // transcript region, and every row of the footer; the Chat Shell Lab mounts the identical
+    // function with mock data. Core no longer owns a single line of chat-box markup — which is the
+    // whole point, because the markup it used to own is exactly what kept drifting from the design.
+    //
+    // What stays here: this pane's real behaviour (sessions, sockets, repos, worktrees, the
+    // transcript renderer) and the handful of Core-only chips the package takes as slot content.
+    const paneRoot = el("div", { class: "ws-pane" }, []);
+    const replyRowWrap = el("div", { class: "ws-reply-row-host" }, []);
+    const imgPreviewWrap = el("div", { class: "ws-img-preview" }, []);
+    imgPreviewWrap.hidden = true;
+    const imgErr = el("div", { class: "ws-img-err" }, []);
+    imgErr.hidden = true;
+    const composeExtras = el("div", { class: "ws-compose-extras" }, [replyRowWrap, imgPreviewWrap, imgErr]);
+    const imgFileInput = el("input", { type: "file", accept: WS_IMG_ALLOWED_TYPES.join(","), multiple: "", class: "ws-img-input" });
+    const bmPop = el("div", { class: "ws-bm-pop" }, []);
+    const view = window.ChatShellUI.mount(paneRoot, {
+      kind: "core",
+      slots: { composeExtra: [imgFileInput, composeExtras], actionExtra: [bmPop] },
+      on: {
+        // Production's own send() owns clearing the box (it also drops the attachments with it), so
+        // this vetoes the package's clear rather than doing it twice out of step.
+        send: () => { send(p); return false; },
+        stop: () => { assignKey(p); p._stopping = Date.now(); wsApplyStall(p); wsPost("stop", { sessionKey: p.sessionKey }); logActivity(p, "■ Stopping…"); },
+        input: (v) => { p.draft = v; saveDraftsSoon(); },   // remember typed-but-unsent text across a view switch
+        attach: () => imgFileInput.click(),
+        drop: (files) => wsAttachImageFiles(p, files),
+        paste: (e) => wsHandlePastedImages(p, e),
+        expand: (on) => { p.expanded = on; saveLayout(); },
+        history: () => wsOpenHistory(p),
+        bookmarks: () => {
+          const showIt = !bmPop.classList.contains("--show");
+          document.querySelectorAll(".ws-bm-pop.--show").forEach((x) => x.classList.remove("--show"));   // one open at a time
+          if (showIt) { wsRenderBookmarkList(p); bmPop.classList.add("--show"); }
+        },
+        multiChat: (on) => wsSetMultiChat(p, on),
+        // The chip is the package's; what it OPENS is Core's own log of Core's own events.
+        activity: () => {
+          const ui = paneUI.get(p.id); if (!ui || !ui.activityLog) return;
+          ui.activityLog.hidden = !ui.activityLog.hidden;
+          if (!ui.activityLog.hidden) renderActivityLog(p);
+        },
+        close: () => clearPane(p),
+        // The medallion at the top of the transcript. Same action the old header row's button had —
+        // fetch the next block of turns above the rendered window.
+        earlier: () => exoExtend(p, "up", wsExoCtx(p)),
+        autoContinue: (on) => {
+          p._autoContinue = on;
+          const cap = p._autoCap || PACT_AUTO_CAP;
+          // Re-ticking at the ceiling grants the next batch — otherwise switching it back on at the
+          // cap looks like it did nothing, which is exactly how this feature fails silently.
+          if (on && (p._autoCount || 0) >= cap) p._autoCap = (p._autoCount || 0) + PACT_AUTO_CAP;
+          p._autoDeadline = 0;                    // a deliberate toggle always starts a fresh countdown
+          if (!on) wsAutoStop(p);
+          saveLayout();
+          wsAutoEnsure(p);
+        },
+        autoWrap: (on) => { p.autoWrap = on; wsPost("control", { action: "setAutoWrap", args: { sessionKey: p.sessionKey, enabled: on } }); saveLayout(); },
+        compact: () => wsCompact(p),
+        wrap: () => wsOpenWrapDialog(p),
+        context: () => { const c = view.els.contextBtn._exoProxy; if (c) c.click(); },
+      },
+    });
+    // Aliases, so every handler and paint path below still reads exactly as it did — they now point
+    // at the package's nodes instead of at ones this function used to build itself.
+    const repoSel = view.els.repoSel; fillRepoSelect(repoSel, p.repo);
+    const wtSel = view.els.wtSel;
     fillWorktreeSelect(wtSel, p);
-    const modeSel = el("select", { class: "wsel wsel-mode", title: "Permission mode for this pane" },
-      WS_MODES.map((m) => el("option", { value: m.id }, [m.short])));
+    const modeSel = view.els.permissionSel;
+    modeSel.replaceChildren(...WS_MODES.map((m) => el("option", { value: m.id }, [m.short])));
     modeSel.value = p.mode;
-    // Model + effort + fast mode — matches Claude Code Desktop's own selector (model, then a
-    // reasoning-effort level for models that support one, then a fast-mode toggle for models that
-    // support that). st.models populates once ANY session anywhere has answered "models" (see
-    // fillModelSelect) — until then this just shows "Default", same as never having picked one.
-    const modelSel = el("select", { class: "wsel wsel-sm wsel-model", title: "Model for this pane" });
+    const transcriptEl = view.core;
+    const promptEl = view.els.typebox;
+    promptEl.placeholder = "Message Claude… (Ctrl+Enter)";
+    promptEl._csView = view;   // so wsAutoResizePrompt(el) can find the view that owns this box
+    const gutterEl = view.els.gutter;
+    const taWrap = view.els.taWrap;
+    const searchDrawer = view.els.searchDrawer;
+    const sendBtn = view.els.sendBtn;
+    const stopBtn = view.els.stopBtn;
+    const sendWrap = view.els.sendGrp;
+    const attachBtn = view.els.attachBtn;
+    const linesChip = view.els.linesChip;
+    const expandBtn = view.els.expandBtn;
+    const histBtn = view.els.historyBtn;
+    const bmBtn = view.els.bookmarkBtn;
+    const seamBulb = view.els.seamBulb;
+    const multiChatCb = view.els.multiChatCb;
+    const wrapWrap = view.els.wrapWrap;
+    const statsRow = view.statsRow;
+    const badge = view.els.contextBtn;
+    const modelSel = view.els.modelSel;
+    const modelNow = view.els.modelNow;
+    const effortSel = view.els.effortSel;
+    const ultracodeCb = view.els.ultracodeCb;
+    const fastModeCb = view.els.fastCb;
+    const fastModeLabel = fastModeCb.parentNode;
+    fastModeLabel.title = "Fast mode — quicker, lighter-weight responses";
+    // The option LISTS stay Core's job — st.models is populated once any session anywhere has
+    // answered "models", and the package deliberately does not own that catalogue. It owns the
+    // control; Core owns what goes in it.
     fillModelSelect(modelSel, p.model);
-    // Core had NO resolved-model readout at all — the selector said "Opus" and nothing said WHICH Opus.
-    // Mirrors Pact's `.pc-model-now`, but shows the exact build including the date suffix.
-    const modelNow = el("span", { class: "ws-model-now", title: "The exact model this pane is running" }, []);
-    const effortSel = el("select", { class: "wsel wsel-sm wsel-effort", title: "Reasoning effort" });
+    modelNow.title = "The exact model this pane is running";
     fillEffortSelect(effortSel, p);
-    const fastModeLabel = el("label", { class: "ws-fastmode", title: "Fast mode — quicker, lighter-weight responses" }, [
-      el("input", { type: "checkbox", class: "ws-fastmode-cb" }, []), " Fast",
-    ]);
-    const fastModeCb = fastModeLabel.querySelector("input");
     fastModeCb.checked = !!p.fastMode;
     // The pane's turn-lock status icon — a plain CSS spinner (no glyph, no dependency):
     // a bordered ring that rotates while the pane's session is busy, and sits still
     // (idle/done) otherwise. Driven by paintPane() from p.status, which onPayload keeps
     // in sync with the existing busy/status/result/error event stream (see onPayload).
     const dot = el("span", { class: "ws-status" });
-    const badge = el("span", { class: "ws-usage" }, ["—"]);
-    const closeBtn = el("button", { class: "ws-x", title: "Clear this pane (ends its session)" }, ["×"]);
-    const histBtn = el("button", { class: "ws-ico", title: "History for this repo" }, ["⏱"]);
-    const compactBtn = el("button", { class: "ws-ico ws-compact", title: "Compact — summarise this conversation to shrink its context window. Sends /compact as the next turn." }, ["🗜 Compact"]);
-    compactBtn.addEventListener("click", () => wsCompact(p));
-    // Manual wrap — confirmed absent before this (only the automatic threshold in lib/workspace.mjs
-    // existed). Split from Compact rather than replacing it: they answer the same question ("this is
-    // getting heavy, what do I do?") with genuinely different tradeoffs (Compact keeps a summary IN
-    // the window; Wrap starts a fresh one and archives the rest — see wsOpenWrapDialog).
-    const wrapBtn = el("button", { class: "ws-ico ws-wrap", title: "Wrap — archive this conversation's head and start a fresh context window. Nothing is deleted; asks for confirmation first." }, ["⟳ Wrap"]);
-    wrapBtn.addEventListener("click", () => wsOpenWrapDialog(p));
-    const wrapCounters = el("span", { class: "ws-wrap-counters" }, []);
-    const transcriptEl = el("div", { class: "ws-transcript" }, []);
-    const promptEl = el("textarea", { class: "ws-prompt", rows: String(WS_PROMPT_MIN_ROWS), placeholder: "Message Claude… (Ctrl+Enter)" });
-    // Auto-resize on a rAF, not synchronously on every keystroke: wsAutoResizePrompt reads
-    // scrollHeight, which forces a synchronous layout flush — cheap alone, but on a weaker client
-    // with several panes it's per-keystroke work that competes with painting the character. Coalesced
-    // to at most once per frame, the keystroke handler returns immediately and the box still grows
-    // smoothly a frame later.
-    let _resizeRAF = 0;
-    promptEl.addEventListener("input", () => {
-      p.draft = promptEl.value; saveDraftsSoon();   // remember typed-but-unsent text across a view switch
-      if (_resizeRAF) return;
-      _resizeRAF = (window.requestAnimationFrame || ((fn) => setTimeout(fn, 16)))(() => { _resizeRAF = 0; wsAutoResizePrompt(promptEl); });
-    });
-    const sendBtn = el("button", { class: "loginbtn ws-send" }, ["Send"]);
-    // "■ Stop" — interrupt the current turn mid-flight (Claude Code's stop button) without ending
-    // the conversation. Shown only while the pane is working (see paintPane); sends the "stop"
-    // action, which the work machine turns into an SDK interrupt (see lib/workspace.mjs _stop).
-    const stopBtn = el("button", { class: "ws-stop", title: "Stop the current response (keeps the conversation)" }, ["■ Stop"]);
+    badge.classList.add("ws-usage");   // the package's context readout, still addressed by Core's own paint paths
+    // The close affordance is the package's (`on.close` below), so it exists in the Chat Shell Lab
+    // too — it used to be a Core-only control the design source had never seen. The class is kept so
+    // Core's own long-standing `.ws-x` rules and the tests keyed to them still apply.
+    const closeBtn = view.els.closeBtn;
+    closeBtn.classList.add("ws-x");
+    closeBtn.title = "Clear this pane (ends its session)";
+    histBtn.title = "History for this repo";
+    // Compact/Wrap/the auto-wrap checkbox+meter are now built through the SAME shared function the
+    // Chat Shell Lab and Pact use (window.ChatShell.buildWrapControls) — see wsPaintWrapControls below,
+    // called on every paintPane() since the meter and the Wrap button's gating depend on LIVE context
+    // usage, not just the state at pane construction. `wrapWrap` is the stable container its output is
+    // repainted into.
+
     stopBtn.hidden = true;
-    stopBtn.addEventListener("click", () => { assignKey(p); p._stopping = Date.now(); wsApplyStall(p); wsPost("stop", { sessionKey: p.sessionKey }); logActivity(p, "■ Stopping…"); });
-    // Attach affordance: a file-picker button (hidden native <input type=file>) plus paste and
-    // drag-drop straight onto the compose row — all three funnel into wsAttachImageFile, so they
-    // end up in the exact same attached/preview state (see design's "functionally equivalent
-    // entry points").
-    const imgFileInput = el("input", { type: "file", accept: WS_IMG_ALLOWED_TYPES.join(","), multiple: "", class: "ws-img-input" });
-    const attachBtn = el("button", { class: "ws-ico ws-attach", type: "button", title: `Attach up to ${WS_IMG_MAX_COUNT} images — click, paste, or drag onto the box` }, ["📎"]);
-    // Filled dynamically by wsPaintAttachment() — one chip (thumbnail + its own ×) per attached
-    // image, up to WS_IMG_MAX_COUNT — not fixed single elements the way one-image-only used to be.
-    const replyRowWrap = el("div", { class: "ws-reply-row-host" }, []);
-    const imgPreviewWrap = el("div", { class: "ws-img-preview" }, []);
-    imgPreviewWrap.hidden = true;
-    const imgErr = el("div", { class: "ws-img-err" }, []);
-    imgErr.hidden = true;
-    // Actions grouped in their own wrapper: a horizontal cluster on desktop, but on mobile a
-    // VERTICAL column of round icon buttons (attach / stop / send) beside a full-width text box —
-    // WhatsApp-style — so the typing area isn't squeezed to nothing when Stop and Send both show.
-    const sendWrap = el("div", { class: "ws-send-wrap" }, [sendBtn]);   // relative host so the Live/Held bulb can dock above Send
-    // ★ Bookmarks — a button that opens a list of this conversation's starred responses; picking one jumps to it.
-    const bmBtn = el("button", { class: "ws-bm-btn", type: "button", title: "Bookmarked responses — jump to a starred answer" }, ["★"]);
-    const bmPop = el("div", { class: "ws-bm-pop" }, []);
-    const bmWrap = el("div", { class: "ws-bm-wrap" }, [bmBtn, bmPop]);
-    bmBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const show = !bmPop.classList.contains("--show");
-      document.querySelectorAll(".ws-bm-pop.--show").forEach((x) => x.classList.remove("--show"));   // one open at a time
-      if (show) { wsRenderBookmarkList(p); bmPop.classList.add("--show"); }
+    // Attach / bookmarks / expand / the type box's own row: all built by the package now (its
+    // action row is the Lab's `f-act`, and the type box has the full-width row of its own that used
+    // to be the "compose box is half the width" bug). What is left here is only the wiring that is
+    // genuinely Core's: which file input to open, what a bookmark list contains, what expanding
+    // means for this pane's saved layout — all handed to mount() as callbacks above.
+    attachBtn.title = `Attach up to ${WS_IMG_MAX_COUNT} images — click, paste, or drag onto the box`;
+    bmBtn.title = "Bookmarked responses — jump to a starred answer";
+    imgFileInput.addEventListener("change", () => {
+      const files = imgFileInput.files ? [...imgFileInput.files] : [];
+      imgFileInput.value = "";   // reset so re-picking the SAME file(s) still fires change next time
+      wsAttachImageFiles(p, files);
     });
-    const composeBtns = el("div", { class: "ws-compose-btns" }, [bmWrap, attachBtn, stopBtn, sendWrap]);
-    const composeRow = el("div", { class: "ws-compose" }, [imgFileInput, promptEl, composeBtns]);
-    const composeExtras = el("div", { class: "ws-compose-extras" }, [replyRowWrap, imgPreviewWrap, imgErr]);
     // A slim, ALWAYS-visible identity readout — plain text, not a control — so which
     // repo@worktree this pane is actually showing is never in doubt regardless of scroll
     // position or which conversation was just resumed into it. Kept separate from the
     // interactive controls below, which move to the bottom (see next block) to sit near the
     // compose row the way Claude's own UI keeps its controls near the input, not in a fixed
     // header far from where you're actually typing.
-    const identityLabel = el("span", { class: "ws-identity" }, ["—"]);
+    const identityLabel = el("span", { class: "ws-identity chip --acc" }, ["—"]);
     // "✓ Saved" badge — shown when the conversation is fully persisted and idle (see p._saved,
     // set from the server's `persisted` result flag), so it's clear at a glance that closing this
     // pane or continuing on another machine is safe. Hidden while working or before the first save.
-    const savedBadge = el("span", { class: "ws-saved", title: "This conversation is saved — safe to close, or continue it on another machine." }, ["✓ Saved"]);
+    const savedBadge = el("span", { class: "ws-saved chip --ok", title: "This conversation is saved — safe to close, or continue it on another machine." }, ["✓ Saved"]);
     savedBadge.hidden = true;
     // "⚙ N background" badge — shown when the chat is free but agent-spawned work (a workflow /
     // backgrounded task) is still running, so hidden work is discoverable, not just felt via the
     // Send button's blinking border. Hover lists what's running.
-    const bgBadge = el("span", { class: "ws-bgwork" }, []);
+    const bgBadge = el("span", { class: "ws-bgwork chip --warn" }, []);
     bgBadge.hidden = true;
     // Mobile-only dock for this pane's Live/Held bulb — up here by the pane identity (the "workspace
-    // medallion"), where there's space, instead of the bottom controls row. Empty on desktop (docks above Send).
+    // medallion"), where there's space, instead of the bottom controls row. Empty on desktop (docks on
+    // the seam between transcript and footer — see seamBulb below).
     const headBulb = el("div", { class: "ws-head-bulb" }, []);
-    const topBar = el("div", { class: "ws-pane-hd" }, [dot, identityLabel, el("span", { class: "ws-spacer" }), headBulb, bgBadge, savedBadge, closeBtn]);
-    // Core's multi-chat toggle + tab strip (confirmed absent before this — Core has always been
-    // exactly one conversation per repo/worktree). OFF by default; the row itself is empty (so it
-    // takes no space) until toggled on. See wsSetMultiChat/wsSwitchConvSlot/wsAddConvSlot.
-    const multiChatCb = el("input", { type: "checkbox", class: "ws-multichat-cb" }, []);
-    const multiChatLabel = el("label", { class: "ws-multichat-label", title: "Off by default — one repository usually means one thread. On lets this pane hold several separate conversations of the same repo, switchable as tabs." }, [multiChatCb, " multi-chat"]);
-    multiChatCb.addEventListener("change", () => wsSetMultiChat(p, multiChatCb.checked));
-    const convTabsRow = el("div", { class: "ws-conv-tabs" }, []);
-    // Unified with Pact: this is the MODEL BAR and it belongs at the BOTTOM of the box, under the composer
-    // — same controls, same order, same place, so Core and Pact stop diverging. Readouts and pickers left,
-    // Compact + the status badge right. (It kept its .ws-pane-controls class: the mobile sheet in
-    // wsOpenControlsSheet() re-homes this exact node by that selector, and renaming it would break that.)
-    const swarmEl = el("div", { class: "pc-swarm", title: "Subagents working right now" }, []);
-    const controlsBar = el("div", { class: "ws-pane-controls --modelbar" }, [repoSel, wtSel, modeSel, modelSel, modelNow, effortSel, fastModeLabel, swarmEl, multiChatLabel, histBtn, el("span", { class: "ws-spacer" }), wrapCounters, compactBtn, wrapBtn, badge]);
-    // The live "what's happening right now" feed — a single always-visible line (tap to expand
-    // the full scrolling log) narrating every state transition: sending, thinking, streaming,
-    // running a tool, waiting for permission, done, a connection hiccup — everything the orange
-    // button alone couldn't tell you. See logActivity()/renderActivityLog().
-    const activityLine = el("div", { class: "ws-activity", title: "Tap for the full activity log" }, ["Idle"]);
+    // Core's multi-chat toggle (confirmed absent before this — Core has always been exactly one
+    // conversation per repo/worktree). OFF by default. Chat Shell Lab parity: this lives in the HEADER,
+    // beside identity — the lab never put it in the footer's model row.
+    const multiChatLabel = multiChatCb.parentNode;
+    // The live "what's happening right now" feed — tap to expand the full scrolling log narrating every
+    // state transition: sending, thinking, streaming, running a tool, waiting for permission, done, a
+    // connection hiccup — everything the orange button alone couldn't tell you. See
+    // logActivity()/renderActivityLog(). Chat Shell Lab parity: this is a CHIP in the header row (like
+    // the lab's agents/recon chips), not a permanent full-width row the lab never had. activityLog docks
+    // under it as an anchored dropdown (like the bookmark popover), not an in-flow sibling that always
+    // costs a row.
+    // The CHIP is the package's now (`on.activity` below opens/closes the log), so the Lab shows this
+    // control too instead of production carrying one the design source never modelled. What stays
+    // Core's is the LOG itself — its format is Core's own event vocabulary — docked into the package's
+    // positioned wrapper rather than being a sibling that costs a row.
+    const activityLine = view.els.activityChip;
     const activityLog = el("div", { class: "ws-activity-log" }, []);
     activityLog.hidden = true;
-    activityLine.addEventListener("click", () => { activityLog.hidden = !activityLog.hidden; if (!activityLog.hidden) renderActivityLog(p); });
-    // Bottom-up order now matches Pact exactly: … transcript → attachments → type box → MODEL BAR.
-    // Exocortex bar — context chip + agents chip + jump/search box + the cue strip, directly above
-    // the transcript. In flow (not an anchored popup) so its panels can never be clipped by the
-    // pane's overflow on a narrow phone viewport.
+    view.els.activityWrap.appendChild(activityLog);
+    const convTabsRow = el("div", { class: "ws-conv-tabs" }, []);
+    // Chat Shell Lab parity, the MODEL ROW: model/effort/ultracode/fast/permission + the context readout
+    // + Compact│Wrap — and NOTHING else. repoSel/wtSel/histBtn used to live here too, which is why this
+    // row read as a grab-bag instead of the lab's tight "model row" — they moved to the action row beside
+    // the compose box (see composeBtns below), matching the lab's actual grouping (repo/worktree/history
+    // are ACTION-row items, not model-row items).
+    const swarmEl = el("div", { class: "pc-swarm", title: "Subagents working right now" }, []);
+    // ULTRACODE — xhigh effort + standing dynamic-workflow orchestration, per the SDK's own
+    // ModelInfo.supportedEffortLevels contract (not itself an effort level; a separate boolean the SDK
+    // declares). Ticking it forces the effort selector to xhigh and locks it there, matching the lab's
+    // "S.ultracode → S.effort = 'xhigh'" rule exactly — a real client-side effect, not a decorative box.
+    // The package owns the checkbox AND its "forces effort to xhigh" rule; what is Core's is what
+    // that means for THIS pane's persisted state and its live session.
+    const ultracodeLabel = ultracodeCb.parentNode;
+    ultracodeCb.addEventListener("change", () => {
+      p.ultracode = ultracodeCb.checked;
+      if (ultracodeCb.checked) effortSel.dispatchEvent(new Event("change"));
+    });
+    // Core's own chips go into the package's header/model slots — the package builds the rows, Core
+    // says what Core-specific things ride in them.
+    view.els.headExtra.replaceChildren(headBulb, bgBadge, savedBadge);
+    // Into the identity GROUP, not the row: rows are made of groups now, so `identitySlot` is no
+    // longer a direct child of the row and inserting against it there throws outright (it did —
+    // "the node before which the new node is to be inserted is not a child of this node", every
+    // Core pane, caught by driving the real page). These two belong inside that group anyway: the
+    // status dot and the repo label are part of "which conversation is this", which is what the
+    // group IS — left in the row they would also be ungrouped, and so unable to declare a side.
+    const identityGroup = view.els.identityGroup;
+    identityGroup.insertBefore(dot, identityGroup.firstChild);
+    identityGroup.insertBefore(identityLabel, view.els.identitySlot);
+    view.els.modelExtra.replaceChildren(swarmEl);
+    const topBar = view.identityRow;       // alias: kept for the exoAgentsChip.insertBefore call below
+    const controlsBar = view.footer;       // alias: what used to be the bare model-row div is now the footer wrapper around it
+    // Exocortex bar — context chip + agents chip + jump/search box + the cue strip. Its REAL chips
+    // are re-homed into the package's own slots (same nodes, same handlers, same live sync — only
+    // their DOM parent changes); left in place they stacked a second, differently-styled bar on top
+    // of the header stats row.
     const exo = exoMountBar(p, wsExoCtx(p));
-    const paneRoot = el("div", { class: "ws-pane" }, [topBar, convTabsRow, activityLine, activityLog, exo.root, transcriptEl, composeExtras, composeRow, controlsBar]);
+    const exoAgentsChip = exo.root.querySelector(".exo-chip-agents");
+    const exoCtxChip = exo.root.querySelector(".exo-chip-ctx");
+    const exoJumpGroup = exo.root.querySelector(".exo-jump");
+    // It lands in the identity row, so it must BE a chip like its neighbours — `.exo-chip` alone is
+    // 27px tall next to 22px chips, which is most of why these read as foreign controls rather than
+    // part of the row. Same node, same handler, same live data; one more class.
+    if (exoAgentsChip) { exoAgentsChip.classList.add("chip"); view.els.statusSlot.appendChild(exoAgentsChip); }
+    if (exoJumpGroup) searchDrawer.appendChild(exoJumpGroup);        // the REAL jump/recall, in the package's search drawer
+    if (exoCtxChip) {
+      // `badge` already shows the raw-number readout with thousand separators (an explicit earlier
+      // request) — a second, percentage-only chip beside it would read as duplication, not fidelity.
+      // Keep exoCtxChip alive (never delete it: its click is what polls the server for a fresh
+      // reading) but hidden, and let the package's `on.context` proxy the visible chip's click onto
+      // it, so "click for the breakdown" still does the real thing.
+      exoCtxChip.hidden = true;
+      badge._exoProxy = exoCtxChip;
+      exoCtxChip._visProxy = badge;   // the node the user actually sees + clicks → the popup anchors HERE
+      badge.title = "Context window — click for the breakdown";
+    }
+    // Conversation tabs and the exocortex cue strip are header ROWS (the package's header is "max 3
+    // rows"), not top-level siblings — the shell stays exactly three regions.
+    view.header.appendChild(convTabsRow);
+    view.header.appendChild(exo.root);
 
     paneRoot.addEventListener("mousedown", () => setActive(p.id));
     // Repointing a pane to a different repo/worktree abandons its OLD identity — bump `_gen` so
@@ -11538,7 +12872,6 @@ function viewWorkspace() {
       histBtn.title = on ? "Showing only this repo's history — click to show ALL history" : "History for this repo";
     }
     syncHistBtn();
-    closeBtn.addEventListener("click", (e) => { e.stopPropagation(); clearPane(p); });
     sendBtn.addEventListener("click", () => send(p));
     promptEl.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(p); } });
     // Attach path 1: file-picker button opens the hidden native input; its change event is the
@@ -11559,14 +12892,6 @@ function viewWorkspace() {
       const files = [...items].filter((item) => item.kind === "file" && /^image\//.test(item.type)).map((item) => item.getAsFile()).filter(Boolean);
       if (files.length) { e.preventDefault(); wsAttachImageFiles(p, files); }
     });
-    // Attach path 3: drag-and-drop one or more image files onto the compose row.
-    composeRow.addEventListener("dragover", (e) => { e.preventDefault(); composeRow.classList.add("ws-drag"); });
-    composeRow.addEventListener("dragleave", () => composeRow.classList.remove("ws-drag"));
-    composeRow.addEventListener("drop", (e) => {
-      e.preventDefault(); composeRow.classList.remove("ws-drag");
-      const files = e.dataTransfer && e.dataTransfer.files ? [...e.dataTransfer.files] : [];
-      wsAttachImageFiles(p, files);
-    });
 
     // _liveNode: the currently-rendered live-streaming-text DOM node, if any (set by paintPane,
     // read+updated directly by onPayload's assistant_delta handler — see there for why).
@@ -11577,11 +12902,26 @@ function viewWorkspace() {
     // (pill + blink + near-bottom follow). transcriptEl is already a child of paneRoot here, so the
     // controller can insert its relative wrapper in place around it.
     const stick = attachStickController(transcriptEl, { wrapClass: "stick-wrap-ws" });
-    // Desktop: dock the Live/Held bulb just above Send. Mobile: syncMobileBar homes it in the pane HEADER
-    // instead (by the identity), so don't dock to the compose here — it would flash there before moving.
-    if (!st.isMobile) stick.dockMode(sendWrap, "stick-mode--dock");
-    paneUI.set(p.id, { root: paneRoot, transcriptEl, stick, promptEl, repoSel, wtSel, modeSel, modelSel, modelNow, effortSel, fastModeLabel, fastModeCb, usageEl: badge, dot, sendBtn, stopBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, replyRowWrap, multiChatCb, convTabsRow, wrapCounters, identityLabel, activityLine, activityLog, exo, _bmPop: bmPop, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
-    if (p.draft) { promptEl.value = p.draft; wsAutoResizePrompt(promptEl); }   // restore the saved compose draft after a view switch / reload
+    // Desktop: dock the Live/Held bulb centred on the seam between transcript and footer, matching the
+    // lab exactly. Mobile: syncMobileBar homes it in the pane HEADER instead (by the identity), so don't
+    // dock to the seam here — it would flash there before moving.
+    // The package centres its OWN Live/Held marker on the transcript/footer seam and drives it from
+    // the real scroll position, so the stick controller's duplicate bulb is retired on desktop —
+    // two markers reporting the same thing, in two places, is worse than either alone. Mobile still
+    // homes it in the pane header (syncMobileBar), where the package's seam position has no room.
+    if (st.isMobile) stick.dockMode(seamBulb, "stick-mode--seam");
+    else stick.modeTag.classList.add("--gone");
+    paneUI.set(p.id, { root: paneRoot, view, transcriptEl, stick, promptEl, repoSel, wtSel, modeSel, modelSel, modelNow, effortSel, fastModeLabel, fastModeCb, ultracodeCb, usageEl: badge, dot, sendBtn, stopBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, replyRowWrap, multiChatCb, convTabsRow, statsRow, wrapWrap, identityLabel, activityLine, activityLog, linesChip, seamBulb, exo, _bmPop: bmPop, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
+    // Restore the saved compose draft after a view switch / reload, plus this pane's expand choice.
+    view.setState({
+      compose: { value: p.draft || "", expanded: !!p.expanded },
+      autoContinue: { shown: false, on: !!p._autoContinue },   // wsAutoEnsure reveals it once a reply exists
+      // Both of these are OFF in the package by default (a shell with nothing to narrate must not
+      // show "Idle" forever; a shell that is the only one on the page must not offer to close).
+      // A Core pane is one of many and does narrate, so it asks for both.
+      activity: { text: "Idle" },
+      close: { shown: true, title: "Clear this pane (ends its session)" },
+    });
     return paneRoot;
   }
 
@@ -11592,8 +12932,10 @@ function viewWorkspace() {
     p._activity.push({ at: Date.now(), text, tone: tone || "" });
     if (p._activity.length > WS_ACTIVITY_CAP) p._activity.shift();
     const ui = paneUI.get(p.id); if (!ui) return;
-    ui.activityLine.textContent = text;
-    ui.activityLine.className = "ws-activity" + (tone ? " " + tone : "");
+    // Through the package, not onto the node: writing `className` directly wiped the chip's own
+    // classes ("chip cs-activity"), so the shared chip look survived exactly until the first event.
+    // Core's tone vocabulary maps onto the package's chip modifiers — one chip vocabulary, not two.
+    if (ui.view) ui.view.setState({ activity: { text, tone: tone === "ws-act-ok" ? "ok" : tone === "ws-act-err" ? "bad" : "" } });
     if (!ui.activityLog.hidden) renderActivityLog(p);
   }
   function renderActivityLog(p) {
@@ -11628,6 +12970,33 @@ function viewWorkspace() {
     // of the rAF and freeze every future scheduled paint (a stuck-until-reload symptom). Isolate + log each.
     for (const id of ids) { const pane = st.panes.find((x) => x.id === id); if (pane) { try { paintPane(pane); } catch (e) { console.error("paintPane failed", e); } } }
   }
+  /** Arm the perf profiler over the cockpit's hot paths (see PERF at the top of this file).
+   *
+   *  Rebinding the function BINDINGS rather than editing each call site: every caller resolves the
+   *  same binding, so one assignment instruments all of them, and nothing is touched when the
+   *  profiler is off beyond one boolean test per call. A function declaration's binding is mutable,
+   *  which is what makes this possible without converting them to consts (and losing hoisting, which
+   *  several of these rely on). Idempotent — the stream can reconnect many times in a session.
+   *
+   *  These are the paths that scale with the number of open panes: the SSE handler that every agent
+   *  event arrives through, the per-pane repaint, the transcript renderer, the coalesced paint flush,
+   *  the header stats, the 250 ms auto-continue tick, and the layout save. If typing is stalling
+   *  because of the cockpit at all, it is in this list. */
+  let _instrumented = false;
+  function wsInstrument() {
+    if (_instrumented) return;
+    _instrumented = true;
+    const w = (name, fn) => function (...a) { return PERF.run(name, fn, this, a); };
+    const o1 = onPayload;            onPayload = w("onPayload (SSE)", o1);
+    const o2 = paintPane;            paintPane = w("paintPane", o2);
+    const o3 = renderTranscriptInto; renderTranscriptInto = w("renderTranscript", o3);
+    const o4 = flushPaints;          flushPaints = w("flushPaints", o4);
+    const o5 = wsPaintStatsRow;      wsPaintStatsRow = w("statsRow", o5);
+    const o6 = wsAutoEnsure;         wsAutoEnsure = w("autoTick (250ms/pane)", o6);
+    const o7 = saveLayout;           saveLayout = w("saveLayout", o7);
+    const o8 = scheduleLiveRender;   scheduleLiveRender = w("liveText", o8);
+  }
+
   function schedulePaint(p) {
     _paintDirty.add(p.id);
     if (_paintRAF) return;
@@ -11646,19 +13015,194 @@ function viewWorkspace() {
   // Update the live node's (capped) text AND keep the transcript pinned to bottom — both at most
   // ONCE per animation frame, not once per streamed chunk. Per-chunk work is then just an O(1)
   // string append to `p._liveText` + scheduling this; the (bounded) text set + the one forced
-  // layout happen per frame. `_liveRAF` guards against more than one scheduled flush per frame.
+  // layout happen per frame. The queue below guards against more than one scheduled flush per frame,
+  // ACROSS ALL PANES — see scheduleLiveRender.
+  // ONE frame, ONE flush, however many panes are streaming.
+  //
+  // Each pane used to schedule its OWN rAF, and inside it did read -> write -> read: sample the
+  // scroll position, set the text, re-apply the scroll. That is fine for one pane and quadratic for
+  // several — pane 2's read forces a layout that must first flush pane 1's write, pane 3's flushes
+  // both, and so on. Eight agents streaming at once therefore paid EIGHT full layout flushes per
+  // frame, each one laying out more freshly-dirtied content than the last, and every one of those
+  // flushes is main-thread time competing with your keystrokes and even with the cursor changing
+  // shape over a button.
+  //
+  // Batched into three phases across ALL panes — every read, then every write, then every scroll
+  // fix-up — the flush count is 2 per frame no matter how many panes are live. This is the same
+  // failure the comment above describes ("2 panes lag but 1 doesn't"), which was fixed for the SIZE
+  // of the live node but not for the NUMBER of live nodes.
+  const _liveQ = new Map();
+  let _liveFrame = 0;
   function scheduleLiveRender(ui, p) {
-    if (ui._liveRAF) return;
-    ui._liveRAF = _raf(() => {
-      ui._liveRAF = 0;
-      const t = ui.transcriptEl; if (!t || !ui._liveNode) return;
-      const text = wsLiveCounterText(p._liveText);
-      // Was the reader at the tail BEFORE this frame's text grew the node? Sample first, then apply
-      // through the shared controller so a reader scrolled up keeps their spot (and sees the pill).
-      const wasNearBottom = ui.stick ? ui.stick.sample() : (t.scrollHeight - t.scrollTop - t.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX);
-      if (ui._liveTextNode) ui._liveTextNode.nodeValue = text; else ui._liveNode.textContent = text;
-      if (ui.stick) ui.stick.apply(wasNearBottom); else if (wasNearBottom) t.scrollTop = t.scrollHeight;
+    _liveQ.set(ui, p);
+    if (_liveFrame) return;
+    _liveFrame = _raf(() => {
+      _liveFrame = 0;
+      const jobs = [];
+      for (const [u, pane] of _liveQ) {
+        u._liveRAF = 0;
+        const t = u.transcriptEl;
+        if (!t || !u._liveNode) continue;
+        jobs.push({ u, t, text: wsLiveCounterText(pane._liveText) });
+      }
+      _liveQ.clear();
+      // PHASE 1 — every READ. Was the reader at the tail BEFORE this frame's text grew the node?
+      for (const j of jobs) {
+        j.wasNearBottom = j.u.stick ? j.u.stick.sample()
+          : (j.t.scrollHeight - j.t.scrollTop - j.t.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX);
+      }
+      // PHASE 2 — every WRITE. Nothing reads geometry in here, so the whole batch dirties layout once.
+      for (const j of jobs) {
+        if (j.u._liveTextNode) j.u._liveTextNode.nodeValue = j.text;
+        else j.u._liveNode.textContent = j.text;
+      }
+      // PHASE 3 — the scroll fix-ups. The first one pays the single re-layout; the rest ride on it,
+      // because writing scrollTop does not dirty layout.
+      for (const j of jobs) {
+        if (j.u.stick) j.u.stick.apply(j.wasNearBottom);
+        else if (j.wasNearBottom) j.t.scrollTop = j.t.scrollHeight;
+      }
     });
+  }
+
+  /* ===== AUTO-CONTINUE, Core ==================================================================
+   * Core never had this; Pact has had a working, capped, cancellable one for a long time. Rather
+   * than invent a second set of rules, this drives the SAME pure decision function Pact does
+   * (pactAutoDecide — no DOM, no Pact state, just the inputs below), with the same ceiling and the
+   * same gates: OFF by default, paused while a round runs, paused while you are typing (your
+   * half-written message outranks the robot), and hard-stopped at the rolling cap until a human
+   * re-ticks it. Every pane owns its own loop, because every pane is on screen at once.
+   *
+   * What it sends is deliberately the plainest possible continuation, and deliberately not an
+   * invention of this feature: it is the same text Pact falls back to when it has no better
+   * suggestion. Auto-continue means "keep going", not "guess what I wanted".
+   */
+  const WS_AUTO_TEXT = "Continue where you left off.";
+  const wsPaneBusy = (p) => p.status === "thinking" || p.status === "awaiting-permission" || p.status === "deepwork";
+  function wsAutoStop(p) {
+    if (p._autoTimer) { clearInterval(p._autoTimer); p._autoTimer = 0; }
+    p._autoDeadline = 0;
+  }
+  /** A human send resets the loop: the ceiling exists to stop a runaway ROBOT, not to ration you. */
+  function wsAutoResetOnHumanSend(p) { p._autoCount = 0; p._autoCap = PACT_AUTO_CAP; }
+  function wsAutoEnsure(p) {
+    const ui = paneUI.get(p.id); if (!ui || !ui.view) return null;
+    const d = pactAutoDecide({
+      autoContinue: p._autoContinue, busy: wsPaneBusy(p),
+      hasReply: (p.transcript || []).some((m) => m && (m.role === "assistant" || m.kind === "assistant") && m.text),
+      active: true,                                  // every Core pane is on screen; each owns its loop
+      composeText: ui.promptEl ? ui.promptEl.value : (p.draft || ""),
+      autoCount: p._autoCount, autoCap: p._autoCap, deadline: p._autoDeadline, now: Date.now(),
+    });
+    // The control reports the real decision — including WHY it is paused — so a suppressed loop can
+    // never be silent. "I ticked the box and nothing happened" is the failure this guards against.
+    const why = pactAutoWhy(d);
+    const title = d.on
+      ? (d.arm ? "Auto-continue armed — sending in " + Math.max(1, Math.ceil(d.msLeft / 1000)) + "s"
+               : (why || "Auto-continue on"))
+      : "Auto-continue: send the next prompt automatically when idle (up to " + PACT_AUTO_CAP + " rounds per batch).";
+    // PUBLISH ONLY WHAT CHANGED. This function runs on a 250 ms timer PER PANE, and setState marks the
+    // shell's per-line group alignment dirty — a write-then-read over every group, i.e. a forced
+    // synchronous layout. Eight panes therefore paid 32 full layout passes a second, forever, to
+    // re-state a decision that is identical between ticks in every case except the one second before
+    // an auto-send fires. The signature is exactly what this call publishes; nothing else.
+    const sig = [d.show || d.on, d.on, d.autoCount, d.autoCap, title].join("\u0001");
+    if (p._autoSig !== sig) {
+      p._autoSig = sig;
+      ui.view.setState({ autoContinue: { shown: d.show || d.on, on: d.on, n: d.autoCount, max: d.autoCap } });
+      if (ui.view.els.sendGrp) ui.view.els.sendGrp.title = title;
+    }
+    if (!d.arm) { wsAutoStop(p); return d; }
+    p._autoDeadline = d.deadline;
+    if (d.fire) {
+      wsAutoStop(p);
+      p._autoCount = (p._autoCount || 0) + 1;        // an AUTO send counts toward the ceiling
+      if (ui.promptEl) ui.promptEl.value = WS_AUTO_TEXT;
+      p._autoSending = true;
+      try { send(p); } finally { p._autoSending = false; }
+      return d;
+    }
+    if (!p._autoTimer) p._autoTimer = setInterval(() => wsAutoEnsure(p), 250);
+    return d;
+  }
+
+  // The header stats row: turns/rounds/%, size, compacted-this-window, wrapped-this-conversation, and
+  // an approximate "would wrap" preview — the EXACT figures live in the wrap dialog itself (a real
+  // server round trip via wrapPreview), so this is deliberately labelled "approximate": it is a glance
+  // chip, not the source of truth. Built once per paint from real transcript/usage data — never a mock.
+  const WS_TAIL_TURNS = 200;   // mirrors ROLL_DEFAULTS.tailTurns (lib/conversationRoll.mjs) — turns, not rounds
+  // Built through the SAME chat-shell.js function the Lab uses (CS.buildStatsChips) — this used to be
+  // an independent, hand-copied reimplementation of the Lab's header row that happened to agree with
+  // it and drifted the moment either side changed. Now it's one function; only the real data differs.
+  function wsPaintStatsRow(p, ui) {
+    if (!ui || !ui.view) return;
+    const tx = Array.isArray(p.transcript) ? p.transcript : [];
+    // THE LIVE WINDOW, not the whole conversation. Every ceiling in this row is per-window — the
+    // engine measures turns and bytes since the last wrap — and the transcript is never spliced by a
+    // wrap, so counting all of it reported `7,668/1,000 turns · 766.8%` and offered to wrap back to
+    // R#1. The boundary is the transcript's own last `wrapped` mark, which is exactly what the
+    // engine reads back (workspace.mjs `_rollFrom`), so client and server cannot disagree.
+    let lastWrap = -1, nWraps = 0;
+    for (let i = 0; i < tx.length; i++) if (tx[i] && tx[i].kind === "wrapped") { lastWrap = i; nWraps++; }
+    let bytes = 0, nP = p._promptOffset || 0, nR = p._responseOffset || 0;
+    let pFrom = 0, rFrom = 0;
+    for (let i = 0; i < tx.length; i++) {
+      const m = tx[i];
+      if (!m) continue;
+      if (i === lastWrap + 1) { pFrom = nP + 1; rFrom = nR + 1; bytes = 0; }   // the window starts here
+      const text = typeof m.text === "string" ? m.text : (typeof m.content === "string" ? m.content : "");
+      bytes += text.length;
+      if (m.role === "user" || m.kind === "user") nP++;
+      else if (m.role === "assistant" || m.kind === "assistant") nR++;
+    }
+    if (!pFrom) { pFrom = (p._promptOffset || 0) + 1; rFrom = (p._responseOffset || 0) + 1; }
+    const usage = p.contextUsage || {};
+    // The row itself is the package's; Core supplies only the real numbers. `wrap` rides along on the
+    // same patch because both are derived from the same live usage reading.
+    ui.view.setState({
+      stats: { prompts: nP, responses: nR, bytes, tokens: Number(usage.totalTokens) || 0,
+        ceiling: Number(usage.maxTokens) || 1000000, maxTurns: 1000, maxBytes: 25 * 1024 * 1024,
+        pFrom, rFrom,
+        compactCount: p._compactCount || 0,
+        // Wrap marks are durable transcript rows, so this survives a reload — the live-event counter
+        // alone reset to zero on every refresh and reported "0 wrapped" for a conversation with
+        // fourteen archived segments.
+        wrapCount: Math.max(nWraps, p._wrapCount || 0), tailTurns: WS_TAIL_TURNS,
+        fmtNum: wsNumFmt, fmtBytes: wsFmtBytes },
+      wrap: { autoWrap: p.autoWrap !== false, tokens: Number(usage.totalTokens) || 0,
+              ceiling: Number(usage.maxTokens) || 1000000 },
+      // "N earlier turns" — the medallion floating at the top of the transcript, not a header row.
+      earlier: exoAboveState(p),
+    });
+  }
+
+  // Compact/Wrap/auto-wrap, built through the SAME shared function the Chat Shell Lab and Pact use
+  // (window.ChatShell.buildWrapControls). Repainted every paintPane() — not just once at pane
+  // construction — because the meter fill and the Wrap button's disabled state depend on the pane's
+  // LIVE context usage, which changes as the conversation grows.
+  // Compact / Wrap / auto-wrap are painted by wsPaintStatsRow's own `wrap` patch (same live usage
+  // reading, one setState) — this stays as the name the paint path calls, so the ordering of the
+  // paint sequence reads unchanged.
+  function wsPaintWrapControls() {}
+
+  /** WHICH MODEL IS ACTUALLY WORKING — always on screen, never blank. The selector states an INTENT
+   *  ("Sonnet 5 (default)"); this states the FACT the engine reported, and the two genuinely differ
+   *  (an alias resolves to a build; a routed session can land elsewhere entirely). When nothing is
+   *  running it says so and names what WILL run — see wsModelNowReadout, shared with Pact so the two
+   *  workspaces cannot word this differently again.
+   *  It must go through the package's own setState: writing textContent directly left the chip
+   *  carrying the right text while still hidden (`--gone`), because the package hides it whenever
+   *  `activeLabel` is empty — which was every pane, always. */
+  function wsPaintModelNow(p, ui) {
+    if (!ui || !ui.modelNow) return;
+    const mr = chatModelReadout(st.models, p.model, p.activeModel);
+    // "What WILL run" is the same resolution with no reported model to prefer — the pick, named
+    // exactly, rather than a second, differently-derived label.
+    const planned = chatModelReadout(st.models, p.model, "").text;
+    const r = wsModelNowReadout(mr, p.sessionKey ? p._engineLive : false, planned);
+    if (ui.view) ui.view.setState({ model: { activeLabel: r.text.replace(/^\u00b7\s*/, "") } });
+    ui.modelNow.title = r.title;
+    ui.modelNow.classList.toggle("--unknown", !r.known);
   }
 
   function paintPane(p) {
@@ -11666,11 +13210,9 @@ function viewWorkspace() {
     ui.root.classList.toggle("on", p.id === st.activeId);
     ui.root.classList.toggle("ro", !!p.readonly);
     wsPaintConvTabs(p);
-    if (ui.wrapCounters) {
-      ui.wrapCounters.textContent = "🗜 " + (p._compactCount || 0) + " · ⟳ " + (p._wrapCount || 0);
-      ui.wrapCounters.title = "🗜 " + (p._compactCount || 0) + " compaction(s) in this window (resets at every wrap) · ⟳ "
-        + (p._wrapCount || 0) + " wrap(s) this conversation has ever had (cumulative)";
-    }
+    wsPaintStatsRow(p, ui);
+    wsPaintWrapControls(p, ui);
+    wsAutoEnsure(p);
     // Keep the dropdown showing the pane's repo, injecting an option for a tree-picked
     // path that isn't a tracked repo.
     if (!Array.from(ui.repoSel.options).some((o) => o.value === (p.repo || ""))) fillRepoSelect(ui.repoSel, p.repo);
@@ -11684,18 +13226,22 @@ function viewWorkspace() {
         ? shortRepo(p.repo) + (p.worktree && p.worktree !== "main" ? " @ " + p.worktree : "")
         : "Pick a repository";
     }
-    if (ui.modeSel.value !== p.mode) ui.modeSel.value = p.mode;
-    ui.modeSel.classList.toggle("danger", p.mode === "bypassPermissions");
-    ui.modeSel.classList.toggle("plan", p.mode === "plan");
+    // Through the package, not by hand: the colour-coding of the permission mode belongs to the
+    // shell (it is the same control, in the same place, in both workspaces and in the Lab). Core used
+    // to toggle its own `danger`/`plan` spelling here, which no rule in the package matches — so
+    // Bypass rendered as an ordinary grey select while the Lab showed it red.
+    ui.view.setState({ permission: { value: p.mode } });
     // Model/effort/fast-mode: rebuilt every paint (cheap — a handful of <option>s), since
     // st.models can arrive/refresh asynchronously well after the pane and its selects exist.
-    fillModelSelect(ui.modelSel, p.model, p.activeModel);
-    if (ui.modelNow) {
-      const mr = chatModelReadout(st.models, p.model, p.activeModel);
-      ui.modelNow.textContent = mr.text ? "· " + mr.text : "· model unreported";
-      ui.modelNow.title = mr.title;
-      ui.modelNow.classList.toggle("--unknown", !mr.text);
+    // A resumed or reattached pane has a session but may not have completed a turn under this page
+    // load, so no contextUsage was ever pushed — ask once, rather than showing an empty readout
+    // forever. `_ctxAsked` keeps it to one request per pane per session key.
+    if (p.sessionKey && !p.readonly && !p.contextUsage && p._ctxAsked !== p.sessionKey) {
+      p._ctxAsked = p.sessionKey;
+      wsPost("control", { action: "contextUsage", args: { sessionKey: p.sessionKey } });
     }
+    fillModelSelect(ui.modelSel, p.model, p.activeModel);
+    wsPaintModelNow(p, ui);
     fillEffortSelect(ui.effortSel, p);
     const modelInfo = modelInfoFor(p.model);
     ui.fastModeLabel.hidden = !modelInfo?.supportsFastMode;
@@ -11715,8 +13261,14 @@ function viewWorkspace() {
     // Deep Work gets its own red treatment, layered on top of (not instead of) `busy` — it's the
     // same turn-lock, just flagged as open-ended background activity rather than an ordinary
     // "one moment" foreground turn, so you're never misled into thinking it's actually idle.
-    ui.sendBtn.classList.toggle("busy", busy);
-    ui.sendBtn.classList.toggle("deepwork", deep);
+    // The presentation itself is decided by the SAME shared function Pact uses; Core only applies it
+    // through its own long-standing class names (see chatShellProdWiring's note on why Core is not
+    // migrated to setState wholesale — it stamps stall warnings onto these buttons elsewhere).
+    const _pres = window.ChatShell.sendPresentation({ busy, deep, stopping: !!p._stopping,
+      background: (Array.isArray(p._background) ? p._background : []).length > 0,
+      suffix: busy ? wsBusyElapsedLabel(p) : "" });
+    ui.sendBtn.classList.toggle("busy", _pres.state === "busy" || _pres.state === "deep");
+    ui.sendBtn.classList.toggle("deepwork", _pres.state === "deep");
     // Hidden background work: a workflow / backgrounded task the agent spawned that runs
     // INDEPENDENTLY of the chat turn — so it can be active even while the chat is idle ("free") and
     // you'd otherwise have no idea. A blinking border on the Send button means "work is happening":
@@ -11728,8 +13280,8 @@ function viewWorkspace() {
     const bgActive = bg.length > 0;
     // Model-bar swarm figures — same component and same live-count semantics as Pact (see pactUpdateSwarm).
     paintSwarm(ui.root && ui.root.querySelector(".pc-swarm"), bg);
-    ui.sendBtn.classList.toggle("work-pulse", busy || bgActive);
-    ui.sendBtn.textContent = (deep ? "Deep Work…" : busy ? "Working…" : "Send") + (busy ? wsBusyElapsedLabel(p) : "");
+    ui.sendBtn.classList.toggle("work-pulse", _pres.pulse);
+    ui.sendBtn.textContent = _pres.sendLabel;
     // The Stop button appears only while the pane is actively working a turn (thinking / deep work /
     // awaiting permission) — it interrupts that turn without ending the conversation.
     // Unified with Pact: on desktop Stop keeps its slot and toggles enabled/disabled instead of appearing
@@ -11754,9 +13306,10 @@ function viewWorkspace() {
     ui.sendBtn.disabled = !!p.readonly;
     ui.attachBtn.disabled = !!p.readonly;
     ui.promptEl.placeholder = p.readonly ? "Read-only — pick the repo above or Resume from history to continue" : (p.resume ? "Resuming saved session — your next message continues it" : "Message Claude… (Ctrl+Enter)");
-    const usg = wsUsageLabel(p.usage, p.contextUsage);
-    ui.usageEl.textContent = usg.text || "—";
-    ui.usageEl.title = usg.title;
+    // "—" said nothing at all. Until a turn completes, no context reading exists for this session —
+    // say that, and make the readout the way to ask for one (it already proxies the exocortex chip's
+    // click, which is the request). A number that has not arrived is different from a number of zero.
+    wsPaintUsage(ui.usageEl, p.usage, p.contextUsage, p.sessionKey ? p._engineLive : false);
     if (ui.exo) ui.exo.sync();   // exocortex chips/cues are pure functions of this pane's state
     // paintPane fires on every streamed event during a turn — a full replaceChildren() would
     // otherwise (a) blow away any tool-group a user just expanded (fixed by handing the pane's
@@ -11773,7 +13326,13 @@ function viewWorkspace() {
     const wasNearBottom = forceBottom || (ui.stick ? ui.stick.sample() : (ui.transcriptEl.scrollHeight - ui.transcriptEl.scrollTop - ui.transcriptEl.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX));
     const hasQueue = p._queue && p._queue.length;
     if (!p.transcript.length && !p._liveText && !hasQueue) {
-      ui.transcriptEl.replaceChildren(el("div", { class: "hint" }, [p.repo ? "Send a message — Claude runs in " + shortRepo(p.repo) + " on your machine." : "Pick a repository (dropdown, or the sidebar) to start."]));
+      // The medallion is a child of the core (see ChatShellUI's `els.coreTop`) and this branch owns
+      // the core's children too — put it back, or it is detached until the first real paint. It is
+      // hidden anyway on a conversation with nothing above the window; keeping the node mounted is
+      // what makes "the host re-includes it wherever it rebuilds the core" true without exception.
+      ui.transcriptEl.replaceChildren(
+        ...(ui.view && ui.view.els && ui.view.els.coreTop ? [ui.view.els.coreTop] : []),
+        el("div", { class: "hint" }, [p.repo ? "Send a message — Claude runs in " + shortRepo(p.repo) + " on your machine." : "Pick a repository (dropdown, or the sidebar) to start."]));
       ui._domLead = []; ui._txRef = null; ui._liveNode = null; ui._liveTextNode = null; ui._showEarlierNode = null;   // reset incremental cache (see renderTranscriptInto)
     } else {
       // Trailing extras that always sit AFTER the real turns: the live-typing preview, then any
@@ -11795,11 +13354,11 @@ function viewWorkspace() {
         : "queued — sending once this turn finishes";
       const queuedCls = "ws-user ws-queued" + (p.status === "deepwork" ? " ws-queued-deep" : "");
       if (hasQueue) for (const q of p._queue) {
-        const kids = [el("b", {}, ["you  "])];
+        const kids = [el("b", { class: "who" }, ["you"])];
         // A queued message's images are still local blobs (not yet uploaded/saved) — render
         // straight from their own dataUrl, the same bytes the real send will carry.
-        if (q.images && q.images.length) kids.push(el("div", { class: "ws-user-images" }, q.images.map((img) => el("img", { class: "ws-user-image", src: img.dataUrl, alt: "attached image (queued)" }, []))));
-        kids.push(q.text, el("span", { class: "ws-queued-tag" }, [queuedTag]));
+        if (q.images && q.images.length) kids.push(el("div", { class: "ws-user-images msgimgs" }, q.images.map((img) => el("img", { class: "ws-user-image", src: img.dataUrl, alt: "attached image (queued)" }, []))));
+        kids.push(q.text, el("span", { class: "ws-queued-tag qtag" }, [queuedTag]));
         tailExtras.push(line(queuedCls, kids));
       }
       // Exocortex tail: the recalled turn (inline, with its provenance) and the honest "more below"
@@ -12497,7 +14056,7 @@ function viewWorkspace() {
       // The model catalog — ONE global list (see st.models above); a fresh answer replaces it and
       // every pane's selector is repainted so a newly-available model shows up everywhere at once,
       // not just in whichever pane happened to ask.
-      if (Array.isArray(data.models) && data.models.length) { st.models = data.models; OMNI_CATALOG = data.models.filter((m) => m && typeof m.value === "string" && m.value.startsWith("omni/")); try { localStorage.setItem("cm_models", JSON.stringify(data.models)); } catch {} for (const p of st.panes) paintPane(p); }
+      if (Array.isArray(data.models) && data.models.length) { st.models = data.models; st.modelsRev++; OMNI_CATALOG = data.models.filter((m) => m && typeof m.value === "string" && m.value.startsWith("omni/")); try { localStorage.setItem("cm_models", JSON.stringify(data.models)); } catch {} for (const p of st.panes) paintPane(p); }
       // NOTE (CONTRACT §2b): the agents tracker MUST see every state frame as well as every
       // background event, keyed per sessionKey — its staleness heuristic measures "when did THIS
       // client last see THIS agent change", and skipped frames make a healthy fleet read as stalled.
@@ -12698,7 +14257,13 @@ function viewWorkspace() {
         // actually commits. Counted HERE, not on the manual "wrapResult" reply, so an automatic
         // roll (which never sends wrapResult) is still counted, and a manual one is never double
         // counted. Compactions belong to the WINDOW a roll just cleared, so they reset here too.
-        if (data.kind === "rolling") { for (const p of targets) { p._wrapCount = (p._wrapCount || 0) + 1; p._compactCount = 0; } }
+        if (data.kind === "rolling") for (const p of targets) {
+          p._wrapCount = (p._wrapCount || 0) + 1; p._compactCount = 0;
+          // The WRAP bar — the same durable mark compaction gets, and the same package design
+          // (.mark.--wrap). The server records the identical row with this `at`, so a resync
+          // replaces this optimistic copy rather than doubling it.
+          if (Array.isArray(p.transcript)) p.transcript.push({ kind: "wrapped", segment: data.segment, sourceRef: data.sourceRef, at: data.at });
+        }
         for (const p of targets) { exoIngestEvent(p, data); paintPane(p); }
         return;
       }
@@ -12710,6 +14275,9 @@ function viewWorkspace() {
         // scroll, breaking Held; see the paintPane comment). A contextUsage answer changes no transcript.
         for (const p of targets) {
           p.contextUsage = data.usage;
+          // Whether a `claude` process exists at all for this conversation — the fact three readouts
+          // needed and none of them had (see wsUsageReadout). Only the server can answer it.
+          if (typeof data.live === "boolean") p._engineLive = data.live;
           // CONTRACT §1: read `contextBreakdown`, not the raw SDK `usage` — and `ok:false` means
           // UNAVAILABLE, never "0% used" (shapeContextPopover keeps the two apart).
           exoNoteContext(p, data);
@@ -12718,7 +14286,9 @@ function viewWorkspace() {
           if (data.usage && data.usage.model) p.activeModel = data.usage.model;
           const ui = paneUI.get(p.id);
           if (ui) {
-            if (ui.usageEl) { const usg = wsUsageLabel(p.usage, p.contextUsage); ui.usageEl.textContent = usg.text || "—"; ui.usageEl.title = usg.title; }
+            // Same wording as paintPane's — one phrasing for "no reading yet", not two that drift.
+            wsPaintUsage(ui.usageEl, p.usage, p.contextUsage, p._engineLive);
+            wsPaintModelNow(p, ui);   // the model chip answers from the same fact, in the same breath
             if (ui.modelSel && p.activeModel !== prevModel) fillModelSelect(ui.modelSel, p.model, p.activeModel);
           }
         }
@@ -12732,9 +14302,27 @@ function viewWorkspace() {
         for (const p of targets) {
           p._compactCount = (p._compactCount || 0) + 1;   // per-WINDOW — reset when "rolling" fires
           exoIngestEvent(p, data);
+          // The MARK in the conversation itself — a bar across the transcript at the point the window
+          // was summarised. The server records the same row (workspace.mjs _onEvent) with this exact
+          // `at`, so a resync replaces this optimistic copy with the persisted one rather than
+          // doubling it. Without a row here the `/compact` prompt stayed the trailing unanswered turn
+          // and painted itself as INTERRUPTED — see wsInterruptedIdx.
+          if (Array.isArray(p.transcript)) p.transcript.push({ kind: "compacted", trigger: data.trigger || "manual", preTokens: data.preTokens ?? null, postTokens: data.postTokens ?? null, at: data.at });
           logActivity(p, "🗜 Context compacted" + (pre && post ? " — " + pre + " → " + post + " tokens" : ""));
           if (p.sessionKey && !p.readonly) wsPost("control", { action: "contextUsage", args: { sessionKey: p.sessionKey } });
           paintPane(p);   // reflect the new count on the 🗜/⟳ badge immediately, not on the next unrelated repaint
+        }
+        return;
+      }
+      // A TURN THAT FAILED. Recorded as a row for the same reason compaction is: without it the pane
+      // simply goes idle with no reply, which is indistinguishable from "nothing happened" — the
+      // exact shape of the "the prompts are stuck" report. The server persists the same row with
+      // this `at`, so a resync replaces this optimistic copy rather than doubling it.
+      if (data.kind === "turnError") {
+        for (const p of targets) {
+          if (Array.isArray(p.transcript)) p.transcript.push({ kind: "turnError", message: data.message || "", subtype: data.subtype || null, at: data.at });
+          logActivity(p, (data.subtype === "resume-missing" ? "↻ " : "⚠ Turn failed — ") + (data.message || "the engine ended the turn with an error"), data.subtype === "resume-missing" ? "" : "ws-act-err");
+          paintPane(p);
         }
         return;
       }
@@ -12791,6 +14379,8 @@ function viewWorkspace() {
         }
         if (data.kind === "status") {
           p.status = data.status;
+          // A status event can only come from a running process — except the two that report its end.
+          p._engineLive = !(data.status === "ended" || data.status === "error");
           noteSessionStatus(sessionKey, data.status);   // keep the global live-conversation stats fresh for our own sessions immediately
           // A shared session can go "thinking" because ANOTHER terminal sent the prompt, not this
           // one's own dispatchPrompt() — reset the streaming-logged flag here too, or this pane
@@ -12936,6 +14526,7 @@ function viewWorkspace() {
       lastAttached = undefined; reportAttach();   // announce what this terminal is viewing
     });
     WS_ES.onmessage = (e) => { WS_LAST_MSG_AT = Date.now(); try { onPayload(JSON.parse(e.data)); } catch {} };
+    wsInstrument();
     WS_ES.onerror = () => { note("Stream interrupted — retrying…"); logActivityAll("⚠ Connection interrupted — reconnecting…", "ws-act-err"); };
     // Staleness watchdog: a mobile carrier's NAT can silently drop an idle connection with no
     // FIN/RST — Node's res.write() never throws in that case, so the server keeps "sending" into
@@ -13060,6 +14651,7 @@ function viewWorkspace() {
     const text = pendingRefs.length
       ? window.ChatShell.buildReplyPreamble(pendingRefs) + (typed ? "\n" + typed : "")
       : typed;
+    if (!p._autoSending) wsAutoResetOnHumanSend(p);   // a HUMAN prompt resets the auto-continue ceiling
     p._replyRefs = []; wsPaintReplyRow(p);   // one-shot per send, same treatment as attached images
     // Same "clear optimistically, restore on failure" treatment either way — the attached images
     // (if any) are a one-shot per send, never left over for the next message.

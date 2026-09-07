@@ -64,6 +64,7 @@ import { SESSION_COOKIE, LOGIN_COOKIE } from "./auth/session.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dir, "public");
+const CHAT_SHELL_DIR = resolve(__dir, "..", "packages", "claude-chat-shell", "src");
 const DATA_DIR = join(__dir, "data");
 const MASTER_ROOT = resolve(__dir, "..", "..");   // D:/_Claude
 const SECRETS_DIR = join(MASTER_ROOT, ".secrets"); // the single token store for the workspace
@@ -1446,6 +1447,14 @@ const handler = async (req, res) => {
     : null;
   if (stickyMirror) {
     return sendFile(res, path, PUBLIC_DIR, () => proxyToMirror(req, res, stickyMirror, path + (url.search || "")));
+  }
+
+  // THE CHAT SHELL PACKAGE, served straight from packages/claude-chat-shell/src at /chat-shell/*.
+  // Deliberately NOT copied into public/: a copy is a second version of the file that drifts the
+  // moment either side is edited, which is the exact failure this package exists to end. Both the
+  // live dashboard and the Chat Shell Lab load these same bytes from this same directory.
+  if (path.startsWith("/chat-shell/")) {
+    return sendFile(res, path.slice("/chat-shell".length), CHAT_SHELL_DIR);
   }
 
   sendFile(res, path, PUBLIC_DIR);

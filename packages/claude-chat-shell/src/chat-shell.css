@@ -1,0 +1,18 @@
+/* @ancientpantheon/claude-chat-shell — the ONE stylesheet a consumer links.
+ *
+ *   <link rel="stylesheet" href="/chat-shell/chat-shell.css">
+ *
+ * Everything below it is an implementation detail of the package; a consumer never links the
+ * three parts individually, and never needs to know they exist.
+ *
+ *   theme.css       WHAT COLOUR          the design tokens (--panel/--acc/--bub-u/--tag-r-bg/…)
+ *   frame.css       WHERE                the three regions (header/core/footer) + row layout
+ *   components.css  WHAT IT LOOKS LIKE   chips, bubbles, turn medallions, the type box, the
+ *                                        gutter, the send group, the joined split control…
+ *
+ * All component rules are scoped `.cs-shell` — the class mount() puts on your host element — so
+ * dropping this into an existing app cannot restyle anything outside the chat box.
+ */
+@import url("./theme.css");
+@import url("./frame.css");
+@import url("./components.css");

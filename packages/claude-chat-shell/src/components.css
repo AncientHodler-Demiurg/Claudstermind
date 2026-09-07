@@ -1,0 +1,492 @@
+/* CHAT SHELL COMPONENTS — the single source of truth for the Core/Pact chat COMPONENT look.
+ *
+ * The third and last of the three shared chat-shell stylesheets, completing what
+ * chat-shell-theme.css (palette) and chat-shell-frame.css (region/row structure) started:
+ *
+ *   chat-shell-theme.css       WHAT COLOUR   the tokens (--panel/--acc/--bub-u/…)
+ *   chat-shell-frame.css       WHERE         the three regions + header/footer row layout
+ *   chat-shell-components.css  WHAT IT LOOKS LIKE   chips, bubbles, turn tags, the type box,
+ *                                            the gutter, the send group, the split control…
+ *
+ * This file is the answer to the one complaint the previous two did not close: the shape and the
+ * palette matched, but every WIDGET inside the shell was still two independent implementations —
+ * the Lab's `.chip`/`.msg`/`.sel`/`.btn-send` versus production's `.exo-chip`/`.ws-line`/`.ws-send`
+ * — so the Lab and the live workspaces kept reading as two different applications. Every rule below
+ * is the Lab's own, moved here verbatim; the Lab now gets them from this file, and so does
+ * production, because it is THE SAME FILE.
+ *
+ * SCOPING. Every rule is prefixed `.cs-shell` — the class carried by the Lab's `#shell` and by both
+ * production chat containers (a Core pane's `.ws-pane`, Pact's `.pact-chat`). Two things follow
+ * from that, both deliberate:
+ *   1. Nothing here can leak into the rest of the dashboard (the rail, the file editor, the
+ *      landing page) — a bare `button {}` rule from the Lab would otherwise restyle the whole app.
+ *   2. `.cs-shell .msg.--u` (0,3,0) outranks production's own `.ws-line.ws-user` (0,2,0), so
+ *      production's elements can carry BOTH class sets and the Lab's look wins without deleting
+ *      production's long-standing class names (and the ~1400 tests keyed to them).
+ */
+
+/* ===== THE SHELL BOX + REGION TONES =====
+ * "CORE = the reading surface, the LIGHTEST thing in the shell (content deserves the light);
+ *  HEADER/FOOTER = chrome, clearly DARKER, so the eye reads 'content' vs 'controls' instantly,
+ *  plus a hard line and a 1px inner highlight at each seam" (chat-shell-lab.html's own comment).
+ * Production had neither the tone step nor the seam highlights — the single biggest reason a live
+ * pane read as one flat slab where the Lab reads as three regions.
+ *
+ * MEASURED, and it was not implemented: --hdr, --ftr and the core's own background ALL resolved to
+ * --panel, so every region painted the identical colour (Core rgb(8,12,24) x3, Pact rgb(19,27,38) x3)
+ * and the "three regions" the comment describes existed only as prose. --core-bg (theme.css) is the
+ * tone step, and the seams take --edge — the SAME token the outer frame uses — so the line between
+ * the regions matches the line around the whole box by construction, at one shared --seam-w. */
+.cs-shell { background: var(--panel); }
+.cs-shell .rg-header { background: var(--hdr); border-bottom: var(--seam-w) solid var(--edge);
+  box-shadow: inset 0 -1px 0 #ffffff0f, 0 3px 8px -3px #000a; }
+.cs-shell .rg-core { background: var(--core-bg); padding: 10px 12px; }
+.cs-shell .rg-footer { background: var(--ftr); border-top: var(--seam-w) solid var(--edge);
+  box-shadow: inset 0 1px 0 #ffffff0f, 0 -3px 8px -3px #000a; }
+
+/* ===== GENERIC CONTROLS ===== */
+.cs-shell button { background: #16203a; color: var(--ink); border: 1px solid var(--line);
+  border-radius: 6px; padding: 4px 9px; font: inherit; font-size: 11.5px; cursor: pointer; }
+.cs-shell button:hover { border-color: var(--acc); }
+.cs-shell button.on { background: var(--acc); color: #1a0b2e; border-color: var(--acc); font-weight: 700; }
+.cs-shell button:disabled { opacity: .4; cursor: not-allowed; }
+.cs-shell label { font-size: 11.5px; color: var(--dim); display: flex; gap: 5px; align-items: center; cursor: pointer; }
+.cs-shell .row { display: flex; gap: 6px; align-items: center; margin: 4px 0; flex-wrap: wrap; }
+.cs-shell .spacer { flex: 1; }
+.cs-shell .sel { background: #0f1730; color: var(--ink); border: 1px solid var(--line);
+  border-radius: 6px; padding: 3px 6px; font: inherit; font-size: 11.5px; }
+/* PERMISSION MODE, COLOUR-CODED. Matched on `select` as well as `.sel` on purpose: a host may
+ * substitute its OWN permission control for the native one (Pact does — `wsel wsel-sm pc-mode`), and
+ * the state belongs to the role, not to the package's particular element. Without the bare `select`
+ * arm the substituted control got the class and no styling, which is how Bypass ended up looking
+ * identical to Default in both workspaces while reading correctly red in the Lab. */
+.cs-shell .sel.--danger, .cs-shell select.--danger { color: #ffb4b4; border-color: #ef4444; background: #2a1114; font-weight: 700; }
+.cs-shell .sel.--plan, .cs-shell select.--plan { color: #a5b4fc; border-color: #6366f1; background: #171a35; }
+.cs-shell .btn-send { background: var(--acc); color: #1a0b2e; font-weight: 700; border-color: var(--acc); }
+.cs-shell .btn-stop { background: #3a1720; color: #ffb3c0; border-color: #7a2b3c; }
+/* A pressed Stop, while the interrupt is in flight. */
+.cs-shell .btn-stop.--pending { opacity: .55; cursor: not-allowed; filter: none !important; }
+
+/* WORKING / DEEP WORK — the Send button IS the loud turn indicator, and has been for a long time in
+ * production (styles.css `.ws-send.busy` amber, `.ws-send.busy.deepwork` red). Those rules still
+ * exist there, but they are keyed to production's OWN button classes (.ws-send/.pc-send); the moment
+ * both workspaces moved onto the package's `.btn-send`, nothing matched them any more — and the
+ * package's own `.cs-shell .btn-send` rule above is same-specificity and loaded LATER (chat-shell.css
+ * comes after styles.css in index.html), so even where a class did survive it lost the tie on source
+ * order. Measured before this rule existed: background == var(--acc) in the idle, busy AND deep-work
+ * states, in Core, Pact and the Lab alike. That is "the buttons need to be orange and red, which they
+ * aren't". Owning the states HERE is what makes them true in all three at once.
+ *
+ * Two spellings match on purpose. `--busy`/`--deep` is the package's own state vocabulary, set
+ * through setState({ send: { state } }) — that is what the Lab and any new host should use.
+ * `busy`/`deepwork` are the bare class names production already toggles directly on the button; they
+ * are honoured so the fix is live everywhere immediately rather than only where a call site was
+ * migrated. Deep work is listed second so it wins the tie when both are set (production sets them
+ * independently), matching the old `.busy.deepwork` override. */
+.cs-shell .btn-send.--busy, .cs-shell .btn-send.busy {
+  background: var(--work); border-color: var(--work); color: var(--work-fg); }
+.cs-shell .btn-send.--deep, .cs-shell .btn-send.deepwork {
+  background: var(--work-deep); border-color: var(--work-deep); color: var(--work-deep-fg); }
+.cs-shell .btn-send.--busy:hover, .cs-shell .btn-send.busy:hover,
+.cs-shell .btn-send.--deep:hover, .cs-shell .btn-send.deepwork:hover { filter: brightness(1.05); }
+
+/* "Work is happening" ring — blinks whenever ANY work is active, including agent-spawned background
+ * work while the chat itself is idle. Same reason as above: the keyframes and the rule lived in
+ * styles.css keyed to .ws-send/.pc-send, so the Lab never had them at all and production lost them
+ * with the migration. Own name (csWorkPulse) so it cannot collide with the copy still in styles.css. */
+@keyframes csWorkPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(148,163,184,0); } 50% { box-shadow: 0 0 0 2px rgba(148,163,184,.9); } }
+.cs-shell .btn-send.work-pulse, .cs-shell .btn-send.--pulse { animation: csWorkPulse 1.15s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .cs-shell .btn-send.work-pulse, .cs-shell .btn-send.--pulse { animation: none; box-shadow: 0 0 0 2px rgba(148,163,184,.7); } }
+
+/* `--gone` is applied by JS to rows AND to inline chips/spans. It was only ever DEFINED for
+ * .rg-core and .frow, so hiding a chip silently did nothing. One global rule. */
+.cs-shell .--gone { display: none !important; }
+.cs-shell .rg-core.--gone { display: none; }
+.cs-shell .frow.--gone { display: none; }
+
+/* ===== CHIPS + CONVERSATION TABS =====
+ * "Conversation medallions and header chips are the SAME construction — same height, padding,
+ * radius, border and font. Only their LENGTH may differ." */
+.cs-shell .tab, .cs-shell .hrow.--r1 .chip, .cs-shell .hrow.--r1 .bulb {
+  height: 22px; padding: 0 10px; border-radius: 11px; background: var(--chip); border: 1px solid var(--line);
+  font-size: 11.5px; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
+.cs-shell .tab.--act { border-color: var(--acc); color: #fff; }
+.cs-shell .tab .star { color: var(--warn); font-size: 11px; }
+.cs-shell .chip { padding: 2px 8px; border-radius: 11px; background: var(--chip); border: 1px solid var(--line);
+  font-size: 11px; color: var(--dim); white-space: nowrap; }
+.cs-shell .chip.--ok { color: var(--ok); border-color: #3ddc9744; }
+/* A ceiling nowhere near binding keeps its slot — dimmed, so the bar never reflows when one
+ * becomes relevant. It brightens in place instead of appearing from nowhere. */
+.cs-shell .chip.--far, .cs-shell .chip.--muted { opacity: .42; font-size: 10.5px; }
+.cs-shell .chip.--bad { color: var(--err); border-color: #ff6b8166; background: #1e1116; }
+
+/* THE ACTIVITY CHIP + CLOSE. Both live at the end of the identity row. The activity chip is a chip
+ * like every other chip in that row — one vocabulary, not a lookalike with its own shape — but it is
+ * the one that can carry a long sentence ("Tool finished: Bash — npm test (exit 0)"), so it
+ * truncates with an ellipsis rather than forcing the row to reflow or wrap. Its cap is a LENGTH:
+ * a percentage would resolve against a shrink-to-fit slot that had already sized itself around the
+ * chip's full text, leaving the difference as dead space and pushing everything after it away from
+ * the row's right edge. */
+.cs-shell .cs-activity-wrap { position: relative; display: inline-flex; align-items: center;
+  min-width: 0; max-width: 260px; }
+.cs-shell .cs-activity { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0; max-width: 100%; display: block; font: inherit; font-size: 11px; }
+.cs-shell .cs-activity:hover { color: var(--ink); border-color: var(--acc); }
+.cs-shell .cs-close { flex: 0 0 auto; width: 20px; height: 20px; padding: 0; line-height: 1;
+  border-radius: 6px; border: 1px solid transparent; background: none; color: var(--dim);
+  font-size: 14px; cursor: pointer; }
+.cs-shell .cs-close:hover { color: var(--err); border-color: #ff6b8166; background: #1e1116; }
+.cs-shell .chip.--warn { color: var(--warn); border-color: #ffb45466; background: #1e1a10; }
+.cs-shell .chip.--acc { color: var(--acc); border-color: #c77dff44; }
+.cs-shell .bulb { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 11px;
+  font-size: 11px; font-weight: 600; border: 1px solid; }
+.cs-shell .bulb.--live { color: var(--ok); border-color: #3ddc9755; background: #0d1d18; }
+.cs-shell .bulb.--held { color: var(--warn); border-color: #ffb45455; background: #1d1710; }
+.cs-shell .bulb i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; display: block; }
+
+/* ===== LIVE / HELD, centred ON the Core/Footer seam =====
+ * Anchored to the FOOTER (position:relative) rather than to .rg-core, because .rg-core scrolls and
+ * clips: a child of it would scroll away with the content it is meant to describe. */
+.cs-shell .seambulb { position: absolute; top: -11px; left: 50%; transform: translateX(-50%); z-index: 6;
+  display: inline-flex; align-items: center; gap: 5px; height: 21px; padding: 0 11px; border-radius: 11px;
+  font: 600 10.5px/1 -apple-system, Segoe UI, sans-serif; letter-spacing: .3px; cursor: pointer;
+  border: 1px solid; box-shadow: 0 2px 8px #000a; white-space: nowrap; user-select: none; }
+.cs-shell .seambulb i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; display: block; flex: 0 0 auto; }
+.cs-shell .seambulb.--live { color: var(--ok); border-color: #3ddc9766; background: #0c1c17; }
+.cs-shell .seambulb.--held { color: var(--warn); border-color: #ffb45466; background: #1d1710; }
+.cs-shell .seambulb.--held i { animation: cs-seampulse 1.1s ease-in-out infinite; }
+.cs-shell .seambulb.--gone { display: none; }
+@keyframes cs-seampulse { 0%, 100% { opacity: 1 } 50% { opacity: .25 } }
+
+/* ===== "N EARLIER TURNS", as a MEDALLION at the top of the Core =====
+ * The mirror image of the Live/Held bulb at the bottom seam. It cannot be anchored to the header
+ * the way that one is anchored to the footer (the header's height is what we are trying NOT to
+ * spend), so it rides INSIDE the scroller as a zero-height sticky strip: `height: 0` keeps it out
+ * of the flow entirely, so it overlays the first turn instead of pushing the whole transcript
+ * down, and `position: sticky` re-pins it to the top of the viewport as you scroll. */
+.cs-shell .cs-coretop { position: sticky; top: 6px; z-index: 5; height: 0; overflow: visible;
+  display: flex; justify-content: center; margin: 0; padding: 0; pointer-events: none; }
+.cs-shell .cs-coretop.--gone { display: none; }
+.cs-shell .cs-coretop > * { pointer-events: auto; }
+.cs-shell .cs-earlier { display: inline-flex; align-items: center; gap: 6px; height: 21px; padding: 0 11px;
+  border-radius: 11px; font: 600 10.5px/1 -apple-system, Segoe UI, sans-serif; letter-spacing: .3px;
+  cursor: pointer; white-space: nowrap; user-select: none; max-width: 92%; overflow: hidden;
+  text-overflow: ellipsis; color: var(--acc); border: 1px solid #6f7dff55; background: #12162e;
+  box-shadow: 0 2px 8px #000a; }
+.cs-shell .cs-earlier:hover:not(:disabled) { border-color: #6f7dffaa; color: var(--ink); }
+.cs-shell .cs-earlier:disabled { opacity: .6; cursor: default; }
+
+/* ===== MESSAGE BUBBLES ===== */
+.cs-shell .msg { position: relative; padding: 7px 10px; border-radius: 8px; font-size: 12.5px; max-width: 92%; }
+.cs-shell .msg.--u { background: var(--bub-u); border: 1px solid var(--bub-u-line); color: var(--bub-u-fg); align-self: flex-end; }
+.cs-shell .msg.--a { background: var(--bub-a); border: 1px solid var(--bub-a-line); align-self: flex-start; }
+.cs-shell .msg b.who { display: block; font-size: 11px; margin-bottom: 3px; }
+/* P#/R# tags: a corner pill overlapping the bubble's top edge — R on the LEFT of an answer,
+ * P on the RIGHT of a prompt. They are an ADDRESSING SCHEME, not decoration, so the two colours
+ * are identical in both workspaces (declared outside the theme blocks for exactly that reason). */
+.cs-shell .num { position: absolute; top: -10px; z-index: 1; font: 700 11.5px ui-monospace, Consolas, monospace;
+  line-height: 1.5; padding: 1px 7px; border-radius: 8px; letter-spacing: .4px; pointer-events: none;
+  white-space: nowrap; box-shadow: 0 1px 3px #0006; }
+.cs-shell .num-r { left: 6px; background: var(--tag-r-bg); color: var(--tag-r-fg); }
+.cs-shell .num-p { right: 6px; background: var(--tag-p-bg); color: var(--tag-p-fg); border: 1px solid #ffffff4d; }
+.cs-shell .tR { color: var(--tag-r-bg); font-weight: 700; }
+.cs-shell .tP { color: #7aa2ff; font-weight: 700; }
+
+/* PROMPT STATES. Explicit values rather than color-mix(): the whole bubble carries the state — warm
+ * orange field, solid orange border, orange text — so it is recognised without being read. Written
+ * as three classes so they cannot lose to the generic .msg.--u on source order. */
+.cs-shell .msg.--u.--queued { background: #4a3410; border: 2px solid #f59e0b; color: #fbbf24; }
+.cs-shell .msg.--u.--queued b.who { color: #f59e0b; }
+.cs-shell .msg.--u.--queued .qtag { color: #fcd34d; }
+.cs-shell .msg.--u.--deep { background: #4a1533; border: 2px solid #f472b6; color: #f9a8d4; }
+.cs-shell .msg.--u.--deep b.who { color: #f472b6; }
+.cs-shell .msg.--u.--deep .qtag { color: #f9a8d4; }
+.cs-shell .msg.--u.--dead { background: #16255c; border: 2px solid #3b5bbf; color: #bfd0ff; }
+.cs-shell .msg.--u.--dead b.who { color: #93b0f0; }
+.cs-shell .msg.--u.--dead .qtag { color: #93b0f0; }
+.cs-shell .msg.--u.--discarded { background: #4a1214; border: 2px solid #ef4444; color: #fca5a5; }
+.cs-shell .msg.--u.--discarded b.who { color: #ef4444; }
+.cs-shell .msg.--u.--discarded .qtag { color: #fca5a5; }
+.cs-shell .msg.--risk { box-shadow: 0 0 0 2px #f87171; }
+.cs-shell .msg.--flash { outline: 2px solid var(--acc); outline-offset: 2px; transition: outline-color .5s; }
+.cs-shell .qtag { display: block; margin-top: 3px; font-size: 10px; font-weight: 400; color: #f59e0b; }
+
+/* ARRIVING ANSWER.
+ *   --calm    a stable, unformatted block: pre-wrap, no markdown, so adding characters can never
+ *             reflow what is already there. The only movement is the block growing downwards.
+ *   --counter a FIXED-HEIGHT bubble. Nothing below it moves at all while the answer arrives, which
+ *             is the whole point — a fixed height cannot push the scroll.
+ *   --revealed the single morph at the end: height and opacity settle together, once. */
+.cs-shell .msg.--live { transition: none; }
+.cs-shell .msg.--calm .rawstream { white-space: pre-wrap; font: 12px/1.55 ui-monospace, Consolas, monospace; color: var(--dim); }
+.cs-shell .msg.--counter { min-height: 46px; display: flex; align-items: center; }
+.cs-shell .msg.--counter .ctr { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--dim); }
+.cs-shell .msg.--counter .ctrdot { width: 7px; height: 7px; border-radius: 50%; background: var(--acc);
+  animation: cs-seampulse 1s ease-in-out infinite; }
+.cs-shell .msg.--counter .ctrpct { font: 700 11px ui-monospace, Consolas, monospace; color: var(--acc); }
+.cs-shell .msg.--revealed { animation: cs-reveal .34s cubic-bezier(.2, .8, .2, 1); }
+@keyframes cs-reveal { from { opacity: .25; transform: translateY(4px) scale(.995) } to { opacity: 1; transform: none } }
+.cs-shell .md .mdh { margin: 2px 0 4px; font-size: 13px; color: var(--acc); }
+.cs-shell .md .mdl { margin: 2px 0 4px 18px; padding: 0; }
+.cs-shell .md .mdp { margin: 4px 0; }
+
+/* Bookmark + share sit ON the bubble's top edge, beside their P#/R# medallion, ALWAYS visible.
+ * Hover-to-reveal hid the one thing the mark exists to tell you, and is unusable on touch. */
+.cs-shell .msgacts { position: absolute; top: -10px; z-index: 2; display: flex; gap: 3px; align-items: center; }
+.cs-shell .msg.--a .msgacts { left: 62px; }
+.cs-shell .msg.--u .msgacts { right: 62px; }
+.cs-shell .msgacts button { height: 19px; padding: 0 6px; font-size: 11px; line-height: 1; background: var(--chip);
+  border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 1px 3px #0006; opacity: .62; transition: opacity .12s; }
+.cs-shell .msg:hover .msgacts button, .cs-shell .msgacts button:focus { opacity: 1; }
+.cs-shell .msgacts button.--on { opacity: 1; color: var(--warn); border-color: var(--warn); }
+
+/* Attachments travel with a queued message — images and referenced files, both visible on the
+ * bubble, or a queued message is indistinguishable from one whose attachments were dropped. */
+.cs-shell .msgimgs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.cs-shell .msgfiles { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.cs-shell .mfile { font: 600 10px/1.6 ui-monospace, Consolas, monospace; padding: 1px 7px; border-radius: 7px;
+  background: #0006; border: 1px solid currentColor; opacity: .8; max-width: 220px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.cs-shell .msgimg { width: 132px; height: 84px; border-radius: 6px; border: 1px solid rgba(255,255,255,.25);
+  background: repeating-linear-gradient(45deg, #223, #223 8px, #2b2b3d 8px, #2b2b3d 16px);
+  display: flex; align-items: center; justify-content: center; font-size: 9.5px; color: #aab; }
+.cs-shell .deadbtns { display: flex; gap: 6px; margin-top: 6px; }
+.cs-shell .deadbtns button { font-size: 11px; padding: 2px 9px; }
+.cs-shell .deadbtns .go { color: var(--ok); border-color: #3ddc9766; }
+.cs-shell .deadbtns .kill { color: var(--err); border-color: #ff6b8166; }
+
+/* ===== IN-FLOW BANDS AND MARKERS =====
+ * A compact or a wrap is a pause you should be able to SEE — otherwise the session just goes quiet
+ * and you cannot tell it apart from a hang. In flow at the bottom of Core, never a floating dialog. */
+.cs-shell .busyband { align-self: stretch; margin: 8px 0 2px; padding: 8px 10px; border-radius: 9px; border: 1px solid; }
+.cs-shell .busyband.--compact { background: #0e1a2e; border-color: #5aa8f088; }
+.cs-shell .busyband.--wrap { background: #1b1030; border-color: #c77dff; }
+.cs-shell .busyband .bt { font-size: 11.5px; font-weight: 700; margin-bottom: 5px; }
+.cs-shell .busyband.--compact .bt { color: #8fc3ff; }
+.cs-shell .busyband.--wrap .bt { color: #e3c4ff; }
+.cs-shell .busyband .bbar { height: 6px; border-radius: 3px; background: #0006; overflow: hidden; }
+.cs-shell .busyband .bbar i { display: block; height: 100%; transition: width .18s; }
+.cs-shell .busyband.--compact .bbar i { background: #5aa8f0; }
+.cs-shell .busyband.--wrap .bbar i { background: #c77dff; }
+.cs-shell .busyband .bs { margin-top: 4px; font-size: 10px; color: var(--dim); }
+.cs-shell .mark { position: relative; align-self: stretch; margin: 6px 0; text-align: center; }
+.cs-shell .mark .mlbl { position: relative; display: inline-block; padding: 1px 10px; border-radius: 9px;
+  font: 700 9.5px/1.7 ui-monospace, Consolas, monospace; letter-spacing: .4px; z-index: 1; }
+.cs-shell .mark::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); }
+.cs-shell .mark.--compact::before { border-top: 1px dashed #5aa8f0aa; }
+.cs-shell .mark.--compact .mlbl { background: #0e1a2e; border: 1px solid #5aa8f066; color: #8fc3ff; }
+.cs-shell .mark.--wrap::before { border-top: 3px double #c77dff; height: 5px; }
+.cs-shell .mark.--wrap .mlbl { background: #1b1030; border: 1px solid #c77dff; color: #e3c4ff; font-size: 10.5px; padding: 2px 12px; }
+/* A turn that FAILED. Red, and deliberately allowed to wrap onto several lines — the SDK's reason is
+ * a sentence, not a label, and truncating the one thing that explains a dead conversation would
+ * defeat the point of recording it. */
+.cs-shell .mark.--err::before { border-top: 1px dashed #ff6b81aa; }
+.cs-shell .mark.--err .mlbl { background: #2a1114; border: 1px solid #ff6b81; color: #ffb4b4;
+  font-size: 10.5px; padding: 2px 12px; max-width: 92%; white-space: normal; text-align: left; }
+/* The recovery case: something the reader must know, but not a failure. */
+.cs-shell .mark.--note::before { border-top: 1px dashed #ffb454aa; }
+.cs-shell .mark.--note .mlbl { background: #2a1f0e; border: 1px solid #ffb454; color: #ffd9a0;
+  font-size: 10.5px; padding: 2px 12px; max-width: 92%; white-space: normal; text-align: left; }
+.cs-shell .roll { display: flex; align-items: center; gap: 8px; margin: 0 9px 6px; padding: 5px 9px; border-radius: 7px;
+  background: var(--chip); border: 1px solid var(--line); font-size: 11px; flex-wrap: wrap; row-gap: 5px; }
+.cs-shell .roll.--warn { border-color: #ffb45455; background: #1e1a10; }
+.cs-shell .roll.--err { border-color: #ff6b8155; background: #1e1116; }
+.cs-shell .roll .m { color: var(--dim); white-space: nowrap; }
+.cs-shell .roll .m b { color: var(--ink); }
+.cs-shell .loadstrip { position: relative; height: 16px; margin: 0 9px 6px; border-radius: 8px; background: #0a1020;
+  border: 1px solid var(--line); overflow: hidden; }
+.cs-shell .loadstrip i { display: block; height: 100%; background: linear-gradient(90deg, var(--acc), #5aa8f0); transition: width .25s; }
+.cs-shell .loadstrip .lbl { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px #000; }
+.cs-shell .cue { margin: 0 9px 6px; padding: 6px 9px; border-radius: 7px; background: #1b1330;
+  border: 1px solid #c77dff44; font-size: 11.5px; color: #e3d3ff; }
+
+/* Background-agent panel. Running first, then errors, then the handful of recent successes. */
+.cs-shell .agentpanel { margin: 0 9px 6px; padding: 5px; border-radius: 8px; background: #0a1020;
+  border: 1px solid var(--line); max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+.cs-shell .arow { display: flex; align-items: center; gap: 7px; padding: 3px 7px; border-radius: 6px; font-size: 11px; background: #0e1626; }
+.cs-shell .arow .adot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; background: var(--dim); }
+.cs-shell .arow.--running .adot { background: var(--ok); animation: cs-seampulse 1.1s ease-in-out infinite; }
+.cs-shell .arow.--error { background: #2a1114; border: 1px solid #ef444455; }
+.cs-shell .arow.--error .adot { background: var(--err); }
+.cs-shell .arow.--done { opacity: .62; }
+.cs-shell .arow .alabel { font: 700 10px ui-monospace, Consolas, monospace; color: var(--acc); white-space: nowrap; }
+.cs-shell .arow .adesc { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.cs-shell .arow .aclock { font: 10px ui-monospace, Consolas, monospace; color: var(--dim); white-space: nowrap; }
+.cs-shell .arow .kill { padding: 0 5px; font-size: 10px; background: transparent; border: none; color: var(--err); }
+
+/* ===== FOOTER INNARDS ===== */
+/* Pending reply references look like a quote, not like a tag, because that is what they become. */
+.cs-shell .replyrow { gap: 6px; flex-wrap: wrap; align-items: flex-start; }
+.cs-shell .replychip { display: inline-flex; align-items: baseline; gap: 6px; max-width: 340px; padding: 3px 8px;
+  border-radius: 8px; background: var(--chip); border-left: 3px solid var(--acc); border-top: 1px solid var(--line);
+  border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); font-size: 11px; }
+.cs-shell .replychip.--arch { border-left-color: var(--warn); }
+.cs-shell .replychip .rq { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.cs-shell .replychip .rx { padding: 0 4px; font-size: 10px; background: transparent; border: none; color: var(--dim); }
+.cs-shell .replychip .rx:hover { color: var(--err); }
+/* image thumbs — hover to inspect without leaving the conversation */
+.cs-shell .imgthumb { position: relative; display: inline-flex; }
+.cs-shell .imgthumb .big { position: absolute; bottom: calc(100% + 8px); left: 0; display: none; z-index: 70;
+  width: 300px; height: 190px; border-radius: 10px; border: 1px solid var(--line); box-shadow: 0 12px 40px #000b;
+  background: repeating-linear-gradient(45deg, #223, #223 10px, #2b2b3d 10px, #2b2b3d 20px);
+  align-items: center; justify-content: center; color: var(--dim); font-size: 11px; }
+.cs-shell .imgthumb:hover .big, .cs-shell .imgthumb:focus-within .big { display: flex; }
+
+/* THE TYPE BOX. The gutter is ABSOLUTELY positioned, deliberately: as a flex sibling with
+ * align-items:stretch the textarea was stretched to the flex container's height — itself set from
+ * the textarea — so `height:auto` could never shrink it and the box stayed tall after you deleted
+ * the text. Taking the gutter out of the sizing path breaks that circular dependency. */
+.cs-shell .tawrap { position: relative; width: 100%; }
+.cs-shell .gutter { position: absolute; left: 1px; top: 1px; bottom: 1px; padding: 7px 8px 7px 4px; text-align: right;
+  overflow: hidden; font: 11px/18px ui-monospace, Consolas, monospace; user-select: none; pointer-events: none;
+  background: color-mix(in srgb, var(--field) 70%, #000); border-right: 1px solid var(--field-line);
+  border-radius: 8px 0 0 8px; z-index: 1; transition: width .08s; }
+.cs-shell .gutter b { display: block; font-weight: 400; color: #39435f; }
+.cs-shell .gutter b.--on { color: #8fa0c8; font-weight: 600; }
+/* A wrapped line's continuation rows carry NO number — the line above owns them. Blank rather than
+   numbered, because a number here would name a line that does not start on this row (which is the
+   bug this replaced), and blank rather than absent, because the row still has to hold its height or
+   every number below it slides up. */
+.cs-shell .gutter b.--cont { color: transparent; }
+/* left padding is set from the MEASURED gutter width in paintGutter(); this is only the initial value */
+.cs-shell .rg-typebox, .cs-shell .tawrap .cs-ghost { padding-left: 32px; }
+.cs-shell .rg-typebox { width: 100%; resize: none; background: var(--field); color: var(--ink);
+  border: 1px solid var(--field-line); border-radius: 8px; box-shadow: inset 0 1px 3px #0007; padding: 7px 9px;
+  font: inherit; font-size: 12.5px; line-height: 18px; outline: none; display: block; }
+.cs-shell .rg-typebox:focus { border-color: var(--acc); box-shadow: inset 0 1px 3px #0007, 0 0 0 2px #c77dff22; }
+/* `cs-` prefixed, and explicitly transparent, both for the same reason: this element lies ON TOP of
+ * the type box, so anything a HOST's own stylesheet gives it paints over what you are typing. A
+ * dashboard with its own legacy `.ghost` button class did exactly that — the text was there, styled
+ * correctly, and completely hidden behind an opaque overlay. A drop-in package cannot assume the
+ * app it lands in has no class by that name. */
+.cs-shell .cs-ghost { position: absolute; inset: 0; padding: 7px 9px; font: inherit; font-size: 12.5px;
+  line-height: 18px; color: #8290b5; background: transparent; border: 0; pointer-events: none;
+  white-space: pre-wrap; overflow: hidden; }
+.cs-shell .cs-ghost kbd { background: #1a2440; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px;
+  font-size: 10.5px; color: var(--dim); }
+/* The drawer toggle sits ON the field, mirroring the line-number gutter on the left. */
+.cs-shell .fieldbtn { position: absolute; right: 5px; top: 5px; z-index: 2; height: 20px; padding: 0 7px; font-size: 11px;
+  line-height: 1; background: var(--chip); border: 1px solid var(--line); border-radius: 7px; opacity: .75; }
+.cs-shell .fieldbtn:hover { opacity: 1; border-color: var(--acc); }
+/* The drawer: only present when asked for, so it costs nothing the rest of the time. */
+.cs-shell .searchrow { gap: 6px; align-items: center; background: color-mix(in srgb, var(--acc) 7%, transparent); }
+
+/* Stop/Send + auto-continue live in ONE bordered group, per feedback. */
+.cs-shell .sendgrp { display: flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 9px;
+  padding: 3px 5px; background: var(--chip); }
+.cs-shell .sendgrp.--auto { border-color: #3ddc9755; background: #0c1a1c; }
+.cs-shell .sendgrp .rounds { font-size: 10.5px; color: var(--dim); white-space: nowrap; }
+/* While the loop is actually counting down, the counter is the liveliest thing in the group — it is
+ * the only part of the shell that says "something is about to happen without you". */
+.cs-shell .sendgrp .rounds.--arm { color: var(--ok); font-weight: 700; }
+.cs-shell .autolbl { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--dim);
+  white-space: nowrap; cursor: pointer; }
+.cs-shell .autolbl input { margin: 0; }
+
+/* INLINE GROUPS. `.cs-inline` is the package's generic "a few controls that travel together on one
+ * row" wrapper (host-supplied extras, status chips, the identity/tab slot); `.cs-meta` is the
+ * repo + worktree pair specifically. The flex reset on the selects is not cosmetic: a host's own
+ * `select` rules routinely carry flex:1 (correct for a full-width row), and a growing select on the
+ * action row starves the compose box — a real, shipped regression. They must never grow here. */
+/* A slot WRAPS ITS OWN CHILDREN, matching the row it sits in (.hrow/.frow are `flex-wrap: wrap`).
+ * Without this, a slot holding several controls is one indivisible block: the moment it no longer
+ * fits it jumps to a line of its own and drags every control with it, so a narrow pane collapses
+ * into a stack of ragged part-empty rows instead of filling each row the way the Lab does. */
+.cs-shell .cs-inline { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; row-gap: 5px; min-width: 0; padding: 0; }
+.cs-shell .cs-meta { display: inline-flex; align-items: center; gap: 6px; margin: 0; min-width: 0; }
+.cs-shell .cs-meta > select, .cs-shell .cs-inline > select { flex: 0 1 auto; min-width: 0; max-width: 190px; }
+/* ===== ROW GROUPS — the layout unit of every header/footer row =====
+ * A row is a few LOGICAL GROUPS, not a flat run of controls with a spacer somewhere in it. Two
+ * properties, neither of which a spacer can give:
+ *
+ *   1. A group never splits across a line break — its members are one idea, and half of it stranded
+ *      on the line above is worse than the whole of it moving down. (`flex-wrap: wrap` INSIDE the
+ *      group still lets a group too wide for any line wrap within itself, rather than overflow.)
+ *   2. Alignment is per LINE, and a group does NOT declare its side — the side is CAPTURED from
+ *      where the current width actually put it: on each line the last group goes right, the ones
+ *      before it pack left, and a group left alone on a line favours right (it is also the last on
+ *      its line). The same group is therefore the left-hand one at one width and the right-hand one
+ *      at another, which is exactly what a declared side cannot express.
+ *
+ * Both the `margin-left: auto` and the `data-align` below are written per line by
+ * CS.alignRowGroups, from JS, because "which line did this group land on" is a fact about the
+ * current width that CSS has no way to ask. What lives here is only what is static: the box itself,
+ * and what follows from a side once it has been captured. */
+.cs-shell .cs-grp { display: inline-flex; align-items: center; flex-wrap: wrap;
+  gap: 6px; row-gap: 5px; min-width: 0; padding: 0; }
+/* A group that CAPTURED the right side packs its OWN contents to the right as well: when the group
+ * is wide enough to wrap internally (the auto-wrap meter above the Compact│Wrap split, on a tight
+ * model row) its shorter line must not sit left inside the group's box, opening a gap against the
+ * row's edge. `data-align` is written by the same pass that decides the margin, so the two can
+ * never disagree. */
+.cs-shell .cs-grp[data-align="end"] { justify-content: flex-end; }
+/* A group whose every member is hidden is retired outright (alignRowGroups adds --gone): left in
+ * flow it spends the row's own gap on either side of nothing — the stray-gap bug this exists to
+ * remove. `:empty` covers the same case for a group a host never filled at all. */
+.cs-shell .cs-grp:empty { display: none; }
+
+/* ===== STACKED GROUPS — a control over its own caption (CS.stack) =====
+ * The model row is four of these. `align-items: stretch` so both rows share the group's width and
+ * therefore agree on where they start; the group is then as wide as its WIDER row rather than the
+ * sum of both, which is where the measured 721-806px → 492-544px saving comes from.
+ * `flex-wrap: nowrap` on the group is essential: the two rows are the stack, so letting THEM wrap
+ * would put the caption beside its control again at exactly the widths this is meant to fix. */
+.cs-shell .cs-grp.--stack { flex-direction: column; align-items: stretch; flex-wrap: nowrap;
+  gap: 3px; row-gap: 3px; }
+.cs-shell .cs-grp.--stack > .cs-grow { display: flex; align-items: center; gap: 6px;
+  flex-wrap: wrap; row-gap: 4px; min-width: 0; }
+/* A stacked group that captured the right side packs BOTH of its rows right, so the pair stays a
+ * column against the row's edge instead of the shorter row floating left inside the group's box. */
+.cs-shell .cs-grp.--stack[data-align="end"] > .cs-grow { justify-content: flex-end; }
+/* ROOM FOR ONE LINE ⇒ USE ONE LINE. When the row is wide enough to hold every control flat, the
+ * pairs unstack and the footer gives back a whole row of height. Set by CS.fitStackedRow from the
+ * CONTROLS' own widths — which are the same either way, so the decision cannot oscillate. The pair
+ * is still one group, so it never splits across a break. */
+.cs-shell .frow.--flat .cs-grp.--stack { flex-direction: row; align-items: center; }
+.cs-shell .frow.--flat .cs-grp.--stack > .cs-grow { flex: 0 0 auto; }
+/* An empty row is retired by alignRowGroups (Core has no `fast` toggle, so that stack is one row)
+ * — it must cost no height and no gap, or the collapse is only half a collapse. */
+.cs-shell .cs-grp.--stack > .cs-grow.--gone { display: none; }
+/* The stacked rows are captions as much as controls, so the row's own min-height must not force
+ * each of them to a full control's height — that is what would make a 2-row shelf taller than the
+ * flat row it replaces. */
+.cs-shell .frow.--modelbar { align-items: flex-start; }
+
+/* The bookmark button's own count, and a conversation tab's close affordance. */
+.cs-shell .bmn { font: 700 9.5px ui-monospace, Consolas, monospace; opacity: .8; margin-left: 3px; }
+.cs-shell .tab .rx { padding: 0 3px; margin-left: 2px; font-size: 9px; background: transparent;
+  border: none; color: var(--dim); line-height: 1; }
+.cs-shell .tab .rx:hover { color: var(--err); }
+
+/* Drag-and-drop target feedback on the type box row — the third attachment entry point (with the
+ * clip button and paste), and the only one with no button to press, so it needs to say it is live. */
+.cs-shell .cs-drag .rg-typebox { border-color: var(--acc); box-shadow: inset 0 1px 3px #0007, 0 0 0 2px #c77dff33; }
+
+/* The auto-wrap meter, and the split control it sits beside. A single split control is two related
+ * actions as ONE object: the divider is a shared border, so they read as halves of one decision
+ * rather than two unrelated buttons that happen to be adjacent. */
+/* The meter carries a real WIDTH, not just a flex-basis, and that is load-bearing. It is an empty
+ * element (a track with an <i> fill), so with size coming only from `flex: 0 1 90px` its intrinsic
+ * contribution is ZERO — a flex-basis does not feed a container's max-content width. The group that
+ * holds it therefore sized itself ~50px too narrow and wrapped its own contents onto a second line
+ * even with 880px of free space beside it, which is exactly the reported "the auto-wrap line and
+ * Compact/Wrap button use two horizontal lines while the other things sit on one". Measured: giving
+ * it a width takes the group 49px → 27px and the whole model row 60px → 38px. It still shrinks
+ * (`0 1 auto`) down to min-width when a pane really is tight. */
+.cs-shell .roll .bar, .cs-shell .frow .bar { flex: 0 1 auto; width: 140px; min-width: 70px; height: 6px; border-radius: 3px;
+  background: #0a1020; overflow: hidden; border: 1px solid var(--line); }
+.cs-shell .frow .bar i, .cs-shell .roll .bar i { display: block; height: 100%; background: var(--ok); }
+.cs-shell .roll.--warn .bar i { background: var(--warn); }
+.cs-shell .roll.--err .bar i { background: var(--err); }
+.cs-shell .frow.--modelbar .bar { width: 90px; min-width: 60px; }
+.cs-shell .split { display: inline-flex; align-items: stretch; }
+/* Both halves must stay on ONE line. Without this they wrap their own labels the moment the model
+   row is tight, and the joined control grows into a two-line slab that reads as two broken buttons
+   rather than one decision. */
+.cs-shell .split > button { white-space: nowrap; }
+.cs-shell .split .splitL { border-radius: 6px 0 0 6px; border-right-width: 0; }
+.cs-shell .split .splitR { border-radius: 0 6px 6px 0; border-left: 1px solid var(--line); }
+.cs-shell .split .splitL:hover:not(:disabled) { border-color: #5aa8f0; color: #8fc3ff; }
+.cs-shell .split .splitR:hover:not(:disabled) { border-color: var(--acc); color: var(--acc); }

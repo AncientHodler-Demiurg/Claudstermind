@@ -1,42 +1,17 @@
 <!doctype html><meta charset="utf-8">
 <title>Chat Shell Lab — Header / Core / Footer</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- THE CHAT BOX IS A PACKAGE. Everything below the rail — structure, palette, every component,
+     every control and the geometry that sizes them — is @ancientpantheon/claude-chat-shell, served
+     from packages/claude-chat-shell/src and loaded by the live dashboard from the very same URLs.
+     This page styles and builds NONE of it. That is the point: there is no second implementation
+     left to drift, so a change made here IS a change to production. -->
+<link rel="stylesheet" href="/chat-shell/chat-shell.css">
 <style>
-/* REGION TONES. The three regions must be separable WITHOUT the debug outline.
-   v1 had --hdr #121a2e against --panel #101827 — a tone step of ~1%, running the WRONG WAY (the chrome
-   was LIGHTER than the reading surface), so the shell read as one flat slab. Now:
-     CORE  = the reading surface, the LIGHTEST thing in the shell (content deserves the light)
-   Measured: core #1a2440 vs chrome #080c18 = 1.27:1 surface contrast (was 1.03:1, and inverted).
-     HEADER/FOOTER = chrome, clearly DARKER, so the eye reads "content" vs "controls" instantly
-   plus a hard line and a 1px inner highlight at each seam, which is what actually makes an edge
-   legible on a dark UI — a border alone disappears at low contrast. */
-/* ===== TWO THEMES, ONE STRUCTURE =================================================================
-   The regions, sizes and behaviour are identical; only the palette changes, so a workspace is
-   recognisable at a glance without being a different UI.
-
-   CORE  — "Midnight Violet": deep, cool, near-black chrome with a violet accent. The cockpit.
-   PACT  — "Harbour Slate":  visibly LIGHTER slate surfaces with a teal accent. The workshop.
-
-   INVARIANT: the P#/R# turn tags use the SAME two colours in both themes (blue P, violet R), because
-   they are an addressing scheme, not decoration — if R# changed colour per workspace you could not
-   learn it once. They are declared OUTSIDE the theme blocks for exactly that reason. */
-:root{
-  --tag-p-bg:#1b4fc4; --tag-p-fg:#dbe6ff;      /* P# — blue, right corner  (matches production) */
-  --tag-r-bg:#c77dff; --tag-r-fg:#1a0a1e;      /* R# — violet, left corner (matches production) */
-  --ok:#3ddc97;--warn:#ffb454;--err:#ff6b81;
-}
-body[data-theme="core"]{
-  --bg:#05080f;--panel:#1a2440;--panel2:#0d1226;--line:#22304a;--ink:#e7ecff;--dim:#9aa6c7;
-  --acc:#c77dff;--hdr:#080c18;--ftr:#080c18;--seam:#33436b;
-  --bub-a:#121b30;--bub-a-line:#ffffff1a;--bub-u:#243059;--bub-u-line:#3a4a7a;--bub-u-fg:#eaf0ff;
-  --field:#131d33;--field-line:#3a4a75;--chip:#131d34;
-}
-body[data-theme="pact"]{
-  --bg:#0d1520;--panel:#25303f;--panel2:#18212e;--line:#3a4757;--ink:#eef4fa;--dim:#a8b6c6;
-  --acc:#4ecdc4;--hdr:#131b26;--ftr:#131b26;--seam:#4a5b6e;
-  --bub-a:#1d2735;--bub-a-line:#ffffff1f;--bub-u:#2b4152;--bub-u-line:#4a6a80;--bub-u-fg:#f2f8fc;
-  --field:#1e2937;--field-line:#4a5b6e;--chip:#1c2634;
-}
+/* body[data-theme="core"|"pact"] — --bg/--panel/--acc/--chip/--bub-u etc. — now come from
+   chat-shell-theme.css (linked above), not from a block here. That file matches these selectors
+   directly, so every rule below that reads var(--acc)/var(--panel)/var(--bub-u)/etc. needed NO
+   changes at all; only the hardcoded values that used to live in this block were removed. */
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;display:flex;height:100vh;overflow:hidden}
 /* ---------- control rail ---------- */
@@ -45,12 +20,12 @@ body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.5 -apple-system,
 #rail .sub{color:var(--dim);font-size:11px;margin:0 0 12px}
 .grp{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:9px;background:#0b1120}
 .grp>b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);margin-bottom:6px}
-.row{display:flex;gap:6px;align-items:center;margin:4px 0;flex-wrap:wrap}
-button{background:#16203a;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 9px;font:inherit;font-size:11.5px;cursor:pointer}
-button:hover{border-color:var(--acc)}
-button.on{background:var(--acc);color:#1a0b2e;border-color:var(--acc);font-weight:700}
+#rail .row,.pop .row,#hist .row{display:flex;gap:6px;align-items:center;margin:4px 0;flex-wrap:wrap}
+#rail button,.pop button,#hist button{background:#16203a;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 9px;font:inherit;font-size:11.5px;cursor:pointer}
+#rail button:hover,.pop button:hover,#hist button:hover{border-color:var(--acc)}
+#rail button.on,.pop button.on,#hist button.on{background:var(--acc);color:#1a0b2e;border-color:var(--acc);font-weight:700}
 input[type=range]{width:100%}
-label{font-size:11.5px;color:var(--dim);display:flex;gap:5px;align-items:center;cursor:pointer}
+#rail label,.pop label,#hist label{font-size:11.5px;color:var(--dim);display:flex;gap:5px;align-items:center;cursor:pointer}
 #metrics{font:11px ui-monospace,Consolas,monospace;color:var(--dim);white-space:pre-wrap;background:#080d1a;border:1px solid var(--line);border-radius:6px;padding:7px;line-height:1.55}
 #metrics b{color:var(--ok)}
 /* ---------- stage ---------- */
@@ -58,214 +33,42 @@ label{font-size:11.5px;color:var(--dim);display:flex;gap:5px;align-items:center;
 /* The shell takes ALL the width it is given — panes in the cockpit are narrow and variable, so a fixed
    max-width would be a lie about the space it will actually run in. The rail's width control simulates
    real pane widths. `position: relative` anchors the popups above. */
-#shell{width:100%;position:relative;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 10px 40px #0006}
-/* ===== THE THREE REGIONS. The boundaries are the point — 1px rule + a background TONE STEP so you can
-   always see where a region ends, even mid-scroll. This is spec invariant I3. ===== */
-.rg-header{flex:0 0 auto;background:var(--hdr);border-bottom:1px solid var(--seam);box-shadow:inset 0 -1px 0 #ffffff0f, 0 3px 8px -3px #000a}
-.rg-core{flex:1 1 auto;min-height:0;overflow-y:auto;background:var(--panel);padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+/* The lab shell's own frame reads --edge, the same token the region seams read, so the design source
+   shows the frame and the seams agreeing — which is the whole point of the token. */
+#shell{width:100%;position:relative;display:flex;flex-direction:column;background:var(--panel);border:var(--seam-w) solid var(--edge);border-radius:12px;overflow:hidden;box-shadow:0 10px 40px #0006}
 /* ---- ONE scrollbar treatment, shared by EVERY scrolling surface in the shell ----------------
    The transcript used the browser default while the type box got a different one, so the two sat at
    different widths, different colours and different insets. Same rule for both: thin, rounded, inset
    inside the rounded container, transparent track so it reads as part of the chat graphic rather than
    a browser chrome bar bolted on the edge. Firefox gets the same via scrollbar-width/color. */
-.rg-core, #typebox, .popbox, .histlist, #rail{scrollbar-width:thin;scrollbar-color:#3a4870 transparent}
-.rg-core::-webkit-scrollbar, #typebox::-webkit-scrollbar, .popbox::-webkit-scrollbar,
-.histlist::-webkit-scrollbar, #rail::-webkit-scrollbar{width:10px;height:10px}
-.rg-core::-webkit-scrollbar-track, #typebox::-webkit-scrollbar-track, .popbox::-webkit-scrollbar-track,
-.histlist::-webkit-scrollbar-track, #rail::-webkit-scrollbar-track{background:transparent}
-.rg-core::-webkit-scrollbar-thumb, #typebox::-webkit-scrollbar-thumb, .popbox::-webkit-scrollbar-thumb,
-.histlist::-webkit-scrollbar-thumb, #rail::-webkit-scrollbar-thumb{
+/* .rg-core / .rg-typebox (the transcript + the type box) now get this treatment from the SHARED
+   chat-shell-frame.css, so production's scrolling surfaces match the Lab's exactly. What stays here
+   is only the Lab-page-only furniture (#rail, the popups, the history list). */
+.popbox, .histlist, #rail{scrollbar-width:thin;scrollbar-color:#3a4870 transparent}
+.popbox::-webkit-scrollbar, .histlist::-webkit-scrollbar, #rail::-webkit-scrollbar{width:10px;height:10px}
+.popbox::-webkit-scrollbar-track, .histlist::-webkit-scrollbar-track, #rail::-webkit-scrollbar-track{background:transparent}
+.popbox::-webkit-scrollbar-thumb, .histlist::-webkit-scrollbar-thumb, #rail::-webkit-scrollbar-thumb{
   background:#3a4870;border-radius:99px;border:3px solid transparent;background-clip:content-box}
-.rg-core::-webkit-scrollbar-thumb:hover, #typebox::-webkit-scrollbar-thumb:hover{background:#55689c;background-clip:content-box}
-.rg-core::-webkit-scrollbar-corner, #typebox::-webkit-scrollbar-corner{background:transparent}
-.rg-footer{flex:0 0 auto;background:var(--ftr);border-top:1px solid var(--seam);box-shadow:inset 0 1px 0 #ffffff0f, 0 -3px 8px -3px #000a}
 /* Debug amplifier only. The regions must already be obvious with this OFF — if they are not, the
    tone step above is wrong and THAT is the bug, rather than something a debug outline should paper over. */
 body.showbounds .rg-header{border-bottom-color:var(--warn)}
 body.showbounds .rg-footer{border-top-color:var(--warn)}
 body.showbounds .rg-core{outline:1px dashed #3ddc9755;outline-offset:-2px}
 body.showbounds .rg-header::after,body.showbounds .rg-footer::after{content:attr(data-rg);position:absolute;right:6px;font:700 9px/1 sans-serif;letter-spacing:1px;color:var(--warn);opacity:.85}
-.rg-header,.rg-footer{position:relative}
-/* LIVE / HELD sits centred ON the Core/Footer seam — straddling the border rather than living in a
-   corner. It reports whether the transcript is following the newest turn, so it belongs on the edge of
-   the region it describes, at the point your eye already returns to between reading and typing.
-   Anchored to the FOOTER (position:relative) rather than to .rg-core, because .rg-core scrolls and
-   clips: a child of it would scroll away with the content it is meant to describe. */
-.seambulb{position:absolute;top:-11px;left:50%;transform:translateX(-50%);z-index:6;
-  display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 11px;border-radius:11px;
-  font:600 10.5px/1 -apple-system,Segoe UI,sans-serif;letter-spacing:.3px;cursor:pointer;
-  border:1px solid;box-shadow:0 2px 8px #000a;white-space:nowrap;user-select:none}
-.seambulb i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block;flex:0 0 auto}
-.seambulb.--live{color:var(--ok);border-color:#3ddc9766;background:#0c1c17}
-.seambulb.--held{color:var(--warn);border-color:#ffb45466;background:#1d1710}
-.seambulb.--held i{animation:seampulse 1.1s ease-in-out infinite}
-@keyframes seampulse{0%,100%{opacity:1}50%{opacity:.25}}
-.seambulb.--gone{display:none}
-.rg-core.--gone{display:none}
 /* header innards — MAX 3 rows, transient status is a CHIP not a row */
-.hrow{display:flex;align-items:center;gap:6px;padding:6px 9px;min-height:32px;flex-wrap:nowrap;overflow:hidden}
-.hrow+.hrow{border-top:1px solid #ffffff0d}
 /* The search line and the stats line were separate full-width rows, each half empty. One row, split:
    actions left, numbers right. They wrap independently at narrow pane widths. */
 .hrow.--split{align-items:center;gap:10px}
-.hleft{display:flex;align-items:center;gap:6px;flex:0 1 42%;min-width:0}
-.hright{display:flex;align-items:center;gap:6px;flex:1 1 58%;min-width:0;justify-content:flex-start;flex-wrap:wrap;row-gap:4px}
-/* Conversation medallions and header chips are the SAME construction — same height, padding, radius,
-   border and font. Only their LENGTH may differ. Previously a tab was 3px/14px and a chip 2px/11px, so
-   the two rows sat at different heights and the header jumped between workspaces. */
-.tab,.hrow.--r1 .chip,.hrow.--r1 .bulb{height:22px;padding:0 10px;border-radius:11px;background:var(--chip);
-  border:1px solid var(--line);font-size:11.5px;white-space:nowrap;display:inline-flex;align-items:center;gap:5px}
-.tab.--act{border-color:var(--acc);color:#fff}
-.tab .star{color:var(--warn);font-size:11px}
-.chip{padding:2px 8px;border-radius:11px;background:var(--chip);border:1px solid var(--line);font-size:11px;color:var(--dim);white-space:nowrap}
-.chip.--ok{color:var(--ok);border-color:#3ddc9744}
-/* A ceiling that is nowhere near binding still keeps its slot — dimmed, so the bar never reflows when
-   one becomes relevant. It brightens in place instead of appearing from nowhere. */
-.chip.--far{opacity:.42;font-size:10.5px}
-.chip.--bad{color:var(--err);border-color:#ff6b8166;background:#1e1116}
-.chip.--warn{color:var(--warn);border-color:#ffb45466;background:#1e1a10}
-.chip.--acc{color:var(--acc);border-color:#c77dff44}
-/* Live / Held — whether the view is pinned to the newest turn or holding your scroll position. */
-.bulb{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:11px;font-size:11px;font-weight:600;border:1px solid}
-.bulb.--live{color:var(--ok);border-color:#3ddc9755;background:#0d1d18}
-.bulb.--held{color:var(--warn);border-color:#ffb45455;background:#1d1710}
-.bulb i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block}
-/* per-answer actions — bookmark + share, revealed on hover, always reachable by keyboard */
-.msg{position:relative}
-/* The in-progress band for a compact/wrap. In flow at the end of Core so it cannot overlap anything. */
-.busyband{align-self:stretch;margin:8px 0 2px;padding:8px 10px;border-radius:9px;border:1px solid}
-.busyband.--compact{background:#0e1a2e;border-color:#5aa8f088}
-.busyband.--wrap{background:#1b1030;border-color:#c77dff}
-.busyband .bt{font-size:11.5px;font-weight:700;margin-bottom:5px}
-.busyband.--compact .bt{color:#8fc3ff} .busyband.--wrap .bt{color:#e3c4ff}
-.busyband .bbar{height:6px;border-radius:3px;background:#0006;overflow:hidden}
-.busyband .bbar i{display:block;height:100%;transition:width .18s}
-.busyband.--compact .bbar i{background:#5aa8f0} .busyband.--wrap .bbar i{background:#c77dff}
-.busyband .bs{margin-top:4px;font-size:10px;color:var(--dim)}
-/* Transcript event markers. */
-.mark{position:relative;align-self:stretch;margin:6px 0;text-align:center}
-.mark .mlbl{position:relative;display:inline-block;padding:1px 10px;border-radius:9px;
-  font:700 9.5px/1.7 ui-monospace,Consolas,monospace;letter-spacing:.4px;z-index:1}
-.mark::before{content:"";position:absolute;left:0;right:0;top:50%;transform:translateY(-50%)}
-.mark.--compact::before{border-top:1px dashed #5aa8f0aa}
-.mark.--compact .mlbl{background:#0e1a2e;border:1px solid #5aa8f066;color:#8fc3ff}
-.mark.--wrap::before{border-top:3px double #c77dff;height:5px}
-.mark.--wrap .mlbl{background:#1b1030;border:1px solid #c77dff;color:#e3c4ff;font-size:10.5px;padding:2px 12px}
-/* ARRIVING ANSWER.
-   --calm    a stable, unformatted block: pre-wrap, no markdown, so adding characters can never reflow
-             what is already there. The only movement is the block growing downwards.
-   --counter a FIXED-HEIGHT bubble. Nothing below it moves at all while the answer arrives, which is the
-             whole point — a fixed height cannot push the scroll.
-   --revealed the single morph at the end: height and opacity settle together, once. */
-.msg.--live{transition:none}
-.msg.--calm .rawstream{white-space:pre-wrap;font:12px/1.55 ui-monospace,Consolas,monospace;color:var(--dim)}
-.md .mdh{margin:2px 0 4px;font-size:13px;color:var(--acc)}
-.md .mdl{margin:2px 0 4px 18px;padding:0}
-.md .mdp{margin:4px 0}
-.msg.--counter{min-height:46px;display:flex;align-items:center}
-.msg.--counter .ctr{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--dim)}
-.msg.--counter .ctrdot{width:7px;height:7px;border-radius:50%;background:var(--acc);animation:seampulse 1s ease-in-out infinite}
-.msg.--counter .ctrpct{font:700 11px ui-monospace,Consolas,monospace;color:var(--acc)}
-.msg.--revealed{animation:reveal .34s cubic-bezier(.2,.8,.2,1)}
-@keyframes reveal{from{opacity:.25;transform:translateY(4px) scale(.995)}to{opacity:1;transform:none}}
-.msg.--flash{outline:2px solid var(--acc);outline-offset:2px;transition:outline-color .5s}
-/* PROMPT STATES — copied from production styles.css (.ws-user / .ws-queued / .ws-queued-deep /
-   .ws-interrupted / .ws-discarded). The lab had invented its own washed-out versions; these are the
-   real colours, so what is judged here is what ships.
-     queued      ORANGE #f59e0b — typed, waiting for the running turn to finish
-     queued deep PINK   #f472b6 — waiting behind BACKGROUND work, which can run far longer
-     interrupted BLUE   #172554 — sent, never answered; offers Resume / Discard
-     discarded   RED    #3a0d0d — explicitly killed, kept visible so it is never silently lost */
-/* STATE BUBBLES. Written as .msg.--u.--queued (three classes) so they cannot be overridden by the
-   generic .msg.--u prompt styling — equal specificity meant the winner depended on source order, which
-   is why these kept rendering as a dark navy box with only the label coloured.
-   Explicit values rather than color-mix(): the whole bubble carries the state — warm orange field,
-   solid orange border, orange text — so it is recognised without being read. */
-.msg.--u.--queued{background:#4a3410;border:2px solid #f59e0b;color:#fbbf24}
-.msg.--u.--queued b.who{color:#f59e0b}
-.msg.--u.--queued .qtag{color:#fcd34d}
-.msg.--u.--deep{background:#4a1533;border:2px solid #f472b6;color:#f9a8d4}
-.msg.--u.--deep b.who{color:#f472b6}
-.msg.--u.--deep .qtag{color:#f9a8d4}
-.msg.--u.--dead{background:#16255c;border:2px solid #3b5bbf;color:#bfd0ff}
-.msg.--u.--dead b.who{color:#93b0f0}
-.msg.--u.--dead .qtag{color:#93b0f0}
-.msg.--u.--discarded{background:#4a1214;border:2px solid #ef4444;color:#fca5a5}
-.msg.--u.--discarded b.who{color:#ef4444}
-.msg.--u.--discarded .qtag{color:#fca5a5}
-.msg.--risk{box-shadow:0 0 0 2px #f87171}
-.msg b.who{display:block;font-size:11px;margin-bottom:3px}
-/* the queued/interrupted status line, at the BOTTOM of the bubble as production renders it */
-.qtag{display:block;margin-top:3px;font-size:10px;font-weight:400;color:#f59e0b}
-.msg.--deep .qtag{color:#f472b6}
-.msg.--dead .qtag{color:#93b0f0}
-.msg.--discarded .qtag{color:#fca5a5}
-/* attached-image thumbnails INSIDE the bubble — a queued message carries its images with it */
-.msgimgs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
-/* Referenced files travel with a queued message too — shown as chips so a long path cannot blow the
-   bubble's width open. */
-.msgfiles{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px}
-.mfile{font:600 10px/1.6 ui-monospace,Consolas,monospace;padding:1px 7px;border-radius:7px;
-  background:#0006;border:1px solid currentColor;opacity:.8;max-width:220px;overflow:hidden;
-  text-overflow:ellipsis;white-space:nowrap}
-.msgimg{width:132px;height:84px;border-radius:6px;border:1px solid rgba(255,255,255,.25);
-  background:repeating-linear-gradient(45deg,#223,#223 8px,#2b2b3d 8px,#2b2b3d 16px);
-  display:flex;align-items:center;justify-content:center;font-size:9.5px;color:#aab}
-.deadbtns{display:flex;gap:6px;margin-top:6px}
-.deadbtns button{font-size:11px;padding:2px 9px}
-.deadbtns .go{color:var(--ok);border-color:#3ddc9766}
-.deadbtns .kill{color:var(--err);border-color:#ff6b8166}
+/* .spacer/.chip/button/label inside the SHELL now come from chat-shell-components.css (scoped
+   .cs-shell) — what stays here is the same handful of rules for the lab page's own furniture. */
+.pop .spacer,#hist .spacer,#rail .spacer{flex:1}
+.pop .chip,#hist .chip,#rail .chip{padding:2px 8px;border-radius:11px;background:var(--chip);border:1px solid var(--line);font-size:11px;color:var(--dim);white-space:nowrap}
 #laberr{display:none;position:fixed;left:8px;right:8px;bottom:8px;z-index:200;cursor:pointer;
   background:#3a0d0d;border:2px solid #ef4444;color:#ffd7d7;padding:8px 12px;border-radius:9px;
   font:600 12px/1.5 ui-monospace,Consolas,monospace;box-shadow:0 8px 30px #000c}
 #jumpmsg{display:none;position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:80;
   background:#2a1c0b;border:1px solid var(--warn);color:var(--warn);padding:6px 12px;border-radius:8px;font-size:12px}
-/* Bookmark + share sit ON the bubble's top edge, immediately beside their P#/R# medallion, and are
-   ALWAYS visible. Hover-to-reveal hid the one thing the mark exists to tell you — which answers are
-   bookmarked — and is unusable on a touch screen. */
-.msgacts{position:absolute;top:-10px;z-index:2;display:flex;gap:3px;align-items:center}
-.msg.--a .msgacts{left:62px}
-.msg.--u .msgacts{right:62px}
-.msgacts button{height:19px;padding:0 6px;font-size:11px;line-height:1;background:var(--chip);
-  border:1px solid var(--line);border-radius:8px;box-shadow:0 1px 3px #0006;opacity:.62;transition:opacity .12s}
-.msg:hover .msgacts button,.msgacts button:focus{opacity:1}
-.msgacts button.--on{opacity:1}
-/* Pending reply references. They look like a quote, not like a tag, because that is what they become. */
-.replyrow{gap:6px;flex-wrap:wrap;align-items:flex-start}
-.replychip{display:inline-flex;align-items:baseline;gap:6px;max-width:340px;padding:3px 8px;border-radius:8px;
-  background:var(--chip);border-left:3px solid var(--acc);border-top:1px solid var(--line);
-  border-right:1px solid var(--line);border-bottom:1px solid var(--line);font-size:11px}
-.replychip.--arch{border-left-color:var(--warn)}
-.replychip .rq{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
-.replychip .rx{padding:0 4px;font-size:10px;background:transparent;border:none;color:var(--dim)}
-.replychip .rx:hover{color:var(--err)}
-.msgacts button.--on{color:var(--warn);border-color:var(--warn)}
-.spacer{flex:1}
-.roll{display:flex;align-items:center;gap:8px;margin:0 9px 6px;padding:5px 9px;border-radius:7px;background:var(--chip);border:1px solid var(--line);font-size:11px;flex-wrap:wrap}
-.roll.--warn{border-color:#ffb45455;background:#1e1a10}
-.roll.--err{border-color:#ff6b8155;background:#1e1116}
-.roll .m{color:var(--dim);white-space:nowrap}
-.roll .m b{color:var(--ink)}
-.roll .bar,.frow .bar{flex:0 1 140px;min-width:70px;height:6px;border-radius:3px;background:#0a1020;overflow:hidden;border:1px solid var(--line)}
-.frow .bar i{display:block;height:100%;background:var(--ok)}
-#f-model{gap:8px}
-/* The drawer toggle sits ON the field, mirroring the line-number gutter on the left. */
-.fieldbtn{position:absolute;right:5px;top:5px;z-index:2;height:20px;padding:0 7px;font-size:11px;
-  line-height:1;background:var(--chip);border:1px solid var(--line);border-radius:7px;opacity:.75}
-.fieldbtn:hover{opacity:1;border-color:var(--acc)}
-/* The drawer: only present when asked for, so it costs nothing the rest of the time. */
-.searchrow{gap:6px;align-items:center;background:color-mix(in srgb,var(--acc) 7%,transparent)}
-#f-model .bar{flex:0 1 90px}
-.roll .bar i{display:block;height:100%;background:var(--ok)}
-.roll.--warn .bar i{background:var(--warn)} .roll.--err .bar i{background:var(--err)}
 button:disabled{opacity:.4;cursor:not-allowed}
-/* A single split control: two related actions, one object. The divider is a shared border, so they
-   read as halves of one decision rather than two unrelated buttons that happen to be adjacent. */
-.split{display:inline-flex;align-items:stretch}
-.split .splitL{border-radius:6px 0 0 6px;border-right-width:0}
-.split .splitR{border-radius:0 6px 6px 0;border-left:1px solid var(--line)}
-.split .splitL:hover:not(:disabled){border-color:#5aa8f0;color:#8fc3ff}
-.split .splitR:hover:not(:disabled){border-color:var(--acc);color:var(--acc)}
 /* Popups are scoped to the CHAT BOX, not the page. `position: fixed` centred them on the viewport, so
    in a multi-pane cockpit a pane's own dialog would appear miles from the pane that raised it — and even
    here it sat off-centre over the transcript. They are re-parented into #shell on every build and
@@ -286,85 +89,6 @@ button:disabled{opacity:.4;cursor:not-allowed}
 .kv{display:flex;gap:8px;font-size:12px}.kv .k{color:var(--dim);flex:1}.kv .v{font-weight:600}
 .ctxrow{display:flex;align-items:center;gap:7px;font-size:12px}
 .ctxsw{width:11px;height:11px;border-radius:3px;flex:0 0 auto}
-/* Background-agent panel. Running first, then errors, then the handful of recent successes. */
-.agentpanel{margin:0 9px 6px;padding:5px;border-radius:8px;background:#0a1020;border:1px solid var(--line);
-  max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:3px}
-.arow{display:flex;align-items:center;gap:7px;padding:3px 7px;border-radius:6px;font-size:11px;background:#0e1626}
-.arow .adot{width:6px;height:6px;border-radius:50%;flex:0 0 auto;background:var(--dim)}
-.arow.--running .adot{background:var(--ok);animation:seampulse 1.1s ease-in-out infinite}
-.arow.--error{background:#2a1114;border:1px solid #ef444455}
-.arow.--error .adot{background:var(--err)}
-.arow.--done{opacity:.62}
-.arow .alabel{font:700 10px ui-monospace,Consolas,monospace;color:var(--acc);white-space:nowrap}
-.arow .adesc{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.arow .aclock{font:10px ui-monospace,Consolas,monospace;color:var(--dim);white-space:nowrap}
-.arow .kill{padding:0 5px;font-size:10px;background:transparent;border:none;color:var(--err)}
-.loadstrip{position:relative;height:16px;margin:0 9px 6px;border-radius:8px;background:#0a1020;border:1px solid var(--line);overflow:hidden}
-.loadstrip i{display:block;height:100%;background:linear-gradient(90deg,var(--acc),#5aa8f0);transition:width .25s}
-.loadstrip .lbl{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;text-shadow:0 1px 2px #000}
-.cue{margin:0 9px 6px;padding:6px 9px;border-radius:7px;background:#1b1330;border:1px solid #c77dff44;font-size:11.5px;color:#e3d3ff}
-/* core innards */
-.msg{padding:7px 10px;border-radius:8px;font-size:12.5px;max-width:88%}
-.msg.--u{background:var(--bub-u);border:1px solid var(--bub-u-line);color:var(--bub-u-fg);align-self:flex-end}
-.msg.--a{background:var(--bub-a);border:1px solid var(--bub-a-line);align-self:flex-start}
-/* P#/R# tags EXACTLY as production renders them (styles.css .ws-num / .pc-num): a corner pill that
-   overlaps the bubble's top edge — R on the LEFT of an answer, P on the RIGHT of a prompt. */
-.num{position:absolute;top:-10px;z-index:1;font:700 11.5px ui-monospace,Consolas,monospace;line-height:1.5;
-  padding:1px 7px;border-radius:8px;letter-spacing:.4px;pointer-events:none;white-space:nowrap;box-shadow:0 1px 3px #0006}
-.num-r{left:6px;background:var(--tag-r-bg);color:var(--tag-r-fg)}
-.num-p{right:6px;background:var(--tag-p-bg);color:var(--tag-p-fg);border:1px solid #ffffff4d}
-/* the wrap line reuses the SAME two colours so R/P read the same everywhere */
-.tR{color:var(--tag-r-bg);font-weight:700}
-.tP{color:#7aa2ff;font-weight:700}
-/* HEADER PARITY: both workspaces reserve the same header height, so switching cannot shift the layout.
-   Pact fills row 1 with conversation tabs; Core fills it with an identity chip. Same box either way. */
-.hrow.--r1{min-height:38px}
-/* image thumbs — hover to inspect without leaving the conversation */
-.imgthumb{position:relative;display:inline-flex}
-.imgthumb .big{position:absolute;bottom:calc(100% + 8px);left:0;display:none;z-index:70;
-  width:300px;height:190px;border-radius:10px;border:1px solid var(--seam);box-shadow:0 12px 40px #000b;
-  background:repeating-linear-gradient(45deg,#223,#223 10px,#2b2b3d 10px,#2b2b3d 20px);
-  align-items:center;justify-content:center;color:var(--dim);font-size:11px}
-.imgthumb:hover .big,.imgthumb:focus-within .big{display:flex}
-/* footer innards */
-.frow{display:flex;align-items:center;gap:6px;padding:5px 9px;min-height:30px}
-.frow+.frow{border-top:1px solid #ffffff0d}
-.frow.--gone{display:none}
-/* `--gone` is applied by JS to rows AND to inline chips/spans (#f-modelchip2, #f-imgchip, #f-meta).
-   It was only ever DEFINED for .rg-core and .frow, so hiding a chip silently did nothing and the
-   collapsed-state chips showed permanently alongside the very rows they stand in for. One global rule. */
-.--gone{display:none !important}
-/* the type box sits in a wrapper so ghost text can be overlaid exactly on top of it */
-/* The gutter is ABSOLUTELY positioned, deliberately. As a flex sibling with align-items:stretch the
-   textarea was stretched to the flex container's height — which was itself set from the textarea — so
-   `height:auto` could never shrink it and the box stayed tall after you deleted the text. Taking the
-   gutter out of the sizing path breaks that circular dependency: the textarea's height is now driven
-   only by its own content. */
-.tawrap{position:relative;width:100%}
-.gutter{position:absolute;left:1px;top:1px;bottom:1px;padding:7px 8px 7px 4px;text-align:right;
-  overflow:hidden;font:11px/18px ui-monospace,Consolas,monospace;user-select:none;pointer-events:none;
-  background:color-mix(in srgb,var(--field) 70%,#000);border-right:1px solid var(--field-line);
-  border-radius:8px 0 0 8px;z-index:1;transition:width .08s}
-.gutter b{display:block;font-weight:400;color:#39435f}
-.gutter b.--on{color:#8fa0c8;font-weight:600}
-/* Both the text and the ghost clear the gutter, or they render underneath it. */
-/* left padding is set from the measured gutter width in paintGutter(); this is only the initial value */
-#typebox,.tawrap #ghost{padding-left:32px}
-#ghost{position:absolute;inset:0;padding:7px 9px;font:inherit;font-size:12.5px;line-height:18px;color:#8290b5;pointer-events:none;white-space:pre-wrap;overflow:hidden}
-#ghost kbd{background:#1a2440;border:1px solid var(--line);border-radius:4px;padding:0 4px;font-size:10.5px;color:var(--dim)}
-/* Stop/Send + auto-continue live in ONE bordered group, per feedback */
-.sendgrp{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:9px;padding:3px 5px;background:var(--chip)}
-.sendgrp.--auto{border-color:#3ddc9755;background:#0c1a1c}
-.sendgrp .rounds{font-size:10.5px;color:var(--dim);white-space:nowrap}
-.autolbl{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--dim);white-space:nowrap;cursor:pointer}
-.autolbl input{margin:0}
-#typebox{width:100%;resize:none;background:var(--field);color:var(--ink);border:1px solid var(--field-line);border-radius:8px;box-shadow:inset 0 1px 3px #0007;padding:7px 9px;font:inherit;font-size:12.5px;line-height:18px;outline:none;display:block}
-#typebox:focus{border-color:var(--acc);box-shadow:inset 0 1px 3px #0007,0 0 0 2px #c77dff22}
-.btn-send{background:var(--acc);color:#1a0b2e;font-weight:700;border-color:var(--acc)}
-.btn-stop{background:#3a1720;color:#ffb3c0;border-color:#7a2b3c}
-.sel{background:#0f1730;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:3px 6px;font:inherit;font-size:11.5px}
-.sel.--danger{color:#ffb4b4;border-color:#ef4444;background:#2a1114;font-weight:700}
-.sel.--plan{color:#a5b4fc;border-color:#6366f1;background:#171a35}
 /* history popup */
 #hist{position:fixed;inset:0;background:#000b;display:none;align-items:center;justify-content:center;z-index:50;border-radius:12px}
 #hist.--open{display:flex}
@@ -375,13 +99,6 @@ button:disabled{opacity:.4;cursor:not-allowed}
 .hitem{padding:7px 9px;border:1px solid var(--line);border-radius:7px;background:#0f1730;font-size:12px;display:flex;gap:8px;align-items:center}
 .hitem .spacer{flex:1}
 .warnbar{background:#2a1c0b;border-bottom:1px solid var(--warn);color:var(--warn);font-size:11.5px;padding:5px 10px;text-align:center}
-/* NARROW PANES. The cockpit runs four of these side by side, so the shell has to survive ~380px
-   without any row escaping. Header and footer rows wrap; the jump box takes its own line; long chips
-   truncate rather than push Send off the edge. Nothing here is mobile-specific — it is pane width. */
-@container (max-width: 520px){ .hrow,.frow{flex-wrap:wrap} }
-.hrow,.frow{flex-wrap:wrap;row-gap:5px}
-.roll{row-gap:5px}
-.msg{max-width:92%}
 @media (max-width:820px){body{flex-direction:column}#rail{width:auto;flex:0 0 auto;max-height:42vh;border-right:none;border-bottom:1px solid var(--line)}}
 </style>
 
@@ -415,6 +132,11 @@ button:disabled{opacity:.4;cursor:not-allowed}
     <div class="row"><button id="addConv">+ conversation</button><button id="addTurns">+ 6 turns</button><button id="clearTurns">clear</button></div>
     <div class="row"><button id="agents">▸ agents running</button><button id="recon">↻ reconnected</button><button id="marks">＋ event marker</button></div>
     <div class="row"><button id="liveBtn">● Live / Held</button></div>
+    <div class="row"><button id="autoRun">▸ auto-continue countdown</button></div>
+    <div class="row"><span class="sub">Work state — the Send button is the loudest one</span></div>
+    <div class="row"><button id="wIdle" class="on">idle</button><button id="wBusy">working</button><button id="wDeep">deep work</button><button id="wBg">background only</button></div>
+    <div class="row"><span class="sub">Activity narration (the header chip)</span></div>
+    <div class="row"><button id="actStep">▸ next event</button><button id="actLong">long event text</button><button id="actErr">an error</button></div>
     <div class="row"><span class="sub">Connection</span></div>
     <div class="row"><button id="cOk" class="on">ok</button><button id="cLost">disconnected</button><button id="cRecon">reconnecting</button></div>
     <div class="row"><span class="sub">History load progress</span></div>
@@ -440,7 +162,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
 </div>
 
 <div id="jumpmsg"></div>
-<div id="stage"><div id="shell"></div></div>
+<div id="stage"><div id="shell" class="cs-shell"></div></div>
 
 <div id="ctxpop" class="pop"><div class="popbox">
   <div class="pophd"><span>◐ Context breakdown</span><span class="spacer"></span><button onclick="document.getElementById('ctxpop').classList.remove('--open')">×</button></div>
@@ -458,7 +180,11 @@ button:disabled{opacity:.4;cursor:not-allowed}
   <div class="histlist" id="histList"></div>
 </div></div>
 
-<script src="/chat-shell.js"></script>
+<!-- THE PACKAGE. This page is a consumer of @ancientpantheon/claude-chat-shell exactly like the
+     live dashboard is — same three files, same bytes, served from packages/claude-chat-shell/src.
+     There is no lab-only copy of the chat box any more; there is nothing left here to drift. -->
+<script src="/chat-shell/chat-shell.js"></script>
+<script src="/chat-shell/chat-shell-ui.js"></script>
 <script>
 // ERROR SURFACE. "Nothing happens" has been the report three times now, and each time the cause was a
 // silent throw somewhere the browser swallowed. Any uncaught error is now shown ON THE PAGE — a lab you
@@ -495,8 +221,12 @@ function labError(msg, file, line) {
 var CS = window.ChatShell;
 var S = {
   kind: "core", expanded: false, prevLevel: 0,
-  rounds: 60, renderCap: 60, convs: [{ n: "Master", act: true }], agents: 0, recon: false, cue: true, imgs: 0,
+  rounds: 60, renderCap: 20, loadingEarlier: false, convs: [{ n: "Master", act: true }], agents: 0, recon: false, cue: true, imgs: 0,
   repo: "Claudstermind", model: "Opus 4.5", auto: true, autoN: 4,
+  // Seconds until the loop sends the next prompt by itself, or null when it is not counting. The
+  // countdown belongs ON the switch that owns it — a ticker in some other row leaves the switch
+  // looking inert while something is about to happen without you.
+  autoIn: null, _autoTimer: 0,
   ctxTok: 93016, ctxMax: 1000000,
   suggest: "Continue with the next item on the list.",
   autoWrap: true, wraps: 0, live: true, bm: {}, maxTurns: 1000, jumpText: "", states: true,
@@ -516,9 +246,15 @@ var S = {
   //   { kind:"compact"|"wrap", afterRound, preTokens, postTokens, trigger }
   marks: [],
   busy: null,          // { kind, pct } while a compact/wrap is in progress
+  work: null,          // null | "busy" | "deep" — the turn state the Send button paints
+  bgWork: false,       // agent-spawned work still running while the chat itself is idle
 
   worktree: "main", worktrees: ["main", "feat-pact-changed-review", "exocortex"],
   conn: "ok", loadPct: 0,
+  // The live activity narration + the close affordance. Both were production-only controls the lab
+  // had never modelled — which is exactly how they ended up looking foreign in the live app, with
+  // nobody able to say what they were. They are the package's now, so they are here too.
+  activity: "\u2713 Tool finished \u2014 continuing\u2026", activityTone: "", activityLog: [],
   // ONE source of truth. `rounds` is the conversation's size; prompts, responses and turns are
   // DERIVED from it. They used to be independent fields, so "+6 turns" moved the transcript while
   // the counters sat still, and the two disagreed permanently.
@@ -534,152 +270,248 @@ function nResponses() { return S.rounds; }
 function nTurns() { return S.rounds * 2; }
 function nChars() { return S.rounds * S.charsPerRound; }
 function firstRendered() { return Math.max(1, S.rounds - S.renderCap + 1); }   // the transcript is WINDOWED
-function el(t, a, k) { var e = document.createElement(t); for (var x in (a || {})) { if (x === "class") e.className = a[x]; else if (x === "html") e.innerHTML = a[x]; else e.setAttribute(x, a[x]); } (k || []).forEach(function (c) { e.appendChild(typeof c === "string" ? document.createTextNode(c) : c); }); return e; }
+// el() is now CS.el — the one DOM builder shared with production (see chat-shell.js). Aliased locally
+// so every existing call site in this file (there are hundreds) needed zero changes.
+var el = CS.el;
+
+// THE LAB IS A CONSUMER OF THE PACKAGE, exactly like production is. It owns NO chat-box markup any
+// more: every control below is built by ChatShellUI.mount(), and this file only decides what data
+// to hand it and what to do when you click something. That is the whole point — a change to the
+// package changes the lab and the live app together, because there is only one implementation to
+// change. What used to live here (a ~550-line hand-written header/footer assembly) was the second
+// copy, and the second copy is what kept drifting.
+var LAB = null;
+
+function labMount() {
+  LAB = ChatShellUI.mount($("#shell"), {
+    kind: S.kind,
+    slots: { searchExtra: labSearchControls() },
+    on: {
+      // A mock agent: the lab has no session, so "send" narrates what a real host would do.
+      send: function (text) {
+        if (!text.trim()) { flashMsg("Nothing to send \u2014 the box is empty.", false); return false; }
+        flashMsg("Sent. A real host would hand this to the agent now.", true);
+        S._text = ""; return true;
+      },
+      stop: function () { flashMsg("Stop \u2014 the turn is interrupted, the conversation kept.", true); },
+      input: function (v) { S._text = v; },
+      attach: function () { S.imgs = Math.min(4, S.imgs + 1); render(); },
+      drop: function () { S.imgs = Math.min(4, S.imgs + 1); render(); },
+      paste: function () { /* a real host would read the clipboard's image items here */ },
+      expand: function (on) { S.expanded = on; S.prevLevel = 0; },
+      search: function (open) { S.searchOpen = open; },
+      // "Load earlier" — the lab's stand-in for production's exocortex fetch: widen the render window
+      // by a block, with a brief loading state so the medallion's disabled/⟳ state is visible here too.
+      earlier: function () {
+        S.loadingEarlier = true; render();
+        setTimeout(function () { S.loadingEarlier = false; S.renderCap = Math.min(S.rounds, S.renderCap + 20); render(); }, 550);
+      },
+      history: openHist,
+      bookmarks: openBm,
+      context: openCtx,
+      // A host owns its own log format (its events are its own vocabulary), so the package supplies
+      // the chip and the click; what opens is the host's business. The lab narrates that contract.
+      activity: function () { flashMsg("Activity \u2014 a host would open its own event log here.", true); },
+      close: function () { flashMsg("Close \u2014 a host would drop this shell from its grid.", true); },
+      repo: function (v) { S.repo = v; render(); },
+      worktree: function (v) {
+        if (v === "__new__") {
+          var name = (window.prompt("New worktree name", "feat-") || "").trim();
+          if (!name) return render();
+          if (S.worktrees.indexOf(name) < 0) S.worktrees.push(name);
+          S.worktree = name;
+        } else S.worktree = v;
+        render();
+      },
+      model: function (v) { S.model = v; },
+      effort: function (v) { S.effort = v; },
+      ultracode: function (v) { S.ultracode = v; if (v) S.effort = "xhigh"; render(); },
+      permission: function (v) { S.perm = v; },
+      multiChat: function (v) {
+        S.multiChat = v;
+        if (!v) S.convs = [S.convs[0] || { n: "Master", act: true }];
+        render();
+      },
+      autoContinue: function (v) {
+        S.auto = v;
+        if (!v) { clearInterval(S._autoTimer); S._autoTimer = 0; S.autoIn = null; }
+        render();
+      },
+      autoWrap: function (v) { S.autoWrap = v; if (v) armAutoWrap(); render(); },
+      compact: function () { runEvent("compact"); },
+      wrap: openWrap,
+      tab: function (id) { S.convs.forEach(function (c, i) { c.act = i === id; }); render(); },
+      replyRemove: function (i) { S.replies.splice(i, 1); render(); },
+      // The package supplies the button and the exact preamble; the dialog is this page's own.
+      replyPreview: function (refs, preamble) {
+        var b2 = $("#ctxbody"); b2.replaceChildren();
+        $("#ctxpop").querySelector(".pophd span").textContent = "\u21a9 What will be sent";
+        b2.appendChild(el("div", { class: "chip" }, [
+          "The quoted block is prepended to your prompt. A bare \u201cR#219\u201d would not be enough: absolute "
+          + "turn numbers are OUR addressing scheme, and after a wrap the referenced turn may not be in the "
+          + "window at all \u2014 so the reference carries the turn's own words with it."]));
+        b2.appendChild(el("pre", { style: "white-space:pre-wrap;margin:0;padding:9px;border-radius:8px;background:var(--field);border:1px solid var(--line);font:11.5px/1.6 ui-monospace,Consolas,monospace" },
+          [preamble + (LAB.els.typebox.value || "(your prompt goes here)")]));
+        openPop("#ctxpop");
+      },
+      live: function (isLive) { S.live = isLive; },
+      layout: paintMetrics,
+    },
+  });
+  // ID SHIM, lab-page only. The package addresses its controls by reference (production has many
+  // chat boxes on one page, so ids could never be its contract); this page's rail handlers and its
+  // own tests still look a few up by id, so they are labelled here rather than inside the package.
+  var e = LAB.els;
+  [[e.typebox, "typebox"], [e.ghost, "ghost"], [e.gutter, "f-gutter"], [e.seamBulb, "f-bulb"],
+   [e.linesChip, "f-lines"], [e.historyBtn, "f-hist"], [e.expandBtn, "f-expand"],
+   [e.attachRow, "f-img"], [e.attachBtn, "f-attach"], [e.metaGroup, "f-meta"],
+   [e.replyRow, "f-replies"], [e.searchBtn, "f-search"], [e.searchDrawer, "f-searchrow"],
+   [e.wtSel, "f-wt"], [e.bookmarkBtn, "f-bm"], [e.sendGrp, "f-sendgrp"],
+   [e.modelSel, "f-modelsel"], [e.contextBtn, "f-ctx"], [e.multiChatCb, "h-multichat"],
+   [LAB.actionRow, "f-act"], [LAB.modelRow, "f-model"]]
+    .forEach(function (pr) { if (pr[0]) pr[0].id = pr[1]; });
+}
+
+// The jump / recall drawer. Its controls are lab-page behaviour (there is no archive to search
+// here), so they are handed to the package as a `searchExtra` slot rather than being built into it.
+function labSearchControls() {
+  var jin = el("input", { class: "sel", id: "h-jump", style: "flex:1;min-width:80px",
+    placeholder: "R#12 or P#12 to jump \u00b7 or text to search the archive" });
+  jin.oninput = function () { S.jumpText = jin.value; };
+  jin.onkeydown = function (e2) {
+    if (e2.key === "Enter") { e2.preventDefault(); S.jumpText = jin.value; doJump(jin.value); }
+    if (e2.key === "Escape") { LAB.els.searchBtn.click(); }
+  };
+  var jgo = el("button", { title: "Jump to that turn in this conversation" }, ["Go"]);
+  jgo.onclick = function () { S.jumpText = jin.value; doJump(jin.value); };
+  var rec = el("button", { title: "Search the ARCHIVE \u2014 turns already wrapped out of the live window. Jump only reaches loaded turns; Recall reaches the ones that are not." }, ["\u2312 Recall"]);
+  rec.onclick = function () {
+    var q = (jin.value || "").trim();
+    if (!q) { flashMsg("Type a turn number (R#46) to fetch it, or any text to search wrapped turns.", false); return; }
+    var m = q.match(/^([rRpP])?\s*#?\s*(\d+)$/);
+    var wrapped = Math.max(0, nResponses() - 40);
+    if (m) openRecall("number", (m[1] || "R").toUpperCase(), +m[2], wrapped);
+    else openRecall("query", null, q, wrapped);
+  };
+  return [jin, jgo, rec, el("span", { class: "jstat", id: "h-jstat" }, [])];
+}
 
 function build() {
-  var slots = CS.slotsFor(S.kind, { multiChat: S.multiChat });
   var shell = $("#shell");
   shell.style.height = shellTargetH() + "px";
   shell.style.maxWidth = S.width ? S.width + "px" : "none";   // 0 = take everything on offer
-  // build() throws away and rebuilds .rg-core from scratch on EVERY call — a brand-new element always
-  // starts at scrollTop 0. Left alone, that snaps the transcript back to the FIRST turn on every single
-  // interaction (a click, a tick of the stream simulator, a checkbox), not just once. Snapshot the old
-  // core's position before it is destroyed so it can be restored below, once the new one exists.
-  var oldCore = shell.querySelector(".rg-core");
-  var stickToBottom = true, heldTop = 0;
-  if (oldCore) {
-    stickToBottom = (oldCore.scrollTop + oldCore.clientHeight) >= (oldCore.scrollHeight - 4);
-    heldTop = oldCore.scrollTop;
-  }
-  shell.replaceChildren();
+  if (!LAB) labMount();
 
-  /* ================= HEADER — fixed height, max 3 rows, transient status is a CHIP ============== */
-  var hdr = el("div", { class: "rg-header", "data-rg": "HEADER" });
-  var r1 = el("div", { class: "hrow --r1" });
-  if (slots.header.tabs) {
-    S.convs.forEach(function (c, i) {
-      var kids = [c.n];
-      if (i === 0) kids.unshift(el("span", { class: "star", title: "Master conversation" }, ["\u2605"]));
-      r1.appendChild(el("span", { class: "tab" + (c.act ? " --act" : ""), title: i === 0 ? "Master conversation" : c.n }, kids));
-    });
-    r1.appendChild(el("button", { title: "new conversation" }, ["+"]));
-  } else {
-    r1.appendChild(el("span", { class: "chip --acc" }, ["\u25cd " + S.repo]));
-    r1.appendChild(el("span", { class: "chip" }, ["1 active conversation"]));
-  }
-  // MULTI-CHAT toggle, Core only. Off by default: one repository usually means one thread, and tabs you
-  // did not ask for are clutter. Switching it on creates and splits NOTHING — the store has always
-  // written one file per conversation (appendTurn(dir, id, sessionId, …)) and exposes both a per-session
-  // and a merged read. Core simply stops merging them for display.
-  if (S.kind === "core") {
-    var mcCb = el("input", { type: "checkbox", id: "h-multichat" });
-    mcCb.checked = S.multiChat;
-    mcCb.onchange = function () {
-      S.multiChat = this.checked;
-      if (!S.multiChat) S.convs = [S.convs[0] || { n: "Master", act: true }];
-      render();
-    };
-    r1.appendChild(el("label", { class: "autolbl", id: "h-multichat-lbl",
-      title: S.multiChat
-        ? "Several conversations in this repository. They were always stored separately \u2014 this only stops merging them for display."
-        : "One conversation per repository. Switch on to work on two things at once; nothing is created or split, the store already keeps them apart." },
-      [mcCb, "multi-chat"]));
-  }
-  r1.appendChild(el("span", { class: "spacer" }));
-  // THE FIX for the wasted line: transient status is a chip here, never its own full-width row.
-  if (S.recon) r1.appendChild(el("span", { class: "chip --ok" }, ["↻ caught up"]));
-  if (S.agents) r1.appendChild(el("span", { class: "chip --ok" }, ["🟢".repeat(Math.min(S.agents, 5)) + " " + S.agents]));
-  // These were never rendered — the patch that added them silently failed to match, so the rail
-  // buttons toggled state that nothing displayed.
-  if (S.conn === "lost") r1.appendChild(el("span", { class: "chip --bad" }, ["\u26a1 disconnected \u2014 retrying"]));
-  else if (S.conn === "recon") r1.appendChild(el("span", { class: "chip --warn" }, ["\u21bb reconnecting\u2026"]));
-  else if (S.recon) r1.appendChild(el("span", { class: "chip --ok" }, ["\u21bb caught up"]));
-  // BACKGROUND AGENTS. The header shows only what is LIVE — that is the question you are asking when
-  // you glance at it. Everything settled sits behind the chip, so a run of successes can never bury the
-  // one failure that matters.
+  var slots = CS.slotsFor(S.kind, { multiChat: S.multiChat });
+  // TWO COUNTERS WITH DIFFERENT SCOPES, and the difference matters: compactions belong to the
+  // CURRENT WINDOW (a wrap starts a fresh one, so the count resets — the compactions before a wrap
+  // belong to the segment that was archived); wraps belong to the CONVERSATION and only ever go up.
+  var lastWrapRound = S.marks.reduce(function (m, mk) { return mk.kind === "wrap" ? Math.max(m, mk.afterRound) : m; }, 0);
+  var nComp = S.marks.filter(function (mk) { return mk.kind === "compact" && mk.afterRound >= lastWrapRound; }).length;
+  var nbm = Object.keys(S.bm).filter(function (k) { return S.bm[k]; }).length;
+
+  var status = [];
+  if (S.conn === "lost") status.push({ text: "\u26a1 disconnected \u2014 retrying", tone: "bad" });
+  else if (S.conn === "recon") status.push({ text: "\u21bb reconnecting\u2026", tone: "warn" });
+  else if (S.recon) status.push({ text: "\u21bb caught up", tone: "ok" });
+  // BACKGROUND AGENTS: the header shows only what is LIVE — that is the question you are asking
+  // when you glance at it. Everything settled sits behind the chip, so a run of successes can never
+  // bury the one failure that matters.
   var live = S.agentRows.filter(function (a) { return a.status === "running"; });
   var errs = S.agentRows.filter(function (a) { return a.status === "error"; });
   var dones = S.agentRows.filter(function (a) { return a.status === "done"; });
-  if (S.agentRows.length) {
-    var ab = el("button", { class: "chip" + (errs.length ? " --bad" : live.length ? " --ok" : ""),
-      title: live.length + " running \u00b7 " + dones.length + " done \u00b7 " + errs.length + " error(s). "
-           + "Successes clear themselves after a few minutes; errors stay until dismissed." },
-      [live.length ? "\u25cf".repeat(Math.min(live.length, 3)) + " " + live.length + " running"
-                   : errs.length ? "\u26a0 " + errs.length + " error" + (errs.length === 1 ? "" : "s")
-                   : "\u2713 idle"]);
-    ab.onclick = function () { S.agentsOpen = !S.agentsOpen; render(); };
-    r1.appendChild(ab);
-  }
-  r1.appendChild(el("span", { class: "chip --ok" }, ["✓ Saved"]));
-  hdr.appendChild(r1);
-
-  // ONE row, split in two: SEARCH on the left, STATS on the right. Previously the search line and the
-  // stats line were separate full-width rows, each half empty — two rows of header for one row of
-  // content. The context chip is gone from here entirely: the footer already carries the same figure,
-  // and the same number in two places is one number too many.
-  var r2 = el("div", { class: "hrow" });
-  // The search moved OUT of the header entirely — it is now a drawer under the type box, opened on
-  // demand (see the ⌕ button on the compose field). A control you use occasionally does not deserve
-  // permanent header height; the header is for what you read constantly.
-  // RIGHT HALF — the numbers that describe the conversation's size, and nothing you can click by accident.
-  var right = el("div", { class: "hright" });   // now the whole row
-  var tg = CS.rollTriggers({ prompts: nPrompts(), responses: nResponses(), bytes: nChars(),
-                             tokens: S.ctxTok, ceiling: S.ctxMax, maxTurns: S.maxTurns });
-  // The agents chip is gone: the live figures in the title row already say it, and the same fact twice
-  // is one place too many for them to disagree.
-  tg.list.forEach(function (c) {
-    if (c.id === "context") return;                       // the footer carries the context figure
-    var near = c.id === tg.willRollOn;
-    var label = c.id === "turns"
-      ? fmt(c.now) + "/" + fmt(c.max) + " turns \u00b7 " + fmt(Math.round(c.now / 2)) + " rounds"
-      : fmtBytes(c.now) + " / " + fmtBytes(c.max);
-    right.appendChild(el("span", { class: "chip" + (near ? " --acc" : " --far"),
-      title: near ? "NEAREST ceiling \u2014 this is what will fire the wrap (" + c.pct + "%)"
-                  : c.label + " is at " + c.pct + "% \u2014 far from binding" },
-      [(near ? "\u25b8 " : "") + label + " \u00b7 " + c.pct + "%"]));
+  if (S.agentRows.length) status.push({
+    tone: errs.length ? "bad" : live.length ? "ok" : "",
+    text: live.length ? "\u25cf".repeat(Math.min(live.length, 3)) + " " + live.length + " running"
+        : errs.length ? "\u26a0 " + errs.length + " error" + (errs.length === 1 ? "" : "s") : "\u2713 idle",
+    title: live.length + " running \u00b7 " + dones.length + " done \u00b7 " + errs.length + " error(s). "
+         + "Successes clear themselves after a few minutes; errors stay until dismissed.",
+    onClick: function () { S.agentsOpen = !S.agentsOpen; render(); },
   });
-  // TWO COUNTERS WITH DIFFERENT SCOPES, and the difference matters:
-  //   compactions are a property of the CURRENT WINDOW. A wrap starts a fresh window, so the count
-  //     resets to zero — compactions that happened before a wrap belong to the segment that was
-  //     archived, not to the conversation you are now in.
-  //   wraps are a property of the CONVERSATION. They are cumulative, and each one is a segment you can
-  //     still recall from, so the number only ever goes up.
-  // Both render even at zero: "none yet" and "not tracked" must not look the same, and a counter that
-  // appears only when non-zero makes its own absence ambiguous.
-  var lastWrapRound = S.marks.reduce(function (m, mk) { return mk.kind === "wrap" ? Math.max(m, mk.afterRound) : m; }, 0);
-  var nComp = S.marks.filter(function (mk) { return mk.kind === "compact" && mk.afterRound >= lastWrapRound; }).length;
-  right.appendChild(el("span", { class: "chip" + (nComp ? "" : " --far"), style: nComp ? "color:#8fc3ff;border-color:#5aa8f055" : "",
-    title: nComp
-      ? nComp + " compaction" + (nComp === 1 ? "" : "s") + " IN THIS WINDOW. Each replaced earlier turns "
-        + "with a summary that still occupies the window \u2014 wrapping is what actually clears it. "
-        + "This count resets at every wrap, because a fresh window starts with none."
-      : "No compactions in this window yet. Resets at every wrap." },
-    ["\uD83D\uDDDC " + nComp + " compacted \u00b7 this window"]));
-  right.appendChild(el("span", { class: "chip" + (S.wraps ? "" : " --far"), style: S.wraps ? "color:var(--acc);border-color:#c77dff55" : "",
-    title: S.wraps
-      ? S.wraps + " wrap" + (S.wraps === 1 ? "" : "s") + " in this conversation \u2014 so there are "
-        + S.wraps + " archived segment" + (S.wraps === 1 ? "" : "s") + " you can still reach with Recall. "
-        + "Cumulative: this only ever goes up."
-      : "No wraps yet \u2014 the whole conversation is still in one window, and Recall has nothing to search." },
-    ["\u27f3 " + S.wraps + " wrapped \u00b7 this conversation"]));
-  // SIZE stats sit together on the left; the wrap RANGE is pushed to the far right, because it answers
-  // a different question ("what would I lose?") from the rest ("how big is this?").
-  right.appendChild(el("span", { class: "spacer" }));
-  var sp = CS.wrapSpan({ rFrom: 1, rTo: Math.max(0, nResponses() - 40), pFrom: 1, pTo: Math.max(0, nPrompts() - 40) });
-  right.appendChild(el("span", { class: "chip", title: "The range a wrap would take right now (the last 40 rounds are always kept verbatim)" },
-    ["would wrap ", el("span", { class: "tR" }, ["R#1\u2013R#" + fmt(sp.r.to) + " [" + fmt(sp.r.count) + "]"]),
-     " \u00b7 ", el("span", { class: "tP" }, ["P#1\u2013P#" + fmt(sp.p.to) + " [" + fmt(sp.p.count) + "]"])]));
-  r2.appendChild(right);
-  hdr.appendChild(r2);
 
-  // LOADING STRIP — a real progress bar for a cold load / catch-up, in flow so it cannot overlap
-  // anything, and zero height when idle so it costs nothing when there is nothing to report.
+  var st = {
+    multiChat: { shown: S.kind === "core", checked: S.multiChat },
+    status: status, saved: true,
+    stats: { prompts: nPrompts(), responses: nResponses(), bytes: nChars(), tokens: S.ctxTok,
+             ceiling: S.ctxMax, maxTurns: S.maxTurns, compactCount: nComp, wrapCount: S.wraps,
+             tailTurns: 80, fmtNum: fmt, fmtBytes: fmtBytes },
+    attachments: Array.from({ length: S.imgs }, function (_, j) {
+      return { label: "shot-" + (j + 1) + ".png", onRemove: function () { S.imgs = Math.max(0, S.imgs - 1); render(); } };
+    }),
+    replies: S.replies,
+    compose: { value: S._text || "", expanded: S.expanded, suggest: S.suggest,
+               placeholder: "Message the agent\u2026 (\u2318/Ctrl+Enter to send)" },
+    repo: { shown: !!slots.footer.repoPicker,
+            options: ["Claudstermind", "OuronetPact", "AncientHub"].map(function (r) { return { value: r, label: r }; }),
+            value: S.repo },
+    worktree: { options: S.worktrees.map(function (w) { return { value: w, label: "\u2442 " + w }; })
+                  .concat([{ value: "__new__", label: "\uff0b create a new worktree\u2026" }]),
+                value: S.worktree },
+    bookmarks: nbm,
+    autoContinue: { on: S.auto, n: S.autoN, max: 10, in: S.autoIn },
+    // THE SEND BUTTON AS THE WORK INDICATOR — amber while a turn runs, red for deep work (the visible
+    // turn ended but the agent is still producing), and a blinking ring whenever ANY work is live,
+    // including background work while the chat itself reads idle. Simulated here because these states
+    // existed only in production: their colours were keyed to production's own button classes, so
+    // after both workspaces moved onto this package's button all three states painted the identical
+    // accent colour — and nobody could see that here, because here they were never shown at all.
+    sending: { state: S.work, pulse: !!S.work || S.bgWork,
+               sendLabel: S.work === "deep" ? "Deep Work\u2026" : S.work === "busy" ? "Working\u2026" : "Send" },
+    // The picked model and the model actually RUNNING are a stacked pair in the footer — the second
+    // captions the first. The lab passed no running label at all, so the one group that most needs to
+    // demonstrate the pairing was the one group rendering as a single row. It carries the pick here;
+    // a real host reports whatever the engine actually answered with, which can differ.
+    model: { options: ["Opus 4.5", "Opus 5", "Sonnet 5", "Haiku 4.5", "Fable 5.1"]
+               .map(function (m) { return { value: m, label: m }; }), value: S.model,
+             activeLabel: "running " + S.model },
+    effort: { value: S.effort, disabled: S.ultracode },
+    ultracode: { checked: S.ultracode },
+    permission: { value: S.perm },
+    context: { tokens: S.ctxTok, ceiling: S.ctxMax },
+    wrap: { autoWrap: S.autoWrap, tokens: S.ctxTok, ceiling: S.ctxMax },
+    // "What is this shell doing right now", in words. A CHIP, never its own row: a permanent row
+    // costs header height forever to report something true for two seconds. It truncates rather than
+    // reflowing the row, and clicking it is how a host opens its own full log.
+    activity: { text: S.activity, tone: S.activityTone },
+    // Core-style workspaces show several shells at once and each can be dismissed; a single-shell
+    // host passes nothing and the control is simply absent.
+    close: { shown: S.kind === "core", title: "Close this conversation" },
+    live: S.live,
+    // "N earlier turns" — the transcript is WINDOWED (firstRendered()), so everything above the
+    // window is genuinely off-screen and reachable only by loading it. A medallion floating at the
+    // top of the core, never a header row: a permanent row spends a line of chrome forever on a
+    // number you act on once.
+    earlier: (firstRendered() > 1)
+      ? { text: fmt((firstRendered() - 1) * 2) + " earlier turns", loading: S.loadingEarlier }
+      : false,
+  };
+  // Tabs and the identity chip share one slot — a workspace addresses either one conversation or
+  // several, never both, so only one of these keys is ever sent.
+  if (slots.header.tabs) {
+    st.tabs = S.convs.map(function (c, i) {
+      return { id: i, label: c.n, active: c.act, master: i === 0, title: i === 0 ? "Master conversation" : c.n };
+    });
+  } else {
+    st.identity = [{ label: S.repo, icon: "\u25cd", tone: "acc" }, { label: "1 active conversation", tone: "" }];
+  }
+  LAB.setState(st);
+  // buildWrapControls mints fresh nodes on every paint (the meter fill and the Wrap button's gating
+  // both depend on live usage), so their lab ids are re-applied here rather than once at mount.
+  var awCb = LAB.els.wrapWrap.querySelector("input");
+  if (awCb) awCb.id = "f-autowrap";
+  var awBar = LAB.els.wrapWrap.querySelector(".bar");
+  if (awBar) awBar.id = "f-wrapmeter";
+
+  // A cold load / catch-up is a real progress bar, in flow so it cannot overlap anything, and zero
+  // height when idle so it costs nothing when there is nothing to report. Lab-page furniture: it
+  // rides in the package's header slot rather than being part of the package's own contract.
+  LAB.els.headExtra.replaceChildren();
   if (S.loadPct > 0 && S.loadPct < 100) {
-    hdr.appendChild(el("div", { class: "loadstrip", title: "Loading conversation history" },
+    LAB.header.appendChild(el("div", { class: "loadstrip", title: "Loading conversation history" },
       [el("i", { style: "width:" + S.loadPct + "%" }), el("span", { class: "lbl" }, ["loading history \u00b7 " + S.loadPct + "%"])]));
   }
-  // The expanded panel: running first, then errors, then the few recent successes. Each row shows the
-  // clock that fits its state — a live agent ticks, a finished one reports how long it TOOK.
+  // The expanded agent panel: running first, then errors, then the few recent successes. Each row
+  // shows the clock that fits its state — a live agent ticks, a finished one reports how long it TOOK.
   if (S.agentsOpen && S.agentRows.length) {
     var pan = el("div", { class: "agentpanel", id: "f-agents" });
     live.concat(errs, dones).forEach(function (a) {
@@ -687,7 +519,7 @@ function build() {
       row.appendChild(el("span", { class: "adot" }, []));
       row.appendChild(el("span", { class: "alabel" }, [a.label]));
       row.appendChild(el("span", { class: "adesc" }, [a.description]));
-      row.appendChild(el("span", { class: "spacer" }));
+      row.appendChild(el("span", { class: "spacer" }, []));
       row.appendChild(el("span", { class: "aclock" }, [
         a.status === "running" ? "running " + Math.round((a.elapsedMs || 0) / 1000) + "s"
         : a.durationMs != null ? "took " + Math.round(a.durationMs / 1000) + "s"
@@ -703,12 +535,28 @@ function build() {
       "Running agents stay. Successes clear themselves " + Math.round(CS_RETAIN / 60000)
       + " minutes after they finish. Errors stay until you dismiss them \u2014 a failure that vanishes on "
       + "a timer is one you never find out about."]));
-    hdr.appendChild(pan);
+    LAB.header.appendChild(pan);
   }
-  shell.appendChild(hdr);
 
-  /* ================= CORE — the only flexing region ============================================ */
-  var core = el("div", { class: "rg-core" });
+  paintCore();
+  LAB.relayout();
+}
+
+/* ================= CORE — the transcript. The package sizes and scrolls this region; what goes
+   INSIDE it is the host's job, which here means the lab's synthetic turns. Production's own
+   incremental renderer fills the identical slot with real ones. ========================== */
+function paintCore() {
+  var core = LAB.core;
+  // Rebuilding from scratch resets scrollTop to 0 — which is what "pushed back to the first turn on
+  // every interaction" actually was. Snapshot the position first and restore it below.
+  var stickToBottom = (core.scrollTop + core.clientHeight) >= (core.scrollHeight - 4);
+  var heldTop = core.scrollTop;
+  core.replaceChildren();
+  // THE CONTRACT: the "N earlier turns" medallion is a CHILD of the core region (it is sticky, so it
+  // has to be inside the scroller to pin to the top of the viewport). Any host whose own renderer
+  // rebuilds the core's children must put it back at the head — production's two renderers do exactly
+  // this, and the lab doing it too is what proves the rule is followed, not just written down.
+  core.appendChild(LAB.els.coreTop);
   for (var i = firstRendered() - 1; i < S.rounds; i++) {
     var u = el("div", { class: "msg --u", "data-turn": "P" + (i + 1) },
       [el("span", { class: "num num-p" }, ["P#" + (i + 1)]), mkMsgActs("P", i + 1), "A user turn."]);
@@ -855,347 +703,23 @@ function build() {
       el("div", { class: "bs" }, [S.busy.pct + "%  \u00b7  nothing is deleted \u2014 earlier turns stay searchable"])
     ]));
   }
-  shell.appendChild(core);
-
-  /* ================= FOOTER — grows, collapses in order, Send/Stop never ======================= */
-  var ftr = el("div", { class: "rg-footer", "data-rg": "FOOTER" });
-  // Centred on the seam at the TOP of the footer, which is the same line as the bottom of Core.
-  var bulb = el("div", { class: "seambulb " + (S.live ? "--live" : "--held"), id: "f-bulb",
-    title: S.live ? "Live — following the newest turn. Click to hold your position."
-                  : "Held — your scroll position is pinned; new turns are arriving below. Click to jump back to live." },
-    [el("i"), S.live ? "Live" : "Held"]);
-  // Clicking only ever means "take me back to live". Held is a CONSEQUENCE of scrolling up, not a mode
-  // you choose — as a toggle it could claim Held while you were sitting at the bottom.
-  bulb.onclick = function () { var c = document.querySelector(".rg-core"); if (c) c.scrollTop = c.scrollHeight; };
-  ftr.appendChild(bulb);
-  if (S.imgs) {
-    var ir = el("div", { class: "frow", id: "f-img" });
-    for (var j = 0; j < S.imgs; j++) {
-      ir.appendChild(el("span", { class: "imgthumb", tabindex: "0" }, [
-        el("span", { class: "chip" }, ["\uD83D\uDDBC shot-" + (j + 1) + ".png \u00d7"]),
-        el("span", { class: "big" }, ["shot-" + (j + 1) + ".png \u2014 hover preview (full size on click)"])
-      ]));
-    }
-    ftr.appendChild(ir);
-  }
-  // The pasted-image strip collapses to a single count chip rather than a whole row.
-  var imgChip = el("span", { class: "chip --gone", id: "f-imgchip" }, ["\uD83D\uDDBC " + S.imgs]);
-
-  // PENDING REPLIES — the turns this prompt is answering. Shown ABOVE the type box because they are
-  // part of the message you are composing, and with their token cost, because quoting is not free.
-  if (S.replies.length) {
-    var rr = el("div", { class: "frow replyrow", id: "f-replies" });
-    S.replies.forEach(function (ref, idx) {
-      var q = CS.replyQuote(ref);
-      var chip = el("span", { class: "replychip" + (q.archived ? " --arch" : ""),
-        title: q.who + " \u00b7 " + (q.archived ? "from the archive, not in the current window" : "in this window") + "\n\n" + q.text },
-        [el("b", { class: q.kind === "R" ? "tR" : "tP" }, ["\u21a9 " + q.label]),
-         el("span", { class: "rq" }, [q.text])]);
-      var x = el("button", { class: "rx", title: "Remove this reference" }, ["\u2715"]);
-      x.onclick = function () { S.replies.splice(idx, 1); render(); };
-      chip.appendChild(x);
-      rr.appendChild(chip);
-    });
-    var cost = CS.replyCost(S.replies);
-    var prev = el("button", { title: "See exactly what will be sent" }, ["preview"]);
-    prev.onclick = function () {
-      var b2 = $("#ctxbody"); b2.replaceChildren();
-      $("#ctxpop").querySelector(".pophd span").textContent = "\u21a9 What will be sent";
-      b2.appendChild(el("div", { class: "chip" }, [
-        "The quoted block is prepended to your prompt. A bare \u201cR#219\u201d would not be enough: absolute "
-        + "turn numbers are OUR addressing scheme, and after a wrap the referenced turn may not be in the "
-        + "window at all \u2014 so the reference carries the turn's own words with it."]));
-      var pre = el("pre", { style: "white-space:pre-wrap;margin:0;padding:9px;border-radius:8px;background:var(--field);border:1px solid var(--line);font:11.5px/1.6 ui-monospace,Consolas,monospace" },
-        [CS.buildReplyPreamble(S.replies) + ($("#typebox") && $("#typebox").value ? $("#typebox").value : "(your prompt goes here)")]);
-      b2.appendChild(pre);
-      openPop("#ctxpop");
-    };
-    rr.appendChild(prev);
-    rr.appendChild(el("span", { class: "chip", title: "Quoting costs context \u2014 this is what these references will add to the prompt" },
-      ["\u2248 " + fmt(cost.approxTokens) + " tok"]));
-    ftr.appendChild(rr);
-  }
-
-
-  // TYPE BOX + ghost suggestion. The old "continuation line" row is GONE: the suggested next prompt is
-  // ghost text inside the box, Tab to accept. That reclaims a whole row and puts the suggestion where
-  // you would actually type it.
-  var taRow = el("div", { class: "frow" });
-  var wrap = el("div", { class: "tawrap" });
-  // LINE NUMBERS in their own column. At the 40% cap you cannot see the whole prompt, so the count is
-  // the only honest signal of how big it has actually become.
-  var gut = el("div", { class: "gutter", id: "f-gutter" }, []);
-  wrap.appendChild(gut);
-  var ta = el("textarea", { id: "typebox", rows: "1", placeholder: "Message the agent\u2026 (\u2318/Ctrl+Enter to send)" });
-  var ghost = el("div", { id: "ghost" });
-  // The search DRAWER's toggle sits on the field itself, at the right — the same place the gutter sits
-  // on the left. It belongs to the compose box because what you search for usually becomes what you
-  // reference in the prompt you are writing.
-  var srchBtn = el("button", { class: "fieldbtn", id: "f-search",
-    title: S.searchOpen ? "Hide the jump / recall bar" : "Jump to a turn, or search the archive" },
-    [S.searchOpen ? "\u2715" : "\u2312"]);
-  srchBtn.onclick = function () { S.searchOpen = !S.searchOpen; render(); };
-  wrap.appendChild(ta); wrap.appendChild(ghost); wrap.appendChild(srchBtn);
-  taRow.appendChild(wrap); ftr.appendChild(taRow);
-
-  // …and the drawer itself, BENEATH the field, only when asked for.
-  if (S.searchOpen) {
-    var sr = el("div", { class: "frow searchrow", id: "f-searchrow" });
-    var jin = el("input", { class: "sel", id: "h-jump", style: "flex:1;min-width:80px",
-      placeholder: "R#12 or P#12 to jump \u00b7 or text to search the archive" });
-    jin.value = S.jumpText || "";
-    jin.oninput = function () { S.jumpText = jin.value; };
-    jin.onkeydown = function (e) {
-      if (e.key === "Enter") { e.preventDefault(); S.jumpText = jin.value; doJump(jin.value); }
-      if (e.key === "Escape") { S.searchOpen = false; render(); }
-    };
-    var jgo = el("button", { title: "Jump to that turn in this conversation" }, ["Go"]);
-    jgo.onclick = function () { S.jumpText = jin.value; doJump(jin.value); };
-    var rec = el("button", { title: "Search the ARCHIVE \u2014 turns already wrapped out of the live window. Jump only reaches loaded turns; Recall reaches the ones that are not." }, ["\u2312 Recall"]);
-    rec.onclick = function () {
-      var q = (jin.value || "").trim();
-      if (!q) { flashMsg("Type a turn number (R#46) to fetch it, or any text to search wrapped turns.", false); return; }
-      var m = q.match(/^([rRpP])?\s*#?\s*(\d+)$/);
-      var wrapped = Math.max(0, nResponses() - 40);
-      if (m) openRecall("number", (m[1] || "R").toUpperCase(), +m[2], wrapped);
-      else openRecall("query", null, q, wrapped);
-    };
-    sr.appendChild(jin); sr.appendChild(jgo); sr.appendChild(rec);
-    sr.appendChild(el("span", { class: "jstat", id: "h-jstat" }, []));
-    ftr.appendChild(sr);
-  }
-
-  // ACTION ROW: attach \u00b7 meta \u00b7 history \u2026 [ auto-continue + Stop + Send ] in ONE rectangle.
-  var act = el("div", { class: "frow", id: "f-act" });
-  act.appendChild(el("button", { id: "f-attach", title: "Attach" }, ["\uD83D\uDCCE"]));
-  act.appendChild(el("span", { class: "chip", id: "f-lines", title: "How long this prompt has become" }, ["1 line"]));
-  var meta = el("span", { class: "row", id: "f-meta", style: "gap:6px" });
-  if (slots.footer.repoPicker) {
-    var rsel = el("select", { class: "sel" });
-    ["Claudstermind", "OuronetPact", "AncientHub"].forEach(function (r) { rsel.appendChild(el("option", {}, [r])); });
-    rsel.value = S.repo; rsel.onchange = function () { S.repo = rsel.value; render(); };
-    meta.appendChild(rsel);
-  } else meta.appendChild(el("span", { class: "chip" }, ["\uD83D\uDD12 OuronetPact"]));
-  // A real worktree picker: available worktrees plus an explicit "create new". It was a dead label.
-  var wsel = el("select", { class: "sel", id: "f-wt", title: "Worktree this conversation runs in" });
-  S.worktrees.forEach(function (w) { wsel.appendChild(el("option", { value: w }, ["\u2442 " + w])); });
-  wsel.appendChild(el("option", { value: "__new__" }, ["\uff0b create a new worktree\u2026"]));
-  wsel.value = S.worktree;
-  wsel.onchange = function () {
-    if (wsel.value === "__new__") {
-      var name = (window.prompt("New worktree name", "feat-") || "").trim();
-      if (!name) { wsel.value = S.worktree; return; }
-      if (S.worktrees.indexOf(name) < 0) S.worktrees.push(name);
-      S.worktree = name;
-    } else S.worktree = wsel.value;
-    render();
-  };
-  meta.appendChild(wsel);
-  act.appendChild(meta);
-  act.appendChild(imgChip);
-  act.appendChild(el("button", { id: "f-hist", title: "Conversations in THIS repository" }, ["\uD83D\uDD50"]));
-  // Empty star when there are none; FILLED star + the count when there are. "Are there any, and how
-  // many" is the question you ask before clicking, so the answer belongs on the button itself.
-  var nbm = Object.keys(S.bm).filter(function (k) { return S.bm[k]; }).length;   // prompts AND answers
-  var bmBtn = el("button", { id: "f-bm", class: nbm ? "--on" : "",
-    title: nbm ? nbm + " bookmarked answer" + (nbm === 1 ? "" : "s") + " \u2014 click to list"
-               : "No bookmarks yet \u2014 star an answer to add one" },
-    nbm ? [el("span", {}, ["\u2605"]), el("span", { class: "bmn" }, [String(nbm)])] : [el("span", {}, ["\u2606"])]);
-  bmBtn.onclick = function () { if (nbm) openBm(); };
-  act.appendChild(bmBtn);
-  act.appendChild(el("span", { class: "chip --gone", id: "f-modelchip2" }, [S.model]));
-  // The EXPAND toggle lives HERE, in the never-collapsing action row — not in the model row, which is
-  // collapse step 1. It used to vanish exactly when a long prompt made you want it.
-  act.appendChild(el("button", { id: "f-expand", title: "How much of the conversation the type box may take" },
-    [S.expanded ? "\u21d5 40%" : "\u21d5 Full"]));
-  act.appendChild(el("span", { class: "spacer" }));
-
-  var autoCb = el("input", { type: "checkbox", id: "f-autocb" });
-  if (S.auto) autoCb.setAttribute("checked", "checked");
-  var grp = el("div", { class: "sendgrp" + (S.auto ? " --auto" : ""), id: "f-sendgrp" }, [
-    el("label", { class: "autolbl", title: "Auto-continue: send the next prompt automatically when idle" }, [autoCb, "auto"]),
-    el("span", { class: "rounds" }, [S.auto ? S.autoN + "/10" : "\u2014"]),
-    el("button", { class: "btn-stop" }, ["\u25a0 Stop"]),
-    el("button", { class: "btn-send" }, ["Send"])
-  ]);
-  autoCb.onchange = function () { S.auto = this.checked; render(); };
-  act.appendChild(grp);
-  ftr.appendChild(act);
-
-  // MODEL ROW: a real selector + effort + the context readout WITH ITS CEILING + the expand toggle.
-  var mb = el("div", { class: "frow", id: "f-model" });
-  var msel = el("select", { class: "sel", id: "f-modelsel" });
-  // CLAUDE SUBSCRIPTION ONLY, deliberately. OmniRoute is not offered in the chat box until it has been
-  // tested end to end — a selectable route that might not work is worse than no route at all.
-  ["Opus 4.5", "Opus 5", "Sonnet 5", "Haiku 4.5", "Fable 5.1"].forEach(function (m) { msel.appendChild(el("option", {}, [m])); });
-  msel.title = "Claude subscription models only. OmniRoute is intentionally not selectable here until it is verified.";
-  msel.value = S.model; msel.onchange = function () { S.model = msel.value; render(); };
-  mb.appendChild(msel);
-  // The SDK's ModelInfo.supportedEffortLevels is exactly ('low'|'medium'|'high'|'xhigh'|'max').
-  // There is NO "default" level — that was an invented entry that mapped to nothing.
-  var esel = el("select", { class: "sel", title: "Reasoning effort (SDK: low | medium | high | xhigh | max)" });
-  ["low", "medium", "high", "xhigh", "max"].forEach(function (m) {
-    esel.appendChild(el("option", { value: m }, ["effort: " + m]));
-  });
-  esel.value = S.effort;
-  esel.onchange = function () { S.effort = esel.value; render(); };
-  mb.appendChild(esel);
-  // ULTRACODE is NOT an effort level — the SDK declares it as its own boolean: "xhigh effort plus
-  // standing dynamic-workflow orchestration. Requires workflows enabled and an xhigh-capable model."
-  // Listing it among the levels would have misrepresented what it does and what it needs.
-  var ucCb = el("input", { type: "checkbox", title: "Ultracode: xhigh effort + standing dynamic-workflow orchestration. Forces effort to xhigh." });
-  ucCb.checked = S.ultracode;
-  ucCb.onchange = function () { S.ultracode = ucCb.checked; if (S.ultracode) S.effort = "xhigh"; render(); };
-  mb.appendChild(el("label", { class: "autolbl", title: "Session-scoped; requires an xhigh-capable model" }, [ucCb, "ultracode"]));
-  mb.appendChild(el("label", { class: "autolbl" }, [el("input", { type: "checkbox" }), "fast"]));
-  // PERMISSION MODE was missing entirely — and it is the control most often changed, since Bypass is
-  // the working default here. Coloured when it is the dangerous one, so the state is visible at a
-  // glance rather than needing to be read.
-  var psel = el("select", { class: "sel" + (S.perm === "bypassPermissions" ? " --danger" : S.perm === "plan" ? " --plan" : ""),
-    title: "Permission mode for this conversation" });
-  [["default", "Default"], ["acceptEdits", "Accept edits"], ["plan", "Plan"], ["bypassPermissions", "Bypass"]]
-    .forEach(function (m) { psel.appendChild(el("option", { value: m[0] }, [m[1]])); });
-  psel.value = S.perm;
-  psel.onchange = function () { S.perm = psel.value; render(); };
-  mb.appendChild(psel);
-  // THE CEILING, spelled out — "16%" alone never said 16% of what.
-  var pct = Math.round(S.ctxTok / S.ctxMax * 100);
-  // The footer readout is the ONLY context figure now, so it is also the way into the breakdown —
-  // when the header medallion was removed, its click went with it and the breakdown became unreachable.
-  var ctxBtn = el("button", { class: "chip --acc", id: "f-ctx",
-    title: "Context window: " + S.ctxTok.toLocaleString() + " of " + S.ctxMax.toLocaleString()
-         + " tokens used \u2014 click for the breakdown" },
-    [S.ctxTok.toLocaleString() + " / " + S.ctxMax.toLocaleString() + " tok \u00b7 " + pct + "%"]);
-  ctxBtn.onclick = openCtx;
-  mb.appendChild(ctxBtn);
-
-  // CONTEXT ACTIONS live on THIS row, in the space that was empty to the right of the model controls.
-  // They belong beside the context readout they act on — auto-wrap and Compact/Wrap are all answers to
-  // the number sitting immediately to their left — and it saves a whole row of footer height.
-  mb.appendChild(el("span", { class: "spacer" }));
-  var wr2 = CS.wrapReadiness({ tokens: S.ctxTok, ceiling: S.ctxMax });
-  var awCb2 = el("input", { type: "checkbox", id: "f-autowrap",
-    title: "Automatically wrap to a fresh window at " + Math.round(wr2.autoAt * 100) + "%" });
-  awCb2.checked = S.autoWrap;
-  awCb2.onchange = function () { S.autoWrap = this.checked; render(); if (S.autoWrap) armAutoWrap(); };
-  mb.appendChild(el("label", { class: "autolbl" }, [awCb2, "auto-wrap"]));
-  var fill2 = el("i"); fill2.style.width = Math.min(100, wr2.pct) + "%";
-  mb.appendChild(el("span", { class: "bar", id: "f-wrapmeter",
-    title: wr2.pct + "% of the context window \u2014 automatic wrap fires at " + Math.round(wr2.autoAt * 100) + "%" },
-    [fill2]));
-  var cbtn2 = el("button", { class: "splitL", title: "Compact \u2014 summarise earlier turns to shrink the context window. Cheap, keeps this session, but the summary itself stays in the window." }, ["\uD83D\uDDDC Compact"]);
-  cbtn2.onclick = function () { runEvent("compact"); };
-  // A disabled control with no VISIBLE reason is indistinguishable from a broken one — which is exactly
-  // how this was read. The button states the threshold it is waiting for, on its face.
-  var wbtn2 = el("button", { class: "splitR", title: wr2.reason },
-    [wr2.canWrapManually ? "\u27f3 Wrap" : "\u27f3 Wrap at " + Math.round(wr2.manualAt * 100) + "%"]);
-  wbtn2.disabled = !wr2.canWrapManually;
-  wbtn2.onclick = openWrap;
-  mb.appendChild(el("span", { class: "split" }, [cbtn2, wbtn2]));
-  ftr.appendChild(mb);
-  shell.appendChild(ftr);
-  // Dialogs are NOT moved into the shell any more. Re-parenting them on every rebuild made their
-  // visibility depend on build order and on `replaceChildren` not having orphaned them first — a whole
-  // class of "the class is set but nothing appears". They stay in the body and are POSITIONED over the
-  // shell from its bounding box when opened (see openPop), which is scoped just as tightly and cannot
-  // be detached by a re-render.
-
-  $("#f-hist").onclick = openHist;
-  $("#f-expand").onclick = toggleExpand;
-  ta.addEventListener("input", function () { S.prevLevel = 0; layout(); });
-  // Ghost suggestion: Tab accepts it. Only offered when the box is empty — never overwrites your typing.
-  ta.addEventListener("keydown", function (e) {
-    if (e.key === "Tab" && !ta.value && S.suggest) { e.preventDefault(); ta.value = S.suggest; S._text = ta.value; S.prevLevel = 0; layout(); }
-  });
-  ta.value = S._text || "";
-  layout();
-  // Restore the transcript's scroll position, since the rebuild above just reset it to 0. DEFAULT is
-  // the newest turn (S.live, or the reader was already at the bottom) — never the oldest, which is what
-  // "pushed to the beginning on every interaction" actually was. Held approximates the same offset so a
-  // re-render mid-read does not relocate the reader.
   if (core.scrollHeight) {
     core.scrollTop = (S.live || stickToBottom) ? core.scrollHeight
       : Math.min(heldTop, Math.max(0, core.scrollHeight - core.clientHeight));
   }
 }
 
-/* The ONLY place geometry is decided — by the shared pure module, from MEASURED input, not CSS luck. */
-function measureFrees(ftr) {
-  // v1 hardcoded these and was WRONG by ~90px, which clipped the footer. Measure what each step really
-  // frees; a step that frees no row height declares 0 rather than a plausible-looking number.
-  var imgRow = $("#f-img");
-  return [
-    { id: "imageStrip", frees: imgRow ? imgRow.offsetHeight : 0 },
-    { id: "meta",       frees: 0 }
-  ];
-}
-
-function layout() {
-  var shell = $("#shell"), ta = $("#typebox");
-  var hdr = shell.querySelector(".rg-header"), ftr = shell.querySelector(".rg-footer"), core = shell.querySelector(".rg-core");
-  var lineH = 18, minTypeH = lineH + 16;
-
-  // Un-collapse everything before measuring, or we would measure a footer that is already collapsed and
-  // then "free" height that was never there — the exact class of error that clipped v1.
-  ["#f-img", "#f-meta", "#f-modelchip2", "#f-imgchip"].forEach(function (sel) { var n = $(sel); if (n) n.classList.remove("--gone"); });
-  $("#f-modelchip2").classList.add("--gone"); $("#f-imgchip").classList.add("--gone");
-
-  ta.style.height = "auto"; ta.style.overflowY = "hidden";
-  var contentH = Math.max(minTypeH, ta.scrollHeight);
-  var footerBaseH = ftr.offsetHeight - ta.offsetHeight + minTypeH;
-  var steps = measureFrees(ftr);
-
-  var r = CS.computeShell({
-    shellH: shell.clientHeight, headerH: hdr.offsetHeight, footerBaseH: footerBaseH,
-    contentH: contentH, minTypeH: minTypeH, lineH: lineH,
-    expanded: S.expanded, prevLevel: S.prevLevel, steps: steps
-  });
-  S.prevLevel = r.collapseLevel;
-
-  ta.style.height = r.typeH + "px";
-  ta.style.overflowY = r.typeScrolls ? "auto" : "hidden";
-  paintGutter(ta);
-  core.classList.toggle("--gone", r.coreHidden);
-  // Live/Held is OBSERVED from the real scroll position now, not mocked from a rail button.
-  if (!core._liveBound) {
-    core._liveBound = true;
-    core.addEventListener("scroll", function () {
-      var atBottom = (core.scrollHeight - core.scrollTop - core.clientHeight) < 24;
-      if (atBottom !== S.live) { S.live = atBottom; paintBulb(); }
-    });
-  }
-  paintBulb();
-  // When Core has vanished there is no transcript to be live against, so the marker goes with it.
-  var sb = $("#f-bulb"); if (sb) sb.classList.toggle("--gone", r.coreHidden);
-
-  // Apply the collapse decision to WHOLE ROWS, so the freed height is real.
-  // The model row is no longer collapsible (see chat-shell.js COLLAPSE_STEPS) — it stays put.
-  var mr = $("#f-model"); if (mr) mr.classList.remove("--gone");
-  $("#f-modelchip2").classList.add("--gone");
-  // The image strip stays at EVERY height (see chat-shell.js COLLAPSE_STEPS). Hiding it meant that
-  // while writing the long prompt the images belong to, the evidence you had attached them vanished.
-  var im = $("#f-img"); if (im) im.classList.remove("--gone");
-  $("#f-imgchip").classList.add("--gone");
-  var mt = $("#f-meta"); if (mt) mt.classList.toggle("--gone", !!r.collapsed.meta);
-
-  // Ghost suggestion, positioned exactly over the empty box.
-  // The ghost overlay sits ON TOP of the textarea, so while it is showing the browser's own placeholder
-  // renders underneath it and the two strings overlap into mush. Only one may be visible at a time:
-  // the ghost is the more useful of the two, so it wins and the placeholder is suspended.
-  var g = $("#ghost");
-  if (!ta.value && S.suggest) {
-    g.innerHTML = "";
-    g.appendChild(document.createTextNode(S.suggest + "  "));
-    var k = document.createElement("kbd"); k.textContent = "Tab"; g.appendChild(k);
-    if (ta.placeholder) { ta.dataset.ph = ta.placeholder; ta.placeholder = ""; }
-  } else {
-    g.textContent = "";
-    if (!ta.placeholder && ta.dataset.ph) ta.placeholder = ta.dataset.ph;
-  }
-
-  var used = hdr.offsetHeight + (r.coreHidden ? 0 : r.coreH) + r.footerH;
+// The live geometry readout — the lab's whole reason for existing. The numbers come straight from
+// the package's own layout pass (`on.layout`), so this reports what the shell actually did, never a
+// second calculation that could agree with it by luck.
+function paintMetrics(r) {
+  // mount() lays out once during construction, so this fires BEFORE the mount() call has returned
+  // and `LAB` has been assigned. Nothing to report yet — the next layout (there is always one) has
+  // the handle. This is inherent to any construction-time callback, not a lab quirk.
+  if (!LAB) return;
+  var shell = $("#shell"), used = LAB.header.offsetHeight + (r.coreHidden ? 0 : r.coreH) + r.footerH;
   $("#metrics").innerHTML =
-    "shell      " + shell.clientHeight + "\nheader     " + hdr.offsetHeight +
+    "shell      " + shell.clientHeight + "\nheader     " + LAB.header.offsetHeight +
     "\ncore@rest  <b>" + Math.round(r.coreAtRest) + "</b>\ncore now   <b>" + Math.round(r.coreH) + "</b>" +
     (r.coreHidden ? "  (VANISHED)" : "") +
     "\nfooter     " + Math.round(r.footerH) +
@@ -1204,11 +728,10 @@ function layout() {
     "\n  base cap " + Math.round(r.baseCap) + (r.capIsFloored ? "  (row-floored)" : "") +
     "\n  freed    " + r.freed + " px (measured)" + (r.freedOverPromised ? "  \u26a0 over-promised" : "") +
     "\nscrolling  " + (r.typeScrolls ? "YES \u2014 text scrolls" : "no") +
-    "\ncollapse   level " + r.collapseLevel + "/" + steps.length +
+    "\ncollapse   level " + r.collapseLevel +
     "\nSend/Stop  <b>visible</b> (invariant I5)";
 }
 
-function toggleExpand() { S.expanded = !S.expanded; S.prevLevel = 0; render(); }
 function openHist() {
   var slots = CS.slotsFor(S.kind);
   $("#histRepo").textContent = S.kind === "pact" ? "🔒 OuronetPact" : S.repo;
@@ -1330,56 +853,17 @@ function mkMsgActs(kind, n) {
    COMPACT is a thin dashed rule: the conversation continued, the hidden window just got smaller.
    WRAP is a heavy double rule: a new context window began. Deliberately different weights — one is
    routine housekeeping, the other is a boundary you will want to find again. */
+/* The mark itself is the PACKAGE's now (CS.buildMark) — it was designed here and, until this pass,
+   only ever rendered here: production logged compaction to its activity rail and drew nothing in the
+   conversation. Both live workspaces call the same function, so this design cannot drift out of them
+   again. The lab keeps only its own number formatter. */
 function mkMark(mk) {
-  var isWrap = mk.kind === "wrap";
-  var saved = (mk.preTokens && mk.postTokens) ? (mk.preTokens - mk.postTokens) : 0;
-  var label = isWrap
-    ? "WRAPPED \u2014 a fresh context window starts here"
-    : "COMPACTED (" + (mk.trigger || "auto") + ") \u2014 " + fmt(mk.preTokens) + " \u2192 " + fmt(mk.postTokens) + " tok, freed " + fmt(saved);
-  return el("div", { class: "mark " + (isWrap ? "--wrap" : "--compact"),
-    title: isWrap ? "Everything before this line was rolled out of the live window. Nothing was deleted; it stays searchable."
-                  : "The engine summarised earlier turns to fit the window. The transcript is unchanged — only the hidden context shrank." },
-    [el("span", { class: "mlbl" }, [label])]);
+  return ChatShell.buildMark({ kind: mk.kind, preTokens: mk.preTokens, postTokens: mk.postTokens,
+                               trigger: mk.trigger, fmtNum: fmt });
 }
-function paintGutter(ta) {
-  var g = $("#f-gutter"); if (!g || !ta) return;
-  var written = (ta.value || "").split("\n").length;
-  if (!ta.value) written = 0;                                 // an empty box has typed NO lines
-  var boxH = parseFloat(ta.style.height) || ta.clientHeight || 34;
-  var slots = Math.max(1, Math.floor((boxH - 14) / 18));
-  var kids = [];
-  for (var i = 1; i <= Math.max(written, slots); i++) {
-    kids.push(el("b", { class: i <= written ? "--on" : "" }, [String(i)]));
-  }
-  g.replaceChildren.apply(g, kids);
-  // Width follows the widest number shown: one glyph costs one glyph. A fixed column wasted space on
-  // short prompts and would clip the numbers on long ones.
-  var digits = String(Math.max(written, slots)).length;
-  var w = 14 + digits * 7;                                   // padding + glyph advance at 11px monospace
-  g.style.width = w + "px";
-  ta.style.paddingLeft = (w + 10) + "px";                    // …and the text keeps clear of the divider
-  ta.style.paddingRight = "44px";                            // …and clear of the drawer toggle on the right
-  var gh = $("#ghost"); if (gh) gh.style.paddingLeft = (w + 10) + "px";
-  // Height is NOT taken from the textarea — that was half of the circular dependency that stopped the
-  // box shrinking. The column stretches via top/bottom instead.
-  if (!ta._gutBound) {
-    ta._gutBound = true;
-    ta.addEventListener("scroll", function () { g.scrollTop = ta.scrollTop; });
-  }
-  var tot = $("#f-lines");
-  if (tot) tot.textContent = written + (written === 1 ? " line" : " lines");
-}
-
-/* Repaint ONLY the bulb, never the whole shell. A full rebuild on every scroll event would reset
-   scrollTop, snap you to the bottom and make Held unreachable — the indicator would destroy the state
-   it is trying to report. */
-function paintBulb() {
-  var b = $("#f-bulb"); if (!b) return;
-  b.className = "seambulb " + (S.live ? "--live" : "--held");
-  b.replaceChildren(el("i"), document.createTextNode(S.live ? "Live" : "Held"));
-  b.title = S.live ? "Live \u2014 following the newest turn."
-                   : "Held \u2014 scrolled up; new turns are arriving below. Click to return to live.";
-}
+/* paintGutter()/paintBulb() used to live here. Both are the package's job now (it paints the
+   numbering column from the real textarea value, and observes the real scroll position for
+   Live/Held), so the lab has nothing left to implement for either. */
 
 /* Context breakdown — what the ctx medallion opens. Percentages are summed from the parts so the
    slices genuinely account for the whole; "free" is shown as its own row, never implied. */
@@ -1582,20 +1066,20 @@ function render() { build(); }
 $("#wCore").onclick = function () { S.kind = "core"; this.classList.add("on"); $("#wPact").classList.remove("on"); document.body.dataset.theme = "core"; note(); render(); };
 $("#wPact").onclick = function () { S.kind = "pact"; this.classList.add("on"); $("#wCore").classList.remove("on"); document.body.dataset.theme = "pact"; note(); render(); };
 function note() { $("#wNote").textContent = S.kind === "pact" ? "Pact: repo LOCKED, many tabs, continuation line on." : "Core: repo CHOSEN, one active conversation, no continuation line."; }
-$("#expandBtn").onclick = toggleExpand;
+$("#expandBtn").onclick = function () { LAB.els.expandBtn.click(); };
 $("#bounds").onchange = function () { document.body.classList.toggle("showbounds", this.checked); };
 // v1 capped the slider at 900px, so on a tall screen there was always dead space below the shell and
 // "max" was not actually max. The range now tracks the REAL available stage height.
 function stageAvail() { var st = $("#stage"); return Math.max(320, st.clientHeight - 36); }
 function shellTargetH() { var sl = $("#shellH"); return $("#fit").checked ? stageAvail() : Math.min(+sl.value, stageAvail()); }
 function syncSlider() { var sl = $("#shellH"); sl.max = stageAvail(); sl.disabled = $("#fit").checked; if ($("#fit").checked) sl.value = stageAvail(); }
-$("#shellH").oninput = function () { $("#shell").style.height = shellTargetH() + "px"; layout(); };
-$("#fit").onchange = function () { syncSlider(); $("#shell").style.height = shellTargetH() + "px"; layout(); };
+$("#shellH").oninput = function () { $("#shell").style.height = shellTargetH() + "px"; LAB.relayout(); };
+$("#fit").onchange = function () { syncSlider(); $("#shell").style.height = shellTargetH() + "px"; LAB.relayout(); };
 document.querySelectorAll("[data-fill]").forEach(function (b) {
   b.onclick = function () {
     var n = +b.dataset.fill;
     S._text = n ? Array.from({ length: n }, function (_, i) { return "Line " + (i + 1) + " of a long prompt that keeps going and going."; }).join("\n") : "";
-    $("#typebox").value = S._text; S.prevLevel = 0; layout();
+    S.prevLevel = 0; LAB.setState({ compose: { value: S._text } });
   };
 });
 $("#addConv").onclick = function () { S.convs.forEach(function (c) { c.act = false; }); S.convs.push({ n: "Chat " + (S.convs.length + 1), act: true }); render(); };
@@ -1645,6 +1129,58 @@ $("#nearTurns").onclick = function () {
   render();
 };
 $("#liveBtn").onclick = function () { S.live = !S.live; render(); };
+
+// Work state. Four buttons rather than a cycle, because the interesting comparison is between two of
+// them side by side: "working" and "deep work" must be tellable apart at a glance from across a room,
+// and "background only" must NOT look like a running turn (the chat really is free — you can talk)
+// while still saying that something is cooking.
+[["wIdle", null, false], ["wBusy", "busy", false], ["wDeep", "deep", false], ["wBg", null, true]].forEach(function (spec) {
+  $("#" + spec[0]).onclick = function () {
+    S.work = spec[1]; S.bgWork = spec[2];
+    ["wIdle","wBusy","wDeep","wBg"].forEach(function (o) { $("#" + o).classList.toggle("on", o === spec[0]); });
+    render();
+  };
+});
+
+// The auto-continue COUNTDOWN, on the send group where it belongs. Run it to watch the counter go
+// live ("4/10 · 5s") and stop it by unticking auto — which is the whole point of keeping the ticker
+// and its switch in the same control.
+$("#autoRun").onclick = function () {
+  clearInterval(S._autoTimer);
+  S.auto = true; S.autoIn = 6;
+  S._autoTimer = setInterval(function () {
+    S.autoIn -= 1;
+    if (S.autoIn <= 0) {
+      clearInterval(S._autoTimer); S._autoTimer = 0; S.autoIn = null;
+      S.autoN = Math.min(10, S.autoN + 1);
+      flashMsg("Auto-continue fired \u2014 a real host would send the next prompt now.", true);
+    }
+    render();
+  }, 1000);
+  render();
+};
+
+// THE ACTIVITY CHIP, driven through its real states. The interesting case is the LONG one: the chip
+// must truncate rather than widen the row or push what follows it away from the row's right edge —
+// which is precisely what a percentage-based cap did in the live app before this control existed to
+// show it (a 273px slot holding 125px of controls, the close button stranded 148px short).
+var ACT_STEPS = ["\u25cf Sending\u2026", "\u25cf Thinking\u2026", "\u25b8 Streaming reply\u2026",
+                 "\ud83d\udd27 Running: Bash", "\u2713 Tool finished \u2014 continuing\u2026",
+                 "\u2713 Reply complete & saved \u2014 safe to close"];
+var actAt = 0;
+$("#actStep").onclick = function () {
+  actAt = (actAt + 1) % ACT_STEPS.length;
+  S.activity = ACT_STEPS[actAt];
+  S.activityTone = actAt === ACT_STEPS.length - 1 ? "ok" : "";
+  render();
+};
+$("#actLong").onclick = function () {
+  S.activity = "\u2713 Tool finished: Bash \u2014 node --test lib/*.test.mjs (1,452 passed, 0 failed) \u2014 continuing\u2026";
+  S.activityTone = "ok"; render();
+};
+$("#actErr").onclick = function () {
+  S.activity = "\u26a0 Connection lost \u2014 retrying"; S.activityTone = "bad"; render();
+};
 $("#ctxr").oninput = function () { S.ctxTok = Math.round(S.ctxMax * this.value / 100); render(); armAutoWrap(); };
 document.querySelectorAll("[data-sm]").forEach(function (b) {
   b.onclick = function () {
@@ -1842,7 +1378,7 @@ document.addEventListener("keydown", function (e) {
   ["#wrappop", "#ctxpop", "#hist"].forEach(function (sel) { var n = $(sel); if (n) n.classList.remove("--open"); });
   if (S.searchOpen && !$("#wrappop").classList.contains("--open")) { S.searchOpen = false; render(); }
 });
-window.addEventListener("resize", function () { syncSlider(); $("#shell").style.height = shellTargetH() + "px"; layout(); });
+window.addEventListener("resize", function () { syncSlider(); $("#shell").style.height = shellTargetH() + "px"; LAB.relayout(); });
 syncSlider();
 /* OFF by default: what you see IS the shipping design, not a debug view of it. */
 

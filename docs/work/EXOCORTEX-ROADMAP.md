@@ -8,6 +8,54 @@ everything past Chapter 4 is direction, not commitment.
 
 ---
 
+## ⏸ RESUME HERE (checkpoint 2026-09-06) — session paused mid-mobile, picking back up at home
+
+The user asked to turn this roadmap into one big executable nectar plan (phases/sub-phases/waves,
+parallelizable). Before doing that, a review surfaced a real gating problem and confirmed the
+roadmap's own four open questions are genuine, not just hedging. **Nothing below has been decided
+without the user — this section is the handoff, not a decision made in their absence.**
+
+### The gating fact that changes "plan it all now"
+**Ch. 0 ("Finish 2.0") is not actually done**, and Ch. 1 is explicitly *"THE GATE FOR EVERYTHING
+BELOW."* Checked `docs/work/ROADMAP-2.0.md` directly:
+- **Phase 4** (infrastructure/hygiene): ~9 items still unchecked, including 4.11 (error rows never
+  persisted), 4.12 (compaction boundaries never persisted), 4.13 (images never garbage-collected) —
+  the same three items already flagged and deliberately deferred as "Wave 5, blocked" during the
+  chat-shell-migration work (see `docs/work/chat-shell-migration/design.md`).
+- **Phase 5** (2.0 release): entirely unchecked — no full review pass, no merge to `main`, no tag,
+  no `2.0.0` version bump.
+So a real top-to-bottom plan has to start with **finishing 2.0**, not with Ch. 1.
+
+### The four open questions below — proposed resolutions, awaiting confirmation
+1. **Ch.3 — how much of Graphify/Hermes survives the port vs. gets rewritten?** THE one that
+   actually blocks planning Ch. 3 in task-level detail. `docs/EXOCORTEX-LEARNINGS.md` names the
+   patterns worth copying (Hermes's SQLite FTS5 memory; Graphify's tree-sitter→NetworkX→viz
+   pipeline) but neither has been checked against Claudstermind's actual stack (Node/ESM, no
+   Python, no NetworkX). **Needs one more research pass — open both repos, answer "does this port
+   cleanly to Node, or does 'port' mean reimplement the shape" — before Ch.3 gets real tasks.**
+   Not yet done; do this first when resuming, as step zero of planning Ch.3.
+2. **Ch.2 — how much curation can be automated before quality falls off?** Proposed: this is not
+   actually a blocker. Ch.2.2 already states the principle ("approval is the quality gate, not a
+   UX nicety") — what's open is only *which* patterns get auto-*proposed*, an implementation detail
+   of 2.2 itself. Proposed resolution: **decide by building, not before.** Awaiting confirmation.
+3. **Ch.6 — commons incentive model (why contribute, what stops poisoning)?** Proposed: **defer
+   entirely** — Ch.6 is self-admittedly "direction, not commitment," years out, and answering it
+   now would be speculative with zero usage data. Awaiting confirmation.
+4. **Ch.4 — hosted offering, or self-host only?** **Genuinely the user's call, not answered.** My
+   guess (self-host-only, given stated discomfort with any of their data touching a shared server
+   elsewhere) is a guess, not a decision — ask directly when resuming.
+
+### What "resume" should look like, next session
+1. Settle question 4 (and confirm/override 2 and 3) with the user.
+2. Do the Ch.3 Graphify/Hermes-vs-Node-stack research (question 1) — this was offered to run in the
+   background while the user was out; **not yet started**, since the instruction was to pause, not
+   continue autonomously.
+3. Once settled, build ONE nectar plan covering **remaining-2.0 → Ch.1 → Ch.2 → Ch.3 → Ch.4**, with
+   real phases/waves, parallelized wherever tasks are independent. Ch.5–8 stay at vision-level —
+   forcing them into committed tasks now would fabricate decisiveness the roadmap itself disclaims.
+
+---
+
 ## The core distinction (read this before anything else)
 
 "Brain" gets used for two very different things, with wildly different costs:

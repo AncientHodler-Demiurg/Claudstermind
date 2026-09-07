@@ -4,6 +4,1723 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.12.6] - 2026-09-07
+### Fixed — escaped pipes tore markdown table cells in half
+
+Reported from a real Pact conversation: tables rendering with literal backticks and a stray
+backslash, and every column after the first shifted by one. **The engine's markdown was correct** —
+the parser was wrong. The source was ordinary GFM:
+
+```
+| `ATS\|C_ColdRecovery` | 10 | **130** |
+```
+
+`\|` is the ONLY way GFM lets you put a pipe inside a table cell, and it applies **even inside a code
+span**, because the table grid is parsed before any inline syntax. `md-mini.js` split rows with a
+plain `.split("|")`, so that cell became two — `` `ATS\ `` and `` C_ColdRecovery` `` — leaving a code
+span that never closed (hence the visible backticks) and one extra column (hence the shift).
+
+Rows are now split on **unescaped** pipes only, with `\|` turned back into a literal pipe. A trailing
+pipe still closes the row unless it is itself escaped — decided by whether the run of backslashes
+before it is odd or even. A backslash that is not escaping a pipe is left exactly as it was, so
+Windows paths and the like are untouched.
+
+The same one-line bug existed in the WhatsApp text converter (`wsMdTableCells` now shares the rule),
+where it flattened the same cells into bogus columns in outgoing messages.
+
+Verified through the live page's own renderer on the reported table: 3 columns per row, three intact
+code spans (`DPTF|C_Mint`, `DPTF|C_Burn`, `DPSF/DPNF|C_RepurposeCollectable`), zero stray backticks.
+
+### Checked while in there
+Core's chat renders no tables at all (headings, bullets and ordered lists only) — a separate gap, not
+this bug. The Chat Shell Lab's own tiny `mdRender` is a mock for design content and has no tables
+either, so neither needed the fix.
+
+### Added
+- 4 tests: an escaped pipe inside and outside a code span, ordinary rows unchanged with a genuinely
+  empty trailing cell preserved, a row ending in an escaped pipe, and a non-pipe backslash left
+  alone. Confirmed red-before-green (2 of 12 against the plain split).
+
+## [1.12.5] - 2026-09-07
+### Fixed — a recovered turn was being labelled as a failed one
+
+Caught by rendering it rather than by reading it: the recovery bar read **"⚠ TURN FAILED"** for a turn
+that had actually succeeded — the dead window was dropped and a fresh one ran to completion. Shouting
+FAILED about a turn that worked is a worse lie than saying nothing.
+
+Two tones now: amber **"↻ FRESH WINDOW"** when the engine recovered, red **"⚠ TURN FAILED"** when the
+turn genuinely died. The live activity cue and Pact's flash note follow the same split.
+
+### Verified end-to-end on the real engine
+A throwaway conversation carrying Khronoton's exact dangling id `b17780e2-…`, prompted through the
+real HTTP API against the restarted daemon:
+
+```
+user        Reply with ONLY the two characters: OK
+turnError   The previous window for this conversation is no longer on disk (session b17780e2…)…
+status      thinking
+init
+assistant   OK
+result      OK
+```
+
+The notice is **persisted** (the conversation's file holds user → turnError → assistant), so it
+survives a reload rather than flashing past — which was the remaining half of the report. Confirmed
+rendering in a real Core pane, then the scratch conversation was deleted.
+
+## [1.12.4] - 2026-09-07
+### Fixed — a conversation whose SDK session file was gone died silently, forever
+
+"There is a chat opened for the Khronoton repository but the prompts are stuck."
+
+They were not stuck, they were **failing** — every prompt, and silently. Two in a row (22:04 and
+22:11) each spawned a session that produced nothing and vanished. The stored resume id
+`b17780e2-…` had no SDK session file left on disk, and `claude --resume <missing>` exits at once:
+
+```
+No conversation found with session ID: b17780e2-dc9f-44f1-8629-9fb687b601af
+{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["No conversation …"]}
+```
+
+Reproduced verbatim against the real binary. **Two independent defects made it unreadable:**
+
+1. The SDK's `errors` array was dropped at the event boundary. `isError` survived; the sentence
+   explaining it did not — so nothing downstream *could* have told you why.
+2. A result carrying `is_error` was treated as an ordinary completed turn: status went idle, no row
+   was recorded, and the pane looked exactly like one where nothing had happened. The transcript for
+   that conversation contains **zero error rows** across its whole life.
+
+And it was unrecoverable: the id never changes, so every future prompt died the same way.
+
+**Now:** a failed turn records a durable `turnError` row — a red bar drawn by the package's own
+`buildMark`, the same builder the compaction and wrap bars use, allowed to wrap onto several lines
+because the SDK's reason is a sentence and truncating the one thing that explains a dead conversation
+would defeat the point. And a resume id whose session file is genuinely gone is dropped: the turn
+starts a fresh window and says so, because the durable history is ours, in the transcript — the SDK
+file is only the model's warm window.
+
+**The conservatism that matters.** "Not in `~/.claude/projects`" has two readings: it is gone, or we
+are looking in the wrong place. Acting on the second would drop every VALID resume on a machine that
+keeps its sessions elsewhere — breaking every conversation at once to fix one. So the store must be
+**visible** (present and non-empty) before its silence counts as evidence; otherwise the id passes
+through untouched, exactly as before. The path is injectable (`sdkProjectsDir`) so a machine that
+keeps them elsewhere can be told rather than guessed at.
+
+### Added
+- `lib/resumeMissing.test.mjs` (8): the three store states (invisible / empty / populated) and both
+  answers from a populated one, the durable row and its live event sharing one `at`, an ordinary
+  result recording nothing, and `is_error` with no `errors` still saying something. Confirmed
+  red-before-green.
+- The shared `mgr()` helper in `workspace.test.mjs` now points at an empty SDK store, which is what
+  keeps the six existing resume tests asserting exactly what they always did.
+
+## [1.12.3] - 2026-09-07
+### Fixed — Pact's Send button told you less than Core's, in three ways
+
+Measured side by side against the real engine, and the report was right. Each workspace had its own
+chain of ternaries deciding what Send and Stop should say and look like, and they had drifted — every
+divergence in the same direction, with Pact showing less:
+
+| | Core | Pact (before) |
+|---|---|---|
+| agent-spawned task running while the chat is idle | ring pulses | **nothing** |
+| Stop pressed, interrupt still in flight | stays amber/red | **drops to resting accent** |
+| label while stopping | "Working…" | "Stopping…" |
+
+The middle one is the worst: the turn is not over until the interrupt actually lands, so falling back
+to the resting colour reads as "finished" while the agent is still going. The first is the one state
+a host cannot signal any other way — the chat genuinely IS free, and the ring is the only thing that
+can say "…and something is still cooking".
+
+`ChatShell.sendPresentation` is now the single decision, and all three surfaces read it: Core, Pact
+desktop, and Pact **mobile** — which does not mount the shell and had a third chain of its own. That
+third one was found by a test I wrote for the first two, not by looking.
+
+The unified behaviour takes the better half of each: the working colour **survives** a pressed Stop
+(Core's), and the label reads **"Stopping…"** (Pact's). Core keeps its live elapsed clock, which
+rides as a caller-supplied suffix — on a running turn only, never on "Send" or "Stopping…", where
+counting up is noise.
+
+Verified live in every state on both workspaces, including Core mid-turn against the real engine
+(`Working… 5:02`, amber, pulsing).
+
+### Added
+- 5 tests executing the pure decision, plus a wiring test asserting no hand-rolled label chain
+  survives anywhere. Confirmed red-before-green by reintroducing the two drifts. Two 1.11.6 tests
+  that pinned the old inline ternaries now pin the shared decision instead.
+
+### Note
+1.12.0's conditional resync is confirmed live after the sessiond restart: **123,631 bytes → 446** for
+an up-to-date pane, with a stale hint still shipping the full transcript.
+
+## [1.12.2] - 2026-09-07
+### Fixed — 1.12.0's conditional resync never actually took effect
+
+Verified against the running engine rather than trusting the unit tests, and it was dead: a resync
+carrying a deliberately MATCHING `have` still returned all 250 rows, 123 KB.
+
+The cause was in my own change. `_control`'s dispatcher hand-picks the fields it forwards —
+`{ scoped, full, limit, around, aroundTurn }` — so a new one is invisible until it is named there. I
+taught `_resync` to accept the hint and the client to send it, and the line in between silently
+dropped it. Every layer looked right on its own.
+
+Two lessons, both now enforced: the dispatcher forwards `have`, and `lib/resyncHave.test.mjs` drives
+the REAL entry point (`handleIn("control", …)`) instead of calling `_resync` directly — the seam that
+broke is now inside what the test exercises.
+
+Worth recording how it was found, because it nearly wasn't: the SSE stream is GLOBAL, so a headless
+browser measuring "resync sizes" was also capturing the resyncs of the real browser sitting open on
+the same machine — which runs the previous client and sends no hint. Those readings looked like the
+fix failing when it had not yet been given a chance. The decisive measurement bypassed the browser
+entirely: three `curl` POSTs (no hint / matching hint / stale hint) with the stream filtered to one
+session key.
+
+## [1.12.1] - 2026-09-07
+### Changed — the model row's pairs unstack when there IS room for one line
+
+"We should also allow, in case the width is big enough to fit everything into one row — a lot of
+place is free and another row is used non-optimally." Correct: the pairing is the right answer when
+the row is tight and the wrong one when it is not. Both workspaces, one mechanism (the package's).
+
+| pane width | Core | Pact |
+|---|---|---|
+| ≥ ~1000px / ~950px | **flat, 38px** | **flat, 40px** |
+| below that | stacked, 64px | stacked, 65px |
+| very narrow (430px) | stacked, 2 lines | stacked, 2 lines |
+
+**The hard part is not flipping back and forth**, and it is worth writing down: unstacking makes a
+row wider, which can make it not fit, which restacks it, which makes it fit — a loop. The escape is
+to measure the CONTROLS rather than the containers. A control is exactly the same width stacked or
+flat, so the predicate cannot depend on the current choice; a container's width IS the current
+choice. `CS.flatRowWidth` is that measurement, pure and separately tested, and `CS.fitStackedRow`
+applies it. Verified live: eight forced relayouts at a width near the boundary produce one state.
+
+It re-evaluates on a WIDTH change, not only on a state change — a resize is precisely the event that
+flips it and it carries no state patch — and re-runs the per-line alignment when it flips, because
+unstacking changes which groups share a line.
+
+### Added
+- 5 tests: the gap arithmetic, an empty group costing nothing (not even a gap, or the row would stack
+  earlier than it needs to), the stability property stated as a test, the row-level flag, and the
+  wiring. Confirmed red-before-green.
+
+## [1.12.0] - 2026-09-07
+### Fixed — the self-heal watchdog was moving ~1.26 MB of JSON every 8 seconds
+
+Two clues cracked this, and the second one ruled out everything I had been chasing:
+
+**"I type a prompt and the bubble appears 5 seconds later."** Core does NOT append optimistically —
+there is a comment saying so — the bubble appears when the **server** echoes the accepted turn. So
+that five seconds was never the browser. It was the engine being too busy to answer.
+
+**Measured off the live stream: one resync is 158 KB for a 250-row window.** The client's self-heal
+watchdog re-asks per pane every ~8 seconds (`WS_HEAL_ACTIVE_QUIET_MS`), so an eight-pane cockpit moved
+**~1.26 MB of JSON every 8 seconds** — `JSON.stringify`d by sessiond once per connected terminal, and
+`JSON.parse`d by the browser — for a question whose entire content is *"did I miss anything?"*. Both
+processes are single-threaded, which is why 32 cores never helped: the work was all on two of them.
+
+The watchdog now says what it already holds — `have: { n, at }`, the row count and the last row's
+timestamp. A transcript is append-only, so a matching tail **proves** the client is current, and the
+reply drops the rows and keeps everything a dropped event could actually have desynced (status, usage,
+mode, liveness). A client that is genuinely behind, or holds a different tail, still gets the full
+transcript; a jump/band request never sends the hint, because there the server must choose the rows.
+
+Payload for an up-to-date pane: **158 KB → a few hundred bytes.**
+
+### Added
+- `lib/resyncHave.test.mjs` (7) — executes the real `WorkspaceManager._resync`: up-to-date drops the
+  rows but keeps the state, behind still heals, same count with a different tail still ships, a
+  missing/malformed `at` is never treated as proof, an empty conversation matches on count alone, and
+  an older client sending no hint keeps working. Confirmed red-before-green.
+
+### Note
+The client half shipped with the dashboard restart; the server half needs sessiond, which is restarted
+out-of-band because this session is a child of it.
+
+## [1.11.9] - 2026-09-07
+### Fixed — every pane re-rendered its ENTIRE transcript from scratch, every 8 seconds
+
+This is the stall. Not a framework problem, not the transcript size, not the 32 cores sitting idle —
+a cache being thrown away for no reason.
+
+The transcript renderer caches one DOM node per finalized turn, keyed by
+`turn.start + ":" + turn.items.length` — a CONTENT-derived key that is stable across a re-parse. But
+the cache was dropped whenever `p.transcript` was a different OBJECT, and **a resync always builds a
+fresh array even when it carries byte-for-byte the same rows**. The self-heal fires one resync per
+pane every 8 seconds (`WS_HEAL_ACTIVE_QUIET_MS`), so every pane rebuilt its whole transcript —
+markdown parsing, syntax highlighting, every node — eight times a minute, for nothing.
+
+Measured on the live app with eight real panes: **22 full re-renders in 45 seconds.** At ~20 turns a
+pane that is 1.66 ms and invisible, which is why it survived so long. The cost is LINEAR in rendered
+nodes, so a cockpit whose panes have loaded their history pays it multiplied by hundreds — a
+multi-second freeze every few seconds, which is why typing lagged, why a `<select>` took an age to
+open, and why the cursor took seconds to change shape over a button. The main thread was never free.
+
+Invalidation is now based on CONTENT (`wsTranscriptIdentity`): the conversation, and the HEAD of the
+window, since every cache key is an index measured from it. Same rows re-parsed → reuse everything.
+Appended reply → reuse everything before it. A changed head (jump-to-#N, "load earlier" prepending),
+a different conversation or slot, `_revealAll` toggling, or a transcript that SHRANK → invalidate, as
+before. O(1) — three sampled rows, no walk — because it runs on every paint.
+
+Live result: **renderTranscript 1.66 ms → 0.42 ms per call** on panes showing ~20 turns, and it scales
+with revealed history. Verified over several self-heal cycles that content stays intact and new
+replies still land (a pane went from "3,907 characters arriving…" to the finalized turn), zero errors.
+
+### Added
+- `lib/transcriptCacheIdentity.test.mjs` (7) — executes the real helper: a re-parsed array is the
+  same identity, an append is too, a prepend/head-change/slot-change/reveal is not, and the identity
+  stays O(1) against a 50,000-row transcript. Confirmed red-before-green.
+- The profiler now keeps a RUNNING TOTAL since you switched it on, not just the 1-second window the
+  overlay ranks by — a freeze that happens every eight seconds is invisible in any one-second window,
+  which is precisely the shape of the bug above. `CMPERF.report()` prints both.
+
+## [1.11.8] - 2026-09-07
+### Added — a profiler that runs in the session that is actually slow
+
+"Eight coding chat windows open, typing stalls, hovering the Send button takes seconds to become a
+hand." Cursor lag that long means the main thread is BLOCKED for seconds — a different problem from
+the per-keystroke costs already fixed, and one I could not reproduce: eight panes on the eight
+largest real conversations (18 MB of transcript, 18k DOM nodes) produced **three long tasks totalling
+205 ms over thirty seconds**, because those panes were IDLE. The load only exists when eight agents
+are actually streaming. Guessing further from a fast machine wastes time, so:
+
+**Ctrl+Alt+P** (or `?perf=1`) opens a live overlay; **`CMPERF.report()`** prints the same numbers as
+text. It reports how long the main thread was blocked and ranks the last 5 seconds by TOTAL time —
+which is what competes with your keystrokes; a 0.3 ms function is irrelevant until you learn it ran
+400 times.
+
+Instrumented: the SSE handler every agent event arrives through, `paintPane`, the transcript
+renderer, the coalesced paint flush, the header stats, the 250 ms-per-pane auto-continue tick, the
+layout save, and the live-text render. Zero cost when off — one boolean test per call, and the
+long-task observer only fires for tasks over 50 ms. It works by rebinding the function bindings
+rather than editing call sites, so every caller is covered by one assignment.
+
+### Fixed — streaming panes thrashed layout against each other
+Each streaming pane scheduled its OWN animation frame, and inside it did read → write → read: sample
+the scroll position, set the live text, re-apply the scroll. Fine for one pane and **quadratic for
+several** — pane 2's read forces a layout that must first flush pane 1's write, pane 3's flushes
+both, and so on. Eight live agents therefore paid **eight full layout flushes per frame**, each
+laying out more freshly-dirtied content than the last, all of it main-thread time competing with
+keystrokes and with the cursor changing shape over a button.
+
+Batched across all panes into read-all → write-all → scroll-all, so the flush count is **2 per frame
+regardless of how many panes are live**. This is the same failure the existing comment in that
+function describes ("2 panes lag but 1 doesn't") — which had been fixed for the SIZE of the live
+node but never for the NUMBER of them.
+
+### Added
+- 2 tests pinning the batching and the phase order (read before write before scroll), confirmed
+  red-before-green against the per-pane version. One existing test matched the live-text call by
+  variable name; it matches the field now, since the batched loop renamed the local.
+
+## [1.11.7] - 2026-09-07
+### Fixed — per-pane work that multiplied by the number of open panes
+
+"Eight coding chat windows open in Core and typing stalls." Profiled and measured rather than guessed
+at; three things scaled with pane count, none of them the transcript.
+
+**The model selector reprocessed the entire catalogue on every paint.** `fillModelSelect` runs from
+`paintPane`, so it fired on every event in every pane — and it deduped, grouped and parsed all **468
+models** each time to produce the same 14 `<option>`s it already had. Measured against the real
+cached catalogue: **0.97 ms per call**. Eight panes repainting on their agents' events is ~77 ms/sec
+of pure waste. It now rebuilds only when the catalogue, the OmniRoute toggle, the pick or the
+show-all flag actually change: **0.97 ms → 0 ms**, same option nodes, same selection. A build that
+fell back to the bare aliases is deliberately *not* cached — the "ask the server for the real
+catalogue" retry lives on that path, and caching it would have left a cold-loaded pane showing three
+aliases forever.
+
+**A 250 ms timer per pane repainted the whole shell.** `wsAutoEnsure` called `setState`
+unconditionally, and `setState` marks the shell's per-line group alignment dirty — a write-then-read
+over every group in four rows, i.e. a forced synchronous layout. Eight panes paid **32 full layout
+passes a second, forever**, to re-state a decision identical between ticks except in the second
+before an auto-send fires. It publishes only when its decision actually changes.
+
+**Two more, smaller:** `modelInfoFor` was a linear scan of all 468 models, called several times per
+paint per pane — indexed once per catalogue revision now. The effort and worktree selectors rebuilt
+their `<option>` lists on every paint; both go through one shared signature guard (`wsSyncOptions`),
+the same idea the package's own `syncSelect` has used all along.
+
+**What I could not reproduce, stated plainly:** eight *live* agents. Panes without a session start no
+timers and no stream, so my local eight-pane harness sat genuinely idle. The fixes above are each
+measured in isolation against the real app and the real catalogue; whether they close the gap for a
+fully loaded cockpit is your call to make from the chair. Two things I ruled out with numbers so we
+don't chase them: `.ws-pane` carries `contain: layout paint`, so a forced reflow costs ~1 ms flat and
+**does not** scale with transcript size (0 → 6,400 rows measured); and the header's transcript scan
+is 0.12 ms on a 7,600-row conversation.
+
+### Added
+- 4 caching tests that execute the real fill (identical option NODES on a repeat call, a changed
+  signature still rebuilding, no signature meaning no caching, and a fallback build never cached),
+  plus 3 pinning the gates. Confirmed red-before-green one guard at a time.
+- One of my own new tests was too weak — removing the `wsSyncOptions` early return left every
+  shape-based assertion passing. It pins the mechanism now.
+
+## [1.11.6] - 2026-09-07
+### Fixed — Pact's Send button never lit up while the agent was working
+
+It stayed the accent colour through an entire turn, beside a visible `● thinking… 5:24`. The paint
+that should have driven it was dead on desktop for **two independent reasons**, and both failed
+silently:
+
+1. **`.pc-compose` does not exist on desktop at all.** Pact builds that element with no children
+   unless it is on mobile — the package owns the compose area — so `if (compose)` was false and the
+   whole Send/Stop paint block never ran.
+2. Even inside it, the buttons were found by `.pc-send` / `.pc-stop`. On desktop they are the
+   **package's** buttons and carry `btn-send` / `btn-stop`; Pact substitutes neither. Both lookups
+   returned null, behind an `if (send)` guard.
+
+Pact already aliases `.pc-input`, `.pc-usage`, `.pc-model-now` and `.pact-wrapwrap` onto the
+package's nodes for exactly this reason — Send and Stop were the two it never did. Rather than add a
+third and fourth alias, the state now goes through the shell's own `setState({ sending })` API, so
+there is one vocabulary and the Lab can demonstrate these states. Verified live across the full
+sequence:
+
+| status | Send | colour | Stop |
+|---|---|---|---|
+| idle | `Send` | accent | disabled |
+| thinking | **`Working…`** | **amber**, pulsing | enabled |
+| deepwork | **`Deep Work…`** | **red**, pulsing | enabled |
+| stop pressed | `Stopping…` | accent | `■ Stopping…`, dimmed |
+
+I checked whether the same hole existed anywhere else: `.pc-send`/`.pc-stop` are the **only** two
+class lookups in Pact that resolve to nothing on desktop.
+
+### Added
+- `stopLabel` / `stopPending` on the shell's sending state, so a pressed Stop reads as pressed in
+  both workspaces rather than each host dimming its own button. `stopLabel` is applied only when the
+  host supplies it — Core appends stall warnings to that button on a path of its own, and an absent
+  key must not stamp over them.
+
+### Note — Core is deliberately NOT migrated
+Core drives the same two buttons with the bare `busy` / `deepwork` / `work-pulse` classes, and it
+works because the package's CSS matches both spellings. It appends an elapsed label and stall
+warnings on separate paths (`wsApplyStall`), so routing it through `setState` risks a later repaint
+stamping over a stall warning — a real regression for no visible gain. A test now pins the contract
+in both directions, so the legacy arm cannot be tidied away while Core still depends on it.
+
+7 new tests, confirmed red-before-green (3/50 against the pre-fix source).
+
+## [1.11.5] - 2026-09-07
+### Fixed — the header counted the whole conversation against a per-window ceiling
+
+`7,668/1,000 turns · 766.8%`, `would wrap R#1–R#6,841`, `0 wrapped · this conversation`. All three
+are the same mistake: **every ceiling in that row is per-WINDOW** — the engine measures turns and
+bytes since the last wrap (`_rollFrom`) — but the chips were fed the whole conversation. A wrap never
+splices the transcript, so "everything the client holds" and "the current window" diverge permanently
+after the first wrap, and the row went on reporting a percentage of a ceiling it had supposedly blown
+through seven times without ever wrapping.
+
+The boundary is now the transcript's own last `wrapped` mark — the same row `_rollFrom` reads, so
+client and server cannot disagree about where the window starts. Live, on the reported conversation:
+
+| | before | after |
+|---|---|---|
+| turns | `7,668/1,000 · 766.8%` | `81/1,000 · 8.1%` |
+| size | 74.0 KiB | 21.7 KiB (this window) |
+| would wrap | `R#1–R#6,861 [6,861]` | `would wrap nothing yet · window is inside the ~200-turn tail` |
+| wrapped | `0` | `2` |
+
+Three smaller things fell out of it:
+
+- **"0 wrapped" survived a reload as a lie.** The counter only ever incremented on a live `rolling`
+  event, so a refresh reset it to zero for a conversation with fourteen archived segments. It is
+  derived from the durable wrap marks now, and the tooltip says what it counts so you can check it
+  against the ⟳ marks in the transcript.
+- **An empty wrap span printed backwards** — `R#6,896–R#6,895 [0]` — which reads as a broken number
+  rather than as the ordinary, common state it is. It says so in words now.
+- `pFrom`/`rFrom` default to 1, so a conversation that has never wrapped is unchanged.
+
+### Fixed — typing in the compose box was doing a full layout pass per keystroke
+Profiled on a real Core pane rather than guessed at: **`alignRowGroups`'s measure pass was 52% of all
+script time while typing.** It writes `margin-left` on every group, then reads `offsetTop`/
+`offsetHeight` back — a forced synchronous layout — and it ran for all four header/footer rows on
+every keystroke, to recompute an answer that cannot have changed. **Typing does not alter the header
+or footer rows.** Only a state change, a resize, or the compose box's own "N lines" chip changing
+width can, so the pass is gated on exactly those.
+
+`measureWrapRows` (the gutter's wrap measurement, 14%) rebuilt every mirror row per keystroke; it
+reuses them and only rewrites lines whose text actually changed.
+
+Measured on the real pane, 30 keystrokes: **median 4.0 ms → 1.0 ms, p90 6.2 → 2.8, worst 8.8 → 5.3.**
+The package's own layout was never the problem at scale — it is flat at 0.3–0.6 ms against a 10,000-row
+transcript; the cost was the per-keystroke forced reflows, not the DOM size.
+
+### Added
+- 3 window-scoping tests in `chatShellDom.test.mjs`, confirmed red-before-green (3/19 against the
+  pre-fix chips). Two tests that pinned the hardcoded `wrapSpan({ rFrom: 1` — the bug itself — now
+  assert it cannot come back.
+
+## [1.11.4] - 2026-09-07
+### Fixed — the wrap bug, applied: sessiond restarted and 62.8 MiB of corrupted archive repaired
+
+The `_rollFrom` fix from 1.11.2 is now actually **running** (sessiond restarted 15:51:17), and the
+damage the old code left behind has been repaired on the real data.
+
+**Proof the fix works:** the old code wrapped on the first completed turn after any restart, because
+the whole conversation counted as un-archived. `Claudstermind@main` has 7,653 turns against a
+1,000-turn threshold. It has been through a restart and ten further rows since — and there is no
+seg15.
+
+**The repair**, run with sessiond stopped so nothing could append mid-rewrite, after a 120 MB tarball
+of both workspaces:
+
+| conversation | discarded | index claimed | now |
+|---|---|---|---|
+| `Claudstermind@main` | seg1–seg13 (59.44 MiB) | P#1–9411, R#1–88447 | P#0–711, R#0–6705 |
+| `OuronetUI@main` | seg1–seg2 (3.38 MiB) | P#1–886, R#1–5613 | P#1–305, R#1–1901 |
+
+**Recall by number went from 0/9 correct to 23/23**, checked against the live transcript rather than
+against the index that was itself wrong.
+
+The repair needed a second draft, and the reason is worth recording. Setting the surviving segment's
+range to start at 1 is wrong whenever a segment holds rows the live transcript does not:
+`Claudstermind@main`'s seg14 has 7,418 turns of which 7,416 are in the live transcript, preceded by
+two that are not — a tunnel health-check exchange. Starting at 1 would have left every recall in that
+conversation off by exactly one, permanently, and looking entirely plausible. The range is now
+DERIVED by aligning the survivor against the live transcript; rows before the alignment point are
+pre-history and take numbers ≤ 0. A survivor that cannot be aligned is refused, not guessed at.
+
+Originals kept as `.bak` beside each file, plus `~/cm-wrapfix-backup-20260907-155113.tar.gz`.
+
+### Changed — the model picker names models, not aliases
+"I don't want to see default in the model selector." The SDK's catalogue ships the subscription
+aliases as rows of their own and they COLLIDE — measured live, it sends
+`{ value: "default", resolvedModel: "claude-sonnet-5" }` *and*
+`{ value: "sonnet", resolvedModel: "claude-sonnet-5" }`: one model, two rows. The label appended the
+alias to tell them apart, which is how the picker came to read `Sonnet 5 (default)` /
+`Sonnet 5 (sonnet)` / `Opus 5 (opus)`.
+
+Rows are now collapsed by the wire id they resolve to, and labelled by the model itself — the picker
+reads **Sonnet 5 · Opus 5 · Haiku 4.5**. Which row survives matters, because the survivor's value is
+what gets sent: a concrete id beats an alias, and any alias beats `default`, which names no model.
+Rows with an unknown exact id are never merged. `default` is gone from the cold-load fallback list too.
+
+A pane still *stored* as `default` selects the option carrying the same wire id — not the first in the
+list. Without that it would have silently claimed to be on whatever the catalogue happened to list
+first: a pane running Sonnet showing "Opus 5". Option membership is now tracked as options are built
+rather than inferred from whether `<select>.value` rejected an assignment, so "did this pick survive"
+is answerable without a live DOM.
+
+### Fixed — Bypass now looks dangerous in both workspaces, not only in the Lab
+Measured: the Lab painted `--danger` (bg `#2a1114`, border `#ef4444`, weight 700) while both
+workspaces rendered Bypass as an ordinary grey select. Same shape as the Send button's dead orange —
+`paintPerm` painted the package's NATIVE select, which Pact substitutes its own control for, and Core
+carried its own class spelling (`danger`) that no package rule matches. The state belongs to the
+ROLE: it now paints whatever element occupies it, both spellings are kept in step, and the CSS matches
+a bare `select` as well as `.sel` so a substituted control is styled too. All three surfaces now
+measure identical.
+
+This exposed a live trap: Pact still passed `permission: { shown: false }` from before role
+substitution existed, meaning "don't mount the native". Once `shown` follows the role, that same line
+means "hide Pact's own permission select". Removed, with a test pinning it.
+
+### Added
+- 5 model-picker tests and 3 permission-role tests. Red-before-green confirmed: 4/11, 3/43 and 1/9
+  against the pre-fix sources.
+
+## [1.11.3] - 2026-09-07
+### Changed — the model row is four stacked pairs: a control over its own caption
+
+Your grouping, built: **model select over the running-model medallion · effort over permission ·
+ultracode over fast · the auto-wrap tick and its meter over Compact│Wrap.** They are ordinary
+groups (`CS.stack`), so they wrap and take their side by exactly the same captured-side rule the
+header's groups use — nothing new to learn, and the header/footer now behave alike.
+
+The pairing is the point, more than the width. Side by side, those are eight unrelated widgets, and
+`· running Opus 5` floating next to a box that says `Opus 5` reads as a duplicate rather than a
+confirmation. Stacked, each bottom row captions the control above it.
+
+The width saving is real and large — a stacked pair is as wide as its **wider** member, not the sum
+— which is what collapses the row: the controls need **721–806px flat, 492–544px stacked**.
+
+Height, measured honestly by A/B on the same page (stacking toggled off with injected CSS):
+
+| | flat | stacked | |
+|---|---|---|---|
+| Core 1248px (maximised) | 1 line, 38px | 1 line, 64px | **costs 25px** |
+| Core 878 / 698 / 558px | 2 lines, 68px | **1 line, 64px** | saves 4–5px |
+| Core mobile 390px | 118px | 116px | saves 2px |
+| Pact 948px | 1 line, 40px | 1 line, 65px | **costs 24px** |
+| Pact 598–698px (real pane) | 2 lines, 71px | **1 line, 65px** | saves 7px |
+| Pact 428px | 3 lines, 102px | 2 lines, 119px | **costs 16px** |
+
+So it is a height win across the band both workspaces actually run in, and a ~25px cost only where
+the flat row already fitted on one line. It is not primarily a height change.
+
+### Fixed — three separate painters were flattening the stack
+All three wrap-control painters (the package's own, Core's, Pact's) did
+`replaceChildren(autoLabel, meter, split)` **directly onto the group**. Correct for a flat span;
+it turns a stack into a three-row column. Measured in Pact exactly that way — a 58px column where
+the stack is 47px in two rows. Where the pieces land is the shell's business, so it has one owner
+now: `ChatShell.fillWrapGroup`, which fills the two rows (and still degrades to flat for a
+non-stacked container).
+
+An empty bottom row collapses rather than reserving height — Core shows no `fast` toggle, so that
+pair renders as one row — and a stack with both rows empty is retired like any other empty group.
+
+### Added
+- `lib/chatShellStackedGroups.test.mjs` (8), plus rewrites of the two tests that pinned the old flat
+  row. Confirmed red-before-green: 8/8 and 30/45 against the pre-change sources.
+
+## [1.11.2] - 2026-09-07
+### Fixed — auto-wrap fired on every sessiond restart; header/footer/core all painted one colour; the Send button's orange and red were dead
+
+**The wrapping engine was wrapping far too often, and it had been quietly corrupting the archive.**
+Reported as "a wrap before answer #2022 and another before #2070 — that seems aggressive." It was:
+those two wrap marks are **57 turns apart against a 1000-turn threshold**.
+
+"Where does the current window start" lived in `_rolledThrough`, an in-memory counter set at roll
+time and never persisted. sessiond restarts routinely, and a restart rebuilds the session with the
+full transcript reloaded from disk while the counter comes back at **0** — so the "turns since the
+last wrap" slice was suddenly the ENTIRE conversation, which for any long-lived workspace is already
+far past the threshold. The very next completed turn wrapped. Every restart. Forever.
+
+The boundary is now DERIVED from the transcript's own durable `{kind:"wrapped"}` marks
+(`_rollFrom`), so a restart recovers the true window and there is exactly one source of truth — the
+same marks the reader can see. Pure, so `wrapPreview` can call it while a dialog sits open.
+
+The damage it had already done, measured on real data:
+
+| conversation | segments | shape | duplicated | index claims | reality |
+|---|---|---|---|---|---|
+| `OuronetUI@main` | 3 | seg1 ⊂ seg2 ⊂ seg3 | 3.38 MiB | R#1–5613 | R#1–1901 |
+| `Claudstermind@main` | 14 | seg1 ⊂ … ⊂ seg14 | 59.44 MiB | R#1–88447 | R#1–6706 |
+
+Every segment begins at the conversation's first prompt — each one re-archiving everything its
+predecessor held. `recallByNumber` resolves a number against those inflated ranges, so recalling a
+late turn could answer with an early one. Nothing was lost (each survivor is a prefix of the live
+transcript), so `scripts/repair-wrap-segments.mjs` cleans it up: it discards only files whose every
+row is provably present in the file it keeps, rewrites the ranges from real contents, and re-points
+the transcript's wrap marks. **Dry run by default**, `.bak` copies on `--commit`.
+
+**"The header/footer and the core chat space have the same background colour."** They did — measured
+`rgb(8,12,24)` for all three regions in Core and `rgb(19,27,38)` for all three in Pact. The shell's
+own stylesheet has described the intended tone step since it was written ("CORE = the reading
+surface, the LIGHTEST thing in the shell; HEADER/FOOTER = chrome, clearly DARKER") but it existed
+only as prose: `--hdr`, `--ftr` and the core background all aliased `--panel`. `--core-bg` is that
+step, derived from `--panel` so light mode gets one too.
+
+**"I want the border between them visible, in the same colour the chat has as a whole — pink for
+Core, dark grey for Pact, and the same thickness in both."** The seams and the outer frame now read
+one token, `--edge`, at one width, `--seam-w`, so they cannot disagree: a focused Core pane's pink
+frame gets pink seams for free. (Both were already 1px — what differed was contrast, not width.)
+
+That fix shipped a bug of its own, caught by loading the page rather than by a test: the focus
+override `.ws-pane.on` is specificity (0,2,0) and **loses** to the theme file's own
+`body[data-theme="dark"] .ws-pane` at (0,2,1), so a focused pane computed the unfocused colour while
+every test was green. `--edge` has one owner now, at matching specificity, and
+`chatShellRegionEdges.test.mjs` computes selector specificity and asserts the focus rule outranks
+every rival — the class of bug, not just this instance.
+
+**"The buttons need to be orange (working) and red (deep work), which they aren't."** Measured: idle
+== busy == deep == `var(--acc)` in Core, Pact **and** the Lab. Those colours were keyed to
+production's own `.ws-send`/`.pc-send` classes, which stopped existing on the button when both
+workspaces migrated to the package's `.btn-send` — and `.cs-shell .btn-send` is the same specificity
+and loaded later, so it won even where a class survived. The package owns the states now
+(`setState({ sending: { state: "busy" | "deep", pulse } })`), honouring production's existing class
+names too so the fix is live everywhere at once rather than only where a call site was migrated. The
+work-pulse ring came along; it had never existed in the Lab at all. The Lab gains
+**idle / working / deep work / background only** buttons, so all four are visible in the design
+source instead of only in production.
+
+### Added
+- `scripts/repair-wrap-segments.mjs` — dry-run archive repair for the damage above.
+- `lib/wrapBoundaryDurability.test.mjs` (6) and `lib/chatShellRegionEdges.test.mjs` (10), plus 3
+  DOM tests for the work states. Confirmed red-before-green: 4/6, 9/10 and 2/3 against the unfixed
+  sources.
+
+### Note
+- One CSS comment in this change was written unclosed, which in CSS silently eats the following
+  rule — the same failure mode as 1.11.1's `--bub-*/etc.`. The existing scoping test caught it.
+
+## [1.11.1] - 2026-09-07
+### Fixed — a footer group that wrapped with 880px of free space beside it, and line numbers that named the wrong lines
+
+Two separate reports, two unrelated root causes, both found by measuring the running app rather than
+reading the CSS.
+
+**"The auto-wrap line and Compact/Wrap button use two horizontal lines, while the other things are
+trying to exist on a single line."** In Core this was not a space problem at all: the model row had
+**523px of spare width** and the group wrapped anyway. The meter (`.bar`) is an EMPTY element — a
+track with an `<i>` fill — sized only by `flex: 0 1 90px`. A flex-basis does not contribute to a
+container's intrinsic (max-content) width, so the group computed itself ~50px narrower than its own
+contents and wrapped them onto a second line. Giving the meter a real `width` fixes it at the root:
+
+| | before | after |
+|---|---|---|
+| wrap group height | 49px | **27px** (one line) |
+| Core model row | 60px | **38px** |
+| Pact model row (950px chat) | 93px | **40px** |
+
+It keeps `flex: 0 1 auto` with a `min-width`, so it still shrinks when a pane genuinely is tight.
+
+**"Line numbering also doesn't seem to be detected properly."** The compose box wraps, and the gutter
+was numbering VISUAL ROWS straight down — so from the first wrapped line onwards, every number named
+the wrong line. Two typed lines wrapping onto four rows showed `1 2 3 4` next to a chip that
+correctly said "2 lines"; the chip was the half that was right. Now: one number per LOGICAL line, on
+the row where that line starts, with its continuation rows blank — what every editor does with
+wrapping on. Verified live in a 600px Pact chat: 2 typed lines over 4 visual rows now read
+`1 · 2 ·`, two numbers for two lines, agreeing with the chip.
+
+- The row counts are measured against a hidden mirror that copies the box's own typography and
+  content width (font, letter-spacing, word-break, tab-size — read from the box, not restated from
+  the stylesheet, since anything missed shows up as a number one row out), cached against the value
+  and width because the painter runs on every keystroke.
+- With no layout engine to measure against (the Node test shim, a detached box) it degrades to one
+  row per line — exactly the unwrapped case — so there is no separate code path for it.
+- A continuation row carries a non-breaking space rather than nothing: an empty `<b>` collapses to
+  zero height and slides every number below it up by a row, which is the same off-by-one again.
+
+**1578 + 74 tests green.** New `lib/chatShellGutter.test.mjs` (13 cases) pins the numbering through
+the pure `gutterEntries`: the reported 2-lines-over-4-rows shape, a line wrapping five times, empty
+rows below the text continuing to count, text taller than the box not being truncated, and degenerate
+row counts never producing a zero-height row. Confirmed red-before-green — restoring the old
+visual-row numbering fails 5 of the 13.
+
+## [1.11.0] - 2026-09-07
+### Added — two snap-to-default buttons for the Pact workspace layout
+
+Asked for: "since on Ouronet the text viewer boxes can be modified freely, I need a button that snaps
+them to their default sizes, which are the equal sizes. There should be 2: one Master Snap that snaps
+everything including the size of the chat space, and a secondary one that snaps only the viewer boxes
+within their given space, leaving the Pact chat box as is."
+
+Both live in the editor toolbar, beside Save All:
+
+- **⛶ Snap all** — the whole layout goes back to default: viewer boxes to equal sizes *and* the chat
+  column to its default share.
+- **⊞ Snap boxes** — only the viewer boxes go back to equal sizes, inside whatever space they have
+  now. The chat column keeps the width you dragged it to.
+
+Two buttons rather than one with a modifier, because that distinction is the entire point: the chat
+column gets tuned once for a screen and then kept, while the boxes get dragged around all day. Having
+to re-drag the chat column every time you tidy the boxes would be the same complaint one level up.
+
+- **They dim when there is nothing left to snap**, so they also answer "is my layout still default?"
+  without being clicked — and a click can never look like it did nothing. Refreshed at every point
+  the layout can go off-default: a box drag, a row drag, a chat-column drag, the grip's double-click
+  reset, a box being added or closed, and at mount (a restored layout may already be off-default).
+- **Snapping CLEARS rather than restores.** Default is not a remembered layout: every weight is `1`
+  (equal shares) and the chat column has no explicit width at all, so the stylesheet's share applies.
+- **In place, not a rebuild.** `pactEdApplyWeights` writes the new flex values onto the live
+  elements. Going through `pactEdLayout()` would re-create every box's DOM and re-render its editor —
+  throwing away scroll position and caret in up to eight open files to change two numbers.
+- The "reset to equal" logic that already existed for box-count changes is now the same
+  `pactEdResetWeights` the button calls, instead of a second inline copy of the same assignments.
+
+**Verified by driving the running app** — dragging the layout out of shape and clicking, not just
+asserting on source:
+
+| step | viewer boxes | chat column | ⛶ | ⊞ |
+|---|---|---|---|---|
+| after dragging both | 79 / 223 / 149 / 124 | 900px (stored) | live | live |
+| **⊞ Snap boxes** | **144 / 144 / 144 / 144** | **900px — untouched** | live | dimmed |
+| dragged again | 73 / 215 / 144 / 144 | 900px | live | live |
+| **⛶ Snap all** | **219 / 219 / 219 / 219** | **600px (default), stored width cleared** | dimmed | dimmed |
+
+That middle row is the requirement: equal boxes with the chat column exactly where it was.
+Zero console errors.
+
+**1565 + 74 tests green**, including a new `lib/pactSnap.test.mjs` (12 cases) covering the equal-share
+arithmetic for every box count the split ladder supports (5 boxes split [3,2], 7 split [4,3] — the
+answer is per-row, not per-box), that a weight merely *close* to 1 still counts as off-default, that
+a missing/zero/junk stored width reads as "no width set", and that the boxes-only snap does not so
+much as mention the chat column's width.
+
+## [1.10.0] - 2026-09-07
+### Added — click a module's line number to copy the whole module (Pact workspace, read-only view)
+
+Asked for: ".pact files open read-only. If a module starts at line 82, clicking that line number
+copies the whole module to the clipboard — same for interfaces — so I can bring it to the deployer.
+Before this I had the collapse and had to select the collapsed module by hand, but that isn't
+possible any more in view mode."
+
+In the read-only medallion view, the line number of every `(module …)` and `(interface …)` opener is
+now a button: blue and bold so you can find the two numbers that do something among the thousand that
+don't, with a tooltip naming exactly what it will take — *"Copy the whole module stoic-xchain — lines
+82–206 (125 lines)"*. Clicking copies that block's raw source. The number turns into a ✓ and the
+block's own rows wash green for a moment, so you can see the module ended where you expected without
+pasting it somewhere to find out.
+
+- **Modules and interfaces only.** Every foldable block is a candidate in principle, but marking all
+  ~200 defuns in a real contract would turn the gutter into a wall of buttons and bury the two lines
+  actually worth clicking. A module or an interface is the unit that goes to a deployer.
+- **One scanner, not a new one.** The extent comes from `pactBlockRanges` — the same string- and
+  comment-aware scanner already behind the fold view, which counts lines correctly through multi-line
+  strings and `\`-at-EOL continuations. It grew `kind`/`name`; `pactFoldRanges` is now a projection
+  that drops them, so the fold view's `{ start, end }` shape and all its existing tests are untouched.
+  A second paren matcher would have been a second set of rules to keep in step — and a naive one
+  fails immediately here: the 1137-line module verified below carries **24 parens inside strings and
+  comments**, any one of which would have ended a copy early and silently handed over half a module.
+- `pactFoldCopyText` — written and unit-tested a while ago, never wired to anything — is what
+  extracts the text. This finishes it rather than adding a third way to slice lines.
+- Only the NUMBER is a button. The code column keeps `user-select: auto`, so selecting by hand still
+  works everywhere, and clicking an unmarked number does nothing at all.
+- Falls back to the old `execCommand` copy path where the async clipboard isn't available (plain
+  http on a LAN IP), and reports a red ✕ + wash if the copy genuinely fails, rather than a silent no-op.
+
+**Verified in a real browser against real contracts, comparing the actual clipboard with the actual
+bytes on disk** — not just the tests:
+
+| clicked | copied | vs. file on disk |
+|---|---|---|
+| `module stoic-xchain`, line 82 | 125 lines | **identical** to `stoic-xchainV3.pact` lines 82–206 |
+| `module TS01-C3`, line 113 | 1137 lines | **identical** to `04_TS01-C3.pact` lines 113–1249 |
+| `interface TalosStageOne_ClientThreeV4`, line 10 | 102 lines | **identical** to lines 10–111 |
+
+Also cross-checked the clipboard against the on-screen rendered text independently of the scanner
+that chose the range (they match exactly, which is what proves the line numbers line up), confirmed
+an unmarked number leaves the clipboard untouched, and confirmed the code column is still selectable.
+Zero console errors.
+
+**1553 + 74 tests green**, including a new `lib/pactCopyBlocks.test.mjs` (18 cases): parens inside
+strings and comments, multi-line strings keeping the line count honest, escaped quotes, indented
+modules inside a namespace, several modules per file, nested defuns not becoming their own targets,
+an unterminated module offering nothing rather than guessing an end, and a round-trip check that the
+copied text re-parses as exactly one complete module.
+
+## [1.9.0] - 2026-09-07
+### Added — row groups: the side is CAPTURED from the layout, per line; and the context readout moves to the header
+
+Asked for directly: "logical groups of medallions and buttons, that, when due to width settings more
+lines are used, these groups would align left and right properly" — and then, precisely: "**not each
+declaring which side, but capturing what side is next, due to width settings.** because it may be
+that 2 groups align left the next right, and the last group would be alone on the last line, and if
+it's alone right is favoured." Plus: put the context readout in the header, because the footer's
+Compact│Wrap block was spending a whole extra line while the header had room.
+
+**The mechanism.** Every header/footer row is now built from GROUPS (`CS.grp(kids)` → `.cs-grp`), not
+a flat run of controls with a spacer in it. Three things follow, none of which a spacer can give:
+
+- A group never splits across a line break. Its members are one idea (the turn count and the byte
+  size; the two compacted/wrapped counters; Stop│Send│auto), and half of it stranded on the line
+  above is worse than the whole of it moving down.
+- **A group does not declare a side.** The side is a RESULT of the layout: on each line, the last
+  group goes right and the ones before it pack left — so three groups on a line read "two left, the
+  next right", and a group left alone on a line favours right because it is also the last on it. The
+  proof that this cannot be authored is visible in one control: the "would wrap" group is **left** at
+  a 950px pane (sharing line 2 with the context chip), **right** at 700px (last on its line), **left**
+  again at 520px, and **right** at 430px (alone). Same group, four widths, four sides.
+- **Alignment is decided per LINE, not per row.** `.spacer { flex: 1 }` only redistributes space
+  among items sharing its own flex line, so it can right-align exactly one group on exactly the line
+  it happens to land on — every other wrapped line falls back to packing left. That is precisely why
+  a two-line header read as ragged. `CS.alignRowGroups` measures which line each group actually
+  wrapped onto, gives that line's last group `margin-left: auto`, and writes the captured side back
+  as `data-align` (the only place a side exists) so a right-hand group also packs its own internally
+  wrapped lines right. The decision is pure (`CS.rowAlignPlan`) and re-made at every width; there is
+  no CSS selector for "did this item wrap", so it cannot live in the sheet.
+- Groups whose every member is hidden are retired outright — left in flow they spend the row's gap on
+  either side of nothing — and a retired group never counts as the last one on its line.
+
+**Verified live at four Pact pane widths plus Core and the Lab, wide and narrow: 30 wrapped lines,
+zero misaligned, zero declared sides.** Every line's last group flush right, everything before it
+flush left. Auto margins are treated as zero when flex line-breaking is computed, so applying the
+plan cannot change the breaks it was computed from: confirmed by forcing six relayouts and observing
+a single stable state.
+
+**The context readout moved to the header stats row**, as its own right-hand group beside the figures
+it belongs with, instead of competing for the model row's one line with the controls that CHANGE the
+conversation. A/B measured on the running app, not by arithmetic: at a 560px Pact pane the model row
+goes from 3 lines to 2 — **one footer line saved** — and at a wide pane Core's whole model row is a
+single line. It is a stable node the package re-appends across stats repaints (it carries a click
+handler and both workspaces alias `.pc-usage` onto it), so a repaint can never drop it.
+
+### Fixed — three bugs this surfaced, two of them live already
+
+- **Pact's context readout could not open its breakdown at all.** `on.context` was `usageEl.click()`,
+  and `usageEl` is reassigned to the package's OWN button right after mount — so the button clicked
+  itself: unbounded recursion, not a readout. Its popover anchor (`_visProxy`) pointed at the local
+  node the mount replaces, which is not in the document, so there was no valid anchor either. Both
+  were wired before the mount, where the visible node does not exist yet. Now wired after, onto the
+  hidden real exocortex chip — the same way Core's `on.context` has always done it. Verified by
+  clicking it on the running app: the 440×357 breakdown opens, reading "168k / 1M (17%) · opus-5".
+- **The context chip was truncated to "167,501 / 1,000,000 tok …"** — a legacy `max-width: 150px`
+  from when `.pc-usage` was a small text span in Pact's mobile head, now inherited by the package's
+  chip and eating the percentage, the one figure the chip exists to report. Scoped to `.pc-head`,
+  where it is still the right call. Reads in full again.
+- **Core crashed on every pane render** partway through this work: `identityRow.insertBefore(label,
+  els.identitySlot)` throws once rows are made of groups, because the slot is a child of the GROUP,
+  not the row. Caught by loading the real page while all 1,533 tests were green — a source-grep test
+  cannot see it. The package now hands hosts `els.identityGroup`, and there is a structural test
+  (mount, then assert slot→group→row) plus a guard that no host inserts against the row again.
+
+Dead CSS removed with the rules it replaced: the `.spacer ~ .cs-inline` alignment rules (superseded
+by groups) and the `.pc-modelbar` block (nothing has carried that class since Pact's chat became the
+package). Pact's hand-rolled `buildStatsChips` + `replaceChildren` copy of the stats paint is gone
+too — it now goes through the package's own patch like Core, which is also what keeps the context
+node alive across repaints.
+
+**1536 + 74 tests green.** New `lib/chatShellRowGroups.test.mjs` (19 cases) covers the plan
+exhaustively and the DOM pass against controllable line offsets — including "the SAME group takes a
+different side at a different width", which is the property the whole design rests on. Confirmed
+red-before-green against the pre-change package. One case pins a bug the unit tests could not have
+caught and measuring the running app did: rows are `align-items: center`, so a short group sharing a
+line with a tall one starts several px lower — bucketing lines on exact `offsetTop` split one line
+into two and mis-assigned the sides outright.
+
+## [1.8.9] - 2026-09-07
+### Fixed — Pact's footer still didn't match the Lab: a dead row, and two flavours of "wraps left instead of right"
+
+Reported from two screenshots: the Compact│Wrap block wasn't aligned to the right like the Lab's, and
+Pact carried an extra "Auto-continue" bar above the compose box that doesn't exist in the Lab at all.
+
+- **The extra bar is gone.** It used to sit permanently above the compose box (`.pc-contline`,
+  holding the suggested-next chip and the ★ bookmark), reading "🔁 Auto-continue" whether or not there
+  was anything to say. Its two real jobs move onto controls that already exist, matching how the Lab
+  actually represents them: the suggested text is now GHOST TEXT inside the compose box itself (Tab,
+  on an empty box, accepts it), and the round count / "why it's paused" reason both ride the shell's
+  own auto-continue control's tooltip. Mobile is untouched — it has no shell control for this yet, so
+  it keeps its own bar exactly as before.
+- **The ★ bookmark star moved into the action row**, at the position the Lab's own ⭐ sits (between 🕐
+  and ⇕Full) — via the package's role-substitution mechanism (`bookmarks` is now a substitutable role,
+  same as `meta`/`modelPick`/`permission`), not a separate row. Its popup now opens upward from that
+  position (the package's default), since the old "opens downward" was specifically for its previous
+  home in the head row; mobile, which still keeps it in the head row, keeps opening downward.
+- **Two real, separate right-alignment bugs**, both only visible on a genuinely narrow pane:
+  1. The `justify-content: flex-end` rule that packs a trailing slot's own children to the right only
+     ever covered `.hrow` (header rows) — the model row's auto-wrap/Compact│Wrap slot is a `.frow`,
+     so its meter and split packed LEFT the moment they wrapped onto their own line.
+  2. Deeper: a flex spacer only redistributes space among items sharing ITS OWN line. Once a narrow
+     row is tight enough that the trailing group (Stop│Send, or the wrap-controls block) no longer
+     fits beside the spacer and wraps onto a line by itself, the spacer is stranded on the previous
+     line and nothing on the new one claims the leftover space — the group defaults to the row's left
+     edge. Measured live at a real 400px Pact pane: Send ending 206px short of the row's right edge,
+     the auto-wrap/Compact│Wrap block 50px short of it. `margin-left: auto` fixes this because it is a
+     property of the item, not the spacer — it claims its own line's leftover space regardless of
+     whether the spacer shares that line or was left behind on the previous one.
+
+Verified live against the running service, not just green tests: measured Send/Stop and the
+Compact│Wrap split ending at the exact same x (972) on a real 400px-wide Pact pane, in both Core and
+Pact; the dead `.pc-contline` row no longer exists in the DOM; mobile's own bar and its downward-
+opening bookmark popup are untouched. Zero console errors on Core, Pact desktop, and Pact mobile.
+
+**1516 + 74 tests green**, including a new regression test pinning the `margin-left: auto` fix
+specifically (so a future "it wraps left again" can't silently reappear).
+
+## [1.8.8] - 2026-09-07
+### Fixed — one state reported as three malfunctions, an invented suggestion, and a chat column nobody could resize
+
+**The big one: "why is the context not being reported? in Pact the model is also not reported."**
+Both, plus a model picker offering only aliases, are the SAME ordinary state — and none of the three
+said so. `workspace.mjs` calls `s.start()` only from `_prompt`, so a conversation that is open but
+has never been prompted has no `claude` process at all: `getContextUsage()`, `getSupportedModels()`
+and the `init` event that names the running model have nothing to answer with. The client could not
+tell that apart from "a process is running and hasn't answered yet", because nothing ever told it.
+
+- The `contextUsage` reply now carries `live` — the only place that fact is knowable — and both
+  workspaces record it. A conversation with no session key at all is settled locally, no round-trip.
+- Both readouts word the three states through ONE shared pair of functions (`wsUsageReadout`,
+  `wsModelNowReadout`): *nothing running* names the cause and the trigger ("context: starts on your
+  first message", "· will run Opus 5") instead of reporting an absence; *running but silent* keeps
+  "no reading yet" / "model not reported yet", which is now literally true; *not yet asked* claims
+  nothing.
+- **Pact never asked for a context reading at all** unless a turn finished, a compaction ran, or a
+  resync fired — so a reopened tab sat on "no reading yet" indefinitely. It has Core's ask-once now.
+- A THIRD hand-written copy of the usage paint, inside `pactChatPaint`, disagreed with the painter it
+  duplicated: `hidden = !usg.text` rendered "no reading yet" as *no control at all*. Deleted.
+
+**"Why isn't this looking similar between the two places?"** — because it genuinely wasn't. Pact was
+substituting a bare `span.pc-usage` / `span.pc-model-now` for two roles where Core uses the package's
+`chip --acc` button and `chip --far` span, so the same two readouts rendered as plain grey text in
+one workspace and as chips in the other. Pact uses the package's own nodes now and aliases its class
+names onto them (the trick that already keeps `.pc-input` working), so its by-class updaters are
+untouched. Role substitution is for a control that is genuinely richer than the native — a readout
+that only shows text is not. Caught while verifying: the package hides that chip on an empty label,
+so Pact had to publish through `setState` rather than writing `textContent` onto it — the exact bug
+Core was fixed for, reproduced the moment Pact started using the same node.
+
+**The suggested-continue line that shouldn't be there.** `pactSuggestNext` returned "Continue where
+you left off." for every conversation that had ever had a reply, so a whole row sat permanently above
+the compose box offering a suggestion read from nothing the agent said. It returns `null` now unless
+the reply actually named a next step. Auto-continue keeps its own fallback — the loop has to send
+*something*, which is a different question from what to advertise, and conflating the two is what put
+the row there.
+
+**The Pact chat column is tunable.** It was a fixed 4:1 share with a hard 600px floor — one number
+for every screen and every job. The default share is 3:1 now, and a drag grip between the editor and
+the chat sets it exactly; the choice is remembered and double-click restores the default. Clamped to
+[420px, 75% of the work area] — 420 is the measured width below which the model row falls out of
+`.pact-chat`'s `overflow: hidden`. Applying a width also clears the stylesheet's `min-width` floor,
+which would otherwise silently refuse anything under 600 and make the drag look broken.
+
+### Verified
+- `lib/*.test.mjs` **1514 pass**, `agent`+`relay`+`dashboard` **74 pass**.
+- New `lib/engineStateReadouts.test.mjs` (13) executes the shared readouts and drives the real
+  `WorkspaceManager._contextUsage`; new `lib/pactChatWidth.test.mjs` (9) executes the clamp. Confirmed
+  **6 red** against the pre-fix source. Three stale tests that pinned the old shape were rewritten.
+- Live, in a real browser: the grip dragged 600 → 836px, persisted across a reload; both readouts
+  confirmed to be `BUTTON.chip --acc` / `SPAN.chip --far`, the same tags and classes as Core's; the
+  invented suggestion row gone. Zero console errors.
+
+### Known — NOT yet live on this machine
+The agent engine runs in a separate daemon (`claudstermind-sessiond.service`), which the dashboard
+restart does not touch. Every server-side change in **1.8.7 and 1.8.8** — the persisted compaction and
+wrap marks, and the `live` flag these readouts depend on — is therefore verified by test and by code
+but is **not running yet**. Restarting sessiond interrupts in-flight turns, so it is deliberately left
+for you to schedule: `sudo systemctl restart claudstermind-sessiond.service`.
+
+## [1.8.7] - 2026-09-07
+### Fixed — the model picker's dead end, the header row spent on a count, and a compaction that left no trace
+
+Four reports, three of them the same shape: a control that was technically present and practically
+useless.
+
+**1. The model dropdown could offer exactly one option — the model already running.** "I can't seem
+to switch to Opus for this chat." When the catalogue is empty (a cold load before any session has
+answered `models`, or a cached catalogue holding only `omni/*` entries while OmniRoute is off), the
+"keep the current pick visible" branch injects the ACTIVE model as a lone option. A `<select>` with
+one option is not a blank `<select>`, so the existing "no options at all" fallback never fired: the
+picker named the right model and could do nothing else.
+
+The subscription aliases are now offered whenever the catalogue has no real Anthropic entry, whether
+or not an active model was injected beside them — and an empty catalogue also triggers one debounced
+request for the real one (the connect-time request legitimately came back empty, because it fired
+before any session existed, and nothing ever asked again). Both selector builders were duplicated
+line for line; they now share `wsFillModelSelectFrom`, so a fix cannot reach only one of them again.
+
+**2. "N earlier turns" is a medallion in the transcript, not a header row.** It sat in the header as
+its own full-width line — a line of chrome spent permanently on a number you act on once. It is now
+the package's `cs-coretop` medallion: a zero-height sticky strip pinned to the top of the core
+region, so it overlays the first turn rather than displacing it and stays reachable however far you
+have scrolled. Verified live at 2,090 earlier turns in Core and 248 in Pact, still pinned after
+scrolling. The Lab renders the same control from the same code, and its transcript is now genuinely
+windowed so the medallion is actually exercised there.
+
+**3. A successful `/compact` painted its own prompt as INTERRUPTED.** `/compact` produces no
+assistant reply, and both clients recognise an interrupted prompt as "the trailing user turn on an
+idle conversation with no assistant turn after it" — which is exactly what a successful compaction
+leaves behind. So it turned dark blue with ▶ resume / ✕ discard buttons: "the compacting prompt
+looked like it didn't process."
+
+**4. Compaction drew no bar.** It was narrated only to the per-client activity rail — transient, not
+stored, not shared. Nothing on reload, nothing on another device, nothing telling a reader where the
+window was summarised.
+
+Both are one fix: compaction (and wrapping) is now a **transcript row**, recorded server-side beside
+the turn it belongs to, stamped with the same `at` the forwarded event carries so a client's
+optimistic copy is replaced by the persisted one instead of doubled. It persists, it reaches every
+device, and it terminates the trailing-unanswered scan.
+
+The bar itself is `ChatShell.buildMark` — the design already existed in the Chat Shell Lab and, until
+now, existed ONLY there. The Lab and both workspaces draw it from that one function.
+
+### Verified
+- `lib/*.test.mjs` **1492 pass**, `agent`+`relay`+`dashboard` **74 pass**.
+- New `lib/modelSelectFill.test.mjs` (6) executes the real fill against a DOM — confirmed 3 red
+  against the pre-fix source. New `lib/compactionMarker.test.mjs` (6) drives the real
+  `WorkspaceManager` and both interrupted scans — confirmed 4 red before. Two stale source-text
+  tests that counted duplicated fallbacks were replaced by the behavioural ones.
+- Live, in a real browser against the running service: Core (a real 124-turn conversation), Pact, and
+  the Lab. Zero console/page errors. The compaction and wrap bars were verified end-to-end from
+  PERSISTED rows via a scratch workspace, then the scratch workspace was deleted.
+- Caught by looking rather than by a test: the medallion rendered "▲ ▲ 248 earlier turns" — the glyph
+  belonged to the old button's own label as well as the package's.
+
+## [1.8.6] - 2026-09-07
+### Fixed — the Lab rendered its own design wrong, and Pact's footer was still two implementations
+
+Two separate causes behind one report ("the footer of the Pact workspace doesn't resemble the
+canonical implementation; the canonical implementation's type box suddenly has 2 rows and the text is
+flush to the line-number separator").
+
+**1. A CSS comment in the Lab closed three lines early and ate the next rule.** The lab's `<style>`
+opened with a comment documenting the theme variables, containing the text `--bub-*/etc.` — a literal
+`*/` INSIDE it. CSS comments end at the FIRST `*/`, so the comment closed early, the remainder became
+live CSS, and the parser recovering from that garbage swallowed the very next rule whole:
+`*{box-sizing:border-box}`. Every element in the Lab silently fell back to `content-box`.
+
+`chat-shell.js`'s geometry computes **border-box** sizes, so under `content-box` the type box rendered
+a full row taller than its content (measured: `style.height` 34px → 50px on screen) and the gutter
+rendered wider than its computed width, pushing the line-number divider under the prompt text. Exactly
+the two symptoms reported. Production was unaffected because `styles.css` carries its own working
+reset — so the Lab, the one page that is supposed to BE the design, was the only page rendering it
+wrong.
+
+**2. Pact's footer controls were mounted in the wrong place, by design.** Core migrated to the package
+properly and uses its native controls; Pact instead hid the natives with `--gone` and appended its own
+to `actionExtra`/`modelExtra` — slots that sit at the END of their rows. Two consequences, both
+visible: the row order disagreed with the Lab's (repo/branch after ⇕Full, the model picker after the
+effort selector), and because a slot did not wrap its own children, a narrow Pact pane collapsed into
+ragged part-empty rows instead of the Lab's tidy ones.
+
+The package now supports **role substitution**: a host whose control for a role is genuinely richer
+than the native one (Pact's worktree menu binds/migrates/merges; its model picker is routing-aware)
+passes its own element for that role and the package mounts it AT THAT ROLE'S POSITION — the native is
+simply never mounted. Pact now substitutes by role (`meta`, `modelPick`, `modelNow`, `permission`,
+`context`); only `swarmEl`, which has no native counterpart, remains a trailing extra. `.cs-inline`
+also wraps its own children now, matching the rows it sits in.
+
+Verified in a real browser at Pact's actual 600px pane width against the Lab's own narrow-width
+preview: both read model → running-model → effort → ultracode → permission → context → auto-wrap →
+Compact│Wrap, in that order. New `lib/chatShellRoleSlots.test.mjs` (4 of 5 confirmed red before);
+`1474 + 74` green.
+
+Still divergent, stated plainly: Pact keeps its history/bookmark controls in the header rather than
+the action row, and its repo/worktree remain a pill + chip rather than two selects — both genuine
+Pact features, not drift. Mobile remains deferred.
+
+## [1.8.5] - 2026-09-07
+### Fixed — Pact workspace dead on a cold load: "WS_FALLBACK_MODELS is not defined"
+
+Shipped in 1.8.4, reported immediately, and entirely self-inflicted. The fallback model list added
+last round was declared `const` **inside the Core view's closure**, but referenced from
+`buildMobileModelSelect` — a TOP-LEVEL function which, despite its name, builds Pact's desktop model
+selector too. The reference resolved to nothing, threw a `ReferenceError`, and took the whole Pact
+view down with it.
+
+**Why nothing caught it, stated plainly:** `node --check` only parses; the 1,466 tests are
+source-text or package-level; and the throwing line only runs when the model catalogue is EMPTY —
+which any browser session that has already answered `"models"` never reaches. The live verification I
+ran last round was in exactly such a session, so it exercised every other path and not this one.
+
+- `WS_FALLBACK_MODELS` is top level now, one list, reachable from both selector builders.
+- Core's `fillModelSelect` gained the **no-options** fallback it never had (it only handled the
+  no-*selection* case) — on a cold load it was a bare caret naming nothing, the same "there is no
+  Claude model here" symptom the other builder was already fixed for.
+
+### Testing
+New `lib/appScopeLeaks.test.mjs`: a scope-shape check over the monolith — a SHOUTY constant declared
+inside a closure must never be referenced from earlier in the file, because "earlier" is either a
+different scope (this bug) or the temporal dead zone (also a ReferenceError). It found exactly one
+offender when written — this one — and no false positives. Verified by reintroducing the bug
+verbatim: the detector names it, file and line.
+
+Verified live on the real failing path, not a warm session: a browser with every model cache cleared
+before `app.js` runs, loading `#workspace/pact` cold. Pact renders, the selector names a real model,
+zero console or page errors.
+
+## [1.8.4] - 2026-09-07
+### Fixed — the context readout was two measurements printed as one, and Pact's auto ticker was in the wrong control
+
+- **"80,311 tok · 17% of 1000k ctx" was not a rounding error — those halves measured different
+  things.** The number was the turn's billed tokens (`usage.input + usage.output`); the percentage
+  was how full the context window is (`contextUsage.percentage`). Printed as one sentence, so the
+  number never matched the percentage. Caught live in Pact at its plainest: the readout said
+  `1,600 tok · 94% of 1000k ctx` while its own tooltip said `942,664 / 1,000,000 (94%)`. A context
+  readout now reports the **context**, both halves from the same measurement
+  (`942,664 / 1,000,000 tok · 94%`), and the turn figure appears in the breakdown labelled as what it
+  is — *"billed for that turn, not the window"*. With no context reading at all, turn usage may still
+  be shown, but as `last turn: N tok`, which cannot be mistaken for a window fill. A percentage is
+  never used to invent a total, and a total is never printed against a percentage it does not equal
+  (pinned by a test that parses the rendered string and checks the ratio).
+- The three copies of "paint the context readout" (Core's paint, Core's live-event path, Pact's) are
+  one `wsPaintUsage` — the old test literally asserted there were three copies of the wording, which
+  enforced the duplication instead of the behaviour.
+- **Pact's auto-continue countdown lived in the suggest bar** — a different row, a different shape —
+  while its on/off switch sat in the send group. So the switch looked inert while the loop was
+  counting down, and the thing about to happen and the thing that stops it were in two places. The
+  countdown is now rendered by the package, inside the send group, beside the round count
+  (`auto 0/10 · 2s`, the counter going green while armed) exactly as the Chat Shell Lab shows it. The
+  suggest bar keeps only what nothing else can say: the suggested prompt and why the loop is paused.
+  Mobile keeps its inline ticker (it has no shell control yet).
+- The Lab gained a **▸ auto-continue countdown** control that actually runs the loop down to zero, so
+  this cannot drift back out of the group unnoticed.
+
+### Testing
+`lib/wsUsage.test.mjs` rewritten around the real contract (7 cases, including one that parses the
+rendered text and asserts the printed percentage is the printed numbers' own ratio). New package
+cases for the countdown. Verified live: the Pact counter ticked `0/10 · 4s` → `0/10 · 2s` and
+returned to `—` when unticked; the readout now reads `942,664 / 1,000,000 tok · 94%`. Confirmed red
+before green: 29 failures against the unfixed source.
+
+## [1.8.3] - 2026-09-07
+### Fixed — the three controls at the end of Core's header: misaligned, and absent from the Lab
+Reported with a screenshot: *"that agent tool and x button aren't properly aligned to the right, and
+I don't know what those are, they don't appear in the chat lab."* Both halves were real.
+
+- **The alignment was a CSS circularity, measured before it was touched.** `.ws-activity-wrap` capped
+  itself at `max-width: 34%` — a percentage, resolved against the shrink-to-fit slot it lives in,
+  which had *already sized itself around the chip's full text*. The difference became dead space
+  **inside** the slot: measured live as a 273px slot holding 125px of controls, leaving the × button
+  stranded 148px short of the header's right edge while the stats row below ended flush. The cap is a
+  length now, and any slot that sits after the row's spacer packs its children to the end, so slack a
+  slot happens to carry can never re-open as a gap. Both rows now end at the same x (verified: 1252).
+- **Two of the three controls existed only in production.** The activity narration and the close ×
+  were Core-only markup the Chat Shell Lab had never modelled — which is precisely how they came to
+  look foreign and unexplained. They are the **package's** now (`setState({ activity, close })`,
+  `on.activity` / `on.close`), so the Lab shows them too, with a rail control that steps through the
+  real event sequence and a long-text case — the one that exposed this bug in the first place. Both
+  default to OFF: a shell with nothing to narrate must not show "Idle" forever, and a shell that is
+  the only one on the page must not offer to close.
+- The activity chip is now a **chip** like every other chip in that row (tone rides as a chip
+  modifier, `--ok` / `--bad`), instead of a lookalike with its own shape. `logActivity` goes through
+  the package: it used to write `className` directly, which wiped the chip's own classes, so the
+  shared look survived exactly until the first event.
+- The exocortex **agents chip** joins the same vocabulary — it was 27px tall sitting among 22px
+  chips, which is most of why it read as a foreign control rather than part of the row.
+
+### Testing
+`lib/chatShellPackage.test.mjs` gains eight cases that mount the package and click these controls
+(hidden until asked for, tone replaces rather than accumulates, the click reaches the host, the cap
+is a length, Core's hand-built versions are deleted, the Lab drives both). Confirmed red before
+green: 25 of 27 failing against the pre-fix package.
+
+## [1.8.2] - 2026-09-07
+### Fixed — Pact could not send at all, and the context readout opened nothing
+Three reports from the live app, all confirmed by driving the running service in a real browser
+before touching anything (each one also reproduced as a failing test first).
+
+- **Pact could not send a prompt.** Neither the Send button nor Ctrl+Enter did anything. Both funnel
+  into `pactChatSend`, which reads the compose box as `PACT_CHAT.host.querySelector(".pc-input")`.
+  When Pact's desktop chat became the package (1.8.0) the mounted textarea carried `rg-typebox`
+  instead — so that lookup returned `null`, the typed text read as `""`, and the function returned
+  silently. **Seven** independent paths find the compose box by that class (send, the tab-switch
+  draft save, the focus/caret restore across a rebuild, the auto-continue "are you mid-typing" gate,
+  the offline refill), and every one of them guards with `if (ta)`, which turned a hard breakage into
+  a quiet one. The package's textarea now keeps Pact's `.pc-input` identity. Verified end to end
+  against the live agent: prompt dispatched, reply received, box cleared.
+- **Clicking the context readout appeared to do nothing.** It *was* opening the breakdown — as an
+  inline row inside the exocortex bar, which since the package migration lives in the **header**,
+  while the control you click sits in the **footer's** model row. The breakdown therefore opened at
+  the opposite end of the pane from the cursor. It is now a popover anchored to the control itself,
+  flipped above when there is no room below, dismissed by an outside click or Escape.
+  It is also **portaled to `<body>` while open**: both hosts (`.ws-pane`, `.pact-chat`) carry
+  `contain: layout paint`, which makes them containing blocks for `position: fixed` — left inside the
+  pane, the "fixed" popup was positioned against the *pane* and measured at x=1583 in a 1600px
+  window, i.e. mostly off-screen.
+- **"Which model is actually working" was unreadable in Core.** `paintPane` wrote the correct text
+  straight onto the chip while the package kept that chip hidden — it hides it whenever `activeLabel`
+  is empty, and Core never passed one, so the readout was correct and invisible in every pane, always.
+  Core now publishes it *through* the package. Both workspaces read **"running <model>"** in the same
+  words, and say **"model not reported yet"** rather than going blank — the selector states an
+  intent, this states the fact the engine reported, and the two genuinely differ.
+
+### Testing
+- The exocortex DOM shim gained the fidelity these fixes needed: `append` now *moves* a node
+  (detaching it from its previous parent) as the real DOM does, plus `getBoundingClientRect`,
+  `contains`, and a `document.body` — without which a portaled node appeared to be in two places at
+  once and "did it come back when closed?" was unanswerable.
+- New behavioural coverage for the popover (anchors to the visible proxy control, portals to `<body>`,
+  returns home when closed, dismissed by outside click and by Escape) and for the two wiring
+  invariants. Confirmed red before green: 15 failures against the unfixed source.
+
+## [1.8.1] - 2026-09-07
+### Fixed — five controls that had the right shape but were not actually wired
+The chat box became a package in 1.8.0 and its layout finally matched the design. Shape is not
+wiring, though, and five controls were reported dead or unexplained in the live app.
+
+- **The model selector rendered as a bare caret naming nothing.** `fillModelSelect` builds its
+  options from the catalogue `st.models`, which is empty until some session answers `"models"` — and
+  is also empty in effect whenever the cached catalogue happens to hold only OmniRoute entries while
+  OmniRoute is off. Either way it produced zero `<option>`s. It now falls back to the Claude
+  subscription aliases the SDK always accepts (`default`/`opus`/`sonnet`/`haiku`), so the control
+  always names something concrete and is never a dead end.
+- **The effort selector was absent entirely.** The old rule hid it whenever `supportsEffort` was
+  falsy — which includes *"the catalogue has not told us yet"*, i.e. most of a cold load or a resumed
+  session. There are three states, not two: the model says it supports effort (use its own list), the
+  model says it does not (hide), or nothing is known yet (offer the SDK's own five levels and say so
+  in the tooltip). And an unset level now reads **"Default effort"** rather than silently selecting
+  `low` — a `<select>` whose value matches no option falls back to the first, so "never chosen"
+  was quietly claiming the lowest level.
+- **The context readout said "—"**, which is not a fact about anything. It now says
+  **"context: no reading yet"** in both workspaces, in the same words, with a tooltip explaining that
+  a reading arrives when a turn completes and that clicking asks for one now. Pact used to *hide* the
+  readout entirely in this state, which made "no reading" indistinguishable from "no such control".
+  A pane that already has a live session now **asks for a reading once**, instead of waiting for a
+  turn to end — that is why a resumed conversation showed an empty readout indefinitely.
+- **"▲ 7,146 earlier turns · load earlier" had no explanation.** It is real and honest — the
+  conversation is longer than the window currently rendered — but a bare count reads as an error. It
+  now carries a tooltip saying what it counts, that nothing is lost (those turns are stored,
+  searchable and reachable by Recall), and what clicking does.
+
+### Added — auto-continue in Core, on the same engine as Pact's
+Core never had an auto-continue loop; Pact has had a working one for a long time. Rather than invent
+a second set of rules, Core now drives the **same pure decision function** (`pactAutoDecide` — no
+DOM, no Pact state, just inputs), with the same ceiling and the same gates:
+
+- **Off by default.** Capped at 10 rounds per batch; re-ticking at the ceiling grants the next batch,
+  so the toggle can never look dead.
+- **A human send resets the count** — the ceiling exists to stop a runaway robot, not to ration you.
+  An auto send counts toward it.
+- **Paused while a round runs, and while you are typing** — a half-written message outranks the loop.
+- **Never silent.** The control carries the live countdown, or the reason it is paused, on itself.
+- It sends the plainest possible continuation ("Continue where you left off.") — the same text Pact
+  falls back to when it has no better suggestion. Auto-continue means "keep going", not "guess what
+  I wanted". It appears only once the conversation has produced at least one reply, matching Pact.
+- The flag **and** the round count survive a reload, so a refresh cannot silently kill a running loop
+  or hand back a ceiling you had already spent.
+
+**In Pact, the same feature moved onto the shell's own control** (inside the send group, beside
+Stop/Send, where the design puts it) and the suggest bar's duplicate checkbox is gone on desktop —
+both were switching the same flag. The bar keeps what only it can say: the suggestion itself, the
+countdown, and why the loop is paused. Pact also gains a **per-tab effort selector and ultracode**;
+the `setEffort` control action already existed, Pact simply never offered the control. Both persist
+with every other per-tab setting.
+
+### Verified
+`node --test lib/*.test.mjs` → **1447 pass, 0 fail**. New `lib/chatShellControlsWiring.test.mjs`
+covers all five, confirmed red before this change (10 of its 11 tests failed). Checked live in a
+headless browser: Core's model row now reads
+`Sonnet 5 (default) · Default effort · ☐ultracode · Bypass · context: no reading yet · ☑auto-wrap · 🗜Compact│⟳Wrap`,
+with zero console/page errors.
+
+## [1.8.0] - 2026-09-07
+### Changed — the chat box is a PACKAGE now: `@ancientpantheon/claude-chat-shell`, mounted by the Lab and both workspaces
+Seven releases tried to make production's chat box match the Chat Shell Lab's by copying the design
+across: first the hex values (1.6.4), then one shared palette file (1.6.5), then the layout (1.6.6),
+then shared leaf widgets (1.6.8), then a shared frame function (1.7.0), then a shared component
+stylesheet (1.7.1). Every one of them narrowed the gap and none of them closed it, for the same
+reason each time: there were still **two implementations**, and two implementations drift.
+
+There is now one. `packages/claude-chat-shell/` is a real, self-contained, drop-in UI package, and
+the Chat Shell Lab, Core and Pact are all just consumers of it.
+
+```html
+<link rel="stylesheet" href="/chat-shell/chat-shell.css">
+<script src="/chat-shell/chat-shell.js"></script>
+<script src="/chat-shell/chat-shell-ui.js"></script>
+```
+```js
+const view = ChatShellUI.mount(hostEl, { kind: "core", on: { send(text) { … } } });
+view.setState({ identity: { label: "my-repo" }, context: { tokens: 93016, ceiling: 1000000 } });
+view.core.appendChild(myTranscriptNode);
+```
+
+- **`ChatShellUI.mount(host, opts)` builds the entire chat box** — header identity/tabs, the live
+  conversation-stats row, the transcript region, the seam Live/Held marker, attachments, reply-quote
+  chips with their token cost, the compose field with its line-number gutter and ghost suggestion,
+  the jump/recall drawer, the action row (attach · lines · repo/worktree · history · bookmarks ·
+  expand · Stop/Send as one group), and the model row (model · effort · ultracode · fast ·
+  permission · context · auto-wrap meter · Compact│Wrap). The host supplies data and callbacks only.
+- **`setState(patch)` is a patch, not a snapshot**, and nodes are built once at mount and updated in
+  place — so a host can push `{ stats }` on every streamed token without the compose field losing
+  focus or caret, or the transcript losing scroll.
+- **`view.core` stays the host's**, on purpose. Rendering a live agentic transcript (incremental
+  append, node caching, tool blocks, streaming, scroll anchoring across thousands of turns) is a
+  genuinely app-specific performance problem; both workspaces hand their real transcript node to
+  `mount()` by reference (`core:` / `existingCore:`) so nothing about that engine changed.
+- **Both workspaces' hand-built chrome is deleted, not left duplicated beside it.** Core's
+  `buildPane` and Pact's `pactChatRender` no longer construct a single chat control; they mount the
+  package, wire callbacks, and alias its nodes so every existing paint path reads unchanged.
+  `wsAutoResizePrompt`/`pactChatAutosize` are now two-line shims that ask the shell that owns a
+  textarea to re-measure itself — the geometry has one owner.
+- **The Lab is a consumer too**, not a mock: ~550 lines of its own header/footer assembly are gone.
+  It supplies synthetic transcript turns and callbacks; everything else it renders is the package.
+- **Served, never copied**: the dashboard serves `packages/claude-chat-shell/src` at `/chat-shell/*`,
+  and the Lab and the live app load those same bytes from that same directory. There is no build
+  step and no second copy to fall out of sync.
+- **`README.md`** documents the whole contract: state keys, callbacks, slots, and the design
+  invariants the package holds for you (Core is the only flexing region; P#/R# colours are identical
+  in every theme; Live/Held is observed, never chosen; Send/Stop can never be collapsed away; the
+  context readout always names its ceiling; nothing here deletes anything).
+
+### Fixed
+- **The compose text was invisible in Core.** The package's ghost-suggestion overlay used the class
+  `.ghost`, which this dashboard already had as a legacy button style with an opaque background — so
+  an empty overlay painted right over what you were typing. Renamed to `.cs-ghost` and given an
+  explicit `background: transparent`. A drop-in package cannot assume the app it lands in has no
+  class by that name; this is the first real collision and the reason the scoping rules are now
+  explicit rather than inherited.
+- **Two Live/Held markers.** The stick-scroll controller's own bulb and the package's seam marker
+  both rendered, reporting the same thing in two places. The controller's is retired on desktop in
+  both workspaces; mobile still docks it in the header, where the seam has no room.
+- **The joined Compact│Wrap control wrapped its own labels** into a two-line slab whenever the model
+  row was tight. `white-space: nowrap` on both halves.
+- Core no longer shows an auto-continue tick it has no loop for, or an empty "running model" chip
+  before a session has reported one.
+
+### Tests
+`lib/chatShellPackage.test.mjs` replaces six files (`coreShellFrame`, `pactShellFrame`,
+`chatShellLayoutParity`, `chatShellGutterExpand`, `composeWidthAndScroll`, `chatShellFrameCss`).
+Those tested "each workspace hand-builds the chat box correctly" — a property that no longer exists —
+and did it by grepping app.js, so they went stale whenever markup moved, reproducing inside the test
+suite the exact drift they existed to catch. The replacement **mounts the real package against a DOM
+and clicks its controls**: three regions in order, the type box on a row of its own, Send/Stop as one
+group, expand labelling the action not the state, ultracode forcing xhigh, a select that never
+renders blank, `setState` not disturbing an unrelated control, and the callbacks actually firing.
+
+### Verified
+`node --test lib/*.test.mjs` → **1436 pass, 0 fail**; `agent`/`relay`/`dashboard` → **74 pass**.
+Checked in a real headless browser against the running service, not from source: the Chat Shell Lab,
+a Core pane and a Pact conversation all render as the package's three regions with its own footer
+order, the compose box measures **98% of the pane** with a live line gutter, and all three report
+**zero console/page errors**.
+
+## [1.7.1] - 2026-09-07
+### Changed — the Chat Shell Lab's COMPONENT design now runs in production; the shell is the Lab's three regions, not a flat stack
+1.6.5 unified the palette, 1.7.0 unified the region structure — and the live workspaces still did
+not look like the Lab, because every WIDGET inside the shell was still two independent
+implementations: the Lab's `.chip`/`.msg`/`.num`/`.sel`/`.btn-send`/`.sendgrp`/`.split` and
+production's parallel `.exo-chip`/`.ws-line`/`.ws-num`/`.wsel`/`.ws-send`. They agreed on placement
+and disagreed on everything else. This release removes the second copy.
+
+- **New shared file: `dashboard/public/chat-shell-components.css`** — the Lab's own component rules,
+  moved verbatim out of `chat-shell-lab.html`'s `<style>` block. The Lab `<link>`s it; production
+  `<link>`s the identical URL from `index.html` (after `styles.css`, so it wins). Bubbles, prompt
+  states, P#/R# medallions, header chips and tabs, the seam bulb, the gutter, the type box, the send
+  group, the split control, the busy bands and event markers, the agent panel — one copy, two pages.
+- **Every rule is scoped `.cs-shell`** — the class the Lab's `#shell`, a Core pane, and Pact's chat
+  host all now carry. That is what keeps a bare `button {}`/`.chip {}` rule from restyling the file
+  editor, the rail and the landing page, and what lets `.cs-shell .msg.--u` (0,3,0) win against
+  production's own `.ws-line.ws-user` (0,2,0) without renaming a class ~1,450 tests are keyed to.
+- **Production's real elements now carry the Lab's own class names, additively** — transcript lines
+  map onto `.msg.--u`/`.msg.--a` and the four prompt states, medallions onto `.num.num-p`/`.num-r`,
+  the compose field onto `.tawrap`/`.gutter`/`.rg-typebox`, Send/Stop onto `.btn-send`/`.btn-stop`
+  inside one `.sendgrp`. Both workspaces' stats chips and Compact│Wrap control now ask
+  `buildStatsChips`/`buildWrapControls` for the LAB's class names instead of overriding them.
+- **New `buildShellFrame` slot: `footerLeadContent`** — everything the Lab's footer carries above its
+  action row (seam bulb → attachments → reply chips → the full-width type box row → the search
+  drawer). Both workspaces are now EXACTLY the Lab's three children: `[header, core, footer]`. Core
+  went from nine top-level siblings to three; Pact from ten to three. Conversation tabs and the
+  exocortex strip became header rows, matching the Lab's "header is max 3 rows".
+- **The Lab's `f-meta` group is back on the action row** (repo + worktree pickers, beside
+  attach/lines/history/bookmark/expand). Safe now, and only now: the 1.6.6 regression was these
+  flex-growing selects sitting BESIDE the textarea; the type box has had its own full-width row
+  since 1.7.0. Their flex-grow is explicitly neutralised on this row, and pinned by a test.
+- **Addressing-scheme colours moved to `chat-shell-theme.css`'s `:root`** — P# blue / R# violet are
+  identical in Core, Pact and the Lab by construction now, because they are one declaration.
+
+### Fixed — two real clipping bugs found by measuring the running app, not by reading source
+- **Core's footer was clipped by the pane's own `overflow: hidden`.** `.stick-wrap-ws` carried a
+  220px floor, which contradicts the shell's own model ("the footer grows, taking height FROM
+  Core"). Measured on a real 1×1 pane: header 84 + floor 220 + footer 185 = 489px inside a 472px
+  pane, so the model row — Compact│Wrap, auto-wrap, the context readout — fell off the bottom.
+  The transcript yields instead, exactly as the Lab does.
+- **Pact's chat column could be squeezed to ~215px** by the file editor (`min-width: 0`), far below
+  anything the shell is designed for: at that width the transcript collapsed to 0px and the model
+  row was clipped by 63px. Measured across widths, 600px is the first at which the transcript
+  survives at all, so that is now the floor (`min(600px, 40vw)`); the editor gives up the space.
+
+### Verified
+`node --test lib/*.test.mjs` → 1451 pass, 0 fail; `agent`/`relay`/`dashboard` suites → 74 pass.
+New `lib/chatShellComponentsCss.test.mjs` (confirmed red before this change: 5 of 6 failing) pins
+the single-source property — both pages load the one file, neither re-declares it locally, every
+selector is scoped, and production's elements really do carry the Lab's class names. Checked in a
+real headless browser against the running service, not from source: both workspaces render as the
+Lab's three regions with the Lab's own footer child order, the compose box measures 98% of the pane,
+zero console/page errors.
+
+## [1.7.0] - 2026-09-07
+### Changed — Core's and Pact's own header/footer construction is torn out; the Chat Shell Lab's real construction runs in production
+1.6.8 shared LEAF widgets (the stats-row chips, the compose gutter, the Compact│Wrap+auto-wrap
+control) between the Chat Shell Lab, Core, and Pact — but the actual page-construction code around
+those widgets was still three separate hand-written implementations that merely called the shared
+functions. This release removes that gap: **the Lab's own header/footer assembly ORDER now runs
+in production, literally, not a lookalike.**
+
+- **New: `window.ChatShell.buildShellFrame(opts)`** (`dashboard/public/chat-shell.js`) — the Lab's
+  `build()` header-row1→row2, footer-action-row→model-row assembly, extracted into one real,
+  parameterized function. Fed real live data via `opts`, not the Lab's mock `S` object.
+- **Core's and Pact's own hand-assembled header/model-row `el(...)` trees are deleted**, not left
+  duplicated alongside the new call — `dashboard/public/app.js`'s pane-building code (Core) and
+  chat-building code (Pact, desktop only) now both call `buildShellFrame` to construct their real
+  header + model row, wiring in their own real widgets (repo/worktree/model/effort/permission
+  selects, the Compact│Wrap+auto-wrap control, identity/status badges) as content.
+- **New shared file: `dashboard/public/chat-shell-frame.css`**, loaded by both the Lab (`<link>`)
+  and production (`styles.css`'s `@import`) — the same pattern `chat-shell-theme.css` established
+  for color in 1.6.5, one level up, for structure: the three shell regions, the header/footer row
+  layout, and the narrow-pane wrap rule.
+- **Real, confirmed bug fixed as part of this, not a side effect:** production's identity row
+  (`.ws-pane-hd`) never declared `flex-wrap`, so at a real narrow multi-pane width (a 4-pane grid
+  puts a single pane around 330-400px) it had no way to avoid clipping — where the Lab's own
+  `.hrow` has always worn `flex-wrap: wrap` specifically for that width, per its own header comment
+  ("the cockpit runs four of these side by side ... Header and footer rows wrap"). Verified by
+  screenshotting the live app in a real 4×1 pane layout: the identity row now fits its real content
+  (status dot, identity, multi-chat, agents pill, saved badge) on one line without overflowing the
+  pane edge, the same way the Lab's own preview does at that width.
+- **What deliberately stayed separate, and why:** the actual transcript/message-content renderer
+  (Core's incremental `renderTranscriptInto`/turn-node caching, Pact's `pactChatMsgNode` caching) —
+  untouched. That engine solves a real problem (a live conversation with 7,000+ turns must not
+  freeze the browser or lose scroll position on every event) the Lab's mock generator was never
+  built to handle; `buildShellFrame`'s `core` region is an empty mount point that renderer fills,
+  exactly as it did before this change. The footer's "action row" concept (attach/lines/history/
+  bookmark/expand buttons beside the compose box) was also NOT forced through `buildShellFrame` —
+  Core's and Pact's real compose areas (the type box, image previews, the search drawer) have a
+  shape that doesn't fold into one `.frow` the way the Lab's simpler mock footer does, and forcing
+  it would have risked breaking a real, working layout for no verified visual gain. Mobile is
+  untouched, same as every prior round in this migration — still deliberately deferred.
+- Verified against the live running service (`claudstermind.service`, not just `node --test`):
+  screenshotted the Lab, a live Core pane in a real 4-pane grid, and a live Pact pane; clicked the
+  real multi-chat checkbox, auto-wrap checkbox, and Compact button on a live pane and confirmed each
+  fired its real state change with zero console errors.
+- 9 test files updated, 5 new (`lib/chatShellFrameCss.test.mjs`, `lib/chatShellFrame.test.mjs`,
+  `lib/coreShellFrame.test.mjs`, `lib/pactShellFrame.test.mjs`, plus behavioral coverage folded into
+  the existing header/footer suites) — confirmed red-before-green against the pre-refactor code, not
+  just green after.
+- **Caught by review, fixed same pass:** the identity row's class list was `"hrow hrow--r1"` (one
+  compound token) where `chat-shell-frame.css`'s row-1 sizing rule is the compound selector
+  `.hrow.--r1` (two separate tokens) — the exact kind of silent mismatch this whole effort exists to
+  prevent, in the very row it was fixing. Also: `buildShellFrame`'s `core` mount point was being
+  built and discarded by both real callers (Core's `transcriptEl`/Pact's `.pc-scroll` were never
+  actually routed through it) — added an `existingCore` option so the caller's real, already-
+  populated transcript container is reused by reference instead. Both fixed and covered by new
+  behavioral tests, not just corrected source text. Full suite: 1441 + 74 nested = 1515 green.
+- OmniRoute untouched, per the standing constraint on this whole migration.
+
+## [1.6.8] - 2026-09-07
+### Changed — the chat chrome is now ONE implementation, not three that happened to agree
+Every round from 1.6.1 through 1.6.7 fixed a specific visual mismatch between the Chat Shell Lab and
+production by hand-copying the Lab's markup into Core's and Pact's already-separate app.js code paths.
+Each round genuinely closed the gap it targeted, and each one re-opened a new one, because "copy the
+Lab's decision into two other files" is not the same guarantee as "there is one function" — a future
+edit to any one of the three could silently drift the others apart again, which is the exact complaint
+that triggered this pass: *"why can't you just copy-paste it — the same code that outputs it on the
+Lab must be used, such that editing the Lab updates Core and Pact automatically."*
+
+- **`chat-shell.js`** (previously pure layout math, "no DOM here on purpose") gained a DOM layer:
+  `el()`, `paintGutter()`, `buildStatsChips()`, `buildWrapControls()`. These are not new features —
+  they are the Lab's existing header-stats-row, line-gutter, and Compact│Wrap-split-plus-auto-wrap-
+  meter logic, extracted verbatim into one shared, tested module.
+- **The Lab, Core's `app.js`, and Pact's `app.js` all now call these same four functions.** `chat-shell-
+  lab.html` no longer defines its own `el()`/`paintGutter()`/inline stats-chip loop/inline wrap-control
+  markup — it calls `CS.el`/`CS.paintGutter`/`CS.buildStatsChips`/`CS.buildWrapControls`, same as
+  production. Editing the shared function now changes the Lab and both live workspaces at once, which
+  was the actual, repeated ask.
+- **Real gap closed as a side effect, not a separate feature bolt-on:** the Lab's auto-wrap checkbox +
+  progress meter — flagged missing back in the original migration-plan audit and never built — now
+  ships in both Core and Pact for real, backed by an actual server-side flag: `ClaudeSession.autoWrap`
+  (default `true`) gates `WorkspaceManager._maybeRoll()`, settable per-session via a new `setAutoWrap`
+  control action (mirrors the existing `setFastMode` pattern exactly). Unticking it stops the automatic
+  threshold from firing on that session; a manual Wrap is completely unaffected either way, since it's
+  an explicit action, not the threshold this flag gates.
+- **Found and fixed while wiring the checkbox for real:** the auto-wrap meter had no CSS at all
+  (`.ws-wrapmeter`/`.ws-autowrap` didn't exist in `styles.css`) — the DOM node was correct, the
+  percentage was correct, and it was still invisible, because a `width: N%` div with no declared
+  height/background renders as nothing. Caught by actually screenshotting the live app rather than
+  trusting the passing tests, which only proved the markup existed.
+- Verified the whole thing by taking real screenshots of the running service (`chat-shell-lab.html`,
+  a live Core conversation, a live Pact conversation) side by side, not by re-reading source — the
+  failure mode this whole arc kept hitting was "described as fixed, never actually looked at."
+- 12 test files updated (several `html.includes(...)` checks now correctly point at `chat-shell.js`
+  since the logic they were checking moved there) plus one new file, `lib/chatShellDom.test.mjs` —
+  15 real behavioral tests (built DOM, fired real clicks/changes, asserted results) against the four
+  new shared functions directly, confirmed red-before-green against the pre-refactor file. Full suite:
+  1417 + 74 nested = 1491 green.
+- OmniRoute untouched, per the standing constraint on this whole migration.
+
+## [1.6.7] - 2026-09-06
+### Fixed — 1.6.6 broke the compose textarea itself; reverted the one change that did it
+- 1.6.6 moved `repoSel`/`wtSel` into the action row beside the textarea (`composeBtns`), reasoning it
+  matched the lab's grouping. It did not account for the CSS those two selects already carried:
+  `.wsel-sm` gives repoSel `flex: 1`, `.wsel-wt` gives wtSel `flex: 0 1 auto` — both written for the
+  full-width model row they used to live in. `.ws-compose` has no `flex-wrap`, so placed beside
+  `.ws-tawrap` (which has `min-width: 0`, correctly, so it can shrink instead of overflowing), the two
+  growing selects took the row and squeezed the textarea toward zero width — the compose box rendered
+  as one character per line, unusable. Shipped and seen live; this should have been checked in an
+  actual layout before being called done.
+- **Reverted the one change that caused it.** `repoSel`/`wtSel` are back in the model row
+  (`controlsBar`), which has `flex-wrap: wrap` and was never at risk. `composeBtns` keeps only the
+  small, fixed-content controls added in 1.6.6 (lines chip, history) alongside attach/bookmark/expand/
+  Stop/Send — none of which carry flex-grow.
+- Added a regression test asserting repoSel/wtSel are never listed inside `composeBtns` again, on top
+  of updating the two array-literal assertions 1.6.6 had left pointing at the broken arrangement. Full
+  suite: 1396/1396 green.
+- The rest of 1.6.6 (activity chip in the header, multi-chat in the header, seam-centred Live/Held
+  bulb in both workspaces, the lines chip, the ultracode checkbox) is unaffected by this — this entry
+  narrowly reverts the repo/worktree-selector placement, nothing else.
+
+## [1.6.6] - 2026-09-06
+### Changed — the panes are RESTRUCTURED to match the lab's DOM, not just its colors
+- 1.6.1-1.6.5 shared the palette and shipped the wrap engine, but never touched the actual shape of
+  the pane. Compared side by side with the lab, production still read as a stack of extra rows: Core's
+  pane had `topBar, statsRow, convTabsRow, activityLine, activityLog, exo.root` as SIX separate
+  full-width siblings before even reaching the transcript, where the lab has exactly two rows in one
+  `.rg-header` block. That's the concrete reason the two never looked alike, no matter how well the
+  hex values matched.
+- **The live activity feed is now a header CHIP** (`.ws-activity-wrap`), not a permanent full-width
+  row the lab never had. Same element, same click-to-expand behaviour — `activityLog` now docks under
+  its chip as an anchored dropdown (like the bookmark popover) instead of always costing a row.
+- **Core's multi-chat checkbox moved from the footer's model row into the header**, beside identity —
+  matching the lab's r1 exactly. The lab never put it in the footer.
+- **The Live/Held bulb now docks centred on the SEAM between transcript and footer**, in both Core and
+  Pact — matching the lab's placement (and an earlier explicit request: "the middle of the border").
+  It was docking above Send instead, a corner neither the lab nor that request specified.
+- **Core's footer is a real ACTION row + a real MODEL row, not one grab-bag.** repoSel/wtSel/histBtn
+  moved out of the model row (`controlsBar`) into the action row beside Attach/Bookmark/Expand/Stop/
+  Send — matching the lab's actual grouping (repo/worktree/history are things you check before you
+  send, not model settings). The model row is now model/effort/ultracode/fast/permission + context +
+  Compact│Wrap, and nothing else.
+- **Two real gaps closed, not just moved:** a "N lines" chip on the action row (the honest signal of
+  prompt length once the 40% cap hides the rest — computed from the textarea's real value on every
+  keystroke), and an **ultracode** checkbox in the model row that forces the effort selector to xhigh
+  and locks it there, matching the lab's own rule (`if (S.ultracode) S.effort = "xhigh"`) — a real
+  client-side effect, not a decorative box.
+- **Not done, disclosed rather than silently skipped:** the auto-wrap countdown band + meter bar
+  (automatic wrapping is still silent/server-side only; no client-driven countdown-and-cancel exists
+  yet) is a real new behavior, not a restructuring, and shipping a checkbox that does nothing when
+  ticked is exactly the "wired to nothing" bug class this migration has hit before — left out on
+  purpose rather than shipped half-working. Pact does not get the ultracode checkbox either: Pact has
+  no reasoning-effort selector at all yet (a pre-existing gap, not part of this pass).
+- Guarded by a new `lib/chatShellLayoutParity.test.mjs` (9 tests) plus one stale exact-string
+  assertion fixed in each of `lib/chatShellGutterExpand.test.mjs` and `lib/pactHeaderStats.test.mjs`
+  (they pinned the OLD array literals). Full suite: 1395/1395 green.
+
+## [1.6.5] - 2026-09-06
+### Changed — the chat palette is now ONE shared file, not two copies that happen to agree
+- 1.6.4 made production's hex values match the lab's exactly, but they were still two independent
+  copies — the lab's own `<style>` block hardcoded one set, `styles.css` hardcoded another set that
+  happened (as of that commit) to equal it. That is not "the same code"; it is two files a person has
+  to remember to edit together, and it will silently drift the next time either is touched alone.
+- **New file: `dashboard/public/chat-shell-theme.css`.** This is now the ONLY place the Core/Pact
+  chat palette (accent, full dark-mode palette, bubble tokens) is defined. `styles.css` reaches it via
+  `@import url("/chat-shell-theme.css")` as its very first rule; `chat-shell-lab.html` reaches the
+  SAME file via a real `<link rel="stylesheet">`. Editing a colour in this one file now changes both
+  the lab and the live app, because it is loaded by both, not copied into both.
+- **Neither side needed its component rules touched.** Both already read the same token *names*
+  (the lab's `.msg.--u{background:var(--bub-u)…}`, production's `.ws-line.ws-user`/`.pc-user` reading
+  `var(--bub-u, …)`) — what was never shared was the *values* those names resolved to. So this is a
+  values-only extraction: the lab's hardcoded `body[data-theme="core"|"pact"]` blocks and production's
+  `body[data-theme="dark"] .ws-pane`/`.pact-right` blocks were deleted from their own files and
+  replaced by one combined rule in the shared file, matched against both documents' selectors at once
+  (production's `data-theme` axis is light/dark; the lab's is core/pact — they never collide, since
+  they're different HTML documents reading the same custom-property names).
+- **The lab's shorter token names (`--acc`, `--dim`, `--hdr`, `--bg`, `--chip`, `--field`, `--seam`,
+  `--panel2`) are now aliases onto the canonical production names** (`--accent`, `--ink-soft`, `--panel`,
+  etc.), defined only in the shared file — so `chat-shell-lab.html`'s own 380-line `<style>` block
+  needed ZERO rule changes, only the redundant hardcoded values removed.
+- Guarded by a rewritten `lib/chatShellPaletteMatch.test.mjs` (now asserts the stronger property: no
+  hex duplication in either consuming file, `@import`/`<link>` both present and pointed at the same
+  file) plus fixes to `lib/workspaceThemeIdentity.test.mjs` and `lib/chatShellLabRender.test.mjs`,
+  which read `styles.css`/the lab directly and needed to follow the palette to its new home. Full
+  suite: 1386/1386 green.
+- **What this does NOT yet cover, stated plainly:** the DOM-construction code (which JS builds the
+  header/footer/bubble/gutter markup) is still two separate implementations — the lab's mock `build()`
+  renders synthetic turns for design exploration; production's Core/Pact renderers handle real
+  streaming, tool calls, images, and session state the lab never modeled. Sharing the *palette* removes
+  the "looks like a different app" complaint; sharing the *rendering logic* itself would mean either
+  extracting production's real turn-renderer into a module the lab also calls (feeding it mock data
+  shaped like real turns), or the reverse — a genuinely separate, larger project, not a CSS fix, and
+  not started here.
+
+## [1.6.4] - 2026-09-06
+### Fixed — production still didn't have the lab's COLOURS, only its layout; the 1.6.1 "theme" pass never actually carried the palette across
+- Direct side-by-side comparison against the real lab showed the header/footer/gutter/wrap structure
+  now matching, but the background/panel/bubble colours still visibly different. Checking
+  styles.css's own comment confirmed why: the 1.6.1 "WORKSPACE IDENTITY" block only ever overrode
+  `--accent`/`--accent-dim`, explicitly leaving `--bg`/`--panel`/`--panel-2`/`--line`/`--ink` on the
+  app-wide "Pantheonic" tokens the rest of the dashboard (Overview/Map/Activity/etc.) uses — a
+  scoping decision that was reasonable at the time but isn't what "same colours" means.
+- **Both workspaces now get the lab's exact dark-mode palette** (`chat-shell-lab.html`'s
+  `body[data-theme="core"|"pact"]` blocks), scoped to `body[data-theme="dark"] .ws-pane` /
+  `.pact-right` so light mode (which the lab has no design for) is untouched: header/footer/hstats
+  chrome, the pane body/transcript background, chips and the compose field, borders, and both text
+  colours all now read the lab's literal hex, not an approximation.
+- **Message bubbles now use the lab's own flat colours directly**, not a derived guess: new
+  `--bub-a`/`--bub-a-line`/`--bub-u`/`--bub-u-line`/`--bub-u-fg` tokens (set alongside the palette
+  above) replace the `color-mix()` formula from 1.6.1 on `.ws-line.ws-user`/`.ws-line.ws-assistant` —
+  that formula was theme-CONSISTENT (right accent) but not colour-IDENTICAL to the lab, and "same
+  colours" means the literal values. The color-mix formula remains only as a graceful fallback for
+  contexts these new tokens aren't defined in (light mode).
+- **Found and fixed a real bug while doing this: Pact's `.pc-user` (its own user-bubble rule) was
+  still the old hardcoded loud blue (`#2f6feb`)** — Core's equivalent was fixed back when the theme
+  pass first shipped, but Pact's copy was missed entirely and nobody caught it since. Same tokens,
+  same fallback-only treatment, now applied to both `.pc-user`/`.pc-asst` as `.ws-line.ws-user`/
+  `.ws-line.ws-assistant`.
+- **Confirmed, not rebuilt: answer-arrival already uses counter mode in production.**
+  `wsLiveCounterText()` ("N characters arriving…", no partial text, matching the lab's settled
+  choice) is genuinely wired into both Core's `scheduleLiveRender` and Pact's `pactChatPaintLive` —
+  checked the call sites directly rather than assuming, since this session's pattern has been
+  "claimed done, actually not" often enough to warrant verifying rather than repeating the claim.
+  Mobile remains the one place still deferred, as already disclosed.
+- Guarded by `lib/chatShellPaletteMatch.test.mjs` (5 tests, confirmed 3 of 5 red against pre-change
+  `git stash` before the fix — the other 2 pinned facts that were already true) — pins the exact hex
+  values against the lab file itself, not a hardcoded guess of what the lab says, so this can't drift
+  the two apart silently again. Full suite: 1384/1384 green.
+- **Not touched, and likely still visible if compared pixel-for-pixel:** popups/code-blocks/terminal
+  backgrounds (`.ws-bm-pop`, `.ws-codeblock`, `.pact-terminal`) keep their own hardcoded dark values —
+  the lab doesn't render any of these specific widgets, so there is nothing in it to copy from; the
+  lab's `--seam` border tint (a third shade distinct from `--line`, used only for the header/footer
+  divider) also wasn't introduced separately — production's existing `--line` is used for that border
+  instead, a minor nuance rather than a colour mismatch.
+
+## [1.6.3] - 2026-09-06
+### Added — the line-number gutter and the ⇕ Expand (40% ⇄ full) toggle, the last two pieces the migration-plan flagged as still missing from BOTH workspaces
+- **Line-number gutter.** A real `.ws-gutter` column now sits inside the compose field, left of the
+  textarea, in both Core and Pact — numbering every typed line, dimming the untyped slots below the
+  current content, sized to the widest digit count actually shown, and scroll-synced to the textarea.
+  Matches the lab's `paintGutter` exactly, including WHY it's absolutely positioned rather than a flex
+  sibling: as a flex sibling with `align-items: stretch` its own height would come FROM the textarea,
+  whose height in turn depends on the left-padding IT reserves for the gutter — a circular dependency.
+  Taking it out of the sizing path breaks that; it just stretches to match via top/bottom.
+- **⇕ Expand toggle.** A real button in the never-collapsing action row (beside Attach/Stop/Send in
+  Core, Attach/Stop/Send in Pact's action bar) that switches the compose box's growth cap between
+  chat-shell.js's `SWALLOW_PCT` (40% of Core) and `SWALLOW_PCT_MAX` (100% — Core may vanish). The label
+  is the ACTION clicking performs ("⇕ Full" while capped, "⇕ 40%" while expanded), not the current
+  state — matching the lab's `f-expand` exactly. Core's toggle is per-pane (`p.expanded`); Pact's is
+  per-tab (`t.expanded`), since Pact is always-multi.
+- **Both workspaces now cap the compose box against the real CORE region, not a stand-in.** This
+  replaces the two divergent, pre-existing rules the migration-plan's own audit named: Core's fixed
+  "40% of the VIEWPORT" and Pact's fixed "80% of the whole `.pact-chat` CONTAINER". Core measures its
+  `.ws-transcript`; Pact measures `.pc-scroll` (the actual scrolling transcript, not the header-bearing
+  box around it). Both feed the SAME shared, already-tested pure function (`ChatShell.swallowCap`) —
+  reconstructing the Core height the box is growing against from what's on screen right now (current
+  Core height + however much the box has already grown past its floor), so there's no separate
+  header/footer measurement needed and no circular dependency on the box's own not-yet-computed height.
+  The old rules remain, unchanged, as a fallback for the one path that's explicitly still deferred
+  (`WS_COMPOSE_BIG`'s mobile collapse call site passes no Core element on purpose).
+- Guarded by `lib/chatShellGutterExpand.test.mjs` (7 tests, confirmed red against pre-change `git
+  stash` before the fix, green after) — wiring-presence checks in the same convention as the rest of
+  this migration (`lib/coreHeaderStats.test.mjs`, `lib/exoRelocation.test.mjs`), since the underlying
+  pure math already has full behavioral coverage in `lib/chatShell.test.mjs`.
+- **Still open, still tracked openly:** the auto-wrap on/off toggle + countdown band, and the
+  `ultracode` checkbox — both need real backend wiring (server-side suppression of the automatic wrap
+  threshold; a real SDK session flag), not just layout, so they weren't folded into this pass.
+
+## [1.6.2] - 2026-09-06
+### Fixed — the header stats row (1.6.1) was sitting on top of the OLD exocortex bar, not replacing it
+- 1.6.1 added a real, lab-matching header stats row, but left the pre-existing `.exo-bar` (context
+  chip, agents chip, jump/recall inputs, "N earlier turns" edge, cue strip) rendering directly below
+  it as its OWN full-width, differently-styled block — background, border, boxy `.exo-chip` pills that
+  don't match the lab at all. Two header-ish rows stacked on top of each other is why it still didn't
+  look like the lab.
+- Re-homed the exocortex's REAL chips (same nodes, same click handlers, same live `sync()` — nothing
+  rebuilt or faked) into the lab's actual slots, in both Core and Pact:
+  - **Agents chip** moves into the header row, beside pane identity.
+  - **Context chip** is hidden (never deleted — its click is what polls the server for a fresh
+    reading) and proxied from the existing raw-number readout (`badge` in Core, `usageEl` in Pact),
+    which already carries the thousand-separator figures from an earlier explicit request — a second,
+    percentage-only chip beside it would have been duplication, not fidelity.
+  - **Jump/Recall** moves into a real search drawer on the compose field itself (`⌕` toggle on the
+    field's right edge, closed by default, costs nothing while closed), matching the lab's design —
+    not a mock: the same `exoJumpTo`/`exoRecall` calls that were already live.
+- What's left in `.exo-bar` (mainly the "⤓ Latest" pin-release, usually hidden, and the "N earlier
+  turns" edge/cue strip, which have no lab equivalent — they're real signals the lab's mock design
+  never needed to solve) no longer paints its own background/border, so it sits in the flow instead of
+  reading as a third stacked block.
+- Guarded by `lib/exoRelocation.test.mjs` (5 tests) — asserts the SAME DOM nodes are grabbed and moved
+  (not recreated), that the ctx chip is hidden rather than deleted, and that both workspaces get the
+  identical treatment.
+- **Still not done, still tracked openly:** the line-number gutter on the compose field, the ⇕
+  expand-to-full toggle, the auto-wrap on/off toggle + countdown band, and the `ultracode` checkbox —
+  none of these exist in production yet for either workspace.
+
+## [1.6.1] - 2026-09-06
+### Fixed — 1.6.0 ported the wrap ENGINE into Core, not the lab's actual header/footer layout
+- User comparison of the lab vs. live Core showed no visual resemblance — correctly. Checking both
+  files directly: 1.6.0 grafted the new functionality (wrap dialog, reply/quote, multi-chat, counter
+  streaming) onto Core's *pre-existing* header/footer structure, plus an accent-color change. The
+  lab's defining second header row (turns/rounds/%, size, `🗜 N compacted`, `⟳ N wrapped`, a "would
+  wrap" preview, all as chips with the nearest ceiling highlighted) had no counterpart in production
+  at all — what existed instead was a bare `"🗜 3 · ⟳ 1"` string tucked into the model row.
+- Added a real `.ws-hstats` header row to Core, built in `wsPaintStatsRow()` from actual transcript/
+  usage data via the SAME shared, tested pure math the wrap dialog itself uses
+  (`window.ChatShell.rollTriggers`/`wrapSpan` — never a second, driftable computation). The "would
+  wrap" chip is explicitly labelled approximate; the wrap dialog's server-round-tripped preview stays
+  the source of truth.
+- Compact and Wrap are now visually joined into one `.ws-split` control (shared border, single
+  divider) instead of two disconnected buttons — matching the lab's design, which treats them as one
+  decision ("shrink now" vs. "start fresh") with two options.
+- Fixed a real color bug the comparison surfaced: `.ws-num-r` (the R# badge) was riding
+  `var(--accent)`, contradicting the workspace-identity CSS's own comment two lines above it, which
+  says P#/R# tags are deliberately fixed outside the theme system "or a user could never learn them
+  once." Pinned to the lab's fixed violet. The user bubble's fixed, generic `#2f6feb` blue (unrelated
+  to either workspace's identity) is now theme-tinted via `color-mix(in srgb, var(--accent) 26%, …)`,
+  matching the lab.
+- Pact got the identical treatment, not deferred: `pactPaintStatsRow()` (its own `.ws-hstats` row,
+  inserted right after Pact's tab header) reuses the exact same `rollTriggers`/`wrapSpan` calls against
+  Pact's real per-tab fields (`t.msgs`, `t._promptOffset`/`t._compactCount`/`t._wrapCount`), and its
+  Compact/Wrap buttons are joined via `.pact-split`, matching Core's `.ws-split`. Desktop only — Pact's
+  mobile view was already explicitly deferred before this pass (see the `mob` branch in `app.js`) and
+  stays that way.
+- Guarded by `lib/coreHeaderStats.test.mjs` (7 tests) + `lib/pactHeaderStats.test.mjs` (4 tests), plus
+  an updated count in `lib/manualWrapUi.test.mjs` (`wrapSpan` now has 4 real call sites, not 2: both
+  wrap-dialog previews, both header stats rows).
+- **Not done yet, tracked openly rather than silently left out:** the lab's auto-wrap on/off toggle +
+  countdown band, and the `ultracode` checkbox, do not exist anywhere in production for either
+  workspace. Those need real engine/session wiring (suppressing the automatic wrap server-side, wiring
+  ultracode into the SDK session config), not just UI, and were never actually built past the lab
+  mockup — a CSS/layout pass cannot close that gap honestly.
+
 ## [1.6.0] - 2026-09-06
 ### Added — `chat-shell.js` now loads in production (inert)
 - `dashboard/public/chat-shell.js` was written to be shared between the prototyping lab and

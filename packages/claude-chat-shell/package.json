@@ -1,0 +1,20 @@
+{
+  "name": "@ancientpantheon/claude-chat-shell",
+  "displayName": "Claude Chat Shell",
+  "version": "1.0.0",
+  "description": "Drop-in agentic chat UI for Claude Code / Claude Agent SDK apps. One <link>, two <script>s, one mount() call — you get the whole chat box: header identity + live conversation stats, the transcript region, the compose footer with line gutter, attachments, reply quotes, model/effort/permission controls, context readout, and the Compact/Wrap context-window controls. You supply data and callbacks; the package owns every pixel.",
+  "publisher": "ancientpantheon",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "keywords": ["claude", "claude-code", "agent-sdk", "chat-ui", "drop-in", "anthropic", "oauth", "agentic"],
+  "main": "./src/chat-shell.js",
+  "exports": {
+    ".": "./src/chat-shell-ui.js",
+    "./math": "./src/chat-shell.js",
+    "./css": "./src/chat-shell.css",
+    "./src/*": "./src/*"
+  },
+  "files": ["src", "README.md"],
+  "sideEffects": ["./src/*.css", "./src/chat-shell.js", "./src/chat-shell-ui.js"]
+}

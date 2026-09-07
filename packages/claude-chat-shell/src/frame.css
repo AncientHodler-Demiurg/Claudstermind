@@ -1,0 +1,66 @@
+/* CHAT SHELL FRAME — the single source of truth for the Core/Pact chat SHELL STRUCTURE.
+ *
+ * Loaded by BOTH the chat shell lab (chat-shell-lab.html, via <link>) and production
+ * (dashboard/public/styles.css, via @import) — same pattern chat-shell-theme.css already
+ * established for color in 1.6.5. That file unified the PALETTE; this one unifies the STRUCTURE:
+ * the three regions (header/core/footer), the header's row layout, and the narrow-pane wrap
+ * behavior — the rules that decide whether a row clips or survives at the pane widths the cockpit
+ * actually runs (a real 4-pane grid puts a single pane around 380-560px wide).
+ *
+ * Scope is deliberately narrow: region/row LAYOUT only, not the chip/badge/gutter component systems
+ * production already has separately-implemented, separately-tested, and already visually verified
+ * (paintGutter/buildStatsChips/buildWrapControls from chat-shell.js — see lib/chatShellDom.test.mjs).
+ * Merging those two independently-evolved systems (the Lab's .chip vs production's .exo-chip, for
+ * one) is real, avoidable risk for no behavioral gain over what 1.6.8 already verified matches;
+ * this file targets only the concrete, confirmed gap: production's identity row never declared
+ * flex-wrap, so it clips at a width the Lab's own row survives.
+ *
+ * Classes here are added ADDITIVELY to production's existing elements (e.g. a Core pane's header row
+ * carries both "ws-pane-hd" and "rg-header") rather than replacing production's class names outright
+ * — a rename would touch every existing selector/test keyed to the old names for no behavioral gain.
+ */
+
+/* ===== THE THREE REGIONS ===== */
+.rg-header { flex: 0 0 auto; }
+.rg-core { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.rg-footer { flex: 0 0 auto; }
+.rg-header, .rg-footer { position: relative; }
+
+/* ===== ONE SCROLLBAR TREATMENT, shared by EVERY scrolling surface in the shell =====
+ * The Lab's own comment on these rules: "The transcript used the browser default while the type box
+ * got a different one, so the two sat at different widths, different colours and different insets.
+ * Same rule for both: thin, rounded, inset inside the rounded container, transparent track so it
+ * reads as part of the chat graphic rather than a browser chrome bar bolted on the edge."
+ * These lived ONLY in the Lab until now — production's transcript and compose box kept whatever
+ * their own stylesheets gave them, which is exactly the "the scrolls is different" report. Applied
+ * to the shared region class (.rg-core, which both workspaces' transcript containers now carry) and
+ * to the compose field via .rg-typebox, so the two surfaces match each other AND match the Lab.
+ */
+.rg-core, .rg-typebox { scrollbar-width: thin; scrollbar-color: #3a4870 transparent; }
+.rg-core::-webkit-scrollbar, .rg-typebox::-webkit-scrollbar { width: 10px; height: 10px; }
+.rg-core::-webkit-scrollbar-track, .rg-typebox::-webkit-scrollbar-track { background: transparent; }
+.rg-core::-webkit-scrollbar-thumb, .rg-typebox::-webkit-scrollbar-thumb {
+  background: #3a4870; border-radius: 99px; border: 3px solid transparent; background-clip: content-box; }
+.rg-core::-webkit-scrollbar-thumb:hover, .rg-typebox::-webkit-scrollbar-thumb:hover {
+  background: #55689c; background-clip: content-box; }
+.rg-core::-webkit-scrollbar-corner, .rg-typebox::-webkit-scrollbar-corner { background: transparent; }
+
+/* ===== HEADER/FOOTER ROWS =====
+ * "header innards — MAX 3 rows, transient status is a CHIP not a row" (chat-shell-lab.html's own
+ * comment). .hrow is a header row, .frow a footer row — same shape, same wrap rule.
+ */
+.hrow { display: flex; align-items: center; gap: 6px; padding: 6px 9px; min-height: 32px; }
+.hrow + .hrow { border-top: 1px solid #ffffff0d; }
+.frow { display: flex; align-items: center; gap: 6px; padding: 5px 9px; min-height: 30px; }
+.frow + .frow { border-top: 1px solid #ffffff0d; }
+.hleft { display: flex; align-items: center; gap: 6px; flex: 0 1 42%; min-width: 0; }
+.hright { display: flex; align-items: center; gap: 6px; flex: 1 1 58%; min-width: 0; justify-content: flex-start; flex-wrap: wrap; row-gap: 4px; }
+.hrow.--r1 { min-height: 38px; }
+
+/* NARROW PANES. The cockpit runs several of these side by side, so the shell has to survive ~380px
+ * without any row escaping — header and footer rows wrap; long chips truncate rather than push
+ * Send off the edge. Nothing here is mobile-specific, it is pane width (chat-shell-lab.html's own
+ * comment on this exact rule). THE CONFIRMED FIX: production's identity row (.ws-pane-hd) never
+ * carried this — it clipped at the Lab's own stated worst case instead of wrapping to survive it.
+ */
+.hrow, .frow { flex-wrap: wrap; row-gap: 5px; }
