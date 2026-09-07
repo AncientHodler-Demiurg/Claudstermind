@@ -3534,6 +3534,44 @@ function wsShareBtn(rawMd) {
   b.addEventListener("click", (e) => { e.stopPropagation(); wsShareResponse(rawMd, b); });
   return b;
 }
+/** A PORTABLE ADDRESS for one turn: `<conversationId>#R949` / `#P21`.
+ *  Deliberately the same shape as the archive's own `<conversationId>#seg14` refs, so `#R949` reads
+ *  as a sibling of something that already exists rather than a second, competing scheme. */
+function wsTurnRef(convId, kind, number) {
+  return String(convId || "") + "#" + kind + String(number || 0);
+}
+/** ⧉ on EVERY message — prompt and answer alike, in both workspaces.
+ *
+ *  Two different jobs, one button, because they are the same gesture with different scope:
+ *    • click      → the RAW text, verbatim. `⤴` already existed but converts to WhatsApp formatting
+ *                   and only ever sat on answers; markdown handed to another agent must survive
+ *                   intact, and a prompt is exactly as worth copying as a reply.
+ *    • alt/shift  → the ADDRESS instead (`…Khronoton@main#R949`), for when the answer is 10 KB and
+ *                   pasting it is worse than pointing at it. `scripts/recall.mjs` resolves one back
+ *                   to its text, so an agent with a shell can read another agent's turn directly.
+ *  The tooltip says both, because a modifier nobody knows about is a feature nobody has. */
+function wsCopyMsgBtn(kind, number, text, convIdFn) {
+  const b = el("button", { class: "ws-copy-btn", type: "button",
+    title: "Copy this " + (kind === "P" ? "prompt" : "answer") + " (raw text).\n"
+         + "Alt/Shift-click: copy its reference instead — another agent can read it with `recall`." }, ["⧉"]);
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const wantRef = e.altKey || e.shiftKey;
+    const convId = typeof convIdFn === "function" ? convIdFn() : convIdFn;
+    const payload = wantRef ? wsTurnRef(convId, kind, number) : String(text || "");
+    const done = (ok) => {
+      const prev = b.textContent, prevTitle = b.title;
+      b.textContent = ok ? "✓" : "✗";
+      b.title = ok ? (wantRef ? "Reference copied — " + payload : "Copied") : "Copy failed";
+      b.classList.add("copied");
+      setTimeout(() => { b.textContent = prev; b.title = prevTitle; b.classList.remove("copied"); }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(payload).then(() => done(true), () => wsCopyFallback(payload, done));
+    } else wsCopyFallback(payload, done);
+  });
+  return b;
+}
 // ===== REPLY QUOTE — pending-reference pure helpers (sliced out for unit tests; see lib/replyQuote.test.mjs)
 // "Reply to a turn the way a chat reply works" — tap ↩ on ANY prompt or response, it queues onto the
 // pane's (Core) or tab's (Pact) `_replyRefs`, shown as removable chips above the compose box, and
@@ -9405,7 +9443,8 @@ function pactChatMsgNode(m) {
       extra.push(resume, discard);
     }
     const replyBtnP = wsReplyBtn("P", m._pnum, m.text, () => { const at = pactChatActive(); wsAddReplyRef(at, "P", m._pnum, m.text); pactPaintReplyRow(at); });
-    return el("div", { class: cls }, [pactNumBadge("P", m._pnum), replyBtnP, ...kids, ...extra]);
+    const copyBtnP = wsCopyMsgBtn("P", m._pnum, m.text, () => (pactChatActive() || {}).key);
+    return el("div", { class: cls }, [pactNumBadge("P", m._pnum), copyBtnP, replyBtnP, ...kids, ...extra]);
   }
   if (m.role === "assistant") {
     const kids = [];
@@ -9419,7 +9458,8 @@ function pactChatMsgNode(m) {
     const star = el("button", { class: "ws-bm-star" + (m._bookmarked ? " on" : ""), title: m._bookmarked ? "Bookmarked — click to remove" : "Bookmark this response" }, [m._bookmarked ? "★" : "☆"]);
     star.addEventListener("click", (e) => { e.stopPropagation(); pactChatToggleBookmark(m); });
     const replyBtnR = wsReplyBtn("R", m._rnum, m.text, () => { const at = pactChatActive(); wsAddReplyRef(at, "R", m._rnum, m.text); pactPaintReplyRow(at); });
-    return el("div", { class: "pc-msg pc-asst msg --a" }, [pactNumBadge("R", m._rnum), wsShareBtn(m.text), replyBtnR, star, ...kids]);
+    const copyBtnR = wsCopyMsgBtn("R", m._rnum, m.text, () => (pactChatActive() || {}).key);
+    return el("div", { class: "pc-msg pc-asst msg --a" }, [pactNumBadge("R", m._rnum), copyBtnR, wsShareBtn(m.text), replyBtnR, star, ...kids]);
   }
   if (m.kind === "tool_use") {
     // Expandable, like the Core cockpit: the tool names show at a glance; tap to reveal each call's
@@ -12127,6 +12167,7 @@ function viewWorkspace() {
   function renderItem(m) {
     if (m.role === "user" || m.kind === "user") {
       const kids = [wsNumBadge("P", m._pnum),
+        wsCopyMsgBtn("P", m._pnum, m.text, () => (st.panes.find((x) => x.id === m._paneId) || {}).sessionKey),
         wsReplyBtn("P", m._pnum, m.text, () => { const rp = st.panes.find((x) => x.id === m._paneId); wsAddReplyRef(rp, "P", m._pnum, m.text); wsPaintReplyRow(rp); }),
         el("b", { class: "who" }, ["you"])];
       // Root-caused a real "the image disappears from the UI the instant I hit send" report: the
@@ -12167,7 +12208,8 @@ function viewWorkspace() {
       const star = el("button", { class: "ws-bm-star" + (m._bookmarked ? " on" : ""), title: m._bookmarked ? "Bookmarked — click to remove" : "Bookmark this response" }, [m._bookmarked ? "★" : "☆"]);
       star.addEventListener("click", (e) => { e.stopPropagation(); wsToggleBookmark(m); });
       const replyBtn = wsReplyBtn("R", m._rnum, m.text, () => { const rp = st.panes.find((x) => x.id === m._paneId); wsAddReplyRef(rp, "R", m._rnum, m.text); wsPaintReplyRow(rp); });
-      return line("ws-assistant", [wsNumBadge("R", m._rnum), wsShareBtn(m.text), replyBtn, star, ...renderAssistantText(m.text)]);
+      const copyBtn = wsCopyMsgBtn("R", m._rnum, m.text, () => (st.panes.find((x) => x.id === m._paneId) || {}).sessionKey);
+      return line("ws-assistant", [wsNumBadge("R", m._rnum), copyBtn, wsShareBtn(m.text), replyBtn, star, ...renderAssistantText(m.text)]);
     }
     if (m.kind === "tool_use") return line("ws-tool", [el("i", { class: "ti ti-tool" }, []), " ", (m.tools || []).map((t) => t.name).join(", ")]);
     if (m.kind === "tool_result") {

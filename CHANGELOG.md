@@ -4,6 +4,52 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.13.0] - 2026-09-07
+### Added — ⧉ copy on every message, and an address another agent can read
+
+Asked for: a copy button on each prompt and answer, so one agent's output can be shown to another —
+"or reference it somehow. If agents in a chatbox can read answer R#949 of another agent in another
+chat." Both halves are here, because the second one is what actually scales.
+
+**⧉ on every message, in both workspaces.** `⤴` already existed but converts to WhatsApp formatting
+and only ever sat on ANSWERS — markdown handed to another agent has to survive intact, and a prompt
+is exactly as worth copying as a reply. Click copies the **raw text**, verbatim.
+
+**Alt/Shift-click copies the ADDRESS instead** — `AncientPantheon/constructors/Khronoton@main#R949`.
+Deliberately the same shape as the archive's existing `<conversationId>#seg14` refs, so it reads as a
+sibling of something already there rather than a competing scheme. The tooltip says so, because a
+modifier nobody knows about is a feature nobody has.
+
+**`scripts/recall.mjs` turns an address back into text**, and every agent here has a shell:
+
+```
+node scripts/recall.mjs 'AncientPantheon/constructors/Khronoton@main#R949'
+node scripts/recall.mjs 'Khronoton#R949'          # any unambiguous fragment
+node scripts/recall.mjs --list                    # conversations and their P#/R# ranges
+node scripts/recall.mjs 'Khronoton#R949' --json
+```
+
+So the loop is: point at a turn in one chat, paste the address into another, and that agent reads it
+**itself**. An address beats a paste the moment the answer is large, and it stays meaningful later.
+Text goes to stdout alone (header on stderr) so it pipes cleanly. Round-trip verified on the real
+conversation: the ⧉ button copied 3,793 characters, and `recall 'Khronoton#R949'` returned the same
+3,793 characters.
+
+**The numbering had to be got exactly right**, because getting it wrong returns the wrong turn while
+looking entirely plausible — the same class of bug that made recall-by-number useless before 1.12.0.
+R#n is the n-th assistant row of the LIVE transcript, 1-based. Wrapping never splices that file; it
+archives a *copy* of the head. Confirmed against the server rather than assumed: `capTranscript`
+hands a full transcript back with `responseOffset: 0`. My first draft added the archived count on top
+and was wrong; the archive is now only a fallback for a live file that has been trimmed.
+
+### Added
+- `lib/recallCli.test.mjs` (8): exact resolution for answers and prompts, 1-based numbering stated as
+  its own test, fragment matching that refuses ambiguity and lists the candidates, an out-of-range
+  error that says how many exist, malformed addresses rejected, stdout carrying the text alone, and
+  `--json`/`--list`. Red-before-green: an off-by-one fails 5 of 8.
+- 3 wiring tests. One earned its keep immediately — Pact's prompt button was built and never
+  inserted, which only a live count of rendered buttons caught.
+
 ## [1.12.8] - 2026-09-07
 ### Fixed — the wrap preview printed a backwards range when one side was empty
 

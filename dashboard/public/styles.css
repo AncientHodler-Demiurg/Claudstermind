@@ -799,6 +799,16 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .ws-reply-btn:hover { color: var(--accent); filter: brightness(1.15); }
 .ws-assistant .ws-reply-btn, .pc-asst .ws-reply-btn { position: absolute; top: -9px; right: 54px; z-index: 2;
   width: 22px; height: 20px; padding: 0; }
+/* ⧉ Copy this turn — on a PROMPT it sits inline beside "you" (the corner there is empty); on an
+   ANSWER it joins the floating corner row, one slot further left than ↩. Same geometry as the three
+   it stands beside, so the row stays a row. Click copies the raw text; Alt/Shift copies the turn's
+   reference (see wsCopyMsgBtn) — the tooltip says so, since an unadvertised modifier helps nobody. */
+.ws-copy-btn { background: transparent; border: none; color: var(--ink-mute); font-size: 13px; line-height: 1;
+  cursor: pointer; padding: 0 4px; vertical-align: middle; }
+.ws-copy-btn:hover { color: var(--accent); filter: brightness(1.15); }
+.ws-copy-btn.copied { color: #34d399; }
+.ws-assistant .ws-copy-btn, .pc-asst .ws-copy-btn { position: absolute; top: -9px; right: 78px; z-index: 2;
+  width: 22px; height: 20px; padding: 0; }
 /* The removable chips shown above the compose box for pending reply references (round 22 design:
    "reply to a turn the way a chat reply works"). Empty/absent when there is nothing pending — costs
    no layout space until used. */
