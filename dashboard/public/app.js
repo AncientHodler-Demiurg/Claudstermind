@@ -14149,7 +14149,33 @@ function viewWorkspace() {
         const interactive = [...bucket.values()].some((req) => req.mode !== "restore");   // a silent boot reattach that finds nothing shouldn't nag
         st.pendingOpens.delete(sessionKey);
         for (const req of bucket.values()) clearTimeout(req.timer);   // resolves every pane waiting on this key
-        if (interactive) note("Could not open — " + (data.message || "that conversation could not be opened."));
+        // A DEAD END, MADE RECOVERABLE. A pane whose stored key names a conversation the engine has
+        // never heard of renders empty FOREVER — one toast you may not have been looking at, then a
+        // blank box with a repo selected and no way to tell what is wrong. It happens whenever a key
+        // outlives its conversation: a session file removed on disk, a tab restored from a layout
+        // saved against an older store, a conversation opened from history and later deleted.
+        //
+        // For a Core pane the canonical key is DERIVABLE — repo + worktree + slot — so when the
+        // stored one is unknown and differs from it, re-derive and reopen. Once per pane (`_reKeyed`),
+        // because a canonical key that ALSO fails is a real absence and must not become a loop.
+        let recovered = 0;
+        for (const req of bucket.values()) {
+          const p = st.panes.find((x) => x.id === req.paneId);
+          if (!p || !p.repo || p._reKeyed) continue;
+          const canonical = wsWorkspaceId(p.repo, p.worktree, wsPaneSlot(p));
+          if (!canonical || canonical === p.sessionKey) continue;
+          p._reKeyed = true;
+          p.sessionKey = canonical;
+          p.transcript = []; p._turnCache = null; p._domLead = []; p.readonly = false;
+          const ui = paneUI.get(p.id); if (ui) ui._txRef = null;
+          logActivity(p, "↻ That conversation is gone — reattached this pane to " + shortRepo(p.repo) + "'s own history.", "ws-act-ok");
+          saveLayout();
+          beginPendingOpen(canonical, p, "recover");
+          wsPost("control", { action: "open", args: { sessionKey: canonical } });
+          paintPane(p);
+          recovered++;
+        }
+        if (interactive && !recovered) note("Could not open — " + (data.message || "that conversation could not be opened."));
       }
       // Workspace-level notices (create/remove/note/error) carry no sessionKey.
       if (!sessionKey && (data.kind === "created" || data.kind === "removed" || data.kind === "note" || data.kind === "error")) {

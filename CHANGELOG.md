@@ -4,6 +4,43 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.12.7] - 2026-09-07
+### Fixed — a pane whose conversation no longer exists sat empty forever
+
+Reported as "the conversation couldn't be opened", with a blank Core pane: repo selected, model row
+working, one red line and nothing else.
+
+**I caused this specific instance.** While verifying the dangling-resume fix I created a throwaway
+conversation *inside the user's Khronoton workspace* to prompt through the real engine, then deleted
+it. Anything still pointing at that key had nowhere to go. The right move was a scratch workspace of
+its own; using someone's live one for a diagnostic was careless.
+
+But the dead end it exposed is real and general: **a key can outlive its conversation** in several
+ordinary ways — a session file removed on disk, a layout restored against an older store, a
+conversation opened from history and later deleted. In every one of them the pane rendered empty
+*forever*: one toast you may not have been looking at, then a blank box with nothing to say what was
+wrong, and the dead key written straight back to localStorage on the next save.
+
+For a Core pane the canonical key is derivable — repo + worktree + slot — so it now repairs itself:
+re-derive, drop the stale rows and their render cache, persist, reopen, and **say so** in the activity
+line ("↻ That conversation is gone — reattached this pane to Khronoton's own history"). At most once
+per pane: a canonical key that also fails is a real absence, not something to retry in a loop, and the
+old toast still fires for the cases that genuinely cannot be repaired.
+
+Reproduced headless against the live engine — a pane keyed to the removed conversation rendered the
+exact reported screenshot (one line, key unchanged across reloads); with the fix, the same layout
+recovers to `AncientPantheon/constructors/Khronoton@main`, 249 lines, 715 earlier turns available.
+
+### Also — Khronoton itself was already working
+The 1.12.4/1.12.5 recovery fired at 22:48:49 on the real conversation: the dangling `b17780e2…` was
+dropped, session `7c20edd9…` started, and the agent replied at 22:49:33 — correctly noting it could
+not see the earlier turns' context, which is exactly what the notice warns about.
+
+### Added
+- `lib/paneKeyRecovery.test.mjs` (5), pinning the derivation, the once-only guard and its ordering
+  (recorded BEFORE the reopen, or a failing reopen loops), the state left behind, and that the repair
+  announces itself. Confirmed red-before-green against the live engine, not just in source.
+
 ## [1.12.6] - 2026-09-07
 ### Fixed — escaped pipes tore markdown table cells in half
 
