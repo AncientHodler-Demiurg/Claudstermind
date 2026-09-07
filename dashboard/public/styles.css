@@ -820,19 +820,15 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .ws-reply-btn:hover { color: var(--accent); filter: brightness(1.15); }
 .ws-assistant .ws-reply-btn, .pc-asst .ws-reply-btn { position: absolute; top: -9px; right: 54px; z-index: 2;
   width: 22px; height: 20px; padding: 0; }
-/* ===== OFF-SCREEN TRANSCRIPT ROWS COST NOTHING =====================================================
- * Profiled with eight panes at 6x CPU throttle: 2,361 ms of blocked main thread in 20 s, and 71% of
- * it in V8's `(program)` bucket — i.e. NOT JavaScript. Layout, style and paint, over 1,455 message
- * rows, the large majority of which are scrolled out of view in a 4-across grid.
- *
- * `content-visibility: auto` lets the browser skip layout AND paint for a row that is off-screen,
- * and do it again the moment it scrolls in. `contain-intrinsic-size: auto <fallback>` is what keeps
- * the scrollbar honest: `auto` makes Chrome REMEMBER each row's real measured height once it has
- * been rendered, so scrollHeight stops being an estimate — which matters here because the stick
- * controller measures exactly that to decide "am I at the bottom".
- * The fallback is only used for a row that has never been on screen.
- */
-.ws-line, .pc-msg { content-visibility: auto; contain-intrinsic-size: auto 72px; }
+/* NOT `content-visibility: auto` on message rows — tried, measured (~11% less main-thread work,
+   ~15% less layout with eight panes) and REVERTED, because it broke two visible things and the
+   trade was not close:
+     • it implies `contain: paint`, which CLIPS anything drawn outside the row's border box — and the
+       P#/R# badges sit at `top: -9px`, so the turn numbers were cut off;
+     • off-screen rows fall back to `contain-intrinsic-size` estimates, so `scrollHeight` shifts as
+       rows render — the transcript slid on its own, and the stick controller reads exactly that
+       value to decide "am I at the bottom".
+   Left here as a signpost: a future attempt needs the badges inside the row's box first. */
 
 /* ⧉ Copy this turn — on a PROMPT it sits inline beside "you" (the corner there is empty); on an
    ANSWER it joins the floating corner row, one slot further left than ↩. Same geometry as the three

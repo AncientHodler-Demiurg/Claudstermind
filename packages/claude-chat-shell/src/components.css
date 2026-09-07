@@ -446,6 +446,20 @@
  * remove. `:empty` covers the same case for a group a host never filled at all. */
 .cs-shell .cs-grp:empty { display: none; }
 
+/* ===== "LOADING THIS CONVERSATION" — the core region's own bar =====
+ * Core's transcript area used to sit blank while its conversation was fetched, with the header
+ * reporting `0/1,000 turns` beside it — asserting empty rather than admitting pending. The bar's
+ * TRANSFORM animates, never `left` or `width`: those re-run layout every frame, and this appears on
+ * every pane at once, precisely when the main thread has least to spare. */
+.cs-shell .cs-loading { align-self: stretch; display: flex; flex-direction: column; gap: 8px; padding: 18px 12px; }
+.cs-shell .cs-loadbar { position: relative; height: 4px; border-radius: 3px; overflow: hidden;
+  background: color-mix(in srgb, var(--acc) 16%, transparent); }
+.cs-shell .cs-loadbar > i { position: absolute; inset: 0 auto 0 0; width: 40%; border-radius: 3px;
+  background: var(--acc); will-change: transform; animation: csLoadSlide 1.15s ease-in-out infinite; }
+@keyframes csLoadSlide { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
+.cs-shell .cs-loadlbl { color: var(--dim); font-size: 11.5px; }
+@media (prefers-reduced-motion: reduce) { .cs-shell .cs-loadbar > i { animation: none; transform: translateX(0); } }
+
 /* ===== STACKED GROUPS — a control over its own caption (CS.stack) =====
  * The model row is four of these. `align-items: stretch` so both rows share the group's width and
  * therefore agree on where they start; the group is then as wide as its WIDER row rather than the

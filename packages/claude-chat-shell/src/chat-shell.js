@@ -526,6 +526,24 @@
     };
   }
 
+  /** "Still fetching this conversation" — a bar for the CORE region.
+   *
+   *  The gap it fills is real and was completely unexplained: during a reload with several panes,
+   *  Core's transcript area sits blank while its conversation is fetched, and the header meanwhile
+   *  reports `0/1,000 turns · 0%` and "context: no reading yet". So it does not merely look unloaded,
+   *  it actively asserts that the conversation is EMPTY. Pact has had a loading state all along;
+   *  Core never did.
+   *
+   *  The bar animates `transform`, not `left`/`width`: animating either of those re-runs LAYOUT every
+   *  frame, and this shows up on every pane at once, which is exactly when the main thread is
+   *  busiest. (See lib/compositedAnimations.test.mjs.) */
+  function buildLoading(o) {
+    o = o || {};
+    var bar = el("span", { class: "cs-loadbar" }, [el("i", {}, [])]);
+    return el("div", { class: "cs-loading" + (o.className ? " " + o.className : "") },
+      [bar, el("span", { class: "cs-loadlbl" }, [o.label || "Loading conversation\u2026"])]);
+  }
+
   /** Put a buildWrapControls() result into the shell's STACKED wrap group: the auto-wrap tick and its
    *  meter on top (what the window is doing on its own), Compact│Wrap underneath (what you can do
    *  about it).
@@ -1121,7 +1139,7 @@
     coreAtRest: coreAtRest, swallowCap: swallowCap, computeShell: computeShell, slotsFor: slotsFor, wrapReadiness: wrapReadiness, rollTriggers: rollTriggers, wrapSpan: wrapSpan, wrapSeedEstimate: wrapSeedEstimate, seedPlan: seedPlan,
     replyQuote: replyQuote, buildReplyPreamble: buildReplyPreamble, replyCost: replyCost,
     ROLL_MAX_TURNS: ROLL_MAX_TURNS, ROLL_MAX_BYTES: ROLL_MAX_BYTES,
-    el: el, grp: grp, stack: stack, sendPresentation: sendPresentation, fillWrapGroup: fillWrapGroup, flatRowWidth: flatRowWidth, fitStackedRow: fitStackedRow, gutterEntries: gutterEntries, rowAlignPlan: rowAlignPlan, alignRowGroups: alignRowGroups,
+    el: el, grp: grp, stack: stack, sendPresentation: sendPresentation, buildLoading: buildLoading, fillWrapGroup: fillWrapGroup, flatRowWidth: flatRowWidth, fitStackedRow: fitStackedRow, gutterEntries: gutterEntries, rowAlignPlan: rowAlignPlan, alignRowGroups: alignRowGroups,
     paintGutter: paintGutter, buildStatsChips: buildStatsChips, buildWrapControls: buildWrapControls,
     buildShellFrame: buildShellFrame, buildMark: buildMark
   };

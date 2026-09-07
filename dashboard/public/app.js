@@ -25,7 +25,15 @@ const PERF = (() => {
       for (const e of l.getEntries()) {
         const d = Math.round(e.duration);
         st.long.push({ d, at: e.startTime });
-        if (st.on) { st.tLong.n++; st.tLong.blocked += d; st.tLong.worst = Math.max(st.tLong.worst, d); }
+        if (st.on) {
+          st.tLong.n++; st.tLong.blocked += d; st.tLong.worst = Math.max(st.tLong.worst, d);
+          // Attribute it while the evidence is still in the ring.
+          const why = blame(e.startTime, e.startTime + e.duration);
+          const top = why.length ? why.slice(0, 3).map((x) => x[0] + " " + Math.round(x[1]) + "ms").join(" + ")
+                                 : "render/other — no instrumented JS was running";
+          st.feed.push({ d, at: Math.round(e.startTime), why: top });
+          if (st.feed.length > 40) st.feed.shift();
+        }
       }
       if (st.long.length > 400) st.long.splice(0, st.long.length - 400);
     }).observe({ entryTypes: ["longtask"] });
@@ -35,6 +43,28 @@ const PERF = (() => {
   // now, while you are typing), and a running TOTAL since you switched it on (what to paste back
   // after a stall — a freeze that happens every eight seconds is invisible in any one-second window).
   st.tCalls = new Map(); st.tMs = new Map(); st.tLong = { n: 0, blocked: 0, worst: 0 }; st.t0 = performance.now();
+  st.feed = [];      // the live "what just froze, and why" list
+  st.input = [];     // keystroke → next paint, in ms — the number that matches what typing FEELS like
+  // A ring of recently-finished instrumented calls, so a long task can be ATTRIBUTED instead of
+  // merely counted. This is the question that matters when the UI freezes: was it OUR JavaScript, or
+  // was it the browser rendering? A long task with no instrumented call overlapping it is the second
+  // — and no amount of optimising app.js would have touched it.
+  const spans = [];
+  const SPAN_CAP = 400;
+  const span = (name, t0, t1) => {
+    spans.push({ name, t0, t1 });
+    if (spans.length > SPAN_CAP) spans.splice(0, spans.length - SPAN_CAP);
+  };
+  /** Which instrumented calls were running during [from, to]? */
+  const blame = (from, to) => {
+    const hit = new Map();
+    for (const s2 of spans) {
+      if (s2.t1 < from || s2.t0 > to) continue;
+      const overlap = Math.min(s2.t1, to) - Math.max(s2.t0, from);
+      hit.set(s2.name, (hit.get(s2.name) || 0) + Math.max(0, overlap));
+    }
+    return [...hit.entries()].sort((a, b) => b[1] - a[1]);
+  };
   const bump = (name, ms) => {
     st.calls.set(name, (st.calls.get(name) || 0) + 1);
     st.tCalls.set(name, (st.tCalls.get(name) || 0) + 1);
@@ -44,7 +74,8 @@ const PERF = (() => {
   const run = (name, fn, self, args) => {
     if (!st.on) return fn.apply(self, args);
     const t0 = performance.now();
-    try { return fn.apply(self, args); } finally { bump(name, performance.now() - t0); }
+    try { return fn.apply(self, args); }
+    finally { const t1 = performance.now(); bump(name, t1 - t0); span(name, t0, t1); }
   };
   const reset = () => { st.calls.clear(); st.ms.clear(); st.long.length = 0; st.since = performance.now(); };
 
@@ -76,10 +107,36 @@ const PERF = (() => {
       `main thread BLOCKED ${T.long.blocked}ms in ${T.long.n} long task(s), worst ${T.long.worst}ms`];
     for (const r of T.rows.slice(0, 14))
       L.push(`${r.ms.toFixed(0).padStart(7)}ms  ${String(r.n).padStart(6)}x  ${(r.ms / Math.max(1, r.n)).toFixed(2).padStart(7)}ms avg  ${r.name}`);
+    const inp = st.input.slice().sort((a, b) => a - b);
+    if (inp.length) {
+      L.push(`keystroke -> paint: p50 ${Math.round(inp[inp.length >> 1])}ms  p95 ${Math.round(inp[Math.floor(inp.length * 0.95)])}ms  worst ${Math.round(inp[inp.length - 1])}ms  (${inp.length} samples)`);
+    }
+    if (st.feed.length) {
+      L.push("--- what froze it (most recent last) ---");
+      for (const f of st.feed.slice(-12)) L.push(`${String(f.d).padStart(6)}ms  ${f.why}`);
+    }
     L.push(`--- last ${s.span.toFixed(1)}s ---`);
     for (const r of s.rows.slice(0, 6))
       L.push(`${r.ms.toFixed(0).padStart(7)}ms  ${String(r.n).padStart(6)}x  ${(r.ms / Math.max(1, r.n)).toFixed(2).padStart(7)}ms avg  ${r.name}`);
     return L.join("\n");
+  }
+
+  /** Measure a keystroke all the way to the frame that shows it. This is the number the user
+   *  actually experiences — "the text I typed appears a few seconds later" — and it is not the same
+   *  as how long our input handler took, because the delay is usually spent waiting for the main
+   *  thread to become free at all. Installed once, on capture, so nothing can swallow it. */
+  function watchInput() {
+    document.addEventListener("input", (e) => {
+      if (!st.on) return;
+      const t = e.target;
+      if (!t || (t.tagName !== "TEXTAREA" && t.tagName !== "INPUT")) return;
+      const at = performance.now();
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const ms = performance.now() - at;
+        st.input.push(ms);
+        if (st.input.length > 120) st.input.shift();
+      }));
+    }, true);
   }
 
   let box = null, timer = 0;
@@ -92,9 +149,19 @@ const PERF = (() => {
       + `<span style="opacity:.6;min-width:44px;text-align:right">${r.n}x</span>`
       + `<span style="opacity:.6;min-width:56px;text-align:right">${(r.ms / Math.max(1, r.n)).toFixed(2)}avg</span>`
       + `<span>${r.name}</span></div>`).join("");
+    const inp = st.input.slice().sort((a, b) => a - b);
+    const p50 = inp.length ? Math.round(inp[inp.length >> 1]) : 0;
+    const p95 = inp.length ? Math.round(inp[Math.min(inp.length - 1, Math.floor(inp.length * 0.95))]) : 0;
+    const inpCol = p95 > 400 ? "#f87171" : p95 > 150 ? "#f59e0b" : "#3ddc97";
+    const feed = st.feed.slice(-6).reverse().map((f) =>
+      `<div style="display:flex;gap:8px"><b style="color:${f.d > 300 ? "#f87171" : "#f59e0b"};min-width:56px;text-align:right">${f.d}ms</b>`
+      + `<span style="opacity:.85">${f.why}</span></div>`).join("");
     box.innerHTML = `<div style="font-weight:700;margin-bottom:4px">perf · last ${s.span.toFixed(1)}s`
       + `<span style="float:right;color:${bar}">blocked ${s.long.blocked}ms / ${s.long.n} tasks / worst ${s.long.worst}ms</span></div>`
+      + `<div style="margin-bottom:4px">keystroke→paint <b style="color:${inpCol}">p50 ${p50}ms · p95 ${p95}ms</b>`
+      + `<span style="opacity:.5"> (${inp.length} samples)</span></div>`
       + (rows || '<div style="opacity:.6">no instrumented work yet…</div>')
+      + (feed ? '<div style="margin-top:6px;opacity:.85;font-weight:700">what froze it</div>' + feed : "")
       + '<div style="opacity:.45;margin-top:5px">Ctrl+Alt+P to hide · CMPERF.report() to copy</div>';
     st.lastSnap = s;
     reset();
@@ -103,9 +170,9 @@ const PERF = (() => {
     st.on = force == null ? !st.on : !!force;
     if (st.on && !box) {
       box = document.createElement("div");
-      box.style.cssText = "position:fixed;right:10px;bottom:10px;z-index:99999;background:#0b1020ee;color:#e7ecff;"
+      box.style.cssText = "position:fixed;right:10px;bottom:10px;z-index:99999;background:#0b1020f2;color:#e7ecff;"
         + "font:11px/1.5 ui-monospace,Consolas,monospace;padding:9px 11px;border:1px solid #3a4870;border-radius:9px;"
-        + "min-width:430px;pointer-events:none;box-shadow:0 10px 30px #000a";
+        + "min-width:520px;max-width:640px;pointer-events:none;box-shadow:0 10px 30px #000a";
       document.body.appendChild(box);
     }
     if (box) box.style.display = st.on ? "block" : "none";
@@ -113,6 +180,8 @@ const PERF = (() => {
     if (st.on) {
       reset();
       st.tCalls.clear(); st.tMs.clear(); st.tLong = { n: 0, blocked: 0, worst: 0 }; st.t0 = performance.now();
+      st.feed = []; st.input = []; spans.length = 0;
+      if (!watchInput._on) { watchInput._on = true; watchInput(); }
       timer = setInterval(paint, 1000);
     }
     return st.on;
@@ -11696,11 +11765,12 @@ function viewWorkspace() {
     let bucket = st.pendingOpens.get(sessionKey);
     if (!bucket) { bucket = new Map(); st.pendingOpens.set(sessionKey, bucket); }
     const prior = bucket.get(p.id); if (prior) clearTimeout(prior.timer);
+    p._opening = true;   // drives the core region's loading bar — see wsPaneLoading
     const entry = { paneId: p.id, mode, gen: p._gen || 0, priorKey: p.sessionKey, timer: null };
     entry.timer = setTimeout(() => {
       const b = st.pendingOpens.get(sessionKey);
       if (!b || b.get(p.id) !== entry) return;   // already resolved or superseded
-      b.delete(p.id);
+      b.delete(p.id); p._opening = false; p._loadedOnce = true; paintPane(p);
       if (!b.size) st.pendingOpens.delete(sessionKey);
       if (mode !== "restore") note("Could not open — local bridge may be disconnected.");   // a silent boot reattach that times out shouldn't nag
     }, WS_OPEN_TIMEOUT_MS);
@@ -12339,6 +12409,18 @@ function viewWorkspace() {
       : (r.role || r.kind || "?") + ":" + (r.at || 0) + ":" + (typeof r.text === "string" ? r.text.length : 0);
     return [p.sessionKey || "", p.convSlot || 0, p._revealAll ? 1 : 0, tx.length ? k(tx[0]) : "",
             tx.length > 1 ? k(tx[1]) : ""].join("\u0001");
+  }
+
+  /** Is this pane still waiting for its conversation to arrive?
+   *
+   *  Deliberately NOT "is there an open in flight": a pane's rows can arrive down several paths —
+   *  a restore's `open`, the `hello` snapshot, a resync — and keying off one of them left the three
+   *  panes that used another still showing a blank region under a header reading "0/1,000 turns".
+   *  The honest question is simply "this pane is bound to a conversation, and the server has not yet
+   *  told us anything about it". `_loadedOnce` is set by every path that answers, INCLUDING one that
+   *  answers "empty", so a genuinely new conversation stops loading the moment it is confirmed new. */
+  function wsPaneLoading(p) {
+    return !!(p && p.sessionKey && p.repo && !p._loadedOnce && !(p.transcript || []).length);
   }
 
   function renderTranscriptInto(ui, p, tailExtras) {
@@ -13008,6 +13090,17 @@ function viewWorkspace() {
   function flushPaints() {
     _paintRAF = 0;
     const ids = _paintDirty; _paintDirty = new Set();
+    // READ EVERY PANE'S SCROLL POSITION FIRST, then paint. A pane's scroll has to be sampled BEFORE
+    // its own DOM changes, but sampling inside each paint means pane 2's read must flush pane 1's
+    // writes, pane 3's must flush both — N forced layouts instead of one. Hoisted here they are one
+    // read pass over a clean tree. (The matching write pass is schedulePaneScroll.) Measured at 6x
+    // throttle with eight panes: 547 ms -> a single flush.
+    PERF.run("  stick.sample x N (batched)", () => {
+      for (const id of ids) {
+        const ui = paneUI.get(id);
+        if (ui && ui.stick) ui._preSample = ui.stick.sample();
+      }
+    }, null, []);
     // A throw in one pane's paint must NOT abort the loop (the other panes would go stale) nor bubble out
     // of the rAF and freeze every future scheduled paint (a stuck-until-reload symptom). Isolate + log each.
     for (const id of ids) { const pane = st.panes.find((x) => x.id === id); if (pane) { try { paintPane(pane); } catch (e) { console.error("paintPane failed", e); } } }
@@ -13037,6 +13130,42 @@ function viewWorkspace() {
     const o6 = wsAutoEnsure;         wsAutoEnsure = w("autoTick (250ms/pane)", o6);
     const o7 = saveLayout;           saveLayout = w("saveLayout", o7);
     const o8 = scheduleLiveRender;   scheduleLiveRender = w("liveText", o8);
+    // Finer grain inside paintPane, because "paintPane is slow" is not yet an answer — it is a list
+    // of a dozen things, and the profiler exists to say WHICH.
+    const o9 = wsPaintConvTabs;      wsPaintConvTabs = w("  convTabs", o9);
+    const oA = wsPaintUsage;         wsPaintUsage = w("  usageChip", oA);
+    const oB = wsPaintModelNow;      wsPaintModelNow = w("  modelNow", oB);
+    const oC = fillModelSelect;      fillModelSelect = w("  modelSelect", oC);
+    const oD = fillEffortSelect;     fillEffortSelect = w("  effortSelect", oD);
+    const oE = wsApplyStall;         wsApplyStall = w("  stall", oE);
+    const oF = wsMarkBookmarks;      if (typeof oF === "function") wsMarkBookmarks = w("  bookmarks", oF);
+    const oG = paintSwarm;           if (typeof oG === "function") paintSwarm = w("  swarm", oG);
+  }
+
+  /** ALL the panes' scroll fix-ups in ONE frame.
+   *
+   *  `stick.apply` reads scrollHeight, which forces a synchronous layout. Done inline in paintPane it
+   *  ran once per pane per event, and each one had to first flush the DOM writes of the pane painted
+   *  before it — the same cross-pane thrash that made streaming quadratic (see scheduleLiveRender).
+   *  Measured at 6x throttle with eight panes: 1784 ms of paintPane's 2290 ms, ~51 ms a call.
+   *
+   *  Batched, the FIRST apply pays the one layout everybody needs and the rest read a clean tree;
+   *  writing scrollTop does not dirty layout, so nothing re-invalidates in between. */
+  const _scrollRAF = { id: 0 };
+  function schedulePaneScroll() {
+    if (_scrollRAF.id) return;
+    _scrollRAF.id = _raf(() => {
+      _scrollRAF.id = 0;
+      PERF.run("  stick.apply x N (batched)", () => {
+        for (const ui of paneUI.values()) {
+          if (ui._needScroll === undefined) continue;
+          const near = ui._needScroll; ui._needScroll = undefined;
+          if (!ui.transcriptEl) continue;
+          if (ui.stick) ui.stick.apply(near);
+          else if (near) ui.transcriptEl.scrollTop = ui.transcriptEl.scrollHeight;
+        }
+      }, null, []);
+    });
   }
 
   function schedulePaint(p) {
@@ -13178,6 +13307,9 @@ function viewWorkspace() {
   // it and drifted the moment either side changed. Now it's one function; only the real data differs.
   function wsPaintStatsRow(p, ui) {
     if (!ui || !ui.view) return;
+    // While the conversation is still arriving we do not KNOW the counts; painting them says
+    // "0 turns · 0%", which is a claim, not a blank. Leave the row as it is until we do.
+    if (wsPaneLoading(p)) return;
     const tx = Array.isArray(p.transcript) ? p.transcript : [];
     // THE LIVE WINDOW, not the whole conversation. Every ceiling in this row is per-window — the
     // engine measures turns and bytes since the last wrap — and the transcript is never spliced by a
@@ -13365,16 +13497,44 @@ function viewWorkspace() {
     // Sample the "were they following the tail?" state BEFORE the transcript is re-rendered below.
     // forceBottom (a fresh open/resume, or a just-sent message) overrides it — that lands at the
     // bottom and re-pins, as expected.
-    const wasNearBottom = forceBottom || (ui.stick ? ui.stick.sample() : (ui.transcriptEl.scrollHeight - ui.transcriptEl.scrollTop - ui.transcriptEl.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX));
+    // ONLY TOUCH THE SCROLL WHEN THE CONTENT MOVED.
+    //
+    // `stick.apply(true)` does `scrollTop = scrollHeight`, and reading scrollHeight forces a full
+    // synchronous layout of that pane's transcript. paintPane runs on every SSE event, so this was
+    // paid on every event for every pane whether or not a single row had changed. Profiled at 6x
+    // throttle with eight panes: **1784 ms of paintPane's 2290 ms — 78% of it** — at ~51 ms a call,
+    // and it is the thing behind a 1-2 second freeze while typing.
+    //
+    // If nothing was appended, nothing streamed, and nothing is queued, the scroll position cannot
+    // have drifted, so there is nothing to correct. `forceBottom` (a fresh open, a view switch, a
+    // jump) always goes through.
+    const scrollSig = (p.transcript || []).length + "|" + ((p._liveText || "").length)
+      + "|" + ((p._queue || []).length) + "|" + (ui._txRef === p.transcript ? "s" : "n");
+    const contentMoved = forceBottom || ui._scrollSig !== scrollSig;
+    ui._scrollSig = scrollSig;
+    // flushPaints samples every dirty pane up front (one read pass); use that when it is there, and
+    // fall back to sampling inline for the paths that call paintPane directly.
+    const pre = ui._preSample; ui._preSample = undefined;
+    const wasNearBottom = !contentMoved ? false
+      : (forceBottom || (pre !== undefined ? pre
+        : PERF.run("  stick.sample (inline)", () => (ui.stick ? ui.stick.sample()
+          : (ui.transcriptEl.scrollHeight - ui.transcriptEl.scrollTop - ui.transcriptEl.clientHeight < WS_SCROLL_NEAR_BOTTOM_PX)), null, [])));
     const hasQueue = p._queue && p._queue.length;
     if (!p.transcript.length && !p._liveText && !hasQueue) {
       // The medallion is a child of the core (see ChatShellUI's `els.coreTop`) and this branch owns
       // the core's children too — put it back, or it is detached until the first real paint. It is
       // hidden anyway on a conversation with nothing above the window; keeping the node mounted is
       // what makes "the host re-includes it wherever it rebuilds the core" true without exception.
+      // AN EMPTY TRANSCRIPT MEANS TWO DIFFERENT THINGS, and saying the wrong one is worse than
+      // saying nothing: a conversation that IS empty and ready ("send a message"), or one whose rows
+      // have simply not arrived yet. Core only ever said the first, so on a reload with several panes
+      // the region sat blank under a header reading "0/1,000 turns · 0%" — asserting empty while
+      // still loading. Pact has had a loading state all along; this is Core's, from the same builder.
       ui.transcriptEl.replaceChildren(
         ...(ui.view && ui.view.els && ui.view.els.coreTop ? [ui.view.els.coreTop] : []),
-        el("div", { class: "hint" }, [p.repo ? "Send a message — Claude runs in " + shortRepo(p.repo) + " on your machine." : "Pick a repository (dropdown, or the sidebar) to start."]));
+        wsPaneLoading(p)
+          ? window.ChatShell.buildLoading({ label: "Loading conversation…" })
+          : el("div", { class: "hint" }, [p.repo ? "Send a message — Claude runs in " + shortRepo(p.repo) + " on your machine." : "Pick a repository (dropdown, or the sidebar) to start."]));
       ui._domLead = []; ui._txRef = null; ui._liveNode = null; ui._liveTextNode = null; ui._showEarlierNode = null;   // reset incremental cache (see renderTranscriptInto)
     } else {
       // Trailing extras that always sit AFTER the real turns: the live-typing preview, then any
@@ -13407,14 +13567,14 @@ function viewWorkspace() {
       // affordance — no count, because the number of turns below is genuinely unknown (the row total
       // includes tool output). The matching "N earlier turns" sits in the exo bar above the transcript,
       // where it does not invalidate renderTranscriptInto's untouched-prefix cache every paint.
-      {
+      PERF.run("  exo tail nodes", () => {
         const xctx = wsExoCtx(p);
         const rn = exoRecallNode(p, xctx); if (rn) tailExtras.push(rn);
         const en = exoEdgeNodes(p, xctx); if (en.below) tailExtras.push(en.below);
-      }
+      }, null, []);
       renderTranscriptInto(ui, p, tailExtras);
     }
-    if (ui.stick) ui.stick.apply(wasNearBottom); else if (wasNearBottom) ui.transcriptEl.scrollTop = ui.transcriptEl.scrollHeight;
+    if (contentMoved) { ui._needScroll = wasNearBottom; schedulePaneScroll(); }
     // A forced jump to the bottom (fresh open / view-enter / app-open initial load) can land short if the
     // transcript's layout is still settling (code blocks, wrapping) — re-pin on the next frame so it's truly
     // at the latest message, not a few lines above it.
@@ -14042,7 +14202,7 @@ function viewWorkspace() {
             // key must be discarded, not applied, when it eventually arrives.
             p.worktree = p._pendingWorktree; p._pendingWorktree = null; p._gen = (p._gen || 0) + 1; assignKey(p); reportAttach();
           }
-          if (p.repo === data.worktreesRepo) paintPane(p);
+          if (p.repo === data.worktreesRepo) schedulePaint(p);
         }
         // A history "resume" that recreated its missing worktree first (see
         // resumeAfterRecreatingWorktree) — this state update, listing the worktree as real again,
@@ -14098,12 +14258,12 @@ function viewWorkspace() {
       // The model catalog — ONE global list (see st.models above); a fresh answer replaces it and
       // every pane's selector is repainted so a newly-available model shows up everywhere at once,
       // not just in whichever pane happened to ask.
-      if (Array.isArray(data.models) && data.models.length) { st.models = data.models; st.modelsRev++; OMNI_CATALOG = data.models.filter((m) => m && typeof m.value === "string" && m.value.startsWith("omni/")); try { localStorage.setItem("cm_models", JSON.stringify(data.models)); } catch {} for (const p of st.panes) paintPane(p); }
+      if (Array.isArray(data.models) && data.models.length) { st.models = data.models; st.modelsRev++; OMNI_CATALOG = data.models.filter((m) => m && typeof m.value === "string" && m.value.startsWith("omni/")); try { localStorage.setItem("cm_models", JSON.stringify(data.models)); } catch {} for (const p of st.panes) schedulePaint(p); }
       // NOTE (CONTRACT §2b): the agents tracker MUST see every state frame as well as every
       // background event, keyed per sessionKey — its staleness heuristic measures "when did THIS
       // client last see THIS agent change", and skipped frames make a healthy fleet read as stalled.
-      if (Array.isArray(data.sessions)) { setLiveSessions(data.sessions); for (const s of data.sessions) for (const p of panesOf(s.sessionKey)) { p.status = s.status || p.status; if (s.mode) p.mode = s.mode; if (s.usage) p.usage = s.usage; if (s.background) p._background = s.background; exoNoteAgents(p, s, Date.now()); paintPane(p); } }
-      if (data.session) { upsertLiveSession(data.session); for (const p of panesOf(data.session.sessionKey)) { Object.assign(p, { status: data.session.status ?? p.status, mode: data.session.mode ?? p.mode, usage: data.session.usage ?? p.usage }); if (data.session.background) p._background = data.session.background; exoNoteAgents(p, data.session, Date.now()); paintPane(p); } }
+      if (Array.isArray(data.sessions)) { setLiveSessions(data.sessions); for (const s of data.sessions) for (const p of panesOf(s.sessionKey)) { p.status = s.status || p.status; if (s.mode) p.mode = s.mode; if (s.usage) p.usage = s.usage; if (s.background) p._background = s.background; exoNoteAgents(p, s, Date.now()); schedulePaint(p); } }
+      if (data.session) { upsertLiveSession(data.session); for (const p of panesOf(data.session.sessionKey)) { Object.assign(p, { status: data.session.status ?? p.status, mode: data.session.mode ?? p.mode, usage: data.session.usage ?? p.usage }); if (data.session.background) p._background = data.session.background; exoNoteAgents(p, data.session, Date.now()); schedulePaint(p); } }
       // NOTE: the server's own defaultMode is deliberately NOT mirrored here. Every pane sends
       // its mode with each prompt, so the toolbar picker is a local "mode for new panes"
       // preference — echoing the server's would clobber it on every list refresh.
@@ -14121,6 +14281,7 @@ function viewWorkspace() {
       // a sessionKey and both be waiting; see beginPendingOpen), each independently discarding
       // the reply if its own pane has since moved on (cleared or repointed — stale `gen`).
       const bucket = st.pendingOpens.get(sessionKey); if (!bucket || !bucket.size) return;
+      for (const req of bucket.values()) { const q = st.panes.find((x) => x.id === req.paneId); if (q) { q._opening = false; q._loadedOnce = true; } }
       st.pendingOpens.delete(sessionKey);
       for (const req of bucket.values()) {
         clearTimeout(req.timer);
@@ -14173,7 +14334,7 @@ function viewWorkspace() {
         // the window model describes the conversation the pane now actually holds.
         const _w2 = exoAbsorbWindow(p, data) || _w;
         if (_w2 && _w2.isBand) { p._revealAll = true; p._scrollBottomNext = false; }
-        paintPane(p); setUsageTotal(); saveLayout();
+        schedulePaint(p); setUsageTotal(); saveLayout();
         if (_w2) exoResolveJump(p, wsExoCtx(p), _w2);   // a jump-to-#N answered on the open path
       }
       return;
@@ -14190,7 +14351,7 @@ function viewWorkspace() {
         const bucket = st.pendingOpens.get(sessionKey);
         const interactive = [...bucket.values()].some((req) => req.mode !== "restore");   // a silent boot reattach that finds nothing shouldn't nag
         st.pendingOpens.delete(sessionKey);
-        for (const req of bucket.values()) clearTimeout(req.timer);   // resolves every pane waiting on this key
+        for (const req of bucket.values()) { clearTimeout(req.timer); const q = st.panes.find((x) => x.id === req.paneId); if (q) { q._opening = false; q._loadedOnce = true; } }
         // A DEAD END, MADE RECOVERABLE. A pane whose stored key names a conversation the engine has
         // never heard of renders empty FOREVER — one toast you may not have been looking at, then a
         // blank box with a repo selected and no way to tell what is wrong. It happens whenever a key
@@ -14214,7 +14375,7 @@ function viewWorkspace() {
           saveLayout();
           beginPendingOpen(canonical, p, "recover");
           wsPost("control", { action: "open", args: { sessionKey: canonical } });
-          paintPane(p);
+          schedulePaint(p);
           recovered++;
         }
         if (interactive && !recovered) note("Could not open — " + (data.message || "that conversation could not be opened."));
@@ -14249,7 +14410,7 @@ function viewWorkspace() {
             p._queue = p._queue || [];
             p._queue.push({ text: p._pendingText, images: p._pendingImages || [] });
             p._pendingText = null; p._pendingImages = null;
-            paintPane(p);
+            schedulePaint(p);
             logActivity(p, "⏳ Queued — sending once the current turn finishes…");
           } else {
             logActivity(p, "⏳ Still working on the previous turn…");
@@ -14264,6 +14425,8 @@ function viewWorkspace() {
       // whole reason a resync was requested in the first place.
       if (data.kind === "resync") {
         for (const p of targets) {
+          p._loadedOnce = true;   // answered — stop the loading bar even if the answer is "nothing here"
+
           const prevStatus = p.status, prevLen = (p.transcript || []).length;
           // Exocortex window model first — see the `transcript` branch above for why a BAND takes
           // over the rows while a tail/full reply does not.
@@ -14288,7 +14451,7 @@ function viewWorkspace() {
           // bottom, and yanked a Held reader to Live (and blinked the streaming text). Only clear it when the
           // turn is genuinely done/idle, where the buffer really is stale. (Pact already does this via keepLive.)
           if (data.status !== "thinking" && data.status !== "deepwork" && data.status !== "awaiting-permission") p._liveText = "";
-          paintPane(p);
+          schedulePaint(p);
           // Pull the context-window usage NOW (on load/reconnect), not only after the next turn's result —
           // otherwise a reopened conversation shows no "% ctx" and no model until you send something. The
           // getContextUsage() response also carries `.model`, which is how an already-running session (whose
@@ -14316,8 +14479,8 @@ function viewWorkspace() {
       // Context-window usage is per-conversation — stored on the requesting pane(s) only.
       // Cold-load telemetry (workspace.mjs): the engine is loading a large conversation's history on resume — show
       // "Loading… (N MB)" (not "stuck") until the first output flips it to done. Drives the WS_TICK_TIMER label.
-      if (data.kind === "loadingHistory") { for (const p of targets) { exoIngestEvent(p, data); coldLoadBegin(p, data.bytes, Date.now()); paintPane(p); } return; }
-      if (data.kind === "loadingHistoryDone") { for (const p of targets) { const ch = exoIngestEvent(p, data); if (coldLoadEnd(p, Date.now()) || ch) paintPane(p); } return; }
+      if (data.kind === "loadingHistory") { for (const p of targets) { exoIngestEvent(p, data); coldLoadBegin(p, data.bytes, Date.now()); schedulePaint(p); } return; }
+      if (data.kind === "loadingHistoryDone") { for (const p of targets) { const ch = exoIngestEvent(p, data); if (coldLoadEnd(p, Date.now()) || ch) schedulePaint(p); } return; }
       // Exocortex indicator/recall cues. These frames carry NO inline sessionKey (CONTRACT §0), so
       // they are routed purely by the frame's key — which `targets` already is.
       if (data.kind === "rolling" || data.kind === "lookingUp" || data.kind === "recall") {
@@ -14332,7 +14495,7 @@ function viewWorkspace() {
           // replaces this optimistic copy rather than doubling it.
           if (Array.isArray(p.transcript)) p.transcript.push({ kind: "wrapped", segment: data.segment, sourceRef: data.sourceRef, at: data.at });
         }
-        for (const p of targets) { exoIngestEvent(p, data); paintPane(p); }
+        for (const p of targets) { exoIngestEvent(p, data); schedulePaint(p); }
         return;
       }
       // The engine RECEIVED the ■ Stop press (emitted before the up-to-6s interrupt await) — confirms the
@@ -14378,7 +14541,7 @@ function viewWorkspace() {
           if (Array.isArray(p.transcript)) p.transcript.push({ kind: "compacted", trigger: data.trigger || "manual", preTokens: data.preTokens ?? null, postTokens: data.postTokens ?? null, at: data.at });
           logActivity(p, "🗜 Context compacted" + (pre && post ? " — " + pre + " → " + post + " tokens" : ""));
           if (p.sessionKey && !p.readonly) wsPost("control", { action: "contextUsage", args: { sessionKey: p.sessionKey } });
-          paintPane(p);   // reflect the new count on the 🗜/⟳ badge immediately, not on the next unrelated repaint
+          schedulePaint(p);   // reflect the new count on the 🗜/⟳ badge immediately, not on the next unrelated repaint
         }
         return;
       }
@@ -14390,7 +14553,7 @@ function viewWorkspace() {
         for (const p of targets) {
           if (Array.isArray(p.transcript)) p.transcript.push({ kind: "turnError", message: data.message || "", subtype: data.subtype || null, at: data.at });
           logActivity(p, (data.subtype === "resume-missing" ? "↻ " : "⚠ Turn failed — ") + (data.message || "the engine ended the turn with an error"), data.subtype === "resume-missing" ? "" : "ws-act-err");
-          paintPane(p);
+          schedulePaint(p);
         }
         return;
       }
@@ -14433,7 +14596,7 @@ function viewWorkspace() {
           // The FIRST chunk still needs a full paintPane (nothing rendered yet to update).
           const ui = paneUI.get(p.id);
           if (ui && ui._liveNode) scheduleLiveRender(ui, p);
-          else paintPane(p);
+          else schedulePaint(p);
           continue;
         }
         p._liveText = "";

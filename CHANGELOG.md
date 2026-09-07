@@ -4,6 +4,73 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.13.2] - 2026-09-08
+### Reverted — content-visibility cut the turn numbers and broke scrolling
+
+Reported: "the bubbles numbering are cut" and "the scroll is fucked, it keeps sliding on the top".
+Both were mine, both from one change in 1.13.1, and the trade was not close.
+
+`content-visibility: auto` implies `contain: paint`, which **clips anything drawn outside the row's
+border box** — and the P#/R# badges sit at `top: -9px`. It also makes off-screen rows fall back to
+`contain-intrinsic-size` estimates, so `scrollHeight` shifts as rows render, and the stick controller
+reads exactly that value to decide "am I at the bottom". Measured as an ~11% win and reverted anyway:
+a speed win that damages what is on screen is not a win. Verified after: 248 of 248 badges render
+above their rows, scrollHeight stable.
+
+The codebase already warned about this, in a comment on `.ws-turn`: *"deliberately NOT
+content-visibility:auto, whose on-scroll rendering made scrolling feel like it was loading."* I
+overrode it without reading it. The note is now in both places, with the badge-clipping reason added.
+
+### Fixed — the 1–2 second freezes: the scroll fix-up thrashed layout across panes
+
+Asked for real-time monitoring, so the profiler grew the two things that turn "it's laggy" into an
+answer: **long tasks attributed to a cause**, and **keystroke→paint latency**. The attribution is the
+important half — a freeze with no instrumented JS overlapping it is the browser rendering, and no
+amount of tuning app.js would touch it.
+
+It named the culprit immediately: `stick.apply`, the scroll-to-bottom controller. It does
+`scrollTop = scrollHeight`, and reading scrollHeight forces a synchronous layout — done inline in
+`paintPane`, which runs on **every SSE event for every pane**, each read first having to flush the DOM
+writes of the pane painted before it. The same cross-pane thrash as the streaming renders, one level
+up, and much more expensive.
+
+Fixed with three passes in the only order that works: sample every dirty pane's scroll position
+**before** any of them is painted, paint them all, then write every scroll **after**. Plus a guard so
+a paint that appended nothing does not touch the scroll at all, and the SSE handler's 14 direct
+`paintPane` calls now go through the coalescing scheduler.
+
+Measured at 6× CPU throttle with eight real panes:
+
+| | before | after |
+|---|---|---|
+| `paintPane` | 2290 ms (84.8 ms avg) | **323 ms (14.7 ms avg)** |
+| `stick.apply` | 1784 ms, 33 calls | **6 ms, 6 batched calls** |
+| `stick.sample` | 547 ms | **69 ms, batched** |
+| `onPayload` | 2428 ms | **133 ms** |
+
+**What is left is honestly not ours.** The remaining long tasks read like
+`1302 ms — flushPaints 114 ms + paintPane 109 ms`: ~114 ms of JavaScript, and ~1.2 s of the browser
+laying out and painting what was just inserted. Inserting 250 turns of markdown into eight panes
+costs that much regardless of how fast our code is. The next lever is chunking that insertion across
+frames so no single task exceeds a frame — real work, not attempted here.
+
+### Added — Core's loading state
+Reproduced at 8× throttle: 400 ms into a reload, three of four panes showed a blank transcript region
+under a header reading `0/1,000 turns · 0 rounds · 0%` and "context: no reading yet". It did not
+merely look unloaded — it asserted the conversation was **empty**. Pact has had a loading state since
+it was written; Core never did.
+
+Now a bar (`ChatShell.buildLoading`, so both workspaces draw the same one) whenever a pane is bound to
+a conversation the server has not answered about yet, and the stats row stays quiet rather than
+claiming zero. The predicate is deliberately *not* "is an open in flight": rows arrive by several
+paths (a restore's `open`, the `hello` snapshot, a resync) and keying off one left the panes using
+another still blank — which is exactly how the first attempt failed.
+
+### Fixed — a false positive in the scope-leak guard
+It flagged `INPUT` — the string `"INPUT"` in a tag-name comparison, not an identifier. It strips
+string and regex literals before looking now. A guard that cries wolf gets muted, which is worse than
+not having one. Confirmed it still catches a genuine leak.
+
 ## [1.13.1] - 2026-09-08
 ### Fixed — ONE CSS animation was 54% of all main-thread work with 8 panes open
 
