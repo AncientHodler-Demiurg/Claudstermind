@@ -2,6 +2,89 @@
 
 > Append-only. Non-obvious facts, corrections, tricks that came out of real sessions. Newest at the top. Each entry gets a date + one-line headline + the detail underneath.
 
+## 2026-09-07 — VPS `git pull --ff-only` "multiple branches": the real cause is a DUPLICATED FETCH_HEAD, not the deploy user
+
+Supersedes the 2026-08-21 entry, which blamed the hardened deploy user's git context and prescribed "pull as root".
+That recovery **failed this time** — the same `fatal: Cannot fast-forward to multiple branches` came back over
+`ssh stoanodeprime` as root. Actual cause, found by reading `.git/FETCH_HEAD`: it held **every branch line twice**,
+so the single for-merge branch (`feature/kadena-explorer`) appeared as two merge heads and git refused. Repo config
+was clean (one wildcard refspec, one `branch.*.merge` per branch, only "behind 1"). Duplication showed up after
+back-to-back fetches (an explicit `git fetch origin` then `git pull`'s own fetch).
+
+**Fix that works regardless of FETCH_HEAD state:** skip FETCH_HEAD entirely —
+`git merge --ff-only origin/feature/kadena-explorer`. Then run `deploy.sh <target>`; its internal pull is a no-op
+("Already up to date") because the tree is already at the target, so it never re-triggers the multi-head merge.
+Prefer this to the old root-pull recipe: it's a superset (works whether or not FETCH_HEAD is duplicated) and costs
+nothing extra.
+
+## 2026-09-07 — frontend-stoa's local node_modules is FIXED; `vite build` + `vitest` both work on the node host
+
+Corrects the 2026-09-05 entry that recorded frontend-stoa as unbuildable locally (broken rolldown native binding +
+npm 9.2.0 choking on the `overrides` field), which forced Docker-only verification. As of this session the bindings
+that a prior agent fetched are in place and **`npx tsc -b`, `npx vite build` and `npx vitest run` all succeed
+directly** in `frontend-stoa/` (~440ms build). That restores fast local verification — including real jsdom render
+tests via @testing-library — so a Docker build is no longer the only gate for stoa frontend work. (frontend-kadena
+not re-checked this session; assume Docker-gated until proven otherwise.)
+
+## 2026-09-07 — Radix tooltips need a hand-rolled animation here: there is NO tailwindcss-animate
+
+The explorer frontends ship neither `tailwindcss-animate` nor `tw-animate-css`, so the shadcn-standard
+`data-[state=delayed-open]:animate-in fade-in-0 zoom-in-95` classes compile to **nothing** — silently, with no
+build error, giving a tooltip that pops in with zero animation and no hint why. Fix used: a real `@keyframes` in
+`index.css` bound to a `.pantheon-tooltip` class on the Radix Content, keyed off `[data-state='delayed-open']` /
+`['instant-open']`, with a `prefers-reduced-motion` opt-out. Also note `@radix-ui/react-tooltip` was ALREADY a
+dependency in both frontends but had no `components/ui/tooltip.tsx` wrapper — the primitive had to be written.
+Testing gotcha: Radix mirrors tooltip content into a visually-hidden a11y node, so every string inside a tooltip
+matches **twice** — use `getAllByText`, not `getByText`, in render tests.
+
+## 2026-09-07 — ★ StoaChain gas floor: the exact on-chain formula, and why the explorer mirrors it locally
+
+The network's minimum gas price ("gas floor") is `coin.UC_MinimumGasPriceANU`. Verified against the DEPLOYED
+module on all 10 chains (via the explorer's own `/api/v1/modules/coin/code?chainId=N` Code API):
+
+    GENESIS-TIME          (time "2026-02-23T18:00:00Z")
+    GENESIS-MIN-GAS-PRICE 10000      ; ANU  <- the starting value; easy to miss, the owner only quoted genesis+step
+    GAS-PRICE-INTERVAL    10800.0    ; seconds = 3h
+    MAX-GAS-PRICE         1000000    ; ANU
+    floor = min(10000 + floor((block-time - GENESIS-TIME) / 10800), 1000000)
+
+So: 10,000 ANU at genesis, **+1 ANU every 3 hours** (= +8/day), capping ~339 years out. 1 ANU = 1e-12 STOA.
+
+**CONTRACT DOC BUG worth telling the owner:** the on-chain `@doc` on that function says "caps at 400,000 ANU"
+but the code caps at `MAX-GAS-PRICE` = **1,000,000**. The code is what executes; the docstring is stale.
+
+**The constant CHANGED under us mid-session (2026-09-07).** A first Code-API fetch at ~16:52 UTC returned
+`GENESIS-TIME (time "2026-02-18T21:30:00Z")`; a later fetch returned `2026-02-23T18:00:00Z` on all 10 chains.
+There were `(module coin GOVERNANCE ...)` redeploy txns at ~14:59 and ~16:46 UTC that day. Don't trust a single
+Code-API read of a constant during an active redeploy window — read it on SEVERAL chains and cross-check.
+
+**How to settle which value is real, without node access:** don't argue from the source — argue from accepted
+transactions. `GET /api/v1/transactions?limit=100` and convert `gasPrice * 1e12` to ANU: the observed prices
+(11,567 / 11,565 ANU on 2026-09-07) are what the network ACTUALLY accepted, and they reproduce exactly under
+genesis 2026-02-23T18:00Z and not under 2026-02-18T21:30Z. That empirical check is now frozen into
+`frontend-stoa/src/lib/gas-floor.spec.ts` as three real-transaction regression anchors.
+
+**Node reachability (mapped this session):** the StoaChain node at `129.212.143.119:1848` is NOT reachable from
+this box NOR from stoanodeprime (both time out) — the chain-source is admin-configured at runtime to something
+else. So for live Pact facts, go through the explorer's own public API (Code API / transactions), not a direct
+`/local` call.
+
+**DESIGN CALL — the explorer computes the floor in TypeScript, it does NOT read the chain**
+(`frontend-stoa/src/lib/gas-floor.ts`, rendered by `components/GasFloorBar.tsx` on the dashboard). It is a pure
+function of wall-clock time, so a Pact read buys latency and a failure mode and no accuracy. Pact's `floor`
+truncates toward -inf, which `Math.floor` matches on every input, so the mirror is exact. **THE TRADEOFF TO
+REMEMBER:** these are HARDCODED constants. If `coin` is ever redeployed with a different GENESIS-TIME, interval
+or cap, the explorer will silently drift and someone must update `lib/gas-floor.ts`. Given the constant already
+moved once (above), re-check it after any coin governance upgrade.
+
+**The derived schedule figures (added 2026-09-07, second pass).** Because the floor rises exactly 1 ANU per step,
+the number of steps to the ceiling is just `MAX-GAS-PRICE - GENESIS-MIN-GAS-PRICE` = **990,000 intervals** — that
+is the "of 990,000" in the dashboard's "Interval N of 990,000". Genesis to ceiling is therefore
+`990,000 x 3h` = **123,750 days = 338y 298d 00:50:24**, landing ~2365-04-19 UTC. Express those years in the
+**mean Gregorian year (365.2425 days)**, not a naive 365: over a span this long the naive figure overstates by
+more than two years. Bonus property that makes the breakdown exact integer arithmetic rather than float drift:
+365.2425 days is a whole number of ms (31,556,952,000). All of this is pinned in `gas-floor.spec.ts`.
+
 ## 2026-09-05 — ★ Shared-component pattern: build/verify once against whichever frontend has local tooling, then replicate the exact diff
 
 The medallion-viewer files (`PactMedallionViewer.tsx`, `pact-medallion.css`, `lib/pact-medallion.ts`) are

@@ -1,5 +1,30 @@
 # State — StoaExplorer
 
+## ✅ GAS-FLOOR TIMER (stoa dashboard) — DEPLOYED + VERIFIED (2026-09-07)
+
+`GasFloorBar` sits on the Stoa dashboard between the stat cards and the chain cards: a gold bar that fills over
+each 3-hour interval with a gold-rimmed medallion carrying the current floor in ANU, ticking once a second, zero
+network calls. Computation is `frontend-stoa/src/lib/gas-floor.ts` (a local mirror of `coin.UC_MinimumGasPriceANU`
+— see the ★ 2026-09-07 LEARNINGS entry for the formula, the mid-session constant change, and the hardcoded-
+constants tradeoff). Commit `451aa93`.
+
+Second pass, commit `2159190` — **the hover panel and the long view**:
+- Native `title=` replaced by a styled **Radix tooltip** modelled on the Ouronet footer version panel
+  (`OuronetUI/src/components/ui/ChangelogModal.tsx`): gold-headed card, grouped mono rows Now / Next step /
+  Ceiling / Rule, muted footer strip. Required writing `components/ui/tooltip.tsx` (the Radix dep existed, the
+  wrapper did not) + a hand-rolled `@keyframes` — no tailwindcss-animate in this project.
+- The bar states **"Interval N of 990,000"** and counts the ceiling down in **years/days/hh:mm:ss**, plus a
+  hairline second track for the whole ~339-year climb.
+- Tests: `lib/gas-floor.spec.ts` (23) + a new jsdom render spec `components/GasFloorBar.spec.tsx` (4).
+
+STOA-ONLY — Kadena has no such rule, and it is not on the Ouronet explorer (owner asked, not yet answered).
+Verified live by grepping the running `explorer_frontend_prod` bundle for "Minimum gas price schedule" / "Steps
+left" / "pantheon-tooltip"; container healthy, explorer.stoachain.com 200.
+
+**Two open questions for the owner (raised, unanswered):** (1) the on-chain `@doc` says the floor "caps at
+400,000 ANU" but the code caps at `MAX-GAS-PRICE` = 1,000,000 — we mirror the CODE; one of the two is wrong.
+(2) whether the Feb 18 -> Feb 23 `GENESIS-TIME` redeploy was intentional.
+
 ## 🔑 INFRA ACCESS (discovered 2026-08-18) — I can operate the explorer server directly
 
 From the node host (`~ancientbox`, the home Kadena-CE node machine) there is passwordless **root SSH** to the
