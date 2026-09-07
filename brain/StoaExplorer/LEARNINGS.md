@@ -80,7 +80,9 @@ moved once (above), re-check it after any coin governance upgrade.
 **The derived schedule figures (added 2026-09-07, second pass).** Because the floor rises exactly 1 ANU per step,
 the number of steps to the ceiling is just `MAX-GAS-PRICE - GENESIS-MIN-GAS-PRICE` = **990,000 intervals** — that
 is the "of 990,000" in the dashboard's "Interval N of 990,000". Genesis to ceiling is therefore
-`990,000 x 3h` = **123,750 days = 338y 298d 00:50:24**, landing ~2365-04-19 UTC. Express those years in the
+`990,000 x 3h` = **123,750 days = 338y 298d 00:50:24**, landing **2364-12-18T18:00:00Z** (computed, and now
+pinned in the spec — an earlier hand-waved "~2365-04-19" was WRONG; 338.82 mean years past 2026-02 lands in
+late 2364, not 2365). Express those years in the
 **mean Gregorian year (365.2425 days)**, not a naive 365: over a span this long the naive figure overstates by
 more than two years. Bonus property that makes the breakdown exact integer arithmetic rather than float drift:
 365.2425 days is a whole number of ms (31,556,952,000). All of this is pinned in `gas-floor.spec.ts`.
