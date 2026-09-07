@@ -10448,6 +10448,14 @@ function pactOpenWrapDialog(t) {
   t._wrapDialog = { close, body, confirmBtn };
   wsPost("control", { action: "wrapPreview", args: { sessionKey: t.key } });
 }
+// Why one side of a wrap span can read "none yet" while the other is three figures — asked directly
+// ("why would wrap show 127 answers and no prompts? that can't be right, right?"), so it is answered
+// on the surface that shows the number rather than in a comment nobody opens. Both causes are normal.
+const WS_EMPTY_SIDE_WHY =
+  "One prompt produces many answer rows (one per streamed message between tool calls), and a wrap "
+  + "always keeps the last 200 ROWS verbatim — so a span can hold answers without holding a single "
+  + "prompt. A window opened by a wrap seed has none at all until you type again: that seed is "
+  + "machine-written and is never stored as one of your prompts.";
 function pactFillWrapPreview(t, preview) {
   if (!t._wrapDialog) return;
   const body = t._wrapDialog.body; body.replaceChildren();
@@ -10460,8 +10468,8 @@ function pactFillWrapPreview(t, preview) {
     rFrom: preview.r.from, rTo: preview.r.to, pFrom: preview.p.from, pTo: preview.p.to,
     rChars: preview.r.chars, pChars: preview.p.chars,
   });
-  body.appendChild(el("div", {}, ["Responses  R#" + span.r.from + "–R#" + span.r.to + "  [" + span.r.count + "]"]));
-  body.appendChild(el("div", {}, ["Prompts    P#" + span.p.from + "–P#" + span.p.to + "  [" + span.p.count + "]"]));
+  body.appendChild(el("div", {}, ["Responses  " + window.ChatShell.spanLabel("R", span.r)]));
+  body.appendChild(el("div", { title: WS_EMPTY_SIDE_WHY }, ["Prompts    " + window.ChatShell.spanLabel("P", span.p)]));
   body.appendChild(el("div", {}, [span.chars.toLocaleString() + " characters archived · last " + preview.keptTurns + " turns kept verbatim"]));
   body.appendChild(el("div", { class: "ws-pane-dialog-note" }, ["Nothing is deleted — archived turns stay reachable via Recall."]));
 }
@@ -14971,8 +14979,8 @@ function viewWorkspace() {
       rFrom: preview.r.from, rTo: preview.r.to, pFrom: preview.p.from, pTo: preview.p.to,
       rChars: preview.r.chars, pChars: preview.p.chars,
     });
-    body.appendChild(el("div", {}, ["Responses  R#" + span.r.from + "–R#" + span.r.to + "  [" + span.r.count + "]"]));
-    body.appendChild(el("div", {}, ["Prompts    P#" + span.p.from + "–P#" + span.p.to + "  [" + span.p.count + "]"]));
+    body.appendChild(el("div", {}, ["Responses  " + window.ChatShell.spanLabel("R", span.r)]));
+    body.appendChild(el("div", { title: WS_EMPTY_SIDE_WHY }, ["Prompts    " + window.ChatShell.spanLabel("P", span.p)]));
     body.appendChild(el("div", {}, [span.chars.toLocaleString() + " characters archived · last " + preview.keptTurns + " turns kept verbatim"]));
     body.appendChild(el("div", { class: "ws-pane-dialog-note" }, ["Nothing is deleted — archived turns stay reachable via Recall."]));
   }

@@ -399,8 +399,12 @@
     tg.list.forEach(function (c) {
       if (c.id === "context") return;   // the context readout (its own end-group, below) carries this figure
       var near = c.id === tg.willRollOn;
+      // A ROUND is one exchange, and there is exactly one prompt per exchange — so the round count is
+      // the PROMPT count, not half the row count. `turns / 2` assumed one answer per prompt; a real
+      // window carries 4-6 (median, this machine, 2026-09-08) and sometimes hundreds, so on a
+      // 25-prompt window this claimed 146 rounds. Same false 1:1 premise as the tail split below.
       var label = c.id === "turns"
-        ? fmtNum(c.now) + "/" + fmtNum(c.max) + " turns · " + fmtNum(Math.round(c.now / 2)) + " rounds"
+        ? fmtNum(c.now) + "/" + fmtNum(c.max) + " turns · " + fmtNum(winP) + " rounds"
         : fmtBytes(c.now) + " / " + fmtBytes(c.max);
       size.push(el("span", { class: chipClass + " " + (near ? warnClass : mutedClass),
         title: near ? "Nearest ceiling — this is what will fire the next wrap (" + c.pct + "%)"
@@ -432,26 +436,37 @@
       ["⟳ " + nWraps + " wrapped · this conversation"]));
     // GROUP 3 (start) — "what the NEXT wrap would take", the one forward-looking figure here.
     var tailTurns = o.tailTurns || 80;
-    var tailRounds = Math.round(tailTurns / 2);
+    // WHAT THE KEPT TAIL IS MADE OF. A wrap keeps the last `tailTurns` ROWS verbatim — not that many
+    // prompts and that many answers. This used to assume an even split (`tailTurns / 2` of each),
+    // which is the same false 1:1 premise that mis-sized the roll ceiling. A conversation is not 1:1:
+    // one prompt produces a RUN of assistant rows, one per streamed message between tool calls.
+    // Measured on this machine's live transcripts (2026-09-08): 6.0, 10.0 and 51.5 assistant rows per
+    // prompt, median 4-6, one turn as long as 366 rows.
+    //
+    // On a 25-prompt / 267-answer window that guess subtracted 100 prompts from 25 — clamped to zero,
+    // printed "P# none yet" beside an answer count it had simultaneously inflated ~2x by subtracting
+    // 100 answers where the true tail held ~183. ("Why would wrap show 127 answers and no prompts?")
+    //
+    // Split the tail by the window's OWN ratio instead. It is still an estimate — where the boundary
+    // lands inside a run cannot be known from two totals, which is why the tooltip says approximate
+    // and points at the Wrap dialog — but it now agrees with the server's row walk (splitForRoll)
+    // within a couple of turns instead of contradicting it. Clamped to the window: when the whole
+    // window is shorter than the tail, both sides go to zero and the chip says "nothing yet".
+    var winT = winP + winR;
+    var tailP = winT > 0 ? Math.min(winP, Math.round(tailTurns * (winP / winT))) : 0;
+    var tailR = winT > 0 ? Math.min(winR, tailTurns - tailP) : 0;
     // The next wrap starts where the LAST one ended, not at the first turn of the conversation.
-    var sp = wrapSpan({ rFrom: rFrom, rTo: Math.max(rFrom - 1, num(o.responses, 0) - tailRounds),
-                        pFrom: pFrom, pTo: Math.max(pFrom - 1, num(o.prompts, 0) - tailRounds) });
-    // ONE SIDE CAN BE EMPTY WHILE THE OTHER IS NOT — and it is the normal case, because the tail a
-    // wrap keeps is counted in TURNS: a window with 145 archivable responses can easily have zero
-    // archivable prompts, since prompts are far rarer. Printed as a range that came out backwards
-    // ("P#15–P#14 [0]"), which reads as a broken number rather than as "none of these yet".
-    var side = function (tag, r, f) {
-      return r.count ? tag + "#" + f(r.from) + "–" + tag + "#" + f(r.to) + " [" + f(r.count) + "]"
-                     : tag + "# none yet";
-    };
+    var sp = wrapSpan({ rFrom: rFrom, rTo: Math.max(rFrom - 1, num(o.responses, 0) - tailR),
+                        pFrom: pFrom, pTo: Math.max(pFrom - 1, num(o.prompts, 0) - tailP) });
+    // ONE SIDE CAN BE EMPTY WHILE THE OTHER IS NOT — a normal state, printed in words by spanLabel.
     // NOTHING TO WRAP YET is a real, common state — a fresh window is entirely inside the tail that a
     // wrap always keeps verbatim — and it needs saying in words. Printed as a range it came out
     // backwards ("R#6,896–R#6,895 [0]"), which reads as a broken number rather than as "not yet".
     var span = sp.r.count || sp.p.count
       ? el("span", { class: chipClass,
           title: "Approximate — the last ~" + tailTurns + " turns are always kept verbatim. The Wrap dialog shows the exact figures." },
-          ["would wrap ", el("span", { class: o.rTagClass || "tR" }, [side("R", sp.r, fmtNum)]),
-           " · ", el("span", { class: o.pTagClass || "tP" }, [side("P", sp.p, fmtNum)])])
+          ["would wrap ", el("span", { class: o.rTagClass || "tR" }, [spanLabel("R", sp.r, fmtNum)]),
+           " · ", el("span", { class: o.pTagClass || "tP" }, [spanLabel("P", sp.p, fmtNum)])])
       : el("span", { class: chipClass + " " + mutedClass,
           title: "A wrap always keeps the last ~" + tailTurns + " turns verbatim, and this window is still inside that tail — "
                + "so there is nothing it could archive yet. The count above shows how far into the window you are." },
@@ -916,6 +931,21 @@
     };
   }
 
+  /** ONE way to print one side of a wrap span. Both the header chip and the Wrap dialog say the same
+   *  thing about the same numbers, so they say it with the same function — this was two hand-copies,
+   *  and only one of them had learned that an EMPTY side is a real, common state that has to be
+   *  rendered in words. A range printed from an empty side comes out backwards ("P#24\u2013P#23 [0]"),
+   *  which reads as a broken number rather than as "none of these". Empty happens two ways, both
+   *  normal: the kept tail still holds every prompt in the window, or the window was opened by a WRAP
+   *  SEED — machine-written, never stored as a user row — so it genuinely contains no prompt at all
+   *  until you type again. */
+  function spanLabel(tag, side, fmtNum) {
+    var f = fmtNum || function (n) { return String(Math.round(n || 0)); };
+    var r = side || {};
+    return r.count ? tag + "#" + f(r.from) + "\u2013" + tag + "#" + f(r.to) + " [" + f(r.count) + "]"
+                   : tag + "# none yet";
+  }
+
   /**
    * What the FRESH window actually starts at after a wrap. A wrap does not start from zero — the new
    * session is seeded with (a) a mechanical summary of the head and (b) the last `tailTurns` turns
@@ -1149,6 +1179,7 @@
     ROLL_MAX_TURNS: ROLL_MAX_TURNS, ROLL_MAX_BYTES: ROLL_MAX_BYTES,
     el: el, grp: grp, stack: stack, sendPresentation: sendPresentation, buildLoading: buildLoading, fillWrapGroup: fillWrapGroup, flatRowWidth: flatRowWidth, fitStackedRow: fitStackedRow, gutterEntries: gutterEntries, rowAlignPlan: rowAlignPlan, alignRowGroups: alignRowGroups,
     paintGutter: paintGutter, buildStatsChips: buildStatsChips, buildWrapControls: buildWrapControls,
+    spanLabel: spanLabel,
     buildShellFrame: buildShellFrame, buildMark: buildMark
   };
   if (typeof module === "object" && module.exports) module.exports = API;

@@ -4,6 +4,48 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.13.4] - 2026-09-08
+### Fixed — "would wrap 127 answers · P# none yet"
+
+Asked directly: *"why would wrap show 127 answers and no prompts? that can't be right, right?"*
+
+Two different things were wrong behind that one chip, and a third was right but unexplained.
+
+**1. The kept tail was estimated as half prompts, half answers.** A wrap keeps the last `tailTurns`
+**rows** verbatim — and a conversation is nowhere near one answer per prompt. One prompt produces a
+whole *run* of assistant rows, one per streamed message between tool calls. Measured on this
+machine's own live transcripts (2026-09-08):
+
+| conversation | prompts | answer rows | rows per prompt |
+|---|---|---|---|
+| OuronetUI | 361 | 2,166 | 6.0 |
+| Claudstermind | 747 | 7,161 | 10.0 |
+| Khronoton | 23 | 1,030 | 51.5 |
+
+Median 4–6, and a single turn as long as **366 rows**. So on a 25-prompt / 267-answer window the chip
+subtracted 100 prompts from 25, clamped to zero, and printed `P# none yet` beside an answer count it
+had *simultaneously* inflated ~2× (it subtracted 100 answers where the real tail held ~183). The
+server's own preview walks the actual rows (`splitForRoll`) and was right all along, so the chip was
+contradicting the dialog it is a preview of. It now splits the tail by the window's own ratio and
+lands within a turn or two of the row walk — checked against `splitForRoll` in a test, not by eye.
+
+**2. "N rounds" was `turns / 2`.** Same false 1:1 premise. A round is an exchange and there is exactly
+one prompt per exchange, so the round count *is* the prompt count: that window had 25 rounds, not 146.
+
+**3. A window really can contain zero prompts** — and nothing said so. A wrap does not end the work:
+it respawns the session with a seed (summary + kept tail) that the agent answers immediately, and
+that seed is machine-written, so it is never stored as one of your prompts. Khronoton's live window
+is exactly this: **0 prompts, 50 answer rows**, all of them the agent continuing after the wrap. The
+header chip already printed empty sides in words; the Wrap dialog still built a range by hand from
+the same numbers and rendered it backwards (`P#24–P#23 [0]`). Both now go through one shared
+`ChatShell.spanLabel`, and the dialog carries the explanation on the line that shows the number.
+
+### Not changed (worth knowing)
+`R#` counts assistant **rows**, not answers — so `R#949` addresses the 949th streamed message, and the
+1,000-row auto-wrap ceiling is reached in ~25–160 exchanges depending on how tool-heavy the work is.
+Both are load-bearing: archived segments carry absolute `R#` ranges that Recall resolves against, so
+renumbering would silently break every existing archive. Left alone deliberately, not overlooked.
+
 ## [1.13.3] - 2026-09-08
 ### Fixed — "TURN FAILED" on a turn that worked perfectly well
 
