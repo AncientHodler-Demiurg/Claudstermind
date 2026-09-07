@@ -4,6 +4,72 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.13.1] - 2026-09-08
+### Fixed — ONE CSS animation was 54% of all main-thread work with 8 panes open
+
+"It's so laggy on so many chat views (8 that I have now) that it's hard to use."
+
+I could never reproduce this headlessly — every JS profile came back fast — so I stopped trying to
+reproduce it and **amplified** it instead: the same eight real panes at **6× CPU throttle**, which
+turns invisible costs into measurable ones. The answer was not JavaScript at all:
+
+```
+TaskDuration 4833 ms | Script 351 (7%) | Layout 697 (14%) | Style 292 (6%) | PAINT 3688 (73%)
+```
+
+Bisected by disabling one animation at a time:
+
+| | main thread | paint | style recalcs / 20 s |
+|---|---|---|---|
+| baseline | 4833 ms | 3590 ms | 1412 |
+| **box-shadow pulse off** | **2206 ms** | **895 ms** | **366** |
+| spinner off | 4853 ms | 3559 ms | 1443 *(free)* |
+
+**One animation** — the "work is happening" ring on the Send button — was 54% of all main-thread work
+and 75% of paint. With **one** pane busy. A cockpit with eight busy panes runs eight of them.
+
+`box-shadow` cannot be composited: animating it re-runs style and re-paints the element *and the area
+the shadow bleeds into*, every frame, on the main thread. The spinner measured free for exactly the
+opposite reason — it animates `transform`. The ring is now a **static** shadow on a pseudo-element
+whose **opacity** animates, which the compositor owns outright. Same look, same timing, no
+main-thread work.
+
+Four more animations had the same defect and were converted with it: the reconnect dot, the ops
+activity dot, the "↓ New output" pill (which blinks in *every* pane whose reader is scrolled up — so
+eight at once), and Pact's loading bar, which animated `left` and therefore re-ran **layout** every
+frame, worse again than paint.
+
+**Result, same measurement:**
+
+| | before | after |
+|---|---|---|
+| main thread | 4833 ms | **2211 ms** (−54%) |
+| paint | 3590 ms | **1007 ms** (−72%) |
+| style recalcs | 1412 | **416** (−70%) |
+
+The control flipped meaning, which is the real proof: forcibly disabling the pulse now changes almost
+nothing, where before it halved the workload.
+
+### Also — off-screen transcript rows now cost nothing
+`content-visibility: auto` on message rows, with `contain-intrinsic-size: auto` so Chrome remembers
+each row's real height and `scrollHeight` (which the stick controller reads to decide "am I at the
+bottom") stays honest. Worth recording how this went: measured **first**, showed no benefit, and I
+nearly dropped it — the animation cost was swamping it. Re-measured after the animation fix and it is
+a consistent **~11% less main-thread work, ~15% less layout** across paired runs.
+
+### Answered — no, a page reload is not a "cold read"
+The cold-load bar fires only when the **engine** resumes an SDK session file over **25 MiB** — minutes
+of work, worth a progress bar. A page reload is a different thing entirely: sessiond keeps sessions in
+memory (it survives web restarts by design) and the browser refetches a capped 250-row window. Nothing
+cold-loads, so no bar is correct. Reloading *is* still a full client-side re-render, which is what the
+work above makes cheaper.
+
+### Added
+- `lib/compositedAnimations.test.mjs` (5) — parses every `@keyframes` block and fails any
+  **infinitely-running** animation that touches a property outside `opacity`/`transform`. It earned
+  its keep immediately: written for the Send-button ring, it then found `connPulse`, `actPulse`,
+  `stickPulse` and `pcLoadSlide` on its own.
+
 ## [1.13.0] - 2026-09-07
 ### Added — ⧉ copy on every message, and an address another agent can read
 

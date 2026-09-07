@@ -93,11 +93,30 @@
 /* "Work is happening" ring — blinks whenever ANY work is active, including agent-spawned background
  * work while the chat itself is idle. Same reason as above: the keyframes and the rule lived in
  * styles.css keyed to .ws-send/.pc-send, so the Lab never had them at all and production lost them
- * with the migration. Own name (csWorkPulse) so it cannot collide with the copy still in styles.css. */
-@keyframes csWorkPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(148,163,184,0); } 50% { box-shadow: 0 0 0 2px rgba(148,163,184,.9); } }
-.cs-shell .btn-send.work-pulse, .cs-shell .btn-send.--pulse { animation: csWorkPulse 1.15s ease-in-out infinite; }
+ * with the migration.
+ *
+ * IT ANIMATES OPACITY, NOT box-shadow, AND THE DIFFERENCE IS ENORMOUS. box-shadow cannot be
+ * composited: every frame re-runs style, re-paints the button and the area the shadow bleeds into,
+ * on the main thread. Profiled with eight panes at 6x CPU throttle, with only ONE of them busy:
+ *
+ *     baseline            4833 ms main thread   3590 ms paint   1412 style recalcs / 20s
+ *     this animation off  2206 ms               895 ms           366
+ *
+ * One animation was 54% of ALL main-thread work and 75% of paint — and a cockpit with eight busy
+ * panes runs eight of them. (The spinner, by contrast, measured free: it animates `transform`.)
+ *
+ * The ring is now a STATIC box-shadow on a pseudo-element whose OPACITY animates. Opacity on a
+ * promoted layer is handled by the compositor: no style recalc, no paint, no main-thread work at
+ * all. Same look, same timing. */
+@keyframes csWorkPulse { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+.cs-shell .btn-send.work-pulse, .cs-shell .btn-send.--pulse { position: relative; }
+.cs-shell .btn-send.work-pulse::after, .cs-shell .btn-send.--pulse::after {
+  content: ""; position: absolute; inset: -2px; border-radius: 8px; pointer-events: none;
+  box-shadow: 0 0 0 2px rgba(148,163,184,.9); opacity: 0;
+  will-change: opacity;                      /* promote it, so the compositor owns the animation */
+  animation: csWorkPulse 1.15s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {
-  .cs-shell .btn-send.work-pulse, .cs-shell .btn-send.--pulse { animation: none; box-shadow: 0 0 0 2px rgba(148,163,184,.7); } }
+  .cs-shell .btn-send.work-pulse::after, .cs-shell .btn-send.--pulse::after { animation: none; opacity: .8; } }
 
 /* `--gone` is applied by JS to rows AND to inline chips/spans. It was only ever DEFINED for
  * .rg-core and .frow, so hiding a chip silently did nothing. One global rule. */

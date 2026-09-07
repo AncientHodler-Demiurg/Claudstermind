@@ -301,12 +301,19 @@ svg text { font-family: ui-sans-serif, system-ui, sans-serif; }
 :root[data-theme="dark"] .conn-banner, body[data-theme="dark"] .conn-banner {
   color: #fde68a; background: #3a2c0a; border-bottom-color: #a16207;
 }
+/* An expanding ring, done compositably: a STATIC ring on ::after whose transform+opacity animate.
+   The box-shadow version repainted the dot and the area the shadow grew into on every frame — see
+   lib/compositedAnimations.test.mjs for what that costs when several of them are on screen. */
 .conn-banner .conn-dot {
-  width: 9px; height: 9px; border-radius: 999px; background: #f59e0b; flex: 0 0 auto;
-  box-shadow: 0 0 0 0 #f59e0b88; animation: connPulse 2s ease-out infinite;
+  width: 9px; height: 9px; border-radius: 999px; background: #f59e0b; flex: 0 0 auto; position: relative;
 }
-@keyframes connPulse { 0% { box-shadow: 0 0 0 0 #f59e0b88; } 70% { box-shadow: 0 0 0 7px #f59e0b00; } 100% { box-shadow: 0 0 0 0 #f59e0b00; } }
-@media (prefers-reduced-motion: reduce) { .conn-banner .conn-dot { animation: none; } }
+.conn-banner .conn-dot::after {
+  content: ""; position: absolute; inset: 0; border-radius: 999px; pointer-events: none;
+  box-shadow: 0 0 0 7px #f59e0b88; will-change: transform, opacity;
+  animation: connPulse 2s ease-out infinite;
+}
+@keyframes connPulse { 0% { transform: scale(.2); opacity: .55; } 70% { transform: scale(1); opacity: 0; } 100% { transform: scale(1); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .conn-banner .conn-dot::after { animation: none; opacity: 0; } }
 /* Full "work machine offline" / view-error screen — shown in #view instead of a blank void when the tunnel
    is down or a view throws (see render()'s renderOfflineScreen / renderViewError). */
 .conn-lost { min-height: 60vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -336,9 +343,14 @@ svg text { font-family: ui-sans-serif, system-ui, sans-serif; }
 
 /* Ops activity blinker — a pulsing green dot on the repo card that has a live agent. */
 .actdot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #64748b; flex: 0 0 auto; }
-.actdot.on { background: #34d399; animation: actPulse 1.25s ease-out infinite; }
-@keyframes actPulse { 0% { box-shadow: 0 0 0 0 rgba(52,211,153,.55); } 70% { box-shadow: 0 0 0 6px rgba(52,211,153,0); } 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); } }
-@media (prefers-reduced-motion: reduce) { .actdot.on { animation: none; } }
+.actdot.on { background: #34d399; position: relative; }
+.actdot.on::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
+  box-shadow: 0 0 0 6px rgba(52,211,153,.55); will-change: transform, opacity;
+  animation: actPulse 1.25s ease-out infinite;
+}
+@keyframes actPulse { 0% { transform: scale(.2); opacity: 1; } 70% { transform: scale(1); opacity: 0; } 100% { transform: scale(1); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .actdot.on::after { animation: none; opacity: 0; } }
 
 /* Activity — weekly view: nav, org heatmap (readable day headers), time-of-day chart. */
 .actnav { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -683,13 +695,22 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .stick-pill { position: absolute; right: 12px; bottom: 12px; z-index: 5; display: none; align-items: center; gap: 5px;
   padding: 5px 11px; border-radius: 999px; cursor: pointer; font-size: 12px; font-weight: 600; line-height: 1;
   background: var(--accent); color: #fff; border: 1px solid var(--accent); box-shadow: 0 3px 10px rgba(0, 0, 0, .35); }
+/* The pill blinks in EVERY pane whose reader is scrolled up ("Held"), so with a cockpit of eight it
+   is eight simultaneous animations — worth the same treatment as the work ring: the pill's own
+   OPACITY pulses (composited), and the accent halo is a static ring on ::after whose opacity pulses
+   with it. The old keyframes animated box-shadow, which repaints every frame. */
 .stick-pill.--show { display: inline-flex; animation: stickPulse 1.15s ease-in-out infinite; }
-.stick-pill:hover { filter: brightness(1.08); }
-@keyframes stickPulse {
-  0%, 100% { opacity: 1; box-shadow: 0 3px 10px rgba(0, 0, 0, .35); }
-  50% { opacity: .55; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent); }
+.stick-pill.--show::after {
+  content: ""; position: absolute; inset: 0; border-radius: 999px; pointer-events: none;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent);
+  opacity: 0; will-change: opacity; animation: stickHalo 1.15s ease-in-out infinite;
 }
-@media (prefers-reduced-motion: reduce) { .stick-pill.--show { animation: none; } }
+.stick-pill:hover { filter: brightness(1.08); }
+@keyframes stickPulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+@keyframes stickHalo  { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .stick-pill.--show { animation: none; }
+  .stick-pill.--show::after { animation: none; opacity: 0; } }
 /* Persistent scroll-MODE bulb (attachStickController): always-visible readout of whether the transcript
    is following the tail (green "Live" — incoming messages scroll in) or holding your scrolled-up spot
    (amber "Held" — incoming messages stay put). Bottom-LEFT, opposite the "↓ New output" pill; click to
@@ -799,6 +820,20 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .ws-reply-btn:hover { color: var(--accent); filter: brightness(1.15); }
 .ws-assistant .ws-reply-btn, .pc-asst .ws-reply-btn { position: absolute; top: -9px; right: 54px; z-index: 2;
   width: 22px; height: 20px; padding: 0; }
+/* ===== OFF-SCREEN TRANSCRIPT ROWS COST NOTHING =====================================================
+ * Profiled with eight panes at 6x CPU throttle: 2,361 ms of blocked main thread in 20 s, and 71% of
+ * it in V8's `(program)` bucket — i.e. NOT JavaScript. Layout, style and paint, over 1,455 message
+ * rows, the large majority of which are scrolled out of view in a 4-across grid.
+ *
+ * `content-visibility: auto` lets the browser skip layout AND paint for a row that is off-screen,
+ * and do it again the moment it scrolls in. `contain-intrinsic-size: auto <fallback>` is what keeps
+ * the scrollbar honest: `auto` makes Chrome REMEMBER each row's real measured height once it has
+ * been rendered, so scrollHeight stops being an estimate — which matters here because the stick
+ * controller measures exactly that to decide "am I at the bottom".
+ * The fallback is only used for a row that has never been on screen.
+ */
+.ws-line, .pc-msg { content-visibility: auto; contain-intrinsic-size: auto 72px; }
+
 /* ⧉ Copy this turn — on a PROMPT it sits inline beside "you" (the corner there is empty); on an
    ANSWER it joins the floating corner row, one slot further left than ↩. Same geometry as the three
    it stands beside, so the row stays a row. Click copies the raw text; Alt/Shift copies the turn's
@@ -987,15 +1022,28 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    an ordinary/deep-work turn, OR agent-spawned background work (a workflow/task) that keeps running
    even while the chat is idle and the button still reads "Send". The ring blinks so it's noticeable
    at rest; a darker outline variant when the chat is free (background-only) vs the loud busy colors. */
-@keyframes wsWorkPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(148,163,184,0); } 50% { box-shadow: 0 0 0 2px rgba(148,163,184,.9); } }
-.ws-send.work-pulse { animation: wsWorkPulse 1.15s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) { .ws-send.work-pulse { animation: none; box-shadow: 0 0 0 2px rgba(148,163,184,.7); } }
+/* Animates OPACITY on a pseudo-element, not box-shadow — see the long note on csWorkPulse in the
+   chat-shell package. Measured there: the box-shadow version was 54% of all main-thread work with
+   eight panes open, because box-shadow cannot be composited and repaints every frame. */
+@keyframes wsWorkPulse { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+.ws-send.work-pulse, .pc-send.work-pulse, .ws-bgbadge { position: relative; }
+.ws-send.work-pulse::after, .pc-send.work-pulse::after, .ws-bgbadge::after {
+  content: ""; position: absolute; inset: -2px; border-radius: 999px; pointer-events: none;
+  box-shadow: 0 0 0 2px rgba(148,163,184,.9); opacity: 0; will-change: opacity;
+  animation: wsWorkPulse 1.15s ease-in-out infinite; }
+.ws-send.work-pulse { /* ring drawn by ::after above */ }
+@media (prefers-reduced-motion: reduce) { .ws-send.work-pulse::after, .pc-send.work-pulse::after { animation: none; opacity: .8; } }
 /* "⚙ N background" pane-header badge — chat is free but hidden work runs; a calm slate chip that
    pulses gently, so background activity is discoverable, not only implied by the button ring. */
 .ws-bgwork { font-size: 10.5px; color: #cbd5e1; border: 1px solid color-mix(in srgb, #94a3b8 55%, transparent);
-  border-radius: 999px; padding: 1px 8px; white-space: nowrap; flex: 0 0 auto; animation: wsWorkPulse 1.6s ease-in-out infinite; }
+  border-radius: 999px; padding: 1px 8px; white-space: nowrap; flex: 0 0 auto; position: relative; }
+/* Its ring pulses, not the chip itself: wsWorkPulse animates OPACITY now, so animating the element
+   would blink the whole badge out instead of breathing a ring around it. */
+.ws-bgwork::after { content: ""; position: absolute; inset: -2px; border-radius: 999px; pointer-events: none;
+  box-shadow: 0 0 0 2px rgba(148,163,184,.55); opacity: 0; will-change: opacity;
+  animation: wsWorkPulse 1.6s ease-in-out infinite; }
 .ws-bgwork[hidden] { display: none; }
-@media (prefers-reduced-motion: reduce) { .ws-bgwork { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .ws-bgwork::after { animation: none; opacity: .6; } }
 /* Image attach: hidden native file input (triggered by the 📎 button, `multiple` so one dialog
    picks several at once), up to WS_IMG_MAX_COUNT thumbnail chips — each with its OWN remove (×)
    control, not one fixed control for a single image — and an inline error line for the "still too
@@ -2278,10 +2326,14 @@ body.pact-wgrip-dragging .pact-wgrip { pointer-events: auto; }
 .pc-loading { align-self: stretch; display: flex; flex-direction: column; gap: 8px; padding: 14px 10px; }
 .pc-loading-bar { position: relative; height: 4px; border-radius: 3px; overflow: hidden;
   background: color-mix(in srgb, var(--accent) 16%, transparent); }
+/* transform, not `left`: animating `left` re-runs LAYOUT every frame, which is worse again than the
+   paint cost of a box-shadow. Same travel — the bar is 40% wide, so -100%…250% of ITS OWN width
+   carries it from left:-40% to left:100% of the track. */
 .pc-loading-bar::after { content: ""; position: absolute; top: 0; left: 0; height: 100%; width: 40%;
-  border-radius: 3px; background: var(--accent); animation: pcLoadSlide 1.15s ease-in-out infinite; }
+  border-radius: 3px; background: var(--accent); will-change: transform;
+  animation: pcLoadSlide 1.15s ease-in-out infinite; }
 .pc-loading-lbl { color: var(--ink-dim); font-size: 11.5px; }
-@keyframes pcLoadSlide { 0% { left: -40%; } 100% { left: 100%; } }
+@keyframes pcLoadSlide { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
 @media (prefers-reduced-motion: reduce) { .pc-loading-bar::after { animation: none; width: 100%; opacity: .5; } }
 .pc-perm { align-self: stretch; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px;
   background: color-mix(in srgb, #f59e0b 14%, transparent); border: 1px solid color-mix(in srgb, #f59e0b 45%, transparent); font-size: 12px; }
@@ -2354,7 +2406,7 @@ body.pact-wgrip-dragging .pact-wgrip { pointer-events: auto; }
 .pc-send.busy:hover { filter: brightness(1.05); }
 .pc-send.busy.deepwork { background: #f87171; border-color: #f87171; color: #2a0a0a; }
 .pc-send.busy.deepwork:hover { filter: brightness(1.05); }
-.pc-send.work-pulse { animation: wsWorkPulse 1.15s ease-in-out infinite; }
+.pc-send.work-pulse { /* ring drawn by ::after above */ }
 @media (prefers-reduced-motion: reduce) { .pc-send.work-pulse { animation: none; box-shadow: 0 0 0 2px rgba(148,163,184,.7); } }
 
 /* Markdown viewer (.md files). */
