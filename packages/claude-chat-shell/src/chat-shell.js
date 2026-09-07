@@ -1106,9 +1106,17 @@
       // drops the dead id and starts a fresh one — the reader needs to know the agent no longer
       // carries that window's context, but shouting FAILED at them about a turn that worked is a
       // worse lie than saying nothing. Red for a turn that died, amber for one that recovered.
-      var note = o.tone === "notice";
+      // THREE things arrive on this path and they are not the same event, so they must not read the
+      // same: a turn that died (red), a window the engine had to replace (amber, and the turn ran),
+      // and a diagnostic the SDK attached to a turn that worked perfectly well (amber, and nothing
+      // happened to you at all). Calling the third "TURN FAILED" was the complaint; calling it
+      // "FRESH WINDOW" would just be a different wrong sentence.
+      var note = o.tone === "notice" || o.tone === "info";
       var emsg = o.message || "The turn ended with an error.";
-      var elabel = (note ? "\u21bb FRESH WINDOW \u2014 " : "\u26a0 TURN FAILED \u2014 ") + emsg;
+      var head = o.tone === "info" ? "\u2139 ENGINE NOTE \u2014 "
+               : o.tone === "notice" ? "\u21bb FRESH WINDOW \u2014 "
+               : "\u26a0 TURN FAILED \u2014 ";
+      var elabel = head + emsg;
       if (o.at) { var ed = new Date(o.at); if (!isNaN(ed.getTime())) elabel += "  \u00b7  " + ed.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
       return el("div", { class: "mark " + (note ? "--note" : "--err"), title: emsg },
         [el("span", { class: "mlbl" }, [elabel])]);

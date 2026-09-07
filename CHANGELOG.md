@@ -4,6 +4,47 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.13.3] - 2026-09-08
+### Fixed — "TURN FAILED" on a turn that worked perfectly well
+
+Reported with a screenshot of a red bar mid-conversation:
+
+```
+⚠ TURN FAILED — [ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use
+```
+
+…on a turn that had just streamed **21,039 output tokens**, finished, and been followed by the next
+prompt. My 1.12.4 rule was too blunt: it treated *every* result carrying `is_error` as a dead turn.
+
+The SDK also flags results that are DIAGNOSTICS about a turn that ran fine, and it sends them with
+the **same** `subtype: "error_during_execution"` as a genuinely dead one — so the subtype cannot tell
+them apart. What the turn DID can, and it is also the only definition that matches the report the
+feature exists for ("the prompts are stuck": no reply at all, ever):
+
+> **A turn failed only if it produced nothing.** No streamed text, no tool call, no output tokens.
+
+A flagged result on a turn that produced something is now an activity-log line instead of a permanent
+red bar — surfaced, not shouted. Output is detected either way: content events as they stream, or the
+result's own `output_tokens`. The flag clears at every result, so a good turn cannot vouch for the
+dead one after it.
+
+Three events land on this path and none of them is the other, so they no longer read the same:
+
+| | | |
+|---|---|---|
+| **⚠ TURN FAILED** | red | the turn produced nothing |
+| **↻ FRESH WINDOW** | amber | the engine replaced a lost window; the turn ran |
+| **ℹ ENGINE NOTE** | amber | an SDK diagnostic about a turn that worked |
+
+The diagnostic case is matched in the renderer as well as refused at the source, so the one row
+already on disk stops shouting too — without rewriting anyone's transcript.
+
+### Added
+4 tests, confirmed red-before-green: a turn with output is never a failure however its result is
+flagged; output counted three ways (streamed text, a tool call, usage alone); a turn that genuinely
+produced nothing still gets the red bar; and the per-turn flag resets so one dead turn after a good
+one is still reported.
+
 ## [1.13.2] - 2026-09-08
 ### Reverted — content-visibility cut the turn numbers and broke scrolling
 

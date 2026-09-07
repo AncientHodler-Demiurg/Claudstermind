@@ -9373,8 +9373,16 @@ function wsFmtBytes(n) {
 function wsMarkNode(m) {
   // `resume-missing` is a RECOVERY, not a failure — the turn ran. It gets the amber notice bar; a
   // genuine engine error gets the red one.
-  if (m && m.kind === "turnError") return window.ChatShell.buildMark({ kind: "error", message: m.message, at: m.at,
-    tone: m.subtype === "resume-missing" ? "notice" : "error" });
+  // `resume-missing` is a RECOVERY, and an SDK `[…_diagnostic]` line is a REMARK about a turn that
+  // ran — neither is a failure. Both get the amber notice bar; only a turn that genuinely produced
+  // nothing gets the red one. The diagnostic case is matched here as well as refused at the source,
+  // so rows already persisted before that fix stop shouting too.
+  if (m && m.kind === "turnError") {
+    const tone = m.subtype === "resume-missing" ? "notice"
+      : /^\s*\[[a-z0-9_]*diagnostic\]/i.test(String(m.message || "")) ? "info"
+      : "error";
+    return window.ChatShell.buildMark({ kind: "error", message: m.message, at: m.at, tone });
+  }
   return window.ChatShell.buildMark({
     kind: (m && m.kind === "wrapped") ? "wrap" : "compact",
     preTokens: m && m.preTokens, postTokens: m && m.postTokens,
