@@ -4,6 +4,26 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.13.6] - 2026-09-08
+### Fixed — the 1.13.5 deploy failed on the box
+
+```
+#14 ERROR: failed to calculate checksum of ref …: "/packages/claude-chat-shell/src": not found
+ > [10/11] COPY packages/claude-chat-shell/src/ ./packages/claude-chat-shell/src/
+```
+
+1.13.5 taught the relay's Dockerfile to ship the chat-shell package. It did not teach the **tarball**
+that carries the build context to the box — that list (`dashboard lib relay package.json`) is
+assembled in `lib/deploy.mjs`, and the `COPY` that consumes it lives in `relay/Dockerfile`. Two lists
+of "what the relay needs", in two files, and nothing local could notice: the build context only fails
+to resolve on the far side of an `scp`.
+
+Nothing degraded — the blue-green pipeline aborted at Rebuild with the live site untouched, which is
+what it is for.
+
+`lib/release.test.mjs` now derives the requirement from the Dockerfile itself: **every path the image
+COPYs must be inside the tar the deploy ships.** The next `COPY` is covered the day it is added.
+
 ## [1.13.5] - 2026-09-08
 ### Fixed — the phone couldn't open the Workspace at all
 
