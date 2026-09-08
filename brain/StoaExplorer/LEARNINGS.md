@@ -2,6 +2,48 @@
 
 > Append-only. Non-obvious facts, corrections, tricks that came out of real sessions. Newest at the top. Each entry gets a date + one-line headline + the detail underneath.
 
+## 2026-09-08 — ★ Gas-FEE totals (coin spent on gas): the numbers, the timings, and why they must never touch a float
+
+New metric: `SUM(gas * gas_price)` per chain = native coin actually PAID for gas. `GET /api/v1/stats/gas-fees`
+(shared backend, so both explorers), maintained by `backend/src/modules/stats/gas-fees.service.ts`.
+
+**MEASURED FACTS (2026-09-08), worth not re-deriving:**
+- `transactions.gas_price` is `decimal(20,12)` and **fully populated** on both chains (200k/200k sampled on
+  Kadena; range 1e-8 .. 1.1e-4 KDA). So `SUM(gas*gas_price)` is exact NUMERIC in Postgres.
+- Kadena `transactions`: **217,251,888 rows / 290 GB**. Stoa `transactions`: only **~4,200 rows / 22 MB** —
+  the "5.8M" figure people quote for Stoa is BLOCKS, not transactions. Stoa's aggregate is instant.
+- **The full `GROUP BY chain_id` scan over all 217M Kadena rows takes 4m57s.** (The older gas-counter comment
+  claiming ">425s, non-viable" is stale/pessimistic.) Chunked + duty-cycled the backfill runs ~20 min.
+- Kadena all-time totals at that moment: **177,565.938573 KDA** paid for gas, of which **35,913.09 KDA (20.2%)
+  wasted on FAILED transactions**, and **71% of all fees are on chain 0**.
+- Stoa all-time: **6.176362569815 STOA**.
+
+**`height` has 0.986 physical correlation on the Kadena transactions table** (it is written in block order).
+That is why the backfill walks height RANGES instead of one big scan: ranges read essentially sequentially, so
+you get the same throughput PLUS resumability, bounded statements, and a real progress percentage. Verify with
+`SELECT attname, correlation FROM pg_stats WHERE tablename='transactions'` before assuming this on any table.
+
+**PRECISION IS THE WHOLE FEATURE — never fold fees in JS.** The sibling `GasUsageService` accumulates its
+counters in JavaScript numbers, which is fine for integer gas but WRONG for a 12-decimal fee: 5 integer digits
++ 12 decimals is ~17 significant digits, past float64. Every fee sum is therefore done by Postgres in NUMERIC,
+travels as a **string**, and cross-chain totals are added with BigInt at the smallest unit (same technique as
+the supply endpoint's `decimalToAnu`). Frontend `lib/format-decimal.ts` groups/truncates/subtracts on the digit
+string with no `Number()` anywhere. Pinned test case: `Number('99999.999999999999') === 100000`.
+
+Display truncates, never rounds — a fee total that reads HIGHER than reality is worse than one a hair low, and
+truncation cannot carry into the integer part.
+
+## 2026-09-08 — Partial aggregates must LOOK partial; and a native `title=` will fail the no-bland-tooltip test
+
+Two small process notes from the same session. (1) While the fee backfill walks, the total is a PARTIAL sum, so
+the medallion dims it and shows a progress bar + percentage rather than presenting it as final — the API returns
+`progress.{complete,percent,scannedHeight,targetHeight}` precisely so the UI can be honest about this. (2) A
+`title=` attribute added to a new component broke the existing GasFloorBar spec assertion
+`container.querySelector('[title]')` — which was the test doing its job: the owner had explicitly asked for
+styled tooltips over the native bubble. Fix was to convert the new component to the Radix tooltip, not to relax
+the test. Note `frontend-kadena` also had `@radix-ui/react-tooltip` as an unused dependency with no wrapper;
+both frontends now have `components/ui/tooltip.tsx` + the hand-rolled keyframes.
+
 ## 2026-09-07 — VPS `git pull --ff-only` "multiple branches": the real cause is a DUPLICATED FETCH_HEAD, not the deploy user
 
 Supersedes the 2026-08-21 entry, which blamed the hardened deploy user's git context and prescribed "pull as root".
