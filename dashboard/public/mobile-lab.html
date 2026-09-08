@@ -78,7 +78,18 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
   background:color-mix(in srgb,var(--ok) 12%,transparent);border:1px solid color-mix(in srgb,var(--ok) 42%,transparent)}
 .m-bulb i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block}
 .m-bulb.--busy{color:var(--work);background:color-mix(in srgb,var(--work) 12%,transparent);border-color:color-mix(in srgb,var(--work) 42%,transparent)}
-.m-ttl{font-weight:700;font-size:13.5px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* STATE MEDALLIONS, in the header where they can be seen: connected, reconnecting, agents running.
+   These are the one thing a reveal must never hide — you cannot decide to open a panel about a state
+   you cannot see. They scroll horizontally rather than wrap, so three of them never cost a row. */
+.m-meds{flex:0 1 auto;display:flex;align-items:center;gap:5px;overflow-x:auto;scrollbar-width:none;min-width:0}
+.m-meds::-webkit-scrollbar{display:none}
+.m-hmed{flex:0 0 auto;display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;border-radius:999px;padding:2px 8px;
+  color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent);border:1px solid color-mix(in srgb,var(--ok) 40%,transparent)}
+.m-hmed i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block}
+.m-hmed.--busy{color:var(--work);background:color-mix(in srgb,var(--work) 12%,transparent);border-color:color-mix(in srgb,var(--work) 40%,transparent)}
+.m-hmed.--dim{color:var(--dim);background:var(--chip);border-color:var(--line);font-weight:400}
+.m-hmed.--ok{color:var(--acc);background:color-mix(in srgb,var(--accent) 12%,transparent);border-color:color-mix(in srgb,var(--accent) 40%,transparent)}
+.m-ttl{font-weight:700;font-size:13px;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
 .m-ctx{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);background:var(--chip);
   border:1px solid var(--line);border-radius:999px;padding:3px 9px;cursor:pointer}
 .m-ctx b{color:var(--ink)}
@@ -97,18 +108,55 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
 .m-turn.--p .m-n{right:10px;background:var(--tag-p-bg);color:var(--tag-p-fg)}
 .m-turn.--r .m-n{left:10px;background:var(--tag-r-bg);color:var(--tag-r-fg)}
 
-/* compose — attach, box, send on ONE row; the box grows with the text */
-.m-compose{flex:0 0 auto;display:flex;align-items:flex-end;gap:8px;background:var(--panel);
-  padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-top:var(--seam-w) solid var(--edge)}
+/* ===== THE FOOTER, in three strips, bottom-up — the shape Pact mobile already proved:
+   3. the type box, FULL WIDTH (an attach button beside it is what stole the width)
+   2. a row of buttons: menu + upload left, the retractor centred under the Live medallion, and
+      auto / Stop / Send right
+   1. a strip glued to the nav: Conversations left, Bookmarks right, and in the middle a READ-ONLY
+      readout of the model that is actually running — pull it up (or tap) for the whole right pane. */
+.m-compose{flex:0 0 auto;display:flex;background:var(--panel);padding:8px 10px 0;border-top:var(--seam-w) solid var(--edge)}
+.m-box{flex:1 1 auto;min-width:0;height:40px;max-height:42vh;resize:none;overflow-y:auto;background:var(--field);
+  border:1px solid var(--field-line);border-radius:12px;color:var(--ink);font:inherit;font-size:15px;line-height:1.45;padding:10px 12px}
+.m-box:focus{outline:none;border-color:var(--accent)}
+/* the button row. `position:relative` so the Live medallion can straddle its top edge. */
+.m-btnrow{flex:0 0 auto;position:relative;display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--panel)}
 .m-ico{flex:0 0 auto;width:40px;height:40px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;
   background:var(--chip);border:1px solid var(--line);color:var(--ink);font-size:17px;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .m-ico:active{filter:brightness(1.25)}
-.m-box{flex:1 1 auto;min-width:0;height:40px;max-height:38vh;resize:none;overflow-y:auto;background:var(--field);
-  border:1px solid var(--field-line);border-radius:12px;color:var(--ink);font:inherit;font-size:14px;padding:10px 12px}
-.m-box:focus{outline:none;border-color:var(--accent)}
+.m-ico.--retract{width:64px;font-size:14px}
+.m-auto{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--dim);cursor:pointer;flex:0 0 auto}
+.m-auto .m-sw{width:34px;height:20px}.m-auto .m-sw i{width:14px;height:14px}
+.m-auto.on .m-sw{background:color-mix(in srgb,var(--accent) 62%,#2b3868)}
+.m-auto.on .m-sw i{transform:translateX(14px);background:#fff}
 .m-snd{flex:0 0 auto;min-width:52px;height:40px;border-radius:12px;border:1px solid var(--accent);background:var(--accent);
   color:#1b0b2a;font:inherit;font-size:17px;font-weight:800;cursor:pointer;touch-action:manipulation}
 .m-snd.--busy{background:var(--work);border-color:var(--work);color:var(--work-fg);font-size:13px}
+.m-stp{flex:0 0 auto;min-width:44px;height:40px;border-radius:12px;border:1px solid color-mix(in srgb,var(--work-deep) 55%,var(--line));
+  background:var(--chip);color:var(--work-deep);font-size:15px;cursor:pointer}
+.m-mid{flex:1;display:flex;justify-content:center}
+/* THE LIVE/HELD MEDALLION — straddling the top edge of the button row, centred over the retractor,
+   deliberately shorter than the buttons so it reads as a badge rather than a control. Production
+   already re-homes this exact bulb between docks (stick.dockMode); this is one more dock. */
+.m-med{position:absolute;left:50%;top:-11px;transform:translateX(-50%);z-index:5;height:22px;display:inline-flex;align-items:center;gap:5px;
+  padding:0 10px;border-radius:999px;font-size:10.5px;font-weight:700;background:var(--panel);color:var(--ok);
+  border:1px solid color-mix(in srgb,var(--ok) 45%,transparent);white-space:nowrap}
+.m-med i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block}
+.m-med.--held{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 45%,transparent)}
+/* strip 1 — riser tabs glued to the nav below, exactly like .ws-mbtn/.pactm-mbtn do today */
+.m-risers{flex:0 0 auto;display:flex;align-items:flex-end;justify-content:space-between;gap:6px;padding:4px 6px 0;background:var(--bg)}
+.m-riser{flex:0 0 auto;height:22px;padding:0 9px;display:inline-flex;align-items:center;gap:4px;border-radius:8px 8px 0 0;
+  border:1px solid color-mix(in srgb,var(--accent) 48%,var(--line));border-bottom:none;background:color-mix(in srgb,var(--accent) 13%,var(--panel));
+  color:var(--accent);font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;touch-action:manipulation}
+.m-riser.--bm{color:#fbbf24;border-color:color-mix(in srgb,#fbbf24 45%,var(--line));background:color-mix(in srgb,#fbbf24 11%,var(--panel))}
+/* the middle of that strip: what is RUNNING, not what is selected. Read-only on purpose — the
+   selector lives in the right pane, and this said "Opus 5" next to a dropdown saying "Opus 5" for
+   long enough to make the difference invisible. */
+.m-running{flex:1 1 auto;min-width:0;height:26px;display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer;
+  border-radius:9px 9px 0 0;border:1px solid var(--line);border-bottom:none;background:var(--panel);
+  color:var(--ink);font-size:11px;font-weight:700;touch-action:manipulation}
+.m-running em{font-style:normal;color:var(--dim);font-weight:400}
+.m-running .m-pull{color:var(--dim);font-size:9px;letter-spacing:.2em}
+.m-running:active{background:color-mix(in srgb,var(--accent) 16%,var(--panel))}
 
 /* the app's own bottom navigation, unchanged */
 .m-nav{flex:0 0 auto;height:54px;display:flex;border-top:1px solid var(--line);background:var(--panel)}
@@ -120,6 +168,12 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
    RAILS: thumb-reachable, vertically centred, floating OVER the core's edge so they cost the
    transcript no width. The left rail also carries the live status colour, so "is it working" is
    answerable without opening anything. */
+/* RAIL VARIANTS. The bubbles were being covered by a vertical bar, so the rail is now a lab CHOICE:
+   `tab` (a short arc-ended tab), `arc` (a half-disc, the semicircle idea), or `none` — because the
+   footer's own buttons already open both panes, which makes a permanent rail optional rather than
+   structural. In every variant the core carries side padding equal to the widest rail, so a bubble
+   is never underneath one. */
+.m-core.--gutter{padding-left:26px;padding-right:26px}
 .m-rail{position:absolute;top:50%;transform:translateY(-50%);width:22px;height:112px;z-index:40;cursor:pointer;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;
   background:color-mix(in srgb,var(--panel) 90%,transparent);border:1px solid var(--line);
@@ -131,7 +185,15 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
 .m-stat{flex:0 0 auto;min-height:19px;padding-bottom:0;display:flex;align-items:center;justify-content:center;gap:6px;
   font:9.5px ui-monospace,Consolas,monospace;color:var(--dim);background:#000;border-top:1px solid var(--line)}
 .m-stat b{color:var(--ok)}.m-stat .bad{color:var(--err)}
+.m-cyc{margin-left:10px;padding:1px 7px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--acc);cursor:pointer}
 .m-rlbl{writing-mode:vertical-rl;text-orientation:mixed;font-size:9px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+.m-rail.--arc{width:26px;height:64px;gap:0}
+.m-rail.--arc.--l{border-radius:0 999px 999px 0}
+.m-rail.--arc.--r{border-radius:999px 0 0 999px}
+.m-rail.--arc .m-rlbl{display:none}
+.m-rail.--arc .m-grip{height:22px}
+.m-rail.--tab{height:84px}
+.m-rail.--tab .m-rlbl{font-size:8px}
 
 /* PANELS: the same slide + backdrop mechanic as Pact mobile's drawer, mirrored for the right edge. */
 .m-scrim{position:absolute;inset:0;z-index:50;background:#000a;opacity:0;pointer-events:none;transition:opacity .18s ease}
@@ -247,7 +309,14 @@ var S = {
   view: "proposed",          // which layout the device shows — the whole point of the page
   measured: {},              // { today: pct, proposed: pct } — filled by measure(), never guessed
   panel: null,               // "left" | "right" | null — which edge panel is open
-  busy: false,               // a turn in flight: colours the rail, the bulb and Send
+  busy: false,               // a turn in flight: colours the medallion, Stop and Send
+  big: false,                // the retractor: does the type box get ~30% or ~52% of the screen
+  stick: true,               // transcript pinned to the bottom (the bulb's Live) vs held where you left it
+  rail: "arc",               // "arc" | "tab" | "none" — the edge affordance, a lab choice (see below)
+  agents: "4 agents · 4 done",
+  reconnected: true,
+  runningModel: "Opus 5",    // what is ACTUALLY running — the strip is a readout, never a selector
+  convo: { name: "Claudstermind · Main", star: true },   // ★ = the repository's main conversation
   model: "Opus 5",
   effort: "Default effort",
   perm: "Bypass",
@@ -272,10 +341,13 @@ var S = {
   models: ["Haiku 4.5", "Sonnet 4.5", "Sonnet 5", "Opus 4.1", "Opus 5"],
   efforts: ["Default effort", "low", "medium", "high", "xhigh"],
   perms: ["Manual", "Edits", "Plan", "Auto", "Bypass"],
+  multiChat: false,
+  worktree: "main",
+  /* Conversations OF THE SAME REPOSITORY — that is what this list is for. One of them is the ★ main. */
   convos: [
-    { name: "Claudstermind · main", sub: "live · 731 prompts", on: true },
-    { name: "OuronetUI · dev", sub: "idle · 2h ago", on: false },
-    { name: "Khronoton · main", sub: "idle · yesterday", on: false }
+    { name: "Claudstermind · Main", sub: "live · 731 prompts", on: true, star: true },
+    { name: "Claudstermind · mobile rework", sub: "idle · 20m ago", on: false, star: false },
+    { name: "Claudstermind · relay deploy", sub: "idle · yesterday", on: false, star: false }
   ]
 };
 var nPrompts = function () { return S.turns.filter(function (t) { return t.role === "user"; }).length; };
@@ -334,23 +406,33 @@ function chipRow() {
   return el("div", { class: "cs-shell m-chips" }, chips);
 }
 function leftPanel() {
+  /* WHAT THIS CONVERSATION IS, and how to move between the others in the same repository. The ★ is
+     the repository's MAIN conversation — the same idea Pact already calls "prime" (pactm-frow-prime),
+     so it is one vocabulary, not two. */
+  var convoRows = S.convos.map(function (c) {
+    var r = el("div", { class: "m-row" + (c.on ? " --on" : "") }, [
+      el("span", {}, [(c.star ? "★ " : "") + c.name]), el("em", {}, [c.sub])]);
+    onTap(r, function () { S.convos.forEach(function (x) { x.on = false; }); c.on = true; S.convo = { name: c.name, star: c.star }; render(); });
+    return r;
+  });
+  var multi = toggle("multi-chat — show them side by side", S.multiChat, function (v) { S.multiChat = v; render(); });
   return el("div", { class: "m-panel --l" + (S.panel === "left" ? " open" : ""), id: "pl" }, [
     el("div", { class: "m-phd" }, [el("b", {}, ["Session"]), (function () {
       var x = el("button", { class: "m-px", type: "button" }, ["✕"]); onTap(x, function () { setPanel(null); }); return x;
     })()]),
     el("div", { class: "m-pbody" }, [
       section("This conversation", [
-        el("div", { class: "m-row --on" }, [el("span", {}, ["Claudstermind · AncientHodler"]), el("em", {}, ["main"])]),
-        el("div", { class: "m-row" }, [el("span", {}, ["◉ 4 agents · 4 done"])]),
-        el("div", { class: "m-row" }, [el("span", {}, ["↻ Reconnected — caught up"])])
+        el("div", { class: "m-row --on" }, [el("span", {}, [(S.convo.star ? "★ " : "") + S.convo.name]), el("em", {}, ["live"])]),
+        el("div", { class: "m-row" }, [el("span", {}, ["Workspace"]), el("em", {}, [S.worktree + "  ⌄"])])
       ]),
+      section("Conversations in this repository", convoRows.concat([multi,
+        el("div", { class: "m-btns" }, [el("button", { class: "m-btn --acc", type: "button" }, ["＋ New"]),
+                                        el("button", { class: "m-btn", type: "button" }, ["★ Make main"])])])),
       section("Size and ceilings", [chipRow()]),
-      section("Conversations", S.convos.map(function (c) {
-        return el("div", { class: "m-row" + (c.on ? " --on" : "") }, [el("span", {}, [c.name]), el("em", {}, [c.sub])]);
-      }).concat([el("div", { class: "m-btns" }, [el("button", { class: "m-btn --acc", type: "button" }, ["＋ New chat"]),
-                                                el("button", { class: "m-btn", type: "button" }, ["★ Bookmarks"])])])),
-      section("Find", [el("div", { class: "m-btns" }, [el("button", { class: "m-btn", type: "button" }, ["P#/R# jump"]),
-                                                      el("button", { class: "m-btn", type: "button" }, ["⌕ Recall"])])])
+      section("Find in this conversation", [el("div", { class: "m-btns" }, [
+        el("button", { class: "m-btn", type: "button" }, ["P#/R# jump"]),
+        el("button", { class: "m-btn", type: "button" }, ["⌕ Recall"]),
+        el("button", { class: "m-btn", type: "button" }, ["★ Marks"])])])
     ])
   ]);
 }
@@ -407,34 +489,96 @@ function turns() {
 function paintHead() { var m = $("#mmodel"); if (m) m.textContent = S.model; }
 
 function proposed() {
-  var core = el("div", { class: "m-core" }, turns());
-  var railL = el("div", { class: "m-rail --l" }, [el("div", { class: "m-grip" }, []), el("span", { class: "m-rlbl" }, ["Session"])]);
-  var railR = el("div", { class: "m-rail --r" }, [el("div", { class: "m-grip" }, []), el("span", { class: "m-rlbl" }, ["Controls"])]);
-  onTap(railL, function () { setPanel("left"); });
-  onTap(railR, function () { setPanel("right"); });
-  var ctx = el("div", { class: "m-ctx" }, [el("div", { class: "m-bar" }, [el("i", { style: "width:" + ctxPct() + "%" }, [])]),
-                                           el("b", {}, [ctxPct() + "%"])]);
+  var core = el("div", { class: "m-core" + (S.rail === "none" ? "" : " --gutter") }, turns());
+
+  /* HEAD — the state medallions live here, because "is it connected, did it reconnect" has to be
+     answerable without opening anything. Identity is a tap target for the left pane. */
+  var ctx = el("div", { class: "m-ctx" }, [el("div", { class: "m-bar" }, [el("i", { style: "width:" + ctxPct() + "%" }, [])]), el("b", {}, [ctxPct() + "%"])]);
   onTap(ctx, function () { setPanel("right"); });
-  var head = el("div", { class: "m-head" }, [
-    el("span", { class: "m-bulb" + (S.busy ? " --busy" : "") }, [el("i", {}, []), S.busy ? "Working" : "Live"]),
-    el("span", { class: "m-ttl" }, ["Claudstermind · main"]), ctx]);
+  var meds = [el("span", { class: "m-hmed" + (S.busy ? " --busy" : "") }, [el("i", {}, []), S.busy ? "Working" : "Live"])];
+  if (S.agents) meds.push(el("span", { class: "m-hmed --dim" }, ["◉ " + (S.agents.match(/^\d+/) || ["?"])[0]]));
+  if (S.reconnected) meds.push(el("span", { class: "m-hmed --ok" }, ["↻"]));
+  var medBar = el("span", { class: "m-meds" }, meds);
+  onTap(medBar, function () { setPanel("left"); });   // the full sentence lives in the left pane
+  var title = el("span", { class: "m-ttl" }, [S.convo.star ? "★ " : "", S.convo.name]);
+  onTap(title, function () { setPanel("left"); });
+  var head = el("div", { class: "m-head" }, [title, medBar, ctx]);
+
+  /* 3. THE TYPE BOX — full width. An attach button beside it is exactly what made the field narrow. */
   var box = el("textarea", { class: "m-box", rows: "1", placeholder: "Message Claude…" }, []);
-  box.addEventListener("input", function () {
+  var grow = function () {
     box.style.height = "40px";
-    box.style.height = Math.min(box.scrollHeight, Math.round(window.innerHeight * 0.38)) + "px";
+    var cap = Math.round((S.big ? 0.52 : 0.30) * (document.querySelector(".device") || { clientHeight: 915 }).clientHeight);
+    box.style.height = Math.min(box.scrollHeight, cap) + "px";
+    /* PUSH, DON'T COVER: the core is the only flexing region, so a taller box shrinks it — but the
+       transcript then has to be re-pinned or the bottom slides out of view, which is what reads as
+       "it went over the chat". Same stick-to-bottom rule production's transcript already has. */
+    if (S.stick) core.scrollTop = core.scrollHeight;   // …but only while the bulb says Live
     measure();
-  });
-  var send = el("button", { class: "m-snd" + (S.busy ? " --busy" : ""), type: "button" }, [S.busy ? "■" : "➤"]);
+  };
+  box.addEventListener("input", grow);
+
+  /* 2. THE BUTTON ROW — menu + upload left, retractor centred under the medallion, auto/Stop/Send right. */
+  var menuB = el("button", { class: "m-ico", type: "button", title: "Session" }, ["☰"]);
+  onTap(menuB, function () { setPanel("left"); });
+  var upB = el("button", { class: "m-ico", type: "button", title: "Attach" }, ["📎"]);
+  var retB = el("button", { class: "m-ico --retract", type: "button", title: "Bigger / smaller type box" }, [S.big ? "⌄" : "⌃"]);
+  onTap(retB, function () { S.big = !S.big; render(); });
+  var autoB = el("div", { class: "m-auto" + (S.autoContinue ? " on" : "") }, [el("div", { class: "m-sw" }, [el("i", {}, [])]), "auto"]);
+  onTap(autoB, function () { S.autoContinue = !S.autoContinue; render(); });
+  var stopB = el("button", { class: "m-stp", type: "button", title: "Stop" }, ["■"]);
+  stopB.hidden = !S.busy;
+  onTap(stopB, function () { S.busy = false; render(); });
+  var send = el("button", { class: "m-snd" + (S.busy ? " --busy" : ""), type: "button" }, [S.busy ? "…" : "➤"]);
   onTap(send, function () { S.busy = !S.busy; render(); });
-  var compose = el("div", { class: "m-compose" }, [el("button", { class: "m-ico", type: "button" }, ["📎"]), box, send]);
+  /* THE STICK BULB. Not the turn state — the SCROLL state: "Live" means the transcript is pinned to
+     the bottom and new turns push into view; "Held" means you scrolled up and it is staying put.
+     Tapping it returns to the bottom and re-arms Live, which is what production's bulb does. */
+  var med = el("span", { class: "m-med" + (S.stick ? "" : " --held") }, [el("i", {}, []), S.stick ? "⇣ Live" : "⏸ Held"]);
+  onTap(med, function () { S.stick = true; core.scrollTop = core.scrollHeight; render(); });
+  core.addEventListener("scroll", function () {
+    var atEnd = core.scrollHeight - core.scrollTop - core.clientHeight < 24;
+    if (atEnd !== S.stick) { S.stick = atEnd; med.className = "m-med" + (atEnd ? "" : " --held"); med.textContent = atEnd ? "⇣ Live" : "⏸ Held"; }
+  }, { passive: true });
+  var btnrow = el("div", { class: "m-btnrow" }, [med, menuB, upB,
+    el("div", { class: "m-mid" }, [retB]), autoB, stopB, send]);
+
+  /* 1. THE STRIP glued to the nav. The middle is a READOUT of what is running; pulling it up (or
+     tapping it) opens the right pane, which is where the selector lives. */
+  var running = el("div", { class: "m-running" }, [el("span", { class: "m-pull" }, ["▲▲"]),
+    S.runningModel, el("em", {}, ["· " + S.effort.replace(" effort", "") + " · " + S.perm])]);
+  onTap(running, function () { setPanel("right"); });
+  (function pullUp(node) {          // a real pull, not only a tap — the gesture the ▲▲ promises
+    var y0 = null;
+    node.addEventListener("touchstart", function (e) { y0 = e.touches[0] ? e.touches[0].clientY : null; }, { passive: true });
+    node.addEventListener("touchmove", function (e) {
+      if (y0 == null) return;
+      var y = e.touches[0] ? e.touches[0].clientY : y0;
+      if (y0 - y > 24) { y0 = null; setPanel("right"); }
+    }, { passive: true });
+  })(running);
+  var risers = el("div", { class: "m-risers" }, [
+    (function () { var b = el("div", { class: "m-riser" }, ["💬 " + S.convos.length]); onTap(b, function () { setPanel("left"); }); return b; })(),
+    running,
+    (function () { var b = el("div", { class: "m-riser --bm" }, ["★ Marks"]); onTap(b, function () { setPanel("left"); }); return b; })()
+  ]);
+
   var scrim = el("div", { class: "m-scrim" + (S.panel ? " on" : "") }, []);
   onTap(scrim, function () { setPanel(null); });
-  /* The rails, the scrim and the panels are absolutely positioned, so they can be plain siblings of
-     the flex column rather than living in a wrapper — an absolutely positioned wrapper is what hid
-     the lab strip underneath it the first time. */
-  var wrap = el("div", { class: "mob" }, [appBar(), head, core, compose, nav(), el("div", { class: "m-stat" }, []),
-                                          railL, railR, scrim, leftPanel(), rightPanel()]);
+  var kids = [appBar(), head, core, el("div", { class: "m-compose" }, [box]), btnrow, risers, nav(),
+              el("div", { class: "m-stat" }, [])];
+  if (S.rail !== "none") {
+    var cls = " --" + S.rail;
+    var railL = el("div", { class: "m-rail --l" + cls }, [el("div", { class: "m-grip" }, []), el("span", { class: "m-rlbl" }, ["Session"])]);
+    var railR = el("div", { class: "m-rail --r" + cls }, [el("div", { class: "m-grip" }, []), el("span", { class: "m-rlbl" }, ["Controls"])]);
+    onTap(railL, function () { setPanel("left"); });
+    onTap(railR, function () { setPanel("right"); });
+    kids.push(railL, railR);
+  }
+  kids.push(scrim, leftPanel(), rightPanel());
+  var wrap = el("div", { class: "mob" }, kids);
   wrap.id = "mob";
+  requestAnimationFrame(function () { if (S.stick) core.scrollTop = core.scrollHeight; });
   return wrap;
 }
 
@@ -483,8 +627,15 @@ function measure() {
   S.measured[S.view] = pct;
   var other = S.view === "today" ? "proposed" : "today";
   var chip = document.querySelector(".m-stat");
-  if (chip) chip.innerHTML = "chat <" + (good ? "b" : "span class=bad") + ">" + Math.round(c) + "px · " + pct + "%</" +
-    (good ? "b" : "span") + ">" + (S.measured[other] != null ? " &nbsp;(" + other + ": " + S.measured[other] + "%)" : "");
+  if (chip) {
+    chip.innerHTML = "chat <" + (good ? "b" : "span class=bad") + ">" + Math.round(c) + "px · " + pct + "%</" +
+      (good ? "b" : "span") + ">" + (S.measured[other] != null ? " &nbsp;(" + other + ": " + S.measured[other] + "%)" : "");
+    if (S.view === "proposed") {
+      var cyc = el("span", { class: "m-cyc" }, ["rail: " + S.rail + " ▸"]);
+      onTap(cyc, function () { var o = ["arc", "tab", "none"]; S.rail = o[(o.indexOf(S.rail) + 1) % o.length]; render(); });
+      chip.appendChild(cyc);
+    }
+  }
   out.innerHTML = "device " + Math.round(H) + "px &nbsp;·&nbsp; transcript <" + (good ? "b" : "span class=bad") + ">" +
     Math.round(c) + "px (" + pct + "%)</" + (good ? "b" : "span") + ">" +
     "<br>" + (S.view === "today"

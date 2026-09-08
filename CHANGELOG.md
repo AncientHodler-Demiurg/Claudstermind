@@ -4,6 +4,44 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.14.1] - 2026-09-09
+### Changed — Mobile Cockpit Lab: the footer is three strips, and the type box owns the width
+
+*"the upload and send button makes the chat not use the whole width, this is a bad design."* Correct,
+and it is the same mistake in miniature that the whole page is about: putting things beside the one
+element that needs the room. The footer is now, bottom-up:
+
+1. **A strip glued to the navigation** — `💬 Conversations` left, `★ Marks` right, and in the middle a
+   **read-only readout of what is actually running** (`Opus 5 · Default · Bypass`). Pull it up or tap
+   it and the whole right pane opens. The strip never selects anything; the selector lives in the pane,
+   because a strip saying "Opus 5" next to a dropdown saying "Opus 5" makes the difference invisible.
+2. **A row of buttons** — menu and upload left, the retractor centred, `auto` / Stop / Send right.
+3. **The type box, full width**, expandable, with nothing beside it.
+
+**The Live/Held medallion** straddles the top edge of the button row, above the retractor, deliberately
+shorter than the buttons. It is the **scroll stick** — Live means the transcript is pinned to the
+bottom, Held means you scrolled up and it is staying there — not the turn state, which is a different
+thing that was briefly the same word on the same screen. Tapping it returns to the bottom.
+
+**State medallions moved to the header** and stay there: `● Live`, `◉ 4`, `↻`. A reveal must never hide
+the thing that tells you to open it. They are compact by design — three full-text medallions squeezed
+the conversation name to `★ Claudstermi…` at 412px; the sentence is one tap away in the left pane.
+
+**The type box pushes, it does not cover.** The core is the only flexing region and every other strip
+is `flex: 0 0 auto`, so a taller box shrinks the transcript instead of sitting on top of it — and the
+transcript re-pins to the bottom as it grows, but only while the bulb says Live. That re-pin is what
+was missing: the layout was already pushing, it just let the bottom slide out of view.
+
+**Left pane** — the conversation and its siblings *in the same repository*: the current one named
+`★ Claudstermind · Main` (★ = the repository's main conversation, the same idea Pact already calls
+"prime"), its workspace, the other conversations with a multi-chat toggle, the stats chips, and find.
+**Right pane** — the model settings, unchanged.
+
+**The rail is now a choice, comparable with a thumb**: `arc` (a half-disc), `tab` (a short bar) or
+`none`. Tap `rail: … ▸` in the lab strip to cycle. Whichever is on, the transcript carries a matching
+gutter so a rail never covers a bubble — and `none` is a real option, because the footer's own buttons
+already open both panes, which makes a permanent rail optional rather than structural.
+
 ## [1.14.0] - 2026-09-09
 ### Added — Mobile Cockpit Lab: a proposed phone layout, at `/mobile-lab.html`
 
