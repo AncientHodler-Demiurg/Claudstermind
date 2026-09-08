@@ -1,0 +1,530 @@
+<!doctype html><meta charset="utf-8">
+<title>Mobile Cockpit Lab — header and footer as edge panels</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<!-- A MOCKUP of a proposed phone layout for the Core cockpit. Production is untouched: app.js is not
+     loaded here and nothing here is imported by it. Same relationship the Chat Shell Lab has to the
+     chat box — somewhere to look at a design at full size, on the real device, before it is wired to
+     a live session.
+
+     WHY IT EXISTS. Measured on the live dashboard at 412x915 (Chromium, mobile emulation): the pane
+     header takes 191px, the footer 239px, and the CONVERSATION — the only thing you opened the app
+     for — gets 284px. Under the pane sit three more control strips before the OS navigation. The
+     chat box was designed for a desktop grid of panes 380-560px wide, and on a phone that grid
+     becomes a stack: every row that merely wrapped on the desktop now costs a band of screen.
+
+     THE PROPOSAL, in one sentence: the header and the footer stop being ROWS and become two EDGE
+     PANELS — left for what the header said (who, where, how big), right for what the footer said
+     (model, effort, permission, wrap) — revealed by thumb-reachable rails on the screen edges, so
+     the transcript keeps the screen.
+
+     It reuses mechanics this repo already has: Pact mobile's slide-in drawer with a backdrop and its
+     transform transition (.pactm-drawer), its sheet dismissal, and its tap-vs-scroll disambiguation
+     (onTap, app.js). ONE mechanic is new — the scroll-snap WHEEL. There is no scroll-snap anywhere
+     in the repo today, and a value you change ten times a day deserves better than a native select
+     popup with a 12px hit target.
+
+     The stats chips in the left panel are built by the REAL function (ChatShell.buildStatsChips), so
+     what you see there is what production would render, not a drawing of it.
+
+     PUBLIC AFTER A DEPLOY: dashboard/public is served to anyone who reaches the domain, with no
+     login (relay/server.mjs gates /api/* only). Everything on this page is invented mock content. -->
+<link rel="stylesheet" href="/chat-shell/chat-shell.css">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI,Roboto,sans-serif}
+.page{min-height:100%;display:flex;flex-direction:column;align-items:center;gap:12px;padding:16px 12px 36px}
+.hd{max-width:720px;text-align:center}
+.hd h1{margin:0 0 4px;font-size:18px}
+.hd p{margin:0 0 3px;color:var(--dim);font-size:12.5px}
+.hd code{background:var(--panel-2);padding:1px 5px;border-radius:5px;font-size:11.5px}
+.hd b.stamp{color:var(--ok)}
+.sw{display:inline-flex;background:var(--panel-2);border:1px solid var(--line);border-radius:11px;padding:3px;gap:3px}
+.sw button{appearance:none;border:0;background:transparent;color:var(--dim);font:inherit;font-weight:700;font-size:12.5px;padding:7px 15px;border-radius:8px;cursor:pointer}
+.sw button.on{background:color-mix(in srgb,var(--accent) 24%,transparent);color:#fff}
+#readout{font:11.5px/1.6 ui-monospace,Consolas,monospace;color:var(--dim);text-align:center;min-height:34px}
+#readout b{color:var(--ok)} #readout .bad{color:var(--err)}
+#laberr{position:fixed;left:0;right:0;top:0;z-index:999;background:#3b0d14;color:#ffd7dc;border-bottom:1px solid var(--err);
+  padding:8px 12px;font:12px ui-monospace,Consolas,monospace;display:none;white-space:pre-wrap}
+/* THE DEVICE. On a desktop it is a framed 412x915 phone; on a real phone the frame dissolves and the
+   mock owns the screen — the point is to test it with a thumb, not to look at a picture of it. */
+.device{width:412px;height:915px;flex:0 0 auto;position:relative;overflow:hidden;background:var(--bg);
+  border:10px solid #10162b;border-radius:34px;box-shadow:0 24px 60px #0006}
+@media (max-width:900px),(pointer:coarse) and (max-width:1180px){
+  .page{padding:0;gap:0}
+  .hd,#readout{display:none}
+    /* On a phone the switch joins the measurement in the lab strip at the very bottom, because every
+     other corner of the screen belongs to something the mock is trying to show you. */
+  .sw{position:fixed;z-index:200;left:4px;transform:scale(.72);transform-origin:bottom left;
+      bottom:calc(-3px + env(safe-area-inset-bottom));border:0;background:transparent;padding:0}
+  .sw button{padding:5px 12px}
+  .device{width:100%;height:100dvh;border:0;border-radius:0;box-shadow:none}
+  .m-stat{min-height:30px;justify-content:flex-end;padding-right:10px}
+}
+
+/* ============================== the mock ============================== */
+.mob{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--bg);overflow:hidden}
+.m-app{flex:0 0 auto;height:44px;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid var(--line);background:var(--panel)}
+.m-mark{width:21px;height:21px;border-radius:6px;background:radial-gradient(circle at 30% 30%,#6ea8ff,#2b4bd8);flex:0 0 auto}
+.m-app b{font-size:14px;letter-spacing:.01em}
+.m-app .v{font:10.5px ui-monospace,Consolas,monospace;color:var(--dim)}
+.m-sp{flex:1}
+.m-app .acct{font-size:11px;color:var(--dim);max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* head bar — ONE row; everything the header used to say lives in the left panel */
+.m-head{flex:0 0 auto;height:40px;display:flex;align-items:center;gap:8px;padding:0 10px;background:var(--panel);
+  border-bottom:var(--seam-w) solid var(--edge)}
+.m-bulb{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:var(--ok);border-radius:999px;padding:2px 8px;flex:0 0 auto;
+  background:color-mix(in srgb,var(--ok) 12%,transparent);border:1px solid color-mix(in srgb,var(--ok) 42%,transparent)}
+.m-bulb i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block}
+.m-bulb.--busy{color:var(--work);background:color-mix(in srgb,var(--work) 12%,transparent);border-color:color-mix(in srgb,var(--work) 42%,transparent)}
+.m-ttl{font-weight:700;font-size:13.5px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.m-ctx{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);background:var(--chip);
+  border:1px solid var(--line);border-radius:999px;padding:3px 9px;cursor:pointer}
+.m-ctx b{color:var(--ink)}
+.m-bar{width:32px;height:4px;border-radius:99px;background:var(--panel);overflow:hidden}
+.m-bar i{display:block;height:100%;background:var(--accent)}
+
+/* core */
+.m-core{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px 10px 14px;display:flex;flex-direction:column;gap:11px;
+  background:var(--core-bg);scrollbar-width:thin;scrollbar-color:#3a4870 transparent;overscroll-behavior:contain}
+.m-turn{position:relative;border-radius:12px;padding:10px 11px;font-size:13.5px}
+.m-turn.--p{background:var(--bub-u);border:1px solid var(--bub-u-line);color:var(--bub-u-fg)}
+.m-turn.--r{background:var(--bub-a);border:1px solid var(--bub-a-line)}
+.m-turn p{margin:0 0 7px}.m-turn p:last-child{margin:0}
+.m-turn code{font:12px ui-monospace,Consolas,monospace;background:#0007;padding:1px 4px;border-radius:4px}
+.m-n{position:absolute;top:-8px;font-size:9.5px;font-weight:800;letter-spacing:.04em;padding:1px 6px;border-radius:5px}
+.m-turn.--p .m-n{right:10px;background:var(--tag-p-bg);color:var(--tag-p-fg)}
+.m-turn.--r .m-n{left:10px;background:var(--tag-r-bg);color:var(--tag-r-fg)}
+
+/* compose — attach, box, send on ONE row; the box grows with the text */
+.m-compose{flex:0 0 auto;display:flex;align-items:flex-end;gap:8px;background:var(--panel);
+  padding:8px 10px calc(8px + env(safe-area-inset-bottom));border-top:var(--seam-w) solid var(--edge)}
+.m-ico{flex:0 0 auto;width:40px;height:40px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;
+  background:var(--chip);border:1px solid var(--line);color:var(--ink);font-size:17px;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.m-ico:active{filter:brightness(1.25)}
+.m-box{flex:1 1 auto;min-width:0;height:40px;max-height:38vh;resize:none;overflow-y:auto;background:var(--field);
+  border:1px solid var(--field-line);border-radius:12px;color:var(--ink);font:inherit;font-size:14px;padding:10px 12px}
+.m-box:focus{outline:none;border-color:var(--accent)}
+.m-snd{flex:0 0 auto;min-width:52px;height:40px;border-radius:12px;border:1px solid var(--accent);background:var(--accent);
+  color:#1b0b2a;font:inherit;font-size:17px;font-weight:800;cursor:pointer;touch-action:manipulation}
+.m-snd.--busy{background:var(--work);border-color:var(--work);color:var(--work-fg);font-size:13px}
+
+/* the app's own bottom navigation, unchanged */
+.m-nav{flex:0 0 auto;height:54px;display:flex;border-top:1px solid var(--line);background:var(--panel)}
+.m-nav div{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:9px;color:var(--dim)}
+.m-nav div.on{color:var(--accent)}
+.m-nav i{font-size:15px;font-style:normal}
+
+/* ============================== the reveals ==============================
+   RAILS: thumb-reachable, vertically centred, floating OVER the core's edge so they cost the
+   transcript no width. The left rail also carries the live status colour, so "is it working" is
+   answerable without opening anything. */
+.m-rail{position:absolute;top:50%;transform:translateY(-50%);width:22px;height:112px;z-index:40;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;
+  background:color-mix(in srgb,var(--panel) 90%,transparent);border:1px solid var(--line);
+  touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.m-rail:active{background:color-mix(in srgb,var(--accent) 24%,var(--panel))}
+.m-rail.--l{left:0;border-left:0;border-radius:0 11px 11px 0;border-color:color-mix(in srgb,var(--ok) 42%,var(--line));color:var(--ok)}
+.m-rail.--r{right:0;border-right:0;border-radius:11px 0 0 11px;border-color:color-mix(in srgb,var(--accent) 42%,var(--line));color:var(--accent)}
+.m-grip{width:3px;height:32px;border-radius:99px;background:currentColor;opacity:.5}
+.m-stat{flex:0 0 auto;min-height:19px;padding-bottom:0;display:flex;align-items:center;justify-content:center;gap:6px;
+  font:9.5px ui-monospace,Consolas,monospace;color:var(--dim);background:#000;border-top:1px solid var(--line)}
+.m-stat b{color:var(--ok)}.m-stat .bad{color:var(--err)}
+.m-rlbl{writing-mode:vertical-rl;text-orientation:mixed;font-size:9px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+
+/* PANELS: the same slide + backdrop mechanic as Pact mobile's drawer, mirrored for the right edge. */
+.m-scrim{position:absolute;inset:0;z-index:50;background:#000a;opacity:0;pointer-events:none;transition:opacity .18s ease}
+.m-scrim.on{opacity:1;pointer-events:auto}
+.m-panel{position:absolute;top:0;bottom:0;z-index:60;width:86%;max-width:352px;display:flex;flex-direction:column;
+  background:var(--panel);transition:transform .22s ease}
+.m-panel.--l{left:0;border-right:1px solid var(--line);transform:translateX(-102%)}
+.m-panel.--r{right:0;border-left:1px solid var(--line);transform:translateX(102%)}
+.m-panel.open{transform:translateX(0)}
+.m-phd{flex:0 0 auto;display:flex;align-items:center;gap:8px;height:46px;padding:0 12px;border-bottom:1px solid var(--line)}
+.m-phd b{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);flex:1}
+.m-px{appearance:none;border:0;background:transparent;color:var(--dim);font-size:19px;cursor:pointer;padding:4px 6px}
+.m-pbody{flex:1 1 auto;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:14px;overscroll-behavior:contain}
+.m-sec{display:flex;flex-direction:column;gap:8px}
+.m-sec>b{font-size:9.5px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--dim)}
+.m-row{display:flex;align-items:center;gap:10px;min-height:46px;padding:6px 10px;border-radius:11px;background:var(--chip);
+  border:1px solid var(--line);font-size:13px;cursor:pointer}
+.m-row.--on{border-color:var(--accent)}
+.m-row span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.m-row em{font-style:normal;font-size:11px;color:var(--dim)}
+.m-tog{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:44px;padding:4px 10px;border-radius:11px;
+  background:var(--chip);border:1px solid var(--line);font-size:13px;cursor:pointer}
+.m-sw{width:42px;height:24px;border-radius:99px;background:#2b3868;position:relative;flex:0 0 auto;transition:background .15s}
+.m-sw i{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#93a3d0;display:block;transition:transform .15s,background .15s}
+.m-tog.on .m-sw{background:color-mix(in srgb,var(--accent) 62%,#2b3868)}
+.m-tog.on .m-sw i{transform:translateX(18px);background:#fff}
+.m-btns{display:flex;gap:8px}
+.m-btn{flex:1;min-height:44px;border-radius:11px;border:1px solid var(--line);background:var(--chip);color:var(--ink);
+  font:inherit;font-size:13px;font-weight:700;cursor:pointer}
+.m-btn.--acc{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 50%,var(--line))}
+.m-meter{height:6px;border-radius:99px;background:var(--panel-2);overflow:hidden}
+.m-meter i{display:block;height:100%;background:var(--accent)}
+.m-chips{display:flex;flex-wrap:wrap;gap:6px}
+
+/* THE WHEEL — the one new mechanic. A scroll-snap column with a fixed selection band: whatever sits
+   under the band is the value. Rows are 44px (a thumb), the column is masked at both ends so it
+   reads as a dial rather than a list, and tapping a row scrolls it into the band. */
+.m-wheels{display:flex;gap:8px}
+.m-wheel{flex:1 1 0;min-width:0;position:relative;background:var(--field);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.m-wheel>b{display:block;font-size:9px;font-weight:800;letter-spacing:.11em;text-transform:uppercase;color:var(--dim);padding:7px 8px 2px;text-align:center}
+.m-view{position:relative;height:132px;overflow-y:auto;scroll-snap-type:y mandatory;scrollbar-width:none;overscroll-behavior:contain;
+  -webkit-mask-image:linear-gradient(180deg,transparent,#000 30%,#000 70%,transparent);
+          mask-image:linear-gradient(180deg,transparent,#000 30%,#000 70%,transparent)}
+.m-view::-webkit-scrollbar{display:none}
+.m-pad{height:44px}
+.m-opt{height:44px;display:flex;align-items:center;justify-content:center;scroll-snap-align:center;font-size:13px;color:var(--dim);
+  padding:0 6px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color .12s,transform .12s}
+.m-opt.on{color:#fff;font-weight:800;transform:scale(1.06)}
+.m-band{position:absolute;left:6px;right:6px;top:calc(50% + 9px);height:44px;transform:translateY(-50%);pointer-events:none;border-radius:9px;
+  border-top:1px solid color-mix(in srgb,var(--accent) 55%,transparent);
+  border-bottom:1px solid color-mix(in srgb,var(--accent) 55%,transparent);
+  background:color-mix(in srgb,var(--accent) 8%,transparent)}
+
+/* ===== "TODAY" — the current layout, rebuilt from the measurements, as the thing to compare with.
+   Not a caricature: the row heights below are what the live page actually renders at 412px wide. */
+.t-hd,.t-ft{flex:0 0 auto;background:var(--panel)}
+.t-hd{border-bottom:var(--seam-w) solid var(--edge)}
+.t-ft{border-top:var(--seam-w) solid var(--edge)}
+.t-row{display:flex;align-items:center;gap:6px;padding:6px 9px;min-height:32px;flex-wrap:wrap}
+.t-row+.t-row{border-top:1px solid #ffffff0d}
+.t-row.--right{justify-content:flex-end}
+.t-sel{height:34px;min-width:0;flex:1 1 44%;background:var(--field);border:1px solid var(--field-line);border-radius:9px;color:var(--ink);
+  font:inherit;font-size:12.5px;padding:0 8px;display:flex;align-items:center;justify-content:space-between;gap:6px}
+.t-b{height:32px;padding:0 12px;border-radius:9px;background:var(--chip);border:1px solid var(--line);color:var(--ink);
+  font:inherit;font-size:12.5px;display:inline-flex;align-items:center;gap:5px}
+.t-b.--send{background:var(--accent);border-color:var(--accent);color:#1b0b2a;font-weight:800}
+.t-b.--red{color:var(--work-deep);border-color:color-mix(in srgb,var(--work-deep) 55%,var(--line))}
+.t-mcbar{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:6px 10px;border-top:1px solid var(--line);background:var(--panel)}
+.t-mc{min-width:42px;height:42px;border-radius:11px;background:var(--chip);border:1px solid var(--line);color:var(--ink);
+  display:inline-flex;align-items:center;justify-content:center;font-size:17px}
+.t-mc.--send{background:var(--accent);border-color:var(--accent);color:#fff;min-width:58px}
+.t-risers{flex:0 0 auto;display:flex;align-items:flex-end;justify-content:space-between;gap:8px;padding:3px 6px 0;background:var(--bg)}
+.t-riser{height:19px;padding:0 8px;border-radius:7px 7px 0 0;border:1px solid color-mix(in srgb,var(--accent) 48%,var(--line));border-bottom:none;
+  background:color-mix(in srgb,var(--accent) 13%,var(--panel));color:var(--accent);font-size:9.5px;font-weight:700;display:inline-flex;align-items:center}
+.t-riser.--bm{color:#fbbf24;border-color:color-mix(in srgb,#fbbf24 45%,var(--line));background:color-mix(in srgb,#fbbf24 11%,var(--panel))}
+.t-mid{flex:1;display:flex;justify-content:center}
+</style>
+
+<div id="laberr"></div>
+<div class="page">
+  <div class="hd">
+    <h1>Mobile Cockpit Lab</h1>
+    <p>Mockup only — production untouched. The stats chips are built by the real <code>chat-shell.js</code>.</p>
+    <p><b class="stamp" id="stamp">build —</b> · flip <code>Today</code> / <code>Proposed</code>; the numbers below are measured live from this page.</p>
+  </div>
+  <div class="sw" id="sw">
+    <button type="button" data-v="today">Today</button>
+    <button type="button" data-v="proposed" class="on">Proposed</button>
+  </div>
+  <div id="readout"></div>
+  <div class="device"><div class="mob" id="mob"></div></div>
+</div>
+
+<script src="/chat-shell/chat-shell.js"></script>
+<script>
+/* The error surface comes first, because "nothing happened" is the failure mode a mock page fails
+   with — same reason the Chat Shell Lab opens with this. */
+function labError(what, e) {
+  var box = document.getElementById("laberr");
+  box.style.display = "block";
+  box.textContent = (box.textContent ? box.textContent + "\n" : "") + what + ": " + (e && (e.stack || e.message) || e);
+}
+window.addEventListener("error", function (e) { labError("error", e.error || e.message); });
+window.addEventListener("unhandledrejection", function (e) { labError("promise", e.reason); });
+
+var CS = window.ChatShell;
+var el = CS.el;
+var $ = function (s) { return document.querySelector(s); };
+
+/* ONE object holds every piece of mock state, like the Chat Shell Lab's S. Nothing derived is
+   stored: counts come from functions, so two copies of the same number cannot drift apart. */
+var S = {
+  view: "proposed",          // which layout the device shows — the whole point of the page
+  measured: {},              // { today: pct, proposed: pct } — filled by measure(), never guessed
+  panel: null,               // "left" | "right" | null — which edge panel is open
+  busy: false,               // a turn in flight: colours the rail, the bulb and Send
+  model: "Opus 5",
+  effort: "Default effort",
+  perm: "Bypass",
+  ultracode: false,
+  autoContinue: false,
+  autoWrap: true,
+  // A conversation in the shape a real one has: a long agentic answer per prompt. Text is invented —
+  // this page is public after a deploy.
+  turns: [
+    { role: "user", n: 728, text: "the mobile view is broken. rework it so the chat gets the screen." },
+    { role: "assistant", n: 6989, text: "Measured at 412x915 first, because <b>31%</b> is the number that decides this: header 191px, transcript 284px, footer 239px." },
+    { role: "assistant", n: 6990, text: "The header and footer are <i>rows</i>. On a desktop pane they wrap; on a phone they stack, and every wrap costs a band of screen." },
+    { role: "user", n: 729, text: "use hidden reveals on the left and right, with wheels" },
+    { role: "assistant", n: 6991, text: "Left rail opens what the header said. Right rail opens what the footer said. The rails float over the core, so they cost the transcript no width." },
+    { role: "assistant", n: 6992, text: "Model, effort and permission become <b>wheels</b> — 44px rows under a fixed selection band, instead of a native <code>select</code> popup." }
+  ],
+  // Real numbers from a live conversation, so the chips read like production rather than like a demo.
+  stats: { prompts: 731, responses: 6992, bytes: 86528, tokens: 205590, ceiling: 1000000,
+           maxTurns: 1000, maxBytes: 25 * 1024 * 1024, pFrom: 709, rFrom: 6745,
+           compactCount: 0, wrapCount: 0, tailTurns: 200 },
+  models: ["Haiku 4.5", "Sonnet 4.5", "Sonnet 5", "Opus 4.1", "Opus 5"],
+  efforts: ["Default effort", "low", "medium", "high", "xhigh"],
+  perms: ["Manual", "Edits", "Plan", "Auto", "Bypass"],
+  convos: [
+    { name: "Claudstermind · main", sub: "live · 731 prompts", on: true },
+    { name: "OuronetUI · dev", sub: "idle · 2h ago", on: false },
+    { name: "Khronoton · main", sub: "idle · yesterday", on: false }
+  ]
+};
+var nPrompts = function () { return S.turns.filter(function (t) { return t.role === "user"; }).length; };
+var nResponses = function () { return S.turns.filter(function (t) { return t.role === "assistant"; }).length; };
+var ctxPct = function () { return Math.round(S.stats.tokens / S.stats.ceiling * 100); };
+
+/* Tap that survives a scroll — the same disambiguation Pact mobile uses (app.js onTap): a touch that
+   moved more than 8px vertically was a scroll, and must not also fire the tap. */
+function onTap(node, fn) {
+  var moved = false, y0 = 0;
+  node.addEventListener("click", fn);
+  node.addEventListener("touchstart", function (e) { moved = false; y0 = e.touches[0] ? e.touches[0].clientY : 0; }, { passive: true });
+  node.addEventListener("touchmove", function (e) { var y = e.touches[0] ? e.touches[0].clientY : y0; if (Math.abs(y - y0) > 8) moved = true; }, { passive: true });
+  node.addEventListener("touchend", function (e) { if (moved) return; e.preventDefault(); fn(e); });
+}
+
+/* ---------------- the wheel ----------------
+   Returns the element; `onPick` fires with the value that settles under the band. */
+function wheel(label, options, value, onPick) {
+  var opts = options.map(function (v) { return el("div", { class: "m-opt" + (v === value ? " on" : "") }, [v]); });
+  var view = el("div", { class: "m-view" }, [el("div", { class: "m-pad" }, [])].concat(opts, [el("div", { class: "m-pad" }, [])]));
+  var box = el("div", { class: "m-wheel" }, [el("b", {}, [label]), view, el("div", { class: "m-band" }, [])]);
+  var centreOn = function (o, smooth) { view.scrollTo({ top: o.offsetTop - (view.clientHeight - o.offsetHeight) / 2, behavior: smooth ? "smooth" : "auto" }); };
+  var mark = function () {
+    var mid = view.scrollTop + view.clientHeight / 2, best = null, bd = 1e9;
+    opts.forEach(function (o) { var d = Math.abs(o.offsetTop + o.offsetHeight / 2 - mid); if (d < bd) { bd = d; best = o; } });
+    opts.forEach(function (o) { o.classList.toggle("on", o === best); });
+    return best;
+  };
+  var settle = null;
+  view.addEventListener("scroll", function () {
+    var best = mark();
+    clearTimeout(settle);
+    settle = setTimeout(function () { if (best) onPick(best.textContent); }, 90);
+  }, { passive: true });
+  opts.forEach(function (o) { onTap(o, function () { centreOn(o, true); }); });
+  requestAnimationFrame(function () { var cur = opts[Math.max(0, options.indexOf(value))]; if (cur) centreOn(cur, false); mark(); });
+  return box;
+}
+
+/* ---------------- panels ---------------- */
+function section(title, kids) { return el("div", { class: "m-sec" }, [el("b", {}, [title])].concat(kids)); }
+function toggle(label, on, fn) {
+  var t = el("div", { class: "m-tog" + (on ? " on" : "") }, [el("span", {}, [label]), el("div", { class: "m-sw" }, [el("i", {}, [])])]);
+  onTap(t, function () { fn(!on); });
+  return t;
+}
+function chipRow() {
+  /* The REAL chips, from the REAL function — production's own header row, rendered into a panel
+     where it has the width to say everything instead of wrapping onto three lines. */
+  var chips = CS.buildStatsChips(Object.assign({}, S.stats, {
+    chipClass: "chip", warnClass: "--acc", mutedClass: "--far",
+    fmtNum: function (n) { return Math.round(n).toLocaleString(); },
+    fmtBytes: function (n) { return n >= 1048576 ? (n / 1048576).toFixed(1) + " MiB" : Math.round(n / 1024) + " KiB"; }
+  }));
+  return el("div", { class: "cs-shell m-chips" }, chips);
+}
+function leftPanel() {
+  return el("div", { class: "m-panel --l" + (S.panel === "left" ? " open" : ""), id: "pl" }, [
+    el("div", { class: "m-phd" }, [el("b", {}, ["Session"]), (function () {
+      var x = el("button", { class: "m-px", type: "button" }, ["✕"]); onTap(x, function () { setPanel(null); }); return x;
+    })()]),
+    el("div", { class: "m-pbody" }, [
+      section("This conversation", [
+        el("div", { class: "m-row --on" }, [el("span", {}, ["Claudstermind · AncientHodler"]), el("em", {}, ["main"])]),
+        el("div", { class: "m-row" }, [el("span", {}, ["◉ 4 agents · 4 done"])]),
+        el("div", { class: "m-row" }, [el("span", {}, ["↻ Reconnected — caught up"])])
+      ]),
+      section("Size and ceilings", [chipRow()]),
+      section("Conversations", S.convos.map(function (c) {
+        return el("div", { class: "m-row" + (c.on ? " --on" : "") }, [el("span", {}, [c.name]), el("em", {}, [c.sub])]);
+      }).concat([el("div", { class: "m-btns" }, [el("button", { class: "m-btn --acc", type: "button" }, ["＋ New chat"]),
+                                                el("button", { class: "m-btn", type: "button" }, ["★ Bookmarks"])])])),
+      section("Find", [el("div", { class: "m-btns" }, [el("button", { class: "m-btn", type: "button" }, ["P#/R# jump"]),
+                                                      el("button", { class: "m-btn", type: "button" }, ["⌕ Recall"])])])
+    ])
+  ]);
+}
+function rightPanel() {
+  return el("div", { class: "m-panel --r" + (S.panel === "right" ? " open" : ""), id: "pr" }, [
+    el("div", { class: "m-phd" }, [el("b", {}, ["Controls"]), (function () {
+      var x = el("button", { class: "m-px", type: "button" }, ["✕"]); onTap(x, function () { setPanel(null); }); return x;
+    })()]),
+    el("div", { class: "m-pbody" }, [
+      section("Engine", [el("div", { class: "m-wheels" }, [
+        wheel("Model", S.models, S.model, function (v) { S.model = v; paintHead(); }),
+        wheel("Effort", S.efforts, S.effort, function (v) { S.effort = v; })
+      ])]),
+      section("Permission", [el("div", { class: "m-wheels" }, [wheel("Mode", S.perms, S.perm, function (v) { S.perm = v; })])]),
+      section("Switches", [
+        toggle("ultracode", S.ultracode, function (v) { S.ultracode = v; render(); }),
+        toggle("auto-continue", S.autoContinue, function (v) { S.autoContinue = v; render(); }),
+        toggle("auto-wrap", S.autoWrap, function (v) { S.autoWrap = v; render(); })
+      ]),
+      section("Window", [
+        el("div", { class: "m-meter" }, [el("i", { style: "width:" + ctxPct() + "%" }, [])]),
+        el("div", { class: "m-row" }, [el("span", {}, ["Context"]), el("em", {}, [S.stats.tokens.toLocaleString() + " / 1,000,000 tok · " + ctxPct() + "%"])]),
+        el("div", { class: "m-btns" }, [el("button", { class: "m-btn", type: "button" }, ["🗜 Compact"]),
+                                        el("button", { class: "m-btn --acc", type: "button" }, ["↺ Wrap"])])
+      ]),
+      section("This pane", [el("div", { class: "m-btns" }, [el("button", { class: "m-btn", type: "button" }, ["↕ Full"]),
+                                                           el("button", { class: "m-btn", type: "button" }, ["☆ Star"]),
+                                                           el("button", { class: "m-btn", type: "button" }, ["🕒 History"])])])
+    ])
+  ]);
+}
+function setPanel(which) { S.panel = which; render(); }
+
+/* ---------------- the two layouts ---------------- */
+function appBar() {
+  return el("div", { class: "m-app" }, [el("div", { class: "m-mark" }, []), el("b", {}, ["Claudstermind"]),
+    el("span", { class: "v" }, ["v1.13.6"]), el("div", { class: "m-sp" }, []), el("span", { class: "acct" }, ["🔒 29d"])]);
+}
+function nav() {
+  var items = [["🏠", "Overview"], ["🗺", "Map"], ["📈", "Activity"], ["🔀", "Pipeline"],
+               ["🧠", "Brain"], ["💬", "Workspace"], ["⚙", "Admin"]];
+  return el("div", { class: "m-nav" }, items.map(function (it) {
+    return el("div", { class: it[1] === "Workspace" ? "on" : "" }, [el("i", {}, [it[0]]), el("span", {}, [it[1]])]);
+  }));
+}
+function turns() {
+  return S.turns.map(function (t) {
+    var p = el("p", {}, []);
+    p.innerHTML = t.text;
+    return el("div", { class: "m-turn " + (t.role === "user" ? "--p" : "--r") },
+      [el("span", { class: "m-n" }, [(t.role === "user" ? "P#" : "R#") + t.n]), p]);
+  });
+}
+function paintHead() { var m = $("#mmodel"); if (m) m.textContent = S.model; }
+
+function proposed() {
+  var core = el("div", { class: "m-core" }, turns());
+  var railL = el("div", { class: "m-rail --l" }, [el("div", { class: "m-grip" }, []), el("span", { class: "m-rlbl" }, ["Session"])]);
+  var railR = el("div", { class: "m-rail --r" }, [el("div", { class: "m-grip" }, []), el("span", { class: "m-rlbl" }, ["Controls"])]);
+  onTap(railL, function () { setPanel("left"); });
+  onTap(railR, function () { setPanel("right"); });
+  var ctx = el("div", { class: "m-ctx" }, [el("div", { class: "m-bar" }, [el("i", { style: "width:" + ctxPct() + "%" }, [])]),
+                                           el("b", {}, [ctxPct() + "%"])]);
+  onTap(ctx, function () { setPanel("right"); });
+  var head = el("div", { class: "m-head" }, [
+    el("span", { class: "m-bulb" + (S.busy ? " --busy" : "") }, [el("i", {}, []), S.busy ? "Working" : "Live"]),
+    el("span", { class: "m-ttl" }, ["Claudstermind · main"]), ctx]);
+  var box = el("textarea", { class: "m-box", rows: "1", placeholder: "Message Claude…" }, []);
+  box.addEventListener("input", function () {
+    box.style.height = "40px";
+    box.style.height = Math.min(box.scrollHeight, Math.round(window.innerHeight * 0.38)) + "px";
+    measure();
+  });
+  var send = el("button", { class: "m-snd" + (S.busy ? " --busy" : ""), type: "button" }, [S.busy ? "■" : "➤"]);
+  onTap(send, function () { S.busy = !S.busy; render(); });
+  var compose = el("div", { class: "m-compose" }, [el("button", { class: "m-ico", type: "button" }, ["📎"]), box, send]);
+  var scrim = el("div", { class: "m-scrim" + (S.panel ? " on" : "") }, []);
+  onTap(scrim, function () { setPanel(null); });
+  /* The rails, the scrim and the panels are absolutely positioned, so they can be plain siblings of
+     the flex column rather than living in a wrapper — an absolutely positioned wrapper is what hid
+     the lab strip underneath it the first time. */
+  var wrap = el("div", { class: "mob" }, [appBar(), head, core, compose, nav(), el("div", { class: "m-stat" }, []),
+                                          railL, railR, scrim, leftPanel(), rightPanel()]);
+  wrap.id = "mob";
+  return wrap;
+}
+
+/* TODAY — the same content under the layout production ships, rebuilt at the measured heights so the
+   comparison is honest: two header rows (one of them the stats chips, which wrap onto three lines),
+   five footer rows, then the mobile action bar and the riser tabs. */
+function today() {
+  var chip = function (t, cls) { return el("span", { class: "chip " + (cls || "--far") }, [t]); };
+  var hd = el("div", { class: "t-hd" }, [
+    el("div", { class: "t-row --right" }, [chip("◉"), chip("Claudstermind", "--acc"), el("span", {}, ["☐ multi-chat"]),
+      chip("◉ 4 agents · 4 done"), chip("↻ Reconnected — caught up"), chip("● Live", "--acc"), el("span", {}, ["✕"])]),
+    el("div", { class: "t-row --right" }, Array.prototype.slice.call(chipRow().childNodes))
+  ]);
+  var core = el("div", { class: "m-core" }, turns());
+  var ft = el("div", { class: "t-ft" }, [
+    el("div", { class: "t-row" }, [el("div", { class: "t-sel" }, ["1  Message Claude…"])]),
+    el("div", { class: "t-row" }, [el("span", { class: "t-b" }, ["📎"]), el("span", { class: "t-b" }, ["1 line"]),
+      el("div", { class: "t-sel" }, ["Claudstermind · AncientHodler", "⌄"]), el("div", { class: "t-sel" }, ["main", "⌄"]),
+      el("span", { class: "t-b" }, ["🕒"]), el("span", { class: "t-b" }, ["☆"]), el("span", { class: "t-b" }, ["↕ Full"]),
+      el("span", {}, ["☐ auto"]), el("span", { class: "t-b --send" }, ["Send"])]),
+    el("div", { class: "t-row" }, [el("div", { class: "t-sel" }, [S.model, "⌄"]), el("div", { class: "t-sel" }, [S.effort, "⌄"]),
+      el("span", {}, ["☐ ultracode"]), chip("· running " + S.model), el("span", { class: "t-b --red" }, [S.perm, "⌄"]),
+      el("span", {}, ["☑ auto-wrap"]), el("div", { class: "m-meter", style: "width:96px" }, [el("i", { style: "width:" + ctxPct() + "%" }, [])]),
+      el("span", { class: "t-b" }, ["🗜 Compact"]), el("span", { class: "t-b" }, ["↺ Wrap at 60%"])])
+  ]);
+  var mcbar = el("div", { class: "t-mcbar" }, [el("span", { class: "t-mc" }, ["☰"]), el("span", { class: "t-mc" }, ["⚙"]),
+    el("span", { class: "t-mc" }, ["📎"]), el("span", { class: "t-mc" }, ["⌃"]), el("div", { class: "m-sp" }, []),
+    el("span", { class: "t-mc" }, ["↻"]), el("span", { class: "t-mc --send" }, ["➤"])]);
+  var risers = el("div", { class: "t-risers" }, [el("span", { class: "t-riser" }, ["💬 Conversations [2]"]),
+    el("div", { class: "t-mid" }, [el("div", { class: "t-sel", style: "flex:0 0 auto;min-width:120px" }, [S.model, "⌄"])]),
+    el("span", { class: "t-riser --bm" }, ["★ Bookmarks"])]);
+  var wrap = el("div", { class: "mob" }, [appBar(), hd, core, ft, mcbar, risers, nav(), el("div", { class: "m-stat" }, [])]);
+  wrap.id = "mob";
+  return wrap;
+}
+
+/* The readout is measured from the DOM, not asserted in prose — the claim this page makes is a
+   number, so the page has to keep proving it after every edit. */
+function measure() {
+  var dev = document.querySelector(".device"), core = document.querySelector(".m-core");
+  if (!dev || !core) return;
+  var H = dev.getBoundingClientRect().height, c = core.getBoundingClientRect().height;
+  var pct = Math.round(c / H * 1000) / 10;
+  var out = $("#readout");
+  var good = pct >= 55;
+  S.measured[S.view] = pct;
+  var other = S.view === "today" ? "proposed" : "today";
+  var chip = document.querySelector(".m-stat");
+  if (chip) chip.innerHTML = "chat <" + (good ? "b" : "span class=bad") + ">" + Math.round(c) + "px · " + pct + "%</" +
+    (good ? "b" : "span") + ">" + (S.measured[other] != null ? " &nbsp;(" + other + ": " + S.measured[other] + "%)" : "");
+  out.innerHTML = "device " + Math.round(H) + "px &nbsp;·&nbsp; transcript <" + (good ? "b" : "span class=bad") + ">" +
+    Math.round(c) + "px (" + pct + "%)</" + (good ? "b" : "span") + ">" +
+    "<br>" + (S.view === "today"
+      ? "header 3 rows + footer 7 rows + action bar + risers &nbsp;·&nbsp; measured live: 284px / 31% at 412×915"
+      : "1 head row + 1 compose row; the rest is behind the two rails");
+}
+
+function render() {
+  var host = $("#mob"), next = S.view === "today" ? today() : proposed();
+  host.replaceWith(next);
+  document.querySelectorAll("#sw button").forEach(function (b) { b.classList.toggle("on", b.dataset.v === S.view); });
+  requestAnimationFrame(measure);
+}
+
+/* Wiring: the view switch, Escape closes a panel, and a swipe from either edge opens its panel —
+   the gesture the rails are a visible affordance FOR. */
+document.querySelectorAll("#sw button").forEach(function (b) {
+  b.addEventListener("click", function () { S.view = b.dataset.v; S.panel = null; render(); });
+});
+document.addEventListener("keydown", function (e) { if (e.key === "Escape" && S.panel) setPanel(null); });
+window.addEventListener("resize", measure);
+(function swipes() {
+  var x0 = 0, y0 = 0, live = false;
+  document.addEventListener("touchstart", function (e) {
+    var d = document.querySelector(".device"); if (!d) return;
+    var r = d.getBoundingClientRect(), t = e.touches[0];
+    x0 = t.clientX - r.left; y0 = t.clientY - r.top;
+    live = y0 > 90 && y0 < r.height - 120 && (x0 < 28 || x0 > r.width - 28);
+  }, { passive: true });
+  document.addEventListener("touchend", function (e) {
+    if (!live) return; live = false;
+    var t = e.changedTouches[0], d = document.querySelector(".device"), r = d.getBoundingClientRect();
+    var dx = (t.clientX - r.left) - x0;
+    if (dx > 40 && x0 < 28) setPanel("left");
+    else if (dx < -40 && x0 > r.width - 28) setPanel("right");
+  }, { passive: true });
+})();
+
+document.body.dataset.theme = "core";
+fetch("/api/version").then(function (r) { return r.json(); })
+  .then(function (v) { $("#stamp").textContent = "build " + v.version; })
+  .catch(function () { $("#stamp").textContent = "build (offline)"; });
+render();
+</script>

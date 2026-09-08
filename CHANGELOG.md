@@ -4,6 +4,55 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.14.0] - 2026-09-09
+### Added — Mobile Cockpit Lab: a proposed phone layout, at `/mobile-lab.html`
+
+*"we need a rework of the way the mobile view is displayed… maximize the core space… place [header and
+footer] in hidden revealable elements on right and left side via wheels and buttons revealers."*
+
+**The measurement first.** At 412×915 the Core cockpit spends its screen like this: pane header 191px,
+transcript **284px**, footer 239px — and below the pane sit *three more* control strips (the shell's
+own footer rows, the mobile action bar, the riser tabs) before the OS navigation. The conversation
+gets **31%** of the phone. An independent walk of the CSS put it at 262px / 29%; the mock's own
+rebuild of today's layout measures 271px / 29.6%. Three methods, one answer.
+
+The cause is not neglect, it is inheritance: the chat box is a package designed for a desktop grid of
+panes 380–560px wide, and its narrow-width strategy is to **wrap** rows. On a desktop a wrap costs
+nothing; on a phone every wrapped row is a band of screen.
+
+**The proposal.** The header and the footer stop being rows and become two **edge panels** — left for
+what the header said (identity, status, the stats chips), right for what the footer said (model,
+effort, permission, ultracode, auto-wrap, Compact/Wrap) — revealed by thumb-reachable rails on the
+screen edges or a swipe from the edge. What stays on screen: one 40px head row, the transcript, and
+one compose row with attach and Send in it.
+
+Measured in the mock, live, on the page itself: **701px / 76.6%** for the conversation.
+
+It reuses what this repo already has — Pact mobile's slide-in drawer with a backdrop and its transform
+transition, its sheet dismissal, its tap-vs-scroll disambiguation. **One mechanic is new:** the
+scroll-snap **wheel** for model / effort / permission (44px rows under a fixed selection band). There
+is no `scroll-snap` anywhere in the repo today, and a value you change ten times a day deserves better
+than a native `select` popup with a 12px hit target.
+
+The stats chips in the left panel are built by `ChatShell.buildStatsChips` — the real function, inside
+a real `.cs-shell` scope — so what the panel shows is what production renders, not a drawing of it.
+
+`lib/mobileLab.test.mjs` executes the page against a DOM shim (it cannot be imported; it boots the
+DOM) and asserts both layouts build, both reveals open and close, the three wheels exist with their
+selection bands, and the page keeps the Lab's conventions — one inline script last in the file, shared
+CSS by root-absolute URL, and nothing on it that the internet should not read (`dashboard/public` is
+served without login by the relay).
+
+**Nothing in production changed.** `app.js` is not loaded by this page and does not load it.
+
+### Found while measuring — three live defects in Core's mobile bar (not yet fixed)
+- **`⚙` does nothing.** `openSettingsSheet` looks for `.ws-pane-controls`, which the chat-shell
+  migration deleted — the button opens an empty sheet and returns.
+- **`⌃`/`⌄` (expand compose) does nothing visible.** Its only CSS effect is keyed to `.ws-prompt`;
+  the type box has been the package's `.rg-typebox` since the migration.
+- **Attach, Send/Stop, the model picker and history each exist twice on mobile** — once in the
+  package's footer, once in the bottom bar. Making the bar canonical is worth ~102px on its own.
+
 ## [1.13.6] - 2026-09-08
 ### Fixed — the 1.13.5 deploy failed on the box
 
