@@ -4,6 +4,35 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.14.2] - 2026-09-09
+### Changed — Mobile Cockpit Lab: four surfaces, each with one job
+
+The panes were carrying two jobs each; splitting them made every surface answer one question.
+
+- **Header — the context medallion opens the breakdown over the whole page.** `21%` tells you there
+  is a problem and nothing about what is causing it. The overlay names every part of the window —
+  conversation, tool results, attachments, system prompt, memory, and the free space, which a
+  breakdown has to account for or it does not add up — as shares of one bar.
+- **The middle strip pulls up the MODEL SHEET**, in four zones: model + effort (wheels), permission
+  (its own wheel), the two switches that belong to them (ultracode, auto-wrap), and the window
+  (context, Compact, Wrap). **No auto-continue** — it belongs on the button row with Send, not in a
+  sheet addressed to the agent — and no Full / Star / History, which are pane furniture.
+- **Conversations and Marks are the two selectors**, one on each side of the model strip, at the
+  **same width** so the strip is genuinely centred: the left one chooses between whole chats, the
+  right one between marks made on prompts and answers.
+- **Left pane — this chat's repository controls, in the two levels the model actually has.** Level 1:
+  the chat box points at a repository, and choosing one opens that repository's ★ main conversation.
+  Level 2: a repository holds several conversations, each with its own workspace, plus the multi-chat
+  toggle that allows more than one at once. Same arrangement as the desktop cockpit, stacked.
+- **Right pane — what this conversation has cost**: the stats chips that used to sit in the header,
+  the context meter, and the agent tabs (running vs done, each its own row rather than a count).
+- **The expansion button is gone.** The type box already grows with what you type, so it duplicated
+  itself. What is centred beneath the box is the Live/Held bulb, and nothing else.
+- **One scrollbar design.** Every scrolling surface — transcript, type box, panes, sheets, overlay —
+  now carries the package's own `.rg-core` / `.rg-typebox` class, so it gets the thin, inset,
+  transparent-track treatment production already uses instead of the browser default. The values are
+  not restated on the page; a test fails if a second scrollbar design appears there.
+
 ## [1.14.1] - 2026-09-09
 ### Changed — Mobile Cockpit Lab: the footer is three strips, and the type box owns the width
 

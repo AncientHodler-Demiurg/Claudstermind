@@ -97,8 +97,12 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
 .m-bar i{display:block;height:100%;background:var(--accent)}
 
 /* core */
+/* `.rg-core` / `.rg-typebox` are the PACKAGE's scrolling surfaces (frame.css): thin, rounded, inset,
+   transparent track — the treatment production's transcript and type box already use. Every scrolling
+   surface on this page carries one of those classes rather than restating the values, so there is one
+   scrollbar design and one place to change it. The browser default is what these exist to replace. */
 .m-core{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px 10px 14px;display:flex;flex-direction:column;gap:11px;
-  background:var(--core-bg);scrollbar-width:thin;scrollbar-color:#3a4870 transparent;overscroll-behavior:contain}
+  background:var(--core-bg);overscroll-behavior:contain}
 .m-turn{position:relative;border-radius:12px;padding:10px 11px;font-size:13.5px}
 .m-turn.--p{background:var(--bub-u);border:1px solid var(--bub-u-line);color:var(--bub-u-fg)}
 .m-turn.--r{background:var(--bub-a);border:1px solid var(--bub-a-line)}
@@ -137,14 +141,17 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
 /* THE LIVE/HELD MEDALLION — straddling the top edge of the button row, centred over the retractor,
    deliberately shorter than the buttons so it reads as a badge rather than a control. Production
    already re-homes this exact bulb between docks (stick.dockMode); this is one more dock. */
-.m-med{position:absolute;left:50%;top:-11px;transform:translateX(-50%);z-index:5;height:22px;display:inline-flex;align-items:center;gap:5px;
+.m-med{height:28px;display:inline-flex;align-items:center;gap:5px;
   padding:0 10px;border-radius:999px;font-size:10.5px;font-weight:700;background:var(--panel);color:var(--ok);
   border:1px solid color-mix(in srgb,var(--ok) 45%,transparent);white-space:nowrap}
 .m-med i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block}
 .m-med.--held{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 45%,transparent)}
 /* strip 1 — riser tabs glued to the nav below, exactly like .ws-mbtn/.pactm-mbtn do today */
 .m-risers{flex:0 0 auto;display:flex;align-items:flex-end;justify-content:space-between;gap:6px;padding:4px 6px 0;background:var(--bg)}
-.m-riser{flex:0 0 auto;height:22px;padding:0 9px;display:inline-flex;align-items:center;gap:4px;border-radius:8px 8px 0 0;
+/* EQUAL SIDES. Conversations and Marks are the same control in two directions — which chat, and
+   which mark inside it — so they get the same width and the model strip is centred between them
+   rather than pushed off-centre by whichever label happens to be longer. */
+.m-riser{flex:0 0 104px;justify-content:center;height:22px;padding:0 9px;display:inline-flex;align-items:center;gap:4px;border-radius:8px 8px 0 0;
   border:1px solid color-mix(in srgb,var(--accent) 48%,var(--line));border-bottom:none;background:color-mix(in srgb,var(--accent) 13%,var(--panel));
   color:var(--accent);font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;touch-action:manipulation}
 .m-riser.--bm{color:#fbbf24;border-color:color-mix(in srgb,#fbbf24 45%,var(--line));background:color-mix(in srgb,#fbbf24 11%,var(--panel))}
@@ -157,6 +164,40 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
 .m-running em{font-style:normal;color:var(--dim);font-weight:400}
 .m-running .m-pull{color:var(--dim);font-size:9px;letter-spacing:.2em}
 .m-running:active{background:color-mix(in srgb,var(--accent) 16%,var(--panel))}
+
+/* ===== SHEETS AND THE CONTEXT OVERLAY =====
+   A sheet is the same primitive Pact mobile already uses (openSheet/closeSheet): a panel anchored to
+   the bottom over a backdrop, dismissed by the ✕ or the backdrop. The context breakdown is not a
+   sheet — it takes the WHOLE page, because it is the one readout you open to study rather than to
+   glance at. */
+.m-sheet{position:absolute;inset:0;z-index:70;display:flex;flex-direction:column;justify-content:flex-end}
+.m-sheet-back{position:absolute;inset:0;background:#000a}
+.m-sheet-panel{position:relative;max-height:88%;display:flex;flex-direction:column;background:var(--panel);
+  border-top:1px solid var(--line);border-radius:15px 15px 0 0;box-shadow:0 -8px 28px #0008}
+.m-sheet-hd{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:0 12px;height:46px;border-bottom:1px solid var(--line)}
+.m-sheet-hd b{flex:1;font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
+.m-sheet-grip{position:absolute;top:6px;left:50%;transform:translateX(-50%);width:42px;height:4px;border-radius:99px;background:var(--line)}
+.m-sheet-body{flex:1 1 auto;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:14px}
+.m-over{position:absolute;inset:0;z-index:80;display:flex;flex-direction:column;background:var(--bg)}
+.m-over-hd{flex:0 0 auto;display:flex;align-items:center;gap:8px;height:46px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+.m-over-hd b{flex:1;font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
+.m-over-body{flex:1 1 auto;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:14px}
+/* the stacked context bar: one row, each slice a real share of the window */
+.m-ctxbar{display:flex;height:22px;border-radius:7px;overflow:hidden;border:1px solid var(--line);background:var(--field)}
+.m-ctxbar i{display:block;height:100%;min-width:2px}   /* a 0.1% slice still has to be visible to be a slice */
+.m-ctxrow{display:flex;align-items:center;gap:9px;min-height:38px;padding:4px 10px;border-radius:10px;background:var(--chip);
+  border:1px solid var(--line);font-size:12.5px}
+.m-ctxrow u{width:10px;height:10px;border-radius:3px;flex:0 0 auto;text-decoration:none}
+.m-ctxrow span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.m-ctxrow em{font-style:normal;color:var(--dim);font-variant-numeric:tabular-nums}
+/* agent tabs, in the right pane beside the numbers they summarise */
+.m-agent{display:flex;align-items:center;gap:9px;min-height:42px;padding:4px 10px;border-radius:10px;background:var(--chip);
+  border:1px solid var(--line);font-size:12.5px}
+.m-agent i{width:7px;height:7px;border-radius:50%;flex:0 0 auto;display:block}
+.m-agent.--run i{background:var(--work);box-shadow:0 0 0 3px color-mix(in srgb,var(--work) 22%,transparent)}
+.m-agent.--done i{background:var(--ok)}
+.m-agent span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.m-agent em{font-style:normal;color:var(--dim);font-size:11px}
 
 /* the app's own bottom navigation, unchanged */
 .m-nav{flex:0 0 auto;height:54px;display:flex;border-top:1px solid var(--line);background:var(--panel)}
@@ -207,6 +248,7 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
 .m-phd b{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);flex:1}
 .m-px{appearance:none;border:0;background:transparent;color:var(--dim);font-size:19px;cursor:pointer;padding:4px 6px}
 .m-pbody{flex:1 1 auto;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:14px;overscroll-behavior:contain}
+.m-pbody.rg-core,.m-sheet-body.rg-core,.m-over-body.rg-core{gap:14px}   /* rg-core's own gap is 8px; these are section stacks */
 .m-sec{display:flex;flex-direction:column;gap:8px}
 .m-sec>b{font-size:9.5px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--dim)}
 .m-row{display:flex;align-items:center;gap:10px;min-height:46px;padding:6px 10px;border-radius:11px;background:var(--chip);
@@ -309,11 +351,45 @@ var S = {
   view: "proposed",          // which layout the device shows — the whole point of the page
   measured: {},              // { today: pct, proposed: pct } — filled by measure(), never guessed
   panel: null,               // "left" | "right" | null — which edge panel is open
+  sheet: null,               // "model" | "convos" | "marks" | null — which pull-up sheet is open
+  overlay: null,             // "context" | null — the full-page readouts
+  repo: "Claudstermind",
   busy: false,               // a turn in flight: colours the medallion, Stop and Send
   big: false,                // the retractor: does the type box get ~30% or ~52% of the screen
   stick: true,               // transcript pinned to the bottom (the bulb's Live) vs held where you left it
   rail: "arc",               // "arc" | "tab" | "none" — the edge affordance, a lab choice (see below)
   agents: "4 agents · 4 done",
+  /* The agent tabs the right pane lists — a running one and its finished siblings. */
+  agentList: [
+    { name: "review:correctness", state: "run", meta: "2m 14s · 18k tok" },
+    { name: "review:tests", state: "done", meta: "1m 02s · 9k tok" },
+    { name: "review:security", state: "done", meta: "58s · 7k tok" },
+    { name: "verify:seams.ts", state: "done", meta: "41s · 5k tok" }
+  ],
+  /* A context window is not one number, it is a stack — this is the breakdown the header medallion
+     opens. Shares are of the ceiling, so they read against the same 100% the chip shows. */
+  ctxParts: [
+    { name: "Conversation", tok: 148200, col: "#c77dff" },
+    { name: "Tool results", tok: 38400, col: "#4ecdc4" },
+    { name: "File attachments", tok: 12600, col: "#6ea8ff" },
+    { name: "System prompt + tools", tok: 5100, col: "#f5b544" },
+    { name: "Memory (CLAUDE.md)", tok: 1290, col: "#7ee787" }
+  ],
+  /* Marks are made ON turns — that is what the right-hand riser selects between. */
+  marks: [
+    { at: "R#6992", note: "the wheel decision", kind: "r" },
+    { at: "P#729", note: "left/right reveal brief", kind: "p" },
+    { at: "R#6949", note: "measured 31% at 412x915", kind: "r" }
+  ],
+  /* Chat BOXES — whole chats, each pointing at a repository. The left-hand riser selects between
+     these; the left pane is where a box's repository and workspace are actually set. */
+  boxes: [
+    { name: "Claudstermind · Main", repo: "Claudstermind", tree: "main", on: true, star: true },
+    { name: "OuronetUI · dev", repo: "OuroborosNetwork/daimons/OuronetUI", tree: "dev", on: false, star: true },
+    { name: "Khronoton · Main", repo: "AncientPantheon/constructors/Khronoton", tree: "main", on: false, star: true }
+  ],
+  repos: ["Claudstermind", "OuroborosNetwork/daimons/OuronetUI", "AncientPantheon/constructors/Khronoton",
+          "StoaChain/seers/StoaExplorer", "AncientClients/Tago"],
   reconnected: true,
   runningModel: "Opus 5",    // what is ACTUALLY running — the strip is a readout, never a selector
   convo: { name: "Claudstermind · Main", star: true },   // ★ = the repository's main conversation
@@ -345,9 +421,11 @@ var S = {
   worktree: "main",
   /* Conversations OF THE SAME REPOSITORY — that is what this list is for. One of them is the ★ main. */
   convos: [
-    { name: "Claudstermind · Main", sub: "live · 731 prompts", on: true, star: true },
-    { name: "Claudstermind · mobile rework", sub: "idle · 20m ago", on: false, star: false },
-    { name: "Claudstermind · relay deploy", sub: "idle · yesterday", on: false, star: false }
+    { name: "Claudstermind · Main", repo: "Claudstermind", tree: "main", sub: "live", on: true, star: true },
+    { name: "Claudstermind · mobile rework", repo: "Claudstermind", tree: "wt/mobile", sub: "20m ago", on: false, star: false },
+    { name: "Claudstermind · relay deploy", repo: "Claudstermind", tree: "wt/relay", sub: "yesterday", on: false, star: false },
+    { name: "OuronetUI · Main", repo: "OuroborosNetwork/daimons/OuronetUI", tree: "dev", sub: "2h ago", on: false, star: true },
+    { name: "Khronoton · Main", repo: "AncientPantheon/constructors/Khronoton", tree: "main", sub: "yesterday", on: false, star: true }
   ]
 };
 var nPrompts = function () { return S.turns.filter(function (t) { return t.role === "user"; }).length; };
@@ -388,6 +466,108 @@ function wheel(label, options, value, onPick) {
   return box;
 }
 
+/* ---------------- sheets and overlays ----------------
+   openSheet/closeSheet mirror Pact mobile's primitive (app.js): a bottom-anchored panel over a
+   backdrop, dismissed by the grip, the ✕ or the backdrop. Nothing here re-invents that shape. */
+function setSheet(which) { S.sheet = which; S.panel = null; render(); }
+function setOverlay(which) { S.overlay = which; render(); }
+function sheet(title, body) {
+  var x = el("button", { class: "m-px", type: "button" }, ["✕"]);
+  onTap(x, function () { setSheet(null); });
+  var back = el("div", { class: "m-sheet-back" }, []);
+  onTap(back, function () { setSheet(null); });
+  var panel = el("div", { class: "m-sheet-panel" }, [el("div", { class: "m-sheet-grip" }, []),
+    el("div", { class: "m-sheet-hd" }, [el("b", {}, [title]), x]),
+    el("div", { class: "m-sheet-body rg-core" }, body)]);
+  return el("div", { class: "m-sheet" }, [back, panel]);
+}
+
+/* THE MODEL SHEET — what the middle strip pulls up. Four zones, in this order, and nothing else:
+   the two selectors that decide the answer, the permission that decides what it may do, the two
+   switches that belong to those, and the window it all runs in. No Full/Star/History: those are
+   pane furniture, not things you tell the agent. */
+function modelSheet() {
+  return sheet("Model", [
+    section("Model and effort", [el("div", { class: "m-wheels" }, [
+      wheel("Model", S.models, S.model, function (v) { S.model = v; }),
+      wheel("Effort", S.efforts, S.effort, function (v) { S.effort = v; })
+    ])]),
+    section("Permission", [el("div", { class: "m-wheels" }, [
+      wheel("Mode", S.perms, S.perm, function (v) { S.perm = v; })
+    ])]),
+    section("Switches", [
+      toggle("ultracode", S.ultracode, function (v) { S.ultracode = v; render(); }),
+      toggle("auto-wrap", S.autoWrap, function (v) { S.autoWrap = v; render(); })
+    ]),
+    section("Window", [
+      el("div", { class: "m-meter" }, [el("i", { style: "width:" + ctxPct() + "%" }, [])]),
+      (function () {
+        var r = el("div", { class: "m-row" }, [el("span", {}, ["Context"]),
+          el("em", {}, [S.stats.tokens.toLocaleString() + " / 1,000,000 · " + ctxPct() + "%"])]);
+        onTap(r, function () { setSheet(null); setOverlay("context"); });
+        return r;
+      })(),
+      el("div", { class: "m-btns" }, [el("button", { class: "m-btn", type: "button" }, ["🗜 Compact"]),
+                                      el("button", { class: "m-btn --acc", type: "button" }, ["↺ Wrap"])])
+    ])
+  ]);
+}
+
+/* THE CHAT-BOX SELECTOR — whole chats, and which repository each one points at. */
+function convosSheet() {
+  var rows = S.boxes.map(function (b) {
+    var r = el("div", { class: "m-row" + (b.on ? " --on" : "") }, [
+      el("span", {}, [(b.star ? "★ " : "") + b.name]), el("em", {}, [b.tree])]);
+    onTap(r, function () {
+      S.boxes.forEach(function (x) { x.on = false; }); b.on = true;
+      S.convo = { name: b.name, star: b.star }; S.repo = b.repo; S.worktree = b.tree; setSheet(null);
+    });
+    return r;
+  });
+  return sheet("Conversations", [
+    section("Open chats", rows.concat([el("div", { class: "m-btns" }, [
+      el("button", { class: "m-btn --acc", type: "button" }, ["＋ New chat"])])]))
+  ]);
+}
+
+/* THE MARK SELECTOR — marks are made ON a turn, so each row is an address you jump to. */
+function marksSheet() {
+  return sheet("Marks", [
+    section("Marked turns", S.marks.map(function (m) {
+      return el("div", { class: "m-row" }, [el("span", {}, [m.note]), el("em", {}, [m.at])]);
+    }))
+  ]);
+}
+
+/* THE CONTEXT BREAKDOWN — the whole page, because this is the readout you open to study. Opened
+   from the header medallion, which is where the single number lives. */
+function contextOverlay() {
+  var total = S.ctxParts.reduce(function (a, p) { return a + p.tok; }, 0);
+  var free = Math.max(0, S.stats.ceiling - total);
+  var pct = function (t) { return Math.round(t / S.stats.ceiling * 1000) / 10; };
+  var x = el("button", { class: "m-px", type: "button" }, ["✕"]);
+  onTap(x, function () { setOverlay(null); });
+  var bar = el("div", { class: "m-ctxbar" }, S.ctxParts.map(function (p) {
+    return el("i", { style: "width:" + pct(p.tok) + "%;background:" + p.col }, []);
+  }));
+  var rows = S.ctxParts.map(function (p) {
+    return el("div", { class: "m-ctxrow" }, [el("u", { style: "background:" + p.col }, []),
+      el("span", {}, [p.name]), el("em", {}, [p.tok.toLocaleString() + " · " + pct(p.tok) + "%"])]);
+  });
+  rows.push(el("div", { class: "m-ctxrow" }, [el("u", { style: "background:var(--line)" }, []),
+    el("span", {}, ["Free"]), el("em", {}, [free.toLocaleString() + " · " + pct(free) + "%"])]));
+  return el("div", { class: "m-over" }, [
+    el("div", { class: "m-over-hd" }, [el("b", {}, ["Context breakdown"]), x]),
+    el("div", { class: "m-over-body rg-core" }, [
+      section(total.toLocaleString() + " of " + S.stats.ceiling.toLocaleString() + " tokens · " + pct(total) + "%", [bar]),
+      section("What is in the window", rows),
+      section("What would change it", [el("div", { class: "m-btns" }, [
+        el("button", { class: "m-btn", type: "button" }, ["🗜 Compact"]),
+        el("button", { class: "m-btn --acc", type: "button" }, ["↺ Wrap"])])])
+    ])
+  ]);
+}
+
 /* ---------------- panels ---------------- */
 function section(title, kids) { return el("div", { class: "m-sec" }, [el("b", {}, [title])].concat(kids)); }
 function toggle(label, on, fn) {
@@ -406,61 +586,80 @@ function chipRow() {
   return el("div", { class: "cs-shell m-chips" }, chips);
 }
 function leftPanel() {
-  /* WHAT THIS CONVERSATION IS, and how to move between the others in the same repository. The ★ is
-     the repository's MAIN conversation — the same idea Pact already calls "prime" (pactm-frow-prime),
-     so it is one vocabulary, not two. */
-  var convoRows = S.convos.map(function (c) {
-    var r = el("div", { class: "m-row" + (c.on ? " --on" : "") }, [
-      el("span", {}, [(c.star ? "★ " : "") + c.name]), el("em", {}, [c.sub])]);
-    onTap(r, function () { S.convos.forEach(function (x) { x.on = false; }); c.on = true; S.convo = { name: c.name, star: c.star }; render(); });
-    return r;
+  /* THE CHAT BOX'S CONTROLS, in the two levels the model actually has:
+       LEVEL 1 — this box points at a REPOSITORY. Choosing one opens that repository's ★ main
+                 conversation, because that is the conversation a repository means by default.
+       LEVEL 2 — a repository can hold SEVERAL conversations, each with its own workspace. So the
+                 conversation list, the workspace for the chosen one, and the multi-chat toggle that
+                 lets more than one of them be open at once, all live under the repository above them.
+     This is the same arrangement as the desktop cockpit — repo, then worktree, then conversation —
+     stacked instead of laid out in a row. */
+  var repoRows = S.repos.map(function (r) {
+    var on = r === S.repo;
+    var row = el("div", { class: "m-row" + (on ? " --on" : "") }, [el("span", {}, [r]), el("em", {}, [on ? "open" : "→ ★ main"])]);
+    onTap(row, function () {
+      S.repo = r;
+      var main = S.convos.filter(function (c) { return c.repo === r && c.star; })[0];
+      S.convo = { name: main ? main.name : r + " · Main", star: true };
+      S.worktree = main ? main.tree : "main";
+      S.convos.forEach(function (c) { c.on = !!(main && c === main); });
+      render();
+    });
+    return row;
   });
-  var multi = toggle("multi-chat — show them side by side", S.multiChat, function (v) { S.multiChat = v; render(); });
+  var mine = S.convos.filter(function (c) { return c.repo === S.repo; });
+  var convoRows = mine.map(function (c) {
+    var row = el("div", { class: "m-row" + (c.on ? " --on" : "") }, [
+      el("span", {}, [(c.star ? "★ " : "") + c.name]), el("em", {}, [c.tree + " · " + c.sub])]);
+    onTap(row, function () {
+      S.convos.forEach(function (x) { x.on = false; }); c.on = true;
+      S.convo = { name: c.name, star: c.star }; S.worktree = c.tree; render();
+    });
+    return row;
+  });
+  var ws = el("div", { class: "m-row" }, [el("span", {}, ["Workspace"]), el("em", {}, [S.worktree + "  ⌄"])]);
   return el("div", { class: "m-panel --l" + (S.panel === "left" ? " open" : ""), id: "pl" }, [
-    el("div", { class: "m-phd" }, [el("b", {}, ["Session"]), (function () {
+    el("div", { class: "m-phd" }, [el("b", {}, ["This chat"]), (function () {
       var x = el("button", { class: "m-px", type: "button" }, ["✕"]); onTap(x, function () { setPanel(null); }); return x;
     })()]),
-    el("div", { class: "m-pbody" }, [
-      section("This conversation", [
-        el("div", { class: "m-row --on" }, [el("span", {}, [(S.convo.star ? "★ " : "") + S.convo.name]), el("em", {}, ["live"])]),
-        el("div", { class: "m-row" }, [el("span", {}, ["Workspace"]), el("em", {}, [S.worktree + "  ⌄"])])
-      ]),
-      section("Conversations in this repository", convoRows.concat([multi,
-        el("div", { class: "m-btns" }, [el("button", { class: "m-btn --acc", type: "button" }, ["＋ New"]),
+    el("div", { class: "m-pbody rg-core" }, [
+      section("1 · Repository", repoRows),
+      section("2 · Conversations in " + S.repo.split("/").pop(), convoRows.concat([
+        toggle("multi-chat — more than one at once", S.multiChat, function (v) { S.multiChat = v; render(); }),
+        el("div", { class: "m-btns" }, [el("button", { class: "m-btn --acc", type: "button" }, ["＋ New conversation"]),
                                         el("button", { class: "m-btn", type: "button" }, ["★ Make main"])])])),
-      section("Size and ceilings", [chipRow()]),
-      section("Find in this conversation", [el("div", { class: "m-btns" }, [
-        el("button", { class: "m-btn", type: "button" }, ["P#/R# jump"]),
-        el("button", { class: "m-btn", type: "button" }, ["⌕ Recall"]),
-        el("button", { class: "m-btn", type: "button" }, ["★ Marks"])])])
+      section("Workspace for this conversation", [ws,
+        el("div", { class: "m-btns" }, [el("button", { class: "m-btn", type: "button" }, ["Select worktree"]),
+                                        el("button", { class: "m-btn --acc", type: "button" }, ["＋ Create"])])])
     ])
   ]);
 }
 function rightPanel() {
+  /* WHAT THIS CONVERSATION HAS COST — the chips that used to sit in the header (rounds, size, how
+     much has been compacted, what a wrap would take) and the agents running underneath it. Both are
+     readouts you consult; neither is something you set, which is why they are together and why the
+     things you SET moved to the model sheet. */
+  var running = S.agentList.filter(function (a) { return a.state === "run"; }).length;
   return el("div", { class: "m-panel --r" + (S.panel === "right" ? " open" : ""), id: "pr" }, [
-    el("div", { class: "m-phd" }, [el("b", {}, ["Controls"]), (function () {
+    el("div", { class: "m-phd" }, [el("b", {}, ["This conversation"]), (function () {
       var x = el("button", { class: "m-px", type: "button" }, ["✕"]); onTap(x, function () { setPanel(null); }); return x;
     })()]),
-    el("div", { class: "m-pbody" }, [
-      section("Engine", [el("div", { class: "m-wheels" }, [
-        wheel("Model", S.models, S.model, function (v) { S.model = v; paintHead(); }),
-        wheel("Effort", S.efforts, S.effort, function (v) { S.effort = v; })
-      ])]),
-      section("Permission", [el("div", { class: "m-wheels" }, [wheel("Mode", S.perms, S.perm, function (v) { S.perm = v; })])]),
-      section("Switches", [
-        toggle("ultracode", S.ultracode, function (v) { S.ultracode = v; render(); }),
-        toggle("auto-continue", S.autoContinue, function (v) { S.autoContinue = v; render(); }),
-        toggle("auto-wrap", S.autoWrap, function (v) { S.autoWrap = v; render(); })
-      ]),
-      section("Window", [
+    el("div", { class: "m-pbody rg-core" }, [
+      section("Size and ceilings", [chipRow()]),
+      section("Context", [
         el("div", { class: "m-meter" }, [el("i", { style: "width:" + ctxPct() + "%" }, [])]),
-        el("div", { class: "m-row" }, [el("span", {}, ["Context"]), el("em", {}, [S.stats.tokens.toLocaleString() + " / 1,000,000 tok · " + ctxPct() + "%"])]),
-        el("div", { class: "m-btns" }, [el("button", { class: "m-btn", type: "button" }, ["🗜 Compact"]),
-                                        el("button", { class: "m-btn --acc", type: "button" }, ["↺ Wrap"])])
+        (function () {
+          var r = el("div", { class: "m-row" }, [el("span", {}, ["Breakdown"]),
+            el("em", {}, [S.stats.tokens.toLocaleString() + " · " + ctxPct() + "%"])]);
+          onTap(r, function () { setPanel(null); setOverlay("context"); });
+          return r;
+        })()
       ]),
-      section("This pane", [el("div", { class: "m-btns" }, [el("button", { class: "m-btn", type: "button" }, ["↕ Full"]),
-                                                           el("button", { class: "m-btn", type: "button" }, ["☆ Star"]),
-                                                           el("button", { class: "m-btn", type: "button" }, ["🕒 History"])])])
+      section("Agents · " + running + " running, " + (S.agentList.length - running) + " done",
+        S.agentList.map(function (a) {
+          return el("div", { class: "m-agent --" + a.state }, [el("i", {}, []),
+            el("span", {}, [a.name]), el("em", {}, [a.meta])]);
+        }))
     ])
   ]);
 }
@@ -489,12 +688,14 @@ function turns() {
 function paintHead() { var m = $("#mmodel"); if (m) m.textContent = S.model; }
 
 function proposed() {
-  var core = el("div", { class: "m-core" + (S.rail === "none" ? "" : " --gutter") }, turns());
+  var core = el("div", { class: "m-core rg-core" + (S.rail === "none" ? "" : " --gutter") }, turns());
 
   /* HEAD — the state medallions live here, because "is it connected, did it reconnect" has to be
      answerable without opening anything. Identity is a tap target for the left pane. */
+  /* THE CONTEXT MEDALLION. One number in the header; tapping it opens the breakdown over the whole
+     page, because "21%" tells you there is a problem and nothing about what is causing it. */
   var ctx = el("div", { class: "m-ctx" }, [el("div", { class: "m-bar" }, [el("i", { style: "width:" + ctxPct() + "%" }, [])]), el("b", {}, [ctxPct() + "%"])]);
-  onTap(ctx, function () { setPanel("right"); });
+  onTap(ctx, function () { setOverlay("context"); });
   var meds = [el("span", { class: "m-hmed" + (S.busy ? " --busy" : "") }, [el("i", {}, []), S.busy ? "Working" : "Live"])];
   if (S.agents) meds.push(el("span", { class: "m-hmed --dim" }, ["◉ " + (S.agents.match(/^\d+/) || ["?"])[0]]));
   if (S.reconnected) meds.push(el("span", { class: "m-hmed --ok" }, ["↻"]));
@@ -505,10 +706,10 @@ function proposed() {
   var head = el("div", { class: "m-head" }, [title, medBar, ctx]);
 
   /* 3. THE TYPE BOX — full width. An attach button beside it is exactly what made the field narrow. */
-  var box = el("textarea", { class: "m-box", rows: "1", placeholder: "Message Claude…" }, []);
+  var box = el("textarea", { class: "m-box rg-typebox", rows: "1", placeholder: "Message Claude…" }, []);
   var grow = function () {
     box.style.height = "40px";
-    var cap = Math.round((S.big ? 0.52 : 0.30) * (document.querySelector(".device") || { clientHeight: 915 }).clientHeight);
+    var cap = Math.round(0.40 * (document.querySelector(".device") || { clientHeight: 915 }).clientHeight);
     box.style.height = Math.min(box.scrollHeight, cap) + "px";
     /* PUSH, DON'T COVER: the core is the only flexing region, so a taller box shrinks it — but the
        transcript then has to be re-pinned or the bottom slides out of view, which is what reads as
@@ -522,8 +723,6 @@ function proposed() {
   var menuB = el("button", { class: "m-ico", type: "button", title: "Session" }, ["☰"]);
   onTap(menuB, function () { setPanel("left"); });
   var upB = el("button", { class: "m-ico", type: "button", title: "Attach" }, ["📎"]);
-  var retB = el("button", { class: "m-ico --retract", type: "button", title: "Bigger / smaller type box" }, [S.big ? "⌄" : "⌃"]);
-  onTap(retB, function () { S.big = !S.big; render(); });
   var autoB = el("div", { class: "m-auto" + (S.autoContinue ? " on" : "") }, [el("div", { class: "m-sw" }, [el("i", {}, [])]), "auto"]);
   onTap(autoB, function () { S.autoContinue = !S.autoContinue; render(); });
   var stopB = el("button", { class: "m-stp", type: "button", title: "Stop" }, ["■"]);
@@ -540,27 +739,29 @@ function proposed() {
     var atEnd = core.scrollHeight - core.scrollTop - core.clientHeight < 24;
     if (atEnd !== S.stick) { S.stick = atEnd; med.className = "m-med" + (atEnd ? "" : " --held"); med.textContent = atEnd ? "⇣ Live" : "⏸ Held"; }
   }, { passive: true });
-  var btnrow = el("div", { class: "m-btnrow" }, [med, menuB, upB,
-    el("div", { class: "m-mid" }, [retB]), autoB, stopB, send]);
+  /* The expansion button is gone: the box already grows with what you type, and a control that
+     duplicates what the box does anyway was the odd one out in this row. What is left in the middle
+     is the Live/Held bulb, which is a STATE and belongs where the eye already goes. */
+  var btnrow = el("div", { class: "m-btnrow" }, [menuB, upB, el("div", { class: "m-mid" }, [med]), autoB, stopB, send]);
 
   /* 1. THE STRIP glued to the nav. The middle is a READOUT of what is running; pulling it up (or
      tapping it) opens the right pane, which is where the selector lives. */
   var running = el("div", { class: "m-running" }, [el("span", { class: "m-pull" }, ["▲▲"]),
     S.runningModel, el("em", {}, ["· " + S.effort.replace(" effort", "") + " · " + S.perm])]);
-  onTap(running, function () { setPanel("right"); });
+  onTap(running, function () { setSheet("model"); });
   (function pullUp(node) {          // a real pull, not only a tap — the gesture the ▲▲ promises
     var y0 = null;
     node.addEventListener("touchstart", function (e) { y0 = e.touches[0] ? e.touches[0].clientY : null; }, { passive: true });
     node.addEventListener("touchmove", function (e) {
       if (y0 == null) return;
       var y = e.touches[0] ? e.touches[0].clientY : y0;
-      if (y0 - y > 24) { y0 = null; setPanel("right"); }
+      if (y0 - y > 24) { y0 = null; setSheet("model"); }
     }, { passive: true });
   })(running);
   var risers = el("div", { class: "m-risers" }, [
-    (function () { var b = el("div", { class: "m-riser" }, ["💬 " + S.convos.length]); onTap(b, function () { setPanel("left"); }); return b; })(),
+    (function () { var b = el("div", { class: "m-riser" }, ["💬 Chats " + S.boxes.length]); onTap(b, function () { setSheet("convos"); }); return b; })(),
     running,
-    (function () { var b = el("div", { class: "m-riser --bm" }, ["★ Marks"]); onTap(b, function () { setPanel("left"); }); return b; })()
+    (function () { var b = el("div", { class: "m-riser --bm" }, ["★ Marks " + S.marks.length]); onTap(b, function () { setSheet("marks"); }); return b; })()
   ]);
 
   var scrim = el("div", { class: "m-scrim" + (S.panel ? " on" : "") }, []);
@@ -576,6 +777,10 @@ function proposed() {
     kids.push(railL, railR);
   }
   kids.push(scrim, leftPanel(), rightPanel());
+  if (S.sheet === "model") kids.push(modelSheet());
+  else if (S.sheet === "convos") kids.push(convosSheet());
+  else if (S.sheet === "marks") kids.push(marksSheet());
+  if (S.overlay === "context") kids.push(contextOverlay());
   var wrap = el("div", { class: "mob" }, kids);
   wrap.id = "mob";
   requestAnimationFrame(function () { if (S.stick) core.scrollTop = core.scrollHeight; });
@@ -655,7 +860,10 @@ function render() {
 document.querySelectorAll("#sw button").forEach(function (b) {
   b.addEventListener("click", function () { S.view = b.dataset.v; S.panel = null; render(); });
 });
-document.addEventListener("keydown", function (e) { if (e.key === "Escape" && S.panel) setPanel(null); });
+document.addEventListener("keydown", function (e) {
+  if (e.key !== "Escape") return;
+  if (S.overlay) setOverlay(null); else if (S.sheet) setSheet(null); else if (S.panel) setPanel(null);
+});
 window.addEventListener("resize", measure);
 (function swipes() {
   var x0 = 0, y0 = 0, live = false;
