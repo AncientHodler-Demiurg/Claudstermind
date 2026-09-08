@@ -2,6 +2,27 @@
 
 > Append-only. Non-obvious facts, corrections, tricks that came out of real sessions. Newest at the top. Each entry gets a date + one-line headline + the detail underneath.
 
+## 2026-09-08 — Chain cards: one explained hover panel replaced six per-row `title=` bubbles
+
+`ChainMetricsTooltip` (both frontends, identical file) is the hover panel for a dashboard chain card. The card
+shows five bare numbers behind icons — **two of which are the same flame glyph** (gas used vs gas wasted) — so
+the card alone cannot say which is which. The panel names each metric AND explains it, which the old `title=`
+attributes never did (they labelled only, and were native bubbles: unstyleable, slow, one row at a time).
+
+Details worth keeping: the panel shows the fee at FULL precision while the card truncates to fit; gas wasted
+carries its share of the chain's gas so a raw "212,568,430" is judgeable (share omitted rather than dividing by
+zero on an idle chain); Kadena's pre-split chains 10-19 get copy explaining WHY they are empty instead of five
+unexplained zeros. `heightLabel` was deleted from BOTH dashboards — the panel derives Height/Start/Blocks from
+`chainDisplayMode` itself.
+
+**Testing Radix tooltip CONTENT directly:** wrap in `<Tooltip defaultOpen>` and assert with `getAllByText`
+(Radix mirrors content into a visually-hidden a11y node, so every string matches twice).
+
+**Verifying frontend-kadena edits without node_modules:** run stoa's `tsc` over the kadena file with
+`--noEmit --jsx react-jsx --moduleResolution bundler --skipLibCheck` and grep for `error TS1[0-9]{3}` (syntax
+codes only). Module-resolution errors are noise across projects, but this catches the real risk of a hand-edited
+JSX tree — an unbalanced tag — before spending a Docker build on it.
+
 ## 2026-09-08 — Kadena fee backfill took 14.5 min end to end; the walker lags the tip by REORG_LAG BY DESIGN
 
 The chunked height walk over Kadena's 217M rows completed in **14m27s** (container up 20:24:06 -> backfilled_at
@@ -15,6 +36,12 @@ full scan 177565.938573289900 KDA taken ~1h earlier = **-0.0248 KDA over a 199-h
 height at current activity — worth knowing that TODAY'S Kadena fee rate is tiny; the 177k KDA total is almost
 entirely historical). To verify the walker rather than eyeball it, re-scan with the SAME bound:
 `SELECT SUM(gas*COALESCE(gas_price,0)) FROM transactions WHERE height < <next_height>` and compare exactly.
+
+**DONE, and it matched DIGIT FOR DIGIT:** bounded re-scan `WHERE height < 7211803` returned
+`177565.913753332666` — identical to the walker's maintained total across all 18 significant digits. So the
+290-chunk incremental walk and a single unbounded aggregate agree exactly, and the 0.0248 KDA gap was purely the
+REORG_LAG window. That is the verification to repeat if the walker is ever suspected; the bounded scan costs
+~1m11s (vs 4m57s unbounded, since it skips nothing but reads less of the tail).
 
 ## 2026-09-08 — Merged the Stoa fee pill into the gas-floor medallion; medallion-size.ts is gone
 
