@@ -2,6 +2,36 @@
 
 > Append-only. Non-obvious facts, corrections, tricks that came out of real sessions. Newest at the top. Each entry gets a date + one-line headline + the detail underneath.
 
+## 2026-09-08 — Dashboard hover panels: one shell, and `StatCard` has a `tooltip` slot
+
+The explained-hover-panel treatment now covers the headline stat cards as well as the chain cards, both
+frontends. Structure to reuse rather than re-invent:
+
+- **`components/MetricTooltip.tsx`** — the shared shell (gold-headed card + icon, `<Metric>` rows of
+  label/value/explanation, optional footnote, or arbitrary `children` for prose panels). Both
+  `ChainMetricsTooltip` and `StatTooltips` render through it, specifically so the two families cannot drift
+  into slightly different looks.
+- **`components/StatTooltips.tsx`** — one exported panel per headline card: `BlocksIndexedTooltip`,
+  `IndexedTxnsTooltip`, `HashRateTooltip` (Kadena only), `TotalGasTooltip`, `AvgGasTooltip`, `SupplyTooltip`.
+  Identical file in both frontends; chain-specific values are props.
+- **`StatCard` gained an optional `tooltip?: ReactNode`.** Supplying it wraps the card in the Radix trigger and
+  adds `cursor-help`; omitting it leaves the card byte-identical to before. That is the cheap way to add a panel
+  to any future card.
+
+**Domain copy worth keeping (it is the actual value of these panels):** "Blocks Indexed" is NOT a chain height —
+Chainweb is braided, so it is every chain's blocks summed, and people misread it. Gas is UNITS of computation;
+what it COST is the separate fees metric. And gas-per-failed-tx is **not comparable** to gas-per-successful-tx
+because a failure is charged its full gas LIMIT rather than what it executed — which is also why the card splits
+the average instead of showing one blended figure that failures would drag upward.
+
+Derived shares (waste %, failure %) are omitted rather than dividing by zero on an idle chain, and the hash-rate
+epoch rows drop out entirely when that data has not arrived — both are covered by tests.
+
+Stoa's `TempleSupplyCard` is wrapped at the page level (it is an SVG component, not a `StatCard`), and its
+`fullTitle` prop — which rendered an SVG `<title>`, i.e. another native bubble — was dropped in favour of the
+panel. Supply renders through `formatDecimalFull(supplyRaw)`: `supplyRaw` is a 12-decimal STRING, and the
+sibling `supply` float field in the same payload is lossy.
+
 ## 2026-09-08 — Chain cards: one explained hover panel replaced six per-row `title=` bubbles
 
 `ChainMetricsTooltip` (both frontends, identical file) is the hover panel for a dashboard chain card. The card
