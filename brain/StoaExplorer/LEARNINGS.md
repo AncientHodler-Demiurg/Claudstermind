@@ -2,6 +2,34 @@
 
 > Append-only. Non-obvious facts, corrections, tricks that came out of real sessions. Newest at the top. Each entry gets a date + one-line headline + the detail underneath.
 
+## 2026-09-08 — Kadena fee backfill took 14.5 min end to end; the walker lags the tip by REORG_LAG BY DESIGN
+
+The chunked height walk over Kadena's 217M rows completed in **14m27s** (container up 20:24:06 -> backfilled_at
+20:38:33), against the 4m57s a single unbounded scan costs — the ~3x is the duty cycle (20s work / 30s tick),
+deliberately traded for a live explorer.
+
+**Expect the maintained total to sit slightly BELOW an ad-hoc `SELECT SUM(...)` with no WHERE clause**, and do
+not treat that as a bug: the walker stops at `tip - REORG_LAG` (200 heights) so it only counts settled blocks,
+while a bare full scan includes everything up to the current tip. Measured: walker 177565.913753332666 KDA vs a
+full scan 177565.938573289900 KDA taken ~1h earlier = **-0.0248 KDA over a 199-height lag** (~0.00019 KDA per
+height at current activity — worth knowing that TODAY'S Kadena fee rate is tiny; the 177k KDA total is almost
+entirely historical). To verify the walker rather than eyeball it, re-scan with the SAME bound:
+`SELECT SUM(gas*COALESCE(gas_price,0)) FROM transactions WHERE height < <next_height>` and compare exactly.
+
+## 2026-09-08 — Merged the Stoa fee pill into the gas-floor medallion; medallion-size.ts is gone
+
+Owner feedback: two stacked medallions (fee pill above the ANU circle) wasted ~70px of height in a band that is
+otherwise two thin bars. Now ONE stadium medallion rides the bar — cumulated fees on the top line, the floor
+below, hairline between — and its tooltip absorbed the fee panel, so there is a single hover target explaining
+both. Bar padding dropped py-9/10 -> py-8/9.
+
+**`frontend-stoa/src/lib/medallion-size.ts` was deleted** along with its chord geometry: it existed so a CIRCLE
+could grow to fit a longer label without shrinking the type, and a stadium sizes itself from content + padding.
+The requirement (bigger number must not shrink the font) still holds — it is just free now. `GasFeeMedallion`
+also left frontend-stoa; **frontend-kadena still has and uses it** standalone in its dashboard header, because
+Kadena has no gas-floor bar to merge into. That divergence between the two frontends is intentional — do not
+"resync" them by copying the file back.
+
 ## 2026-09-08 — ★ Gas-FEE totals (coin spent on gas): the numbers, the timings, and why they must never touch a float
 
 New metric: `SUM(gas * gas_price)` per chain = native coin actually PAID for gas. `GET /api/v1/stats/gas-fees`
