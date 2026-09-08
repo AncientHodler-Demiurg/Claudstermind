@@ -20,6 +20,11 @@ COPY lib/version.mjs ./lib/version.mjs
 COPY lib/mirror.mjs ./lib/mirror.mjs
 COPY dashboard/auth/ ./dashboard/auth/
 COPY dashboard/public/ ./dashboard/public/
+# The chat box IS this package — index.html loads /chat-shell/*.{css,js} from it and the relay serves
+# it from here (server.mjs DEFAULT_CHAT_SHELL). Without it the online Workspace has no chat box at all:
+# `window.ChatShellUI` never defines and the view dies on "…undefined (reading 'mount')". Source only;
+# the package has no build step and no dependencies.
+COPY packages/claude-chat-shell/src/ ./packages/claude-chat-shell/src/
 COPY relay/ ./relay/
 
 # Build stamp — the version helper reads these (no .git / package.json-root in the image).

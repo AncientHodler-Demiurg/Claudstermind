@@ -30,6 +30,15 @@ import {
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_PUBLIC = resolve(__dir, "..", "dashboard", "public");
+// THE CHAT SHELL PACKAGE. index.html loads /chat-shell/{chat-shell.css,chat-shell.js,chat-shell-ui.js}
+// and the dashboard serves them straight from packages/claude-chat-shell/src (server.mjs) rather than
+// copying them into public/, so a copy can never drift from the package. The relay only ever served
+// public/, so through the online gateway all three 404'd: no ChatShellUI, and the Workspace died on
+// "Cannot read properties of undefined (reading 'mount')" — the whole chat box is that package. It was
+// invisible on the desktop, which talks to localhost:3001 directly, and intermittent on the phone,
+// because a live mirror cookie could proxy the misses down the tunnel to the work machine. Same route
+// as the dashboard's, from the same directory (lib/relayAssets.test.mjs holds them to that).
+const DEFAULT_CHAT_SHELL = resolve(__dir, "..", "packages", "claude-chat-shell", "src");
 
 const MIME = {
   ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
@@ -198,6 +207,7 @@ export function createRelay(opts = {}) {
     throw new Error("AGENT_DEVICE_SECRET must be set and at least 32 characters — it authenticates the local bridge.");
   }
   const publicDir = opts.publicDir ?? DEFAULT_PUBLIC;
+  const chatShellDir = opts.chatShellDir ?? DEFAULT_CHAT_SHELL;
   const link = new AgentLink({ deviceSecret });
 
   const server = http.createServer((req, res) => {
@@ -585,6 +595,11 @@ export function createRelay(opts = {}) {
 
     const view = snapshotView(path, link.snapshot);
     if (view.found) { res.setHeader("cache-control", "no-store"); return sendJSON(res, 200, view.body); }
+
+    // The chat-shell package — BEFORE the mirror fallback, because these are our own assets and must
+    // never depend on a mirror cookie being present to resolve. That dependency is exactly what made
+    // this failure intermittent rather than obvious.
+    if (path.startsWith("/chat-shell/")) return serveStatic(res, path.slice("/chat-shell".length), chatShellDir);
 
     // Last resort — a nested resource of a mirrored page, whose Referer is a sub-resource
     // rather than the page. Only for paths WE don't serve: the relay's own static assets

@@ -4,6 +4,53 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.13.5] - 2026-09-08
+### Fixed — the phone couldn't open the Workspace at all
+
+Two independent crashes, both invisible from the desk, both reported as one screenshot each.
+
+**1. The online relay never served the chat box.** The chat box IS a package
+(`@ancientpantheon/claude-chat-shell`); `index.html` loads it from `/chat-shell/*`, and the dashboard
+serves that prefix straight out of `packages/claude-chat-shell/src` rather than copying the files into
+`public/` — deliberately, so a copy can never drift. The relay only ever served `public/`, and its
+Docker image did not even contain the package. Through the online gateway all three files 404'd,
+`window.ChatShellUI` never defined, and every Core pane died on:
+
+```
+This view couldn't load — Cannot read properties of undefined (reading 'mount')
+```
+
+Invisible from the desk, because the desktop talks to `localhost:3001`, which has the route. And
+*intermittent* on the phone: with a live mirror cookie the relay's fallback proxied the misses down
+the tunnel to the work machine, so the same page sometimes worked. The relay now serves the prefix
+from the same directory the dashboard does, before the mirror fallback, and the image ships it.
+
+**2. Pact mobile threw on its first paint.** `pactChatPaint` computes the shared Send/Stop
+presentation once and two branches read it — desktop hands it to the package via `setState`, mobile
+applies it to its own buttons by hand. The declaration sat *inside* the desktop branch, and `const`
+is block-scoped, so mobile's read was `ReferenceError: pres is not defined` before a single message
+rendered. Desktop never ran that branch: `.pc-compose` exists only on mobile.
+
+### Why nothing caught either one
+
+The wiring test asserted the *string* `send.textContent = pres.sendLabel;` appears in `app.js` —
+presence, not reachability — and **no test had ever loaded the app at a mobile viewport**. So:
+
+- `relay/staticAssets.test.mjs` — every absolute asset `index.html` loads must resolve; every prefix
+  the dashboard routes must be routed by the relay too; the image must ship every directory it serves
+  from; and a real relay must hand back the package's own bytes with no mirror cookie in play.
+- `lib/pactMobileSend.test.mjs` — a value read from two sibling branches must be declared where both
+  can see it, checked by brace depth over the function's own source.
+- `scripts/mobile-smoke.mjs` — loads the real dashboard in a phone-sized Chromium (`mobile: true`, so
+  the app's own `(pointer: coarse)` branches actually run) and exits non-zero on any console error or
+  error boundary. Run it before a deploy.
+
+Also, when the package genuinely can't load (offline, half-loaded page), the error boundary now says
+so — "The chat box package didn't load (/chat-shell/*)" — instead of quoting a null-property message.
+
+> **This one needs a relay deploy.** Everything the phone loads — `app.js` included — is baked into
+> the relay image, so Admin → Deploy is what puts it on the phone.
+
 ## [1.13.4] - 2026-09-08
 ### Fixed — "would wrap 127 answers · P# none yet"
 

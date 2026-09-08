@@ -886,9 +886,19 @@ function renderOfflineScreen(view) {
     retry,
   ]);
 }
+/** The chat box IS a package (@ancientpantheon/claude-chat-shell, loaded from /chat-shell/*), so if
+ *  those two scripts do not load there is no chat box to build and Core dies on `mount`. That is a
+ *  DEPLOYMENT fault, not a view fault, and it read as "Cannot read properties of undefined (reading
+ *  'mount')" on a phone for as long as the online relay did not serve that prefix (fixed in
+ *  relay/server.mjs; relay/staticAssets.test.mjs keeps it fixed). It can still happen offline or on a
+ *  half-loaded page, so when it does, name it — the message a user forwards should say what to do. */
+function chatShellMissing() {
+  return !window.ChatShell || !window.ChatShellUI;
+}
 // The error-boundary card for a view that threw while rendering.
 function renderViewError(view, e) {
   const offline = ME.mode === "live" && !ME.localConnected;
+  const shellGone = !offline && chatShellMissing() && (view === "workspace" || view === "pact");
   const retry = el("button", { class: "conn-lost-retry" }, ["↻ Retry"]);
   retry.addEventListener("click", () => location.reload());
   return el("div", { class: "conn-lost" }, [
@@ -896,7 +906,9 @@ function renderViewError(view, e) {
     el("h2", { class: "conn-lost-title" }, [offline ? "Work machine offline" : "This view couldn't load"]),
     el("p", { class: "conn-lost-msg" }, [offline
       ? "The work machine looks offline — reconnect it and this view comes back."
-      : "Something went wrong rendering this view" + (e && e.message ? " (" + e.message + ")" : "") + "."]),
+      : shellGone
+        ? "The chat box package didn't load (/chat-shell/*), so there is nothing to build this view out of. Reload — if it keeps happening, the server isn't serving that path."
+        : "Something went wrong rendering this view" + (e && e.message ? " (" + e.message + ")" : "") + "."]),
     retry,
   ]);
 }
@@ -9832,18 +9844,26 @@ function pactChatPaint(t) {
   // though the engine's interrupt can take seconds. Cleared when the turn actually ends (status/interrupted).
   if (!busy) t._stopping = 0;   // safety net: any non-busy repaint drops a stale cue
   const stopping = !!t._stopping;
+  // ONE decision, shared with Core (ChatShell.sendPresentation) — these were two separate chains of
+  // ternaries that had drifted: Pact stopped pulsing for background work, and dropped its working
+  // colour the moment Stop was pressed.
+  //
+  // COMPUTED OUT HERE, ABOVE BOTH CONSUMERS, and that placement is the whole fix for a crash that
+  // took Pact mobile out completely: it used to be `const pres` INSIDE the `if (pv)` block below,
+  // while the mobile branch further down also reads it. `const` is block-scoped, so mobile threw
+  // `ReferenceError: pres is not defined` on the FIRST paint — before a single message rendered —
+  // and the view's error boundary swallowed the whole tab ("This view couldn't load"). Desktop never
+  // saw it: `.pc-compose` does not exist there, so the branch that reads `pres` never runs. The
+  // wiring test that guarded this checked that the STRING `pres.sendLabel` appears in the file,
+  // which it did — presence, not reachability. See lib/pactMobileSend.test.mjs, which now boots the
+  // real function with a mobile-shaped DOM instead.
+  const pres = window.ChatShell.sendPresentation({
+    busy, deep, stopping, background: ((t && t._background) || []).length > 0,
+  });
   const pv = PACT_CHAT && PACT_CHAT._view;
-  if (pv) {
-    // Desktop: Stop ALWAYS occupies its slot and switches enabled/disabled, so the row never
-    // reflows when a turn starts or ends (Send would otherwise jump sideways under the cursor).
-    // ONE decision, shared with Core (ChatShell.sendPresentation) — these were two separate chains
-    // of ternaries that had drifted: Pact stopped pulsing for background work, and dropped its
-    // working colour the moment Stop was pressed.
-    const pres = window.ChatShell.sendPresentation({
-      busy, deep, stopping, background: ((t && t._background) || []).length > 0,
-    });
-    pv.setState({ sending: { ...pres, sendDisabled: false } });   // a mid-turn send still queues (v1.2.4)
-  }
+  // Desktop: Stop ALWAYS occupies its slot and switches enabled/disabled, so the row never reflows
+  // when a turn starts or ends (Send would otherwise jump sideways under the cursor).
+  if (pv) pv.setState({ sending: { ...pres, sendDisabled: false } });   // a mid-turn send still queues (v1.2.4)
   if (compose) {
     // MOBILE only — see above. Scoped to the HOST rather than the compose because mobile's own
     // Send/Stop have moved between the two over time.
