@@ -251,6 +251,7 @@ var S = {
   model: "Opus 5",
   effort: "Default effort",
   perm: "Bypass",
+  build: "…",                // filled from /api/version — the app bar and the build stamp share it
   ultracode: false,
   autoContinue: false,
   autoWrap: true,
@@ -386,7 +387,7 @@ function setPanel(which) { S.panel = which; render(); }
 /* ---------------- the two layouts ---------------- */
 function appBar() {
   return el("div", { class: "m-app" }, [el("div", { class: "m-mark" }, []), el("b", {}, ["Claudstermind"]),
-    el("span", { class: "v" }, ["v1.13.6"]), el("div", { class: "m-sp" }, []), el("span", { class: "acct" }, ["🔒 29d"])]);
+    el("span", { class: "v" }, ["v" + S.build]), el("div", { class: "m-sp" }, []), el("span", { class: "acct" }, ["🔒 29d"])]);
 }
 function nav() {
   var items = [["🏠", "Overview"], ["🗺", "Map"], ["📈", "Activity"], ["🔀", "Pipeline"],
@@ -524,7 +525,7 @@ window.addEventListener("resize", measure);
 
 document.body.dataset.theme = "core";
 fetch("/api/version").then(function (r) { return r.json(); })
-  .then(function (v) { $("#stamp").textContent = "build " + v.version; })
+  .then(function (v) { S.build = v.version; $("#stamp").textContent = "build " + v.version; render(); })
   .catch(function () { $("#stamp").textContent = "build (offline)"; });
 render();
 </script>
