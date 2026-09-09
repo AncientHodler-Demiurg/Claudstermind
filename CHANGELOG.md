@@ -4,6 +4,40 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.15.1] - 2026-09-09
+### Fixed — two state mappings written from inference, both wrong
+
+Found by checking them against the shapes their producers emit, rather than by waiting for a phone to
+show empty panels:
+
+- **Agents** were mapped as `{name, done}`. They are `{label, status}` (`lib/backgroundTasks.mjs`), so
+  every row would have read "agent", permanently running. Retired tasks (`status: "removed"`) are now
+  filtered the same way `paintSwarm` filters them — a retired task is not a finished one.
+- **History rows** were mapped as `{when, worktreeMissing}` and keyed off `sessionKey`. They are
+  `{updatedAt, missingWorktree}` keyed by `workspaceId`; `sessionKey` is the **search result's** key,
+  so Resume would have reopened the wrong conversation.
+
+`lib/mobileCockpitWiring.test.mjs` now checks both ends: the field must be read by the mapping AND
+emitted by its producer, so the next rename fails here instead of on a phone.
+
+### Removed — mobile controls that stopped matching anything (T4)
+- **The `⚙` pane-settings sheet.** It borrowed the pane's `.ws-pane-controls` node into a bottom sheet
+  and handed it back on close; that node has not existed since the chat-shell migration, so the lookup
+  returned null and the function returned. It opened nothing, silently, for months.
+- **The `⌃`/`⌄` compose-expand button** and `WS_COMPOSE_BIG`. Its only rule was keyed to `.ws-prompt`,
+  which the migration replaced with the package's `.rg-typebox` — it swapped its own glyph and changed
+  nothing else. **Pact's identical-looking button is untouched**: `.pactm-compose-big .pc-input` is
+  live, so that one works.
+- Eight orphaned stylesheet rules keyed to the same removed class names.
+
+Two buttons therefore left the classic mobile bar. Both were controls in appearance only, and a button
+that looks like a control and is not is worse than an absent one.
+
+**Deferred deliberately** (recorded as T5 in the plan): `renderMobileTabs`, `syncMobileTabDots` and the
+`.ws-mtabs` strip. They are inert, but removing them touches eight call sites in the layout that is the
+**fallback** while the cockpit sits behind a switch. Dead weight is not worth risk landing on the thing
+you fall back to; it goes when the cockpit becomes the default.
+
 ## [1.15.0] - 2026-09-09
 ### Added — the mobile cockpit runs in Core, behind a switch (`?m2=1`)
 
