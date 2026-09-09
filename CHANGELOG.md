@@ -4,6 +4,29 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.15.3] - 2026-09-09
+### Fixed — the cockpit now fills the phone, and attachments stop shrinking the type box
+
+Two faults visible the moment it ran on a real device, both of them mine.
+
+**It was drawing a page around a page.** `body.ws-full #main` keeps 10px/18px of padding for the
+desktop grid, each pane draws a rounded bordered card, the workspace root adds a gap, and the boot
+notice ("Reattached 2 pane(s)…") sits above all of it — a sentence you read once and then look past
+forever, costing ~100px of every screen after that. On a phone the pane **is** the screen: the padding,
+the side borders and the corner radius are gone, and the notice is hidden (it stays on the desktop,
+where a line of prose is free). That is ~110px back.
+
+The rules are `body.ws-mobile2 …` rather than `.ws-mobile2 …` on purpose: `body.ws-full #main` carries
+a type selector, so the unqualified form loses on specificity and silently does nothing — which is
+exactly what the first attempt did.
+
+**Attachments were squeezing the type box.** `composeExtra` — the attachment thumbnails and the
+reply-quote chips — sits inside the compose row, and the row was `display: flex` with the default
+direction, so they sat *beside* the box and took its width. The same mistake as the attach button that
+started this redesign. The compose row is now a column: they stack **above** the box, which keeps the
+full width. Verified in the browser: `flexDirection: "column"`, attachment strip at y=696 against the
+box at y=742, box 392px wide inside a 412px row.
+
 ## [1.15.2] - 2026-09-09
 ### Changed — the mobile cockpit is the layout on a phone, not an opt-in
 
