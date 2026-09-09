@@ -2,6 +2,46 @@
 
 > Append-only. Non-obvious facts, corrections, tricks that came out of real sessions. Newest at the top. Each entry gets a date + one-line headline + the detail underneath.
 
+## 2026-09-10 — ★ RETRY-LOOP PACTS: a failing continuation is resubmitted forever against ONE pact id (10k-63k rows)
+
+Owner reported `/pacts/WiLlYjyopMUHJEtwM7dclistgFhxTa4el8aievcwggc` not loading on Kadena. Not an error — the
+endpoint returned HTTP 200 after **21.3s** with a multi-megabyte body, so the page never appeared.
+
+**The data is CORRECT — do not "fix" the indexer.** I nearly did. 61,709 transfer rows share that one pact_id
+across 61,692 DISTINCT request keys spanning heights 5,003,161 -> tip, which looks exactly like a leaked-variable
+bug. It is not: each row's stored `pact_id` equals its own transaction's `code` field, which IS the rule for a
+step-1 continuation (see `pact-code-analyzer.ts`: a 43-char non-`(` code IS the pactId). **All 61,709 attempts are
+`status = failure`** — a gas-station-funded bot (`xwallet-xchain-gas`) retrying the same cross-chain continuation
+since 2026-08, still growing (the count rose while I queried it). A failed pact step can be resubmitted forever,
+and each retry is its own transaction.
+
+**It is a PATTERN, not one bot.** Rows-per-pact, top of the distribution: 63,080 / 61,709 / 61,694 / 33,808 /
+15,920 / 11,948 / 11,933 / 11,440 / 10,441 / 10,424 / … Any per-pact aggregate must therefore be bounded.
+
+**Both pact endpoints had to be fixed:**
+- `getPact` (detail): fetch `PACT_TRANSFER_CAP + 1` and check for the overflow row. Normal pacts then cost exactly
+  ONE indexed query as before — no COUNT is paid to guard the rare case. Only an oversized pact runs the per-step
+  summary. **21.3s -> 2.37s, multi-MB -> 34KB.**
+- `listPacts` (list): the unbounded `WHERE pact_id = ANY($1) GROUP BY pact_id` scanned **228,222 rows for ONE
+  page** (retry-loop pacts are retried at the TIP, so they land on page 1 every time). Replaced with
+  `unnest($1) CROSS JOIN LATERAL (SELECT ... FROM (SELECT ... WHERE pact_id = p.pact_id LIMIT $2) t)`.
+  **EXPLAIN ANALYZE 10.8s -> 241ms; endpoint was ~43s.** Real pacts average 13 rows, so they are untouched.
+
+Sampled summaries are marked `partial` / `truncated` and the UI says so (list prefixes the amount with "≥"; the
+detail page shows total transfer count + an "N attempts" badge per step). Never present a sampled total as exact.
+
+## 2026-09-10 — MEASUREMENT TRAP: never benchmark an endpoint while its container is redeploying
+
+I reported the multi-step list as "HTTP 000 after 85s — times out entirely". **That was wrong.** I had launched
+`deploy.sh kadena-backend` moments earlier and was hitting a container that was still booting; HTTP 000 was the
+connection being refused/closed, not a server timeout. The honest figure, measured against a healthy container
+and repeated three times, was **~43s**.
+
+Relevant: **explorer_backend_kadena_prod takes ~2 minutes to cold start** (routes map immediately, but
+`SyncService initialized` lands ~116s in) and reports `health=unhealthy` throughout, with health-probe ExitCode 4.
+That is normal, not a failed deploy. Always gate a benchmark on
+`until [ "$(docker inspect -f '{{.State.Health.Status}}' explorer_backend_kadena_prod)" = healthy ]`.
+
 ## 2026-09-08 — Dashboard hover panels: one shell, and `StatCard` has a `tooltip` slot
 
 The explained-hover-panel treatment now covers the headline stat cards as well as the chain cards, both
