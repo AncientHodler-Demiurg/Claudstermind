@@ -4,6 +4,46 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.18.0] - 2026-09-09
+### Changed — auto-continue moved to the server, so a sweep keeps running with the phone off
+
+*"Let's do this, implement this I want to see it in action."*
+
+The loop was a **browser** loop: two `setInterval(…, 250)` in app.js. That runs only while a browser is
+awake and looking at the page, so a locked phone froze it and it fired on return. It was reported
+three times in three disguises — *"the pact workspace is stuck"*, *"the work only resumed the moment I
+came back"*, *"it triggers when I visited"* — and each time the fix was one layer short, because the
+loop was in the wrong place. It now runs where the session lives.
+
+- **`lib/autoContinue.mjs`** — every rule, pure and tested: when to arm, when to refuse and why, and
+  the text to send. Nothing in the scheduler decides anything.
+- **`lib/workspace.mjs`** — one timer per session, always cleared before another is set; re-armed on
+  every `status`/`result`; the state broadcast on the session summary so every device sees the same
+  sweep none of them is driving.
+- **The browser** asks, displays and stops. It no longer counts and no longer sends.
+
+**The safety, deliberately, because this now spends money unattended:**
+
+- The ceiling (10 rounds/batch) is enforced on the server's own count. A client may ask for the loop
+  to be on; it cannot set the count or raise the cap, and a test asserts a client sending
+  `cap: 9999` is ignored outright.
+- **Stop switches the loop off** rather than pausing it. Someone reached for the brake on a sweep
+  running by itself; re-arming eight seconds later would be the most alarming thing this could do.
+- A human send resets the ceiling (it rations a robot, not you) and cancels any pending round.
+- `hold` — the browser saying "someone is typing here" — preserves the old *"your half-typed message
+  outranks the robot"* pause, which a server cannot see for itself.
+- The count increments **before** the send: a throw that left it untouched would retry forever, which
+  is the one failure the ceiling exists to prevent.
+
+Two bugs found while porting, both invisible while a human was watching:
+
+- The suggestion matcher tried a loose `next …` pattern first, so *"I'll continue with Khronoton next
+  time"* produced **"Continue with time."** — confidently wrong, and unattended it spends a round on
+  it. The explicit form now wins and `next` requires a separator; unsure falls back to a generic
+  continue.
+- The human-send ceiling reset sat inside the *new-session* branch, so it ran only for a conversation
+  that did not exist yet — the one case with no ceiling to reset. It never fired for a real send.
+
 ## [1.17.9] - 2026-09-09
 ### Added — keep the screen awake, the way a navigation app does
 

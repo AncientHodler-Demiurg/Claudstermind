@@ -8538,7 +8538,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
   }
   const t = sessionKey ? pactChatByKey(sessionKey) : null;
   if (!t) return;
-  if (kind === "state") { if (data && data.session) { if (data.session.status) t.status = data.session.status; if (data.session.usage) t.usage = data.session.usage; exoNoteAgents(t, data.session, Date.now()); pactAdoptServerClock(t, data.session); pactChatMarkTurnBusy(t); pactChatPaint(t); } return; }
+  if (kind === "state") { if (data && data.session) { if (data.session.auto) pactAdoptAuto(t, data.session.auto); if (data.session.status) t.status = data.session.status; if (data.session.usage) t.usage = data.session.usage; exoNoteAgents(t, data.session, Date.now()); pactAdoptServerClock(t, data.session); pactChatMarkTurnBusy(t); pactChatPaint(t); } return; }
   if (kind === "permission") { t.perm = { requestId: data.requestId, tool: data.tool || data.name || data.title || "a tool" }; t.status = "awaiting-permission"; pactChatPaint(t); return; }
   if (kind !== "event") return;
   const d = data || {};
@@ -9307,8 +9307,29 @@ function pactAutoWhy(d) {
  *  own copy of this and it was missing two lines: the deadline reset (so a stale deadline already in
  *  the past could fire the moment it was switched on) and the ceiling re-grant (so re-ticking at the
  *  cap looked like it did nothing). A setting with two implementations has two behaviours. */
+/* THE SERVER'S ANSWER IS THE TRUTH. `auto` arrives on every session-state frame: whether the loop is
+ * on, how many rounds it has spent, its ceiling, when the next send is due, and the text it will
+ * send. The browser used to own all of that and could therefore disagree with the machine actually
+ * doing the work — and did, every time a phone slept. Adopting it here means the counter, the
+ * countdown and the ghost are reports rather than guesses, and every device shows the same sweep. */
+function wsAdoptAutoInto(o, auto) {
+  if (!o || !auto) return;
+  o._autoContinue = !!auto.on;
+  o._autoCount = auto.count | 0;
+  o._autoCap = (auto.cap | 0) || PACT_AUTO_CAP;
+  o._autoDeadline = auto.at || 0;
+  o._autoText = auto.text || "";
+  o._autoReason = auto.reason || "";
+}
+function pactAdoptAuto(t, auto) { wsAdoptAutoInto(t, auto); if (typeof pactChatUpdateSuggest === "function") pactChatUpdateSuggest(t); }
+function wsAdoptAuto(p, auto) { wsAdoptAutoInto(p, auto); }
 function pactSetAutoContinue(a, v) {
   if (!a) return;
+  /* THE LOOP LIVES ON THE SERVER NOW (lib/autoContinue.mjs + workspace.mjs). This switch asks; the
+     server decides, counts and sends, and reports back on the session state — which is why a sweep
+     keeps running with this page closed and a phone asleep. The local flag below is kept only so the
+     switch reflects the press immediately; the server's answer overwrites it on the next frame. */
+  if (a.key) wsPost("control", { action: "autoContinue", args: { sessionKey: a.key, on: !!v } });
   a._autoContinue = !!v;
   const cap = a._autoCap || PACT_AUTO_CAP;
   if (v && (a._autoCount || 0) >= cap) a._autoCap = (a._autoCount || 0) + PACT_AUTO_CAP;
@@ -9366,7 +9387,9 @@ function pactAutoEnsure(t) {
   });
   if (!d.arm) { pactAutoStop(t); return d; }
   t._autoDeadline = d.deadline;
-  if (d.fire) { pactChatDispatchSuggest(t, pactAutoNextText(t)); return d; }
+  /* THE CLIENT NO LONGER SENDS. The server owns the loop; a browser that also fired would double
+     every round, and this codebase has already shipped that bug twice from here. The countdown below
+     is a READOUT of the server's deadline, nothing more. */
   if (!t._autoTimer) t._autoTimer = setInterval(() => pactAutoTick(t), 250);
   return d;
 }
@@ -9392,7 +9415,9 @@ function pactPaintAutoControl(t, d) {
   // the recommended input. That's missing."
   if (PACT_MC) PACT_MC.setState({ running: { auto: ac, autoContinue: !!d.on },
     // What it will actually send, shown as the box's ghost while the clock runs.
-    autoNext: (d.arm && !d.fire) ? pactAutoNextText(t) : "" });
+    // The server resolves the text it will actually send; showing anything else would advertise a
+    // message that is not the one going out.
+    autoNext: (d.arm && !d.fire) ? (t._autoText || pactAutoNextText(t)) : "" });
 }
 function pactChatUpdateSuggest(t) {
   if (!PACT_CHAT || !PACT_CHAT.host) return;
@@ -13225,6 +13250,10 @@ function viewWorkspace() {
         // fetch the next block of turns above the rendered window.
         earlier: () => exoExtend(p, "up", wsExoCtx(p)),
         autoContinue: (on) => {
+          /* Asks the SERVER, which owns the loop — that is what keeps a sweep running with this page
+             closed. The local flag is set so the switch answers the press at once; the server's
+             report overwrites it on the next state frame. */
+          if (p.sessionKey) wsPost("control", { action: "autoContinue", args: { sessionKey: p.sessionKey, on: !!on } });
           p._autoContinue = on;
           const cap = p._autoCap || PACT_AUTO_CAP;
           // Re-ticking at the ceiling grants the next batch — otherwise switching it back on at the
@@ -14010,19 +14039,14 @@ function viewWorkspace() {
                    in: d.arm && !d.fire ? Math.max(1, Math.ceil(d.msLeft / 1000)) : null };
       ui.view.setState({ autoContinue: ac });
       if (ui.mc) ui.mc.setState({ running: { auto: ac, autoContinue: !!d.on },
-                                  autoNext: (d.arm && !d.fire) ? WS_AUTO_TEXT : "" });
+                                  autoNext: (d.arm && !d.fire) ? (p._autoText || WS_AUTO_TEXT) : "" });
       if (ui.view.els.sendGrp) ui.view.els.sendGrp.title = title;
     }
     if (!d.arm) { wsAutoStop(p); return d; }
     p._autoDeadline = d.deadline;
-    if (d.fire) {
-      wsAutoStop(p);
-      p._autoCount = (p._autoCount || 0) + 1;        // an AUTO send counts toward the ceiling
-      if (ui.promptEl) ui.promptEl.value = WS_AUTO_TEXT;
-      p._autoSending = true;
-      try { send(p); } finally { p._autoSending = false; }
-      return d;
-    }
+    /* THE CLIENT NO LONGER SENDS — the server owns the loop (lib/autoContinue.mjs). A browser that
+       also fired would double every round. What was here is the countdown's readout now. */
+    if (d.fire) { wsAutoStop(p); }
     if (!p._autoTimer) p._autoTimer = setInterval(() => wsAutoEnsure(p), 250);
     return d;
   }
@@ -14979,7 +15003,7 @@ function viewWorkspace() {
       // background event, keyed per sessionKey — its staleness heuristic measures "when did THIS
       // client last see THIS agent change", and skipped frames make a healthy fleet read as stalled.
       if (Array.isArray(data.sessions)) { setLiveSessions(data.sessions); for (const s of data.sessions) for (const p of panesOf(s.sessionKey)) { p.status = s.status || p.status; if (s.mode) p.mode = s.mode; if (s.usage) p.usage = s.usage; if (s.background) p._background = s.background; exoNoteAgents(p, s, Date.now()); schedulePaint(p); } }
-      if (data.session) { upsertLiveSession(data.session); for (const p of panesOf(data.session.sessionKey)) { Object.assign(p, { status: data.session.status ?? p.status, mode: data.session.mode ?? p.mode, usage: data.session.usage ?? p.usage }); if (data.session.background) p._background = data.session.background; exoNoteAgents(p, data.session, Date.now()); schedulePaint(p); } }
+      if (data.session) { upsertLiveSession(data.session); for (const p of panesOf(data.session.sessionKey)) { if (data.session.auto) wsAdoptAuto(p, data.session.auto); Object.assign(p, { status: data.session.status ?? p.status, mode: data.session.mode ?? p.mode, usage: data.session.usage ?? p.usage }); if (data.session.background) p._background = data.session.background; exoNoteAgents(p, data.session, Date.now()); schedulePaint(p); } }
       // NOTE: the server's own defaultMode is deliberately NOT mirrored here. Every pane sends
       // its mode with each prompt, so the toolbar picker is a local "mode for new panes"
       // preference — echoing the server's would clobber it on every list refresh.
