@@ -46,6 +46,8 @@ test("every asset index.html loads exists on disk — in public/, or behind a ro
   const missing = [];
   for (const path of pageAssets(INDEX)) {
     if (existsSync(join(PUBLIC, "." + path))) continue;
+    // The mobile cockpit's two files are plain files under public/ — no route, but index.html loads
+    // them, so a rename that misses one has to fail here rather than on a phone.
     // Not in public/ → it must be a routed prefix. The only one today is the chat-shell package.
     if (path.startsWith("/chat-shell/") &&
         existsSync(join(ROOT, "packages", "claude-chat-shell", "src", path.slice("/chat-shell".length)))) continue;

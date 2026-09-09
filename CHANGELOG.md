@@ -4,6 +4,47 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.15.0] - 2026-09-09
+### Added — the mobile cockpit runs in Core, behind a switch (`?m2=1`)
+
+Waves 1–2 of `docs/work/mobile-cockpit/plan.md`. **The transcript now gets 631px of 915 — 68.9% of the
+phone, up from 284px / 31%**, measured on the real page with a real pane.
+
+- **`dashboard/public/mobile-cockpit.css`** (T1) — the lab's stylesheet, `.m-*` → `.mc-*`, every rule
+  scoped under `.ws-mobile2`. Inert unless the switch is on.
+- **`dashboard/public/mobile-cockpit.js`** (T2) — every surface as a component that knows nothing about
+  Core: head bar, three footer strips, seam bulb, both rails and panes, the model / conversations /
+  marks sheets, the context / repository / history overlays, the scroll-snap wheels. 36 tests.
+- **The wiring** (T3) — `?m2=1` (remembered; `?m2=0` clears it) or the `⇄` in the mobile bar.
+
+**Nothing is reimplemented.** The composites move as nodes (`view.els.contextBtn`,
+`view.els.wrapWrap`, the attachment strip, the reply chips, the stats chips); the values are *driven*
+— a wheel writes through to the real `<select>` and fires its `change`, so Core's own unchanged
+listener runs. The type box mirrors into the package's `promptEl`, which keeps drafts, the reply
+quote's prepending, attachments and auto-continue working through the paths that already exist.
+
+**The desktop is untouched** — verified by screenshot at 1400×900 — and with the switch off the mobile
+layout is what it was.
+
+### Five defects found by building it, each fixed
+1. **`mc` read inside its temporal dead zone** — named in the `paneUI` literal, which is built before
+   the mount block runs. Took the whole Workspace view down; caught by `scripts/mobile-smoke.mjs`.
+2. **The transcript was adopted out of its own wrapper.** `attachStickController` wraps the core and
+   the wrapper owns the jump-to-latest pill, so moving the core alone left a **237px empty box** and
+   an orphaned controller. Measured, not guessed.
+3. **The switch's class was scoped to the workspace root** — which is not an ancestor of the app
+   header, where the way back lives. The exit button could never have been styled visible.
+4. **`connection` was given the wrong shape** (`{state,label}` vs the module's `{text,tone}`), so the
+   medallion rendered empty.
+5. **The riser showed raw values** — `bypassPermissions` instead of `Bypass`. A `<select>`'s value is
+   an id; the selected option's text is the name a person reads.
+
+### Changed — `WS_MOBILE_MQ` is module-scope
+It was declared inside the workspace view, textually after `buildPane`, which now reads it. Correct at
+runtime (the function runs later) but indistinguishable from a real temporal-dead-zone bug, and
+`lib/appScopeLeaks.test.mjs` fired on it. Hoisted rather than muting the check — the query string is
+also the CSS breakpoint and `PACT_MOBILE_MQ`'s, and a comment there already says the three must agree.
+
 ## [1.14.8] - 2026-09-09
 ### Fixed — the repository chooser could not scroll, because its content was being squashed
 

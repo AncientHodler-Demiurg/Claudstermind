@@ -26,7 +26,32 @@
    the containing block — and is in turn the containing block for everything that opens: the rails,
    the scrim, the two panes, the sheets and the overlays are all placed against these four edges.
    A flex column, so the transcript is the one region that grows (see .mc-core). */
-.ws-mobile2 .mc-mob{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--bg);overflow:hidden}
+/* THE WAY BACK. The app header hides its trailing controls on a phone, which would have hidden the
+   one button that leaves this layout — a switch you cannot reach is a trap, so it is exempted. */
+.ws-mobile2 #wsM2Btn{display:inline-flex !important;font-size:15px;padding:2px 8px}
+
+/* THE BARS THE COCKPIT REPLACES. `.ws-mcbar` (attach, send, stop, sync) and `.ws-mmodebar`
+   (conversations, model, bookmarks) are the classic layout's footer — the cockpit's own button row
+   and riser strip say the same things in 80px less. Leaving both on screen was the "two of
+   everything" the port exists to end. The way back moved to the app header, since it lived here. */
+.ws-mobile2 .ws-mcbar, .ws-mobile2 .ws-mmodebar { display: none; }
+
+/* THE ADOPTED TRANSCRIPT. In production the node handed over is Core's stick WRAPPER, not the
+   scrolling region itself: the wrapper owns the jump-to-latest pill and the controller that follows
+   the live end, and the two cannot be separated without leaving one of them behind. So when `mc-core`
+   lands on a wrapper, it stops being the scroller and goes back to being a plain flex column — the
+   region inside it keeps the scrolling, the padding and the package's own scrollbar. */
+.ws-mobile2 .mc-core.stick-wrap{padding:0;overflow:visible;background:transparent}
+.ws-mobile2 .mc-core.stick-wrap > .rg-core{flex:1 1 auto;min-height:0;overflow-y:auto;
+  padding:12px 10px 14px;background:var(--core-bg);overscroll-behavior:contain}
+
+/* THE HOST. The module mounts onto the pane root itself and adds `mc-root` — there is no wrapper,
+   because the pane root is already the flex column these strips stack in. So this states only what
+   the cockpit REQUIRES of whatever it is mounted on, rather than describing a container it does not
+   build: a positioning context for the rails, the scrim and the two panes, all of which are
+   absolutely positioned. `.ws-pane` supplies the column, the background and the overflow already.
+   (Reconciled during T3: the lab's root was its device frame, which production has no equivalent of.) */
+.ws-mobile2.mc-root{position:relative;display:flex;flex-direction:column;overflow:hidden}
 
 /* ============================== the head bar ==============================
    ONE row; everything the header used to say lives in the left pane. */

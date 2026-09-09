@@ -2997,6 +2997,41 @@ let WS_HEAL_TIMER = null;    // fast (~4s) local self-heal — surfaces a droppe
 let WS_TICK_TIMER = null;    // 1s live elapsed tick — updates each busy pane's "Working… M:SS" + stall cue (Pact parity)
 // Mobile: collapse the compose textarea to one line so a long draft stops eating the transcript (mirrors the
 // Pact mobile compose collapse). Persisted so it sticks across reloads.
+/* THE MOBILE COCKPIT SWITCH (docs/work/mobile-cockpit/design.md).
+ * The phone layout is a different arrangement of the SAME pane — one head row, the transcript, and a
+ * three-strip footer, with everything else behind two edge panes and a set of sheets. It ships behind
+ * a switch and defaults OFF, because this cockpit is used daily from a phone and a half-finished
+ * layout is worse than a cramped one. `?m2=1` turns it on and REMEMBERS (so a reload or a hash change
+ * keeps it), `?m2=0` turns it off again, and the ⇄ button in the mobile bar flips it without a URL. */
+/* The phone breakpoint, in ONE place. 900px rather than 760 is deliberate: large low-DPI Androids
+   report ~800px of CSS width. The identical query string is also the CSS breakpoint (styles.css) and
+   PACT_MOBILE_MQ's — a comment there already says the three must never disagree.
+   Module scope, because `buildPane` reads it and is defined earlier in the file than the workspace
+   view that used to own it: correct at runtime, but indistinguishable from a temporal-dead-zone bug,
+   and lib/appScopeLeaks.test.mjs cannot tell the two apart. It should not have to. */
+const WS_MOBILE_MQ = window.matchMedia
+  ? window.matchMedia("(max-width: 900px), (pointer: coarse) and (max-width: 1180px)")
+  : { matches: false, addEventListener() {} };
+const WS_MOBILE2 = (() => {
+  const q = String(location.search || "");
+  try {
+    if (/[?&]m2=1\b/.test(q)) { localStorage.setItem("ws.mobile.v2", "1"); return true; }
+    if (/[?&]m2=0\b/.test(q)) { localStorage.removeItem("ws.mobile.v2"); return false; }
+    return localStorage.getItem("ws.mobile.v2") === "1";
+  } catch { return /[?&]m2=1\b/.test(q); }   // private mode: the URL still works, it just won't stick
+})();
+/* Reveal the header's ⇄ only when it means something: on a phone, with the cockpit on. On the
+   classic layout the switch stays in the mobile bar, where you are standing when you want it. */
+function wsMobile2MountHeaderBtn() {
+  const b = document.getElementById("wsM2Btn");
+  if (!b || b._wired) return;
+  b._wired = true;
+  b.addEventListener("click", wsMobile2Toggle);
+}
+function wsMobile2Toggle() {
+  try { if (WS_MOBILE2) localStorage.removeItem("ws.mobile.v2"); else localStorage.setItem("ws.mobile.v2", "1"); } catch {}
+  location.reload();
+}
 let WS_COMPOSE_BIG = (() => { try { return localStorage.getItem("ws.compose.big") === "1"; } catch { return false; } })();
 // Close any open ★-bookmark popup when clicking outside it (registered once, module load).
 document.addEventListener("mousedown", (e) => { if (!e.target.closest || !e.target.closest(".ws-bm-wrap")) document.querySelectorAll(".ws-bm-pop.--show").forEach((x) => x.classList.remove("--show")); });
@@ -13079,6 +13114,96 @@ function viewWorkspace() {
     if (st.isMobile) stick.dockMode(seamBulb, "stick-mode--seam");
     else stick.modeTag.classList.add("--gone");
     paneUI.set(p.id, { root: paneRoot, view, transcriptEl, stick, promptEl, repoSel, wtSel, modeSel, modelSel, modelNow, effortSel, fastModeLabel, fastModeCb, ultracodeCb, usageEl: badge, dot, sendBtn, stopBtn, attachBtn, savedBadge, bgBadge, imgPreviewWrap, imgErr, replyRowWrap, multiChatCb, convTabsRow, statsRow, wrapWrap, identityLabel, activityLine, activityLog, linesChip, seamBulb, exo, _bmPop: bmPop, _liveNode: null, _liveTextNode: null, _liveRAF: 0, _txRef: null, _turnCache: null, _domLead: [], _showEarlierNode: null });
+    /* ================= THE MOBILE COCKPIT (behind WS_MOBILE2) ================================
+     * The pane keeps every one of its parts; they are ARRANGED differently. The package's header and
+     * footer are hidden as units, the transcript is adopted into the cockpit's own order, and the
+     * controls that still need to be reachable are either re-homed (they are composites with live
+     * listeners) or DRIVEN (a wheel is a phone-shaped input surface for the same <select>, which
+     * stays the single source of truth in the hidden footer).
+     *
+     * Two deliberate departures from the plan, both discovered by reading what the module and Core
+     * actually do rather than what the plan assumed:
+     *
+     *  1. NO `shown: false` PASS. `show(node,false)` adds a `--gone` class that TRAVELS WITH THE NODE,
+     *     so hiding a control and then re-homing it lands an invisible control in the sheet. Hiding
+     *     the header and footer as units achieves the same thing and cannot fight the re-homing.
+     *  2. WHEELS DRIVE THE SELECTS rather than replacing them. The plan said "re-home, do not
+     *     rebuild"; the module's `slots` would honour that literally by mounting the <select> INTO
+     *     the sheet — which is the dropdown the wheel exists to remove. So model/effort/permission
+     *     keep their wheel and write through to the package's control, which then runs Core's own
+     *     unchanged listener. One logic path, one state, a phone-shaped surface on top.
+     *
+     * `wrap` and `context` ARE re-homed: a meter with a split button and a live context chip are
+     * composites, not values, and rebuilding them would be the second implementation this avoids. */
+    let mc = null;
+    /* `WS_MOBILE_MQ.matches`, not `st.isMobile`: nothing writes `st.isMobile` until `syncMobile()`,
+       which runs at the END of viewWorkspace — after the saved layout has already built its panes.
+       Reading it here would be `undefined` on every pane that exists at load, which is all of them. */
+    if (WS_MOBILE_MQ.matches && WS_MOBILE2 && window.MobileCockpit) {
+      const drive = (node, value) => {
+        if (!node) return;
+        if (node.type === "checkbox") { if (node.checked === !!value) return; node.checked = !!value; }
+        else { if (node.value === value) return; node.value = value; }
+        node.dispatchEvent(new Event("change", { bubbles: true }));
+      };
+      // The package's type box stays the value carrier: drafts, the reply quote's prepending, the
+      // attachment strip and auto-continue all read `promptEl`, so the cockpit's box mirrors into it
+      // rather than becoming a second place the text can live.
+      const mirror = (v) => { promptEl.value = v; p.draft = v; saveDraftsSoon(); };
+      view.header.hidden = true;
+      view.footer.hidden = true;
+      mc = window.MobileCockpit.mount(paneRoot, {
+        /* The stick controller has already WRAPPED the core (`attachStickController(transcriptEl)`
+           inserts `.stick-wrap-ws` where the core was and moves it inside), and that wrapper holds
+           the jump-to-latest pill as well. Adopting the core alone tore it out of its own wrapper and
+           left a 237px empty box behind — measured, not guessed. Adopt whatever the core currently
+           sits in, so the transcript and its controller move together. */
+        transcript: view.core.parentNode && view.core.parentNode.classList.contains("stick-wrap")
+          ? view.core.parentNode : view.core,
+        slots: {
+          context: view.els.contextBtn,
+          wrap: view.els.wrapWrap,
+          // The attachment strip and the reply-quote chips belong ABOVE the box on a phone, and both
+          // are the package's own rows with Core's listeners already on them.
+          composeExtra: [imgPreviewWrap, imgErr, replyRowWrap],
+        },
+        on: {
+          input: mirror,
+          send: () => { send(p); return true; },
+          stop: () => { assignKey(p); p._stopping = Date.now(); wsApplyStall(p); wsPost("stop", { sessionKey: p.sessionKey }); logActivity(p, "■ Stopping…"); },
+          attach: () => imgFileInput.click(),
+          jumpBottom: () => stick.pin(),   // the stick controller's own "follow the live end" action
+          model: (v) => drive(modelSel, v),
+          effort: (v) => drive(effortSel, v),
+          permission: (v) => drive(modeSel, v),
+          ultracode: (v) => drive(ultracodeCb, v),
+          autoWrap: (v) => { p.autoWrap = !!v; wsPost("control", { action: "autoWrap", args: { sessionKey: p.sessionKey, on: !!v } }); saveLayout(); },
+          // Auto-continue is the package's own control and Core already answers it at `on.autoContinue`
+          // (a ceiling that re-grants on a deliberate re-tick, a fresh countdown). Drive the real
+          // checkbox so that logic runs once, here, rather than a second time with a different rule.
+          // The package does not export this checkbox on `els` — it lives inside the send group's
+          // label. Resolved by query rather than by a name that would have been silently undefined.
+          autoContinue: (v) => drive(view.els.sendGrp && view.els.sendGrp.querySelector(".autolbl input"), v),
+          multiChat: (v) => wsSetMultiChat(p, v),
+          pickConversation: (slot) => wsSwitchConvSlot(p, Number(slot) || 0),
+          newConversation: () => wsAddConvSlot(p),
+          pickRepo: (path) => { const sel = repoSel; if (sel) drive(sel, path); },
+          pickWorktree: () => { if (wtSel && wtSel.focus) wtSel.focus(); },
+          openHistory: () => loadHistory(st.historyRepo ? null : p.repo || null),
+          // `reopen(sessionKey, mode)` is the same entry point the history column's 👁 and ▶ use, so
+          // read-only vs resume means exactly what it means there.
+          openConversation: (key) => reopen(key, "open"),
+          resumeConversation: (key) => reopen(key, "resume"),
+        },
+      });
+      // The body carries the class for the page; the pane carries it too so a pane built BEFORE
+      // syncMobile() has run is still styled (panes are built from the saved layout first).
+      paneRoot.classList.add("ws-mobile2");
+      // Recorded AFTER the mount, not inside the paneUI literal above: that literal is built before
+      // this block runs, so naming `mc` in it read the binding inside its temporal dead zone and
+      // took the whole view down with a ReferenceError. Caught by scripts/mobile-smoke.mjs.
+      const ui0 = paneUI.get(p.id); if (ui0) ui0.mc = mc;
+    }
     // Restore the saved compose draft after a view switch / reload, plus this pane's expand choice.
     view.setState({
       compose: { value: p.draft || "", expanded: !!p.expanded },
@@ -13090,6 +13215,81 @@ function viewWorkspace() {
       close: { shown: true, title: "Clear this pane (ends its session)" },
     });
     return paneRoot;
+  }
+
+  /** THE COCKPIT'S STATE FEED — one function, called from the paint paths that already exist
+   *  (paintPane, wsPaintStatsRow, syncMobileBar), because a second painting schedule is a second
+   *  thing to keep in step. Everything here is READ from the pane; nothing is computed twice.
+   *  A no-op when the switch is off, which is what keeps this whole feature off the desktop path. */
+  function wsMcSync(p) {
+    const ui = paneUI.get(p && p.id); const mc = ui && ui.mc;
+    if (!mc) return;
+    /** A control's VALUE is an id; the text of its selected option is the name a person reads. The
+     *  strip said "bypassPermissions" because it had only been given the value. */
+    const pick = (sel, fallbackLabel) => {
+      if (!sel) return { value: "", label: fallbackLabel || "" };
+      const opt = sel.selectedOptions && sel.selectedOptions[0];
+      return { value: sel.value, label: (opt && opt.textContent) || fallbackLabel || sel.value,
+               options: Array.prototype.map.call(sel.options || [], (o) => ({ value: o.value, label: o.textContent })) };
+    };
+    const slots = Array.isArray(p.convSlots) && p.convSlots.length ? p.convSlots : wsDefaultConvSlots();
+    const active = p.convSlot || 0;
+    const shortName = p.repo ? (shortRepo(p.repo) || p.repo) : "Pick a repository";
+    const usage = p.contextUsage || {};
+    const busy = p.status === "running" || p.status === "deepwork";
+    // Slot 0 is ALREADY the ★ master conversation (wsDefaultConvSlots) — the design's "main" is a
+    // thing that exists. Rendered as "<repo> · Main" without renaming the stored slot, because the
+    // name is persisted in localStorage and a rename would strand every saved layout.
+    const convos = slots.map((sl) => ({
+      id: sl.slot, slot: sl.slot, repo: p.repo || "",
+      name: shortName + " · " + (sl.slot === 0 ? "Main" : sl.name),
+      star: sl.slot === 0, active: sl.slot === active,
+      sub: sl.slot === active ? (busy ? "working" : "live") : "",
+      tree: p.worktree || "main",
+    }));
+    mc.setState({
+      title: shortName + (slots.length > 1 ? " · " + (active === 0 ? "Main" : (slots[active] || {}).name || "") : ""),
+      star: active === 0,
+      connection: busy ? { text: "Working", tone: "busy" } : { text: "Live", tone: "ok" },
+      busy,
+      stick: !ui.stick || ui.stick.pinned !== false,
+      multiChat: !!p.multiChat,
+      worktree: p.worktree || "main",
+      running: {
+        model: pick(ui.modelSel, p._activeModel),
+        effort: pick(ui.effortSel),
+        permission: pick(ui.modeSel),
+        ultracode: !!(ui.ultracodeCb && ui.ultracodeCb.checked),
+        autoWrap: p.autoWrap !== false,
+        autoContinue: !!p._autoContinue,
+      },
+      context: { tokens: Number(usage.totalTokens) || 0, ceiling: Number(usage.maxTokens) || 0 },
+      agents: (Array.isArray(p._background) ? p._background : []).map((t) => ({
+        name: t.name || t.description || "agent", state: t.done ? "done" : "run",
+        meta: t.tokens ? (Math.round(t.tokens / 1000) + "k tok") : "",
+      })),
+      conversations: convos,
+      marks: (Array.isArray(p.bookmarks) ? p.bookmarks : []).map((at) => ({ at, note: "marked" })),
+      // The chooser reads the SAME map the Overview reads, grouped the same way — a phone must not
+      // invent a second grouping for a workspace that already has one.
+      repos: (MAP && Array.isArray(MAP.repos) ? MAP.repos : []).map((r) => ({
+        name: r.name, path: r.localPath, kind: r.role || "repo",
+        org: repoOrg(r), scope: (MAP.orgs && MAP.orgs[repoOrg(r)] || {}).scope || "",
+        colour: (MAP.orgs && MAP.orgs[repoOrg(r)] || {}).color || "",
+      })),
+      history: (Array.isArray(st.history) ? st.history : []).map((h) => ({
+        id: h.sessionKey || h.sessionId || h.workspaceId, repo: h.repo || "",
+        name: (shortRepo(h.repo || "") || "?") + (h.worktree && h.worktree !== "main" ? " · " + h.worktree : " · Main"),
+        when: h.when || "", first: h.firstPrompt || "", gone: !!h.worktreeMissing,
+      })),
+    });
+  }
+  /** The stats chips are the package's own nodes, built by buildStatsChips inside the header row we
+   *  hide on a phone. They are MOVED into the right pane rather than rebuilt — same chips, same
+   *  numbers, one implementation. Called after the header row has been repainted. */
+  function wsMcStats(p) {
+    const ui = paneUI.get(p && p.id); if (!ui || !ui.mc || !ui.view || !ui.view.statsRow) return;
+    ui.mc.setState({ stats: Array.prototype.slice.call(ui.view.statsRow.children) });
   }
 
   // ---- live activity feed: "what's happening right now", separate from the chat transcript ----
@@ -13391,6 +13591,7 @@ function viewWorkspace() {
       // "N earlier turns" — the medallion floating at the top of the transcript, not a header row.
       earlier: exoAboveState(p),
     });
+    wsMcStats(p);   // the chips were just rebuilt; hand the same nodes to the cockpit's right pane
   }
 
   // Compact/Wrap/auto-wrap, built through the SAME shared function the Chat Shell Lab and Pact use
@@ -13623,7 +13824,9 @@ function viewWorkspace() {
     // at the latest message, not a few lines above it.
     if (forceBottom) _raf(() => { const el2 = ui.transcriptEl; if (el2) { if (ui.stick && ui.stick.pin) ui.stick.pin(); else el2.scrollTop = el2.scrollHeight; } });
     syncMobileTabDots();   // keep the mobile tab's status dot in step (cheap; no-op on desktop)
-    if (st.isMobile && p.id === st.activeId) syncMobileBar();   // reflect the active pane's busy state in the bottom bar
+    // reflect the active pane's busy state in the bottom bar
+    if (st.isMobile && p.id === st.activeId) syncMobileBar();
+    wsMcSync(p);   // no-op unless the mobile cockpit is mounted on this pane
   }
 
   function setActive(id) {
@@ -13647,7 +13850,7 @@ function viewWorkspace() {
   // ---- mobile: tabs + drawer (Phase 2) --------------------------------------------
   // 900px, not 760: many large / low-DPI Android phones report a CSS viewport width around 800px
   // even though they're physically phone-sized, so a 760 cutoff left them on the desktop layout.
-  const WS_MOBILE_MQ = window.matchMedia ? window.matchMedia("(max-width: 900px), (pointer: coarse) and (max-width: 1180px)") : { matches: false, addEventListener() {} };
+  // (WS_MOBILE_MQ is module-scope — see its declaration beside WS_MOBILE2.)
   function openDrawer() { root.classList.add("ws-drawer-open"); }
   function closeDrawer() { root.classList.remove("ws-drawer-open"); }
   // One chat box at a time on a phone: a tab per pane (status dot + short label + close), a menu
@@ -13769,7 +13972,12 @@ function viewWorkspace() {
       },
     });
     wsMBar._sendB = sendB; wsMBar._stopB = stopB; wsMBar._chatsBar = chatsBar; wsMBar._modelSel = modelSel;
-    wsMBar.replaceChildren(menuB, setB, attachB, collapseB, el("span", { class: "ws-spacer" }, []), syncB, stopB, sendB);
+    // The layout switch. It lives in the OLD bar because that is where you are standing when you
+    // want the new one, and in the new cockpit the same key is flipped from its left pane. Reloading
+    // is deliberate: the two layouts build a pane differently, and rebuilding one in place is a
+    // bigger promise than a switch needs to make.
+    const m2B = mb(WS_MOBILE2 ? "⇄1" : "⇄2", WS_MOBILE2 ? "Back to the current mobile layout" : "Try the new mobile cockpit", wsMobile2Toggle);
+    wsMBar.replaceChildren(menuB, setB, attachB, collapseB, m2B, el("span", { class: "ws-spacer" }, []), syncB, stopB, sendB);
     // Bottom controls row: the two corner tabs flanking the model picker; the Live/Held bulb moved UP into the pane header.
     wsModeStrip.replaceChildren(chatsBar, modelSel, bmBar);
   }
@@ -13822,6 +14030,13 @@ function viewWorkspace() {
   function syncMobile() {
     st.isMobile = !!WS_MOBILE_MQ.matches;
     root.classList.toggle("ws-mobile", st.isMobile);
+    // Every rule in mobile-cockpit.css is scoped under this, so the stylesheet is inert unless the
+    // switch is on AND we are actually on a phone. It goes on the BODY, not the workspace root: the
+    // way back lives in the app HEADER, which is not inside that root, so a rule scoped to the root
+    // could never reach it — the button stayed invisible and the layout had no exit.
+    document.body.classList.toggle("ws-mobile2", st.isMobile && WS_MOBILE2);
+    const m2b = document.getElementById("wsM2Btn");
+    if (m2b) { m2b.hidden = !(st.isMobile && WS_MOBILE2); wsMobile2MountHeaderBtn(); }
     closeSheet();   // rotating between phone/desktop: never strand a borrowed controls node in a hidden sheet
     if (st.isMobile) { renderMobileTabs(); buildMobileBar(); syncMobileBar(); }
     else closeDrawer();

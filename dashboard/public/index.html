@@ -19,6 +19,10 @@
        app's own same-element rules and the package's design wins inside the chat box without
        deleting the ws-*/pc-* class names the rest of the app is keyed to. -->
   <link rel="stylesheet" href="/chat-shell/chat-shell.css" />
+  <!-- THE MOBILE COCKPIT (docs/work/mobile-cockpit/design.md) — the phone arrangement of a Core pane.
+       Every rule is scoped under `.ws-mobile2`, which syncMobile() puts on the root only when the
+       switch is on AND we are on a phone, so linking it costs a desktop nothing. -->
+  <link rel="stylesheet" href="/mobile-cockpit.css" />
   <!-- Claudstermind brain mark — the generated blue circuit-brain logo (transparent). -->
   <link rel="icon" type="image/png" href="/brand/favicon.png?v=2" />
   <!-- PWA: installable to the home screen as a standalone app. -->
@@ -45,6 +49,10 @@
         <span class="model-pill" id="modelPill">model: —</span>
         <span class="model-pill" id="genPill">—</span>
         <div class="ph-identity" id="phIdentity"></div>
+        <!-- The mobile cockpit's way back. It lives up here rather than in the pane because the
+             cockpit hides the old mobile bar it used to sit in, and a switch you cannot reach is a
+             trap. Shown only on a phone, and only while the cockpit is on (app.js). -->
+        <button id="wsM2Btn" class="ph-btn --ghost" title="Back to the classic mobile layout" hidden>⇄</button>
         <button id="themeBtn" class="ph-btn --ghost" title="Toggle theme">◐</button>
       </div>
       <div class="ph-l2" id="phL2">
@@ -93,6 +101,9 @@
   <script src="/exocortex.js"></script>
   <script src="/chat-shell/chat-shell.js"></script>
   <script src="/chat-shell/chat-shell-ui.js"></script>
+  <!-- Before app.js, which reads window.MobileCockpit at pane-build time — the same ordering the
+       chat-shell scripts above already rely on. -->
+  <script src="/mobile-cockpit.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
