@@ -13386,6 +13386,15 @@ function viewWorkspace() {
       // The body carries the class for the page; the pane carries it too so a pane built BEFORE
       // syncMobile() has run is still styled (panes are built from the saved layout first).
       paneRoot.classList.add("ws-mobile2");
+      /* CORE'S Compact/Wrap ARE THE PACKAGE'S OWN NODES, re-homed into the model sheet — so the
+         cockpit never sees their clicks and cannot know the sheet has done its job. Closing it here
+         is the same rule the module applies to its own buttons: the surface you pressed it on is
+         finished. Capture phase, so it runs even though the package's handler stops propagation. */
+      if (view.els.wrapWrap && mc && mc.closeSheet) {
+        view.els.wrapWrap.addEventListener("click", (e) => {
+          if (e.target && e.target.closest && e.target.closest("button")) mc.closeSheet();
+        }, true);
+      }
       // Recorded AFTER the mount, not inside the paneUI literal above: that literal is built before
       // this block runs, so naming `mc` in it read the binding inside its temporal dead zone and
       // took the whole view down with a ReferenceError. Caught by scripts/mobile-smoke.mjs.

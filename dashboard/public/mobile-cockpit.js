@@ -526,8 +526,12 @@
                        function () { setSheet(null); setOverlay("context"); });
           }),
           roleOr("wrap", function () {
-            return btns([btn("🗜 Compact", "", function () { call("compact"); }),
-                         btn("↺ Wrap", "--acc", function () { call("wrap"); })]);
+            /* PRESSING EITHER OF THESE IS DONE WITH THIS SHEET. Compact acts immediately and its
+               result is the transcript behind you; Wrap opens a confirmation, which would otherwise
+               appear UNDER the sheet that launched it. A surface that stays open after its own button
+               has fired asks you to dismiss something you already finished with. */
+            return btns([btn("🗜 Compact", "", function () { setSheet(null); call("compact"); }),
+                         btn("↺ Wrap", "--acc", function () { setSheet(null); call("wrap"); })]);
           })])
       ]);
     }
@@ -597,9 +601,10 @@
           }))]),
         section("What is in the window", parts.map(function (p) { return ctxRow(p.name, p.tokens, p.colour); })
           .concat([ctxRow("Free", free, "var(--line)")])),
+        /* Same on the context page: what it would change is the thing behind this overlay. */
         section("What would change it", [btns([
-          btn("🗜 Compact", "", function () { call("compact"); }),
-          btn("↺ Wrap", "--acc", function () { call("wrap"); })])])
+          btn("🗜 Compact", "", function () { setOverlay(null); call("compact"); }),
+          btn("↺ Wrap", "--acc", function () { setOverlay(null); call("wrap"); })])])
       ]);
     }
     /* THE REPOSITORY CHOOSER — grouped by ORGANISATION exactly as the Overview groups them, because
@@ -924,6 +929,11 @@
              marksTab: marksTab, runningTab: runningTab, scrim: scrim,
              leftPane: paneL.node, leftPaneBody: paneL.body, rightPane: paneR.node, rightPaneBody: paneR.body },
       setState: setState,
+      /* For a host whose own control was re-homed INTO a sheet: the cockpit cannot see that node's
+         click (it belongs to the host, with the host's handlers), so it cannot know the surface is
+         done. Core's Compact/Wrap are exactly that — the package's real split control, moved here. */
+      closeSheet: function () { setSheet(null); },
+      closeOverlay: function () { setOverlay(null); },
       destroy: function () {
         setOverlay(null);
         setSheet(null);

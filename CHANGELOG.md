@@ -4,6 +4,24 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.16.2] - 2026-09-09
+### Fixed — Compact and Wrap now close the surface they were pressed in
+
+*"when clicking compact it should also close that pane that has the compact button."*
+
+Compact acts immediately and its result is the transcript **behind** you; Wrap opens a confirmation
+that would otherwise appear **under** the sheet that launched it. Either way the surface has done its
+job, and one that stays open asks you to dismiss something you already finished with. Both now close —
+in the model sheet and on the context page, whose two buttons change the very window it is describing.
+
+This needed doing twice, because the button is not the same object in the two workspaces:
+
+- **In Pact** it is the cockpit's own button, so the module closes the sheet itself.
+- **In Core** it is the chat-shell package's real `Compact│Wrap` split control, **re-homed** into the
+  sheet. Its clicks belong to the package, so the cockpit never sees them and cannot know it is
+  finished. The mount now exposes `closeSheet()` / `closeOverlay()` for exactly this case, and Core
+  listens on the re-homed node in the **capture** phase — the package's own handler stops propagation.
+
 ## [1.16.1] - 2026-09-09
 ### Fixed — Pact's recall came back, and its left pane stopped describing a structure it does not have
 
