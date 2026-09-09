@@ -4,6 +4,36 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.17.9] - 2026-09-09
+### Added — keep the screen awake, the way a navigation app does
+
+*"Can we prevent screen going off when the chat page is on? Like how the gps program stays always on."*
+Yes — the **Screen Wake Lock API**, which is the same mechanism those apps use. A `keep screen awake`
+switch now sits in Switches, beside ultracode and auto-wrap.
+
+Three things make it more than one request, and each was a way to get it silently wrong:
+
+1. **The browser releases the lock every time the page is hidden.** A one-shot request works once and
+   then quietly stops working the first time you switch apps. It is re-applied on `visibilitychange`
+   rather than acquired once and trusted.
+2. **The system can drop it on its own** — battery saver, an incoming call. The sentinel fires
+   `release`; forgetting it there is what lets the next apply ask again instead of believing it still
+   holds one.
+3. **It is a real battery cost.** So it is opt-in, remembered across reloads, and held only on the
+   chat views. Leaving one gives the screen back; returning takes it again.
+
+Offered only where the browser actually has the API. `wakeLock: null` means *no such capability*,
+which is not the same as "off" — a switch that silently does nothing is worse than no switch.
+
+Measured on a phone viewport: switch present and off; tapped → preference persisted and a live
+sentinel held (`released: false`); left the chat view → released; returned → re-acquired.
+
+**On auto-continue.** While this holds, the page stays visible and foregrounded, so the browser does
+not freeze its timers — which is precisely what strands an unattended sweep (1.17.5). That makes it a
+useful *mitigation*: with the screen kept awake and Claudstermind in front, a sweep keeps running. It
+is not a fix. It cannot survive the phone being locked by hand, and it does nothing for a browser sent
+to the background. Only a server-driven loop covers those.
+
 ## [1.17.8] - 2026-09-09
 ### Added — while auto-continue is armed, the field ghosts the message it is about to send
 

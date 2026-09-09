@@ -821,6 +821,52 @@ function buildLegend() {
   $("#legend").replaceChildren(...items);
 }
 
+/* ===== KEEP THE SCREEN AWAKE =========================================================== *
+ * "Can we prevent screen going off when the chat page is on? Like how the gps program stays always
+ * on." That is the Screen Wake Lock API — the same mechanism a navigation app uses.
+ *
+ * Three things make this harder than one request:
+ *  1. The browser RELEASES the lock every time the page is hidden. A one-shot request works once and
+ *     then silently stops working the first time you switch apps, so it is re-applied on
+ *     visibilitychange rather than acquired once and trusted.
+ *  2. The system can drop it on its own (battery saver, an incoming call). The sentinel fires
+ *     `release`; forgetting it there is what lets the next apply ask again instead of believing it
+ *     still holds one.
+ *  3. It is a real battery cost, so it is OPT-IN, remembered, and held only on the chat views — the
+ *     ones this was asked for. On Overview there is nothing to watch.
+ *
+ * Worth knowing: while this holds, the page stays visible and foregrounded, so the browser does not
+ * freeze its timers — which is exactly what strands an unattended auto-continue sweep (1.17.5). It
+ * mitigates that; it does not fix it. It cannot survive the phone being locked by hand. Only a
+ * server-driven loop covers that. */
+const WS_WAKE_KEY = "cm.wakeLock";
+let WS_WAKE = null;                     // the live sentinel, or null when we hold nothing
+let WS_WAKE_ON = (() => { try { return localStorage.getItem(WS_WAKE_KEY) === "1"; } catch { return false; } })();
+const wsWakeSupported = () => typeof navigator !== "undefined" && !!navigator.wakeLock;
+/** Bring the real lock into line with the preference. Idempotent — safe on every view change. */
+async function wsWakeApply() {
+  if (!wsWakeSupported()) return;
+  const want = WS_WAKE_ON && (VIEW === "workspace" || VIEW === "pact") && document.visibilityState === "visible";
+  if (want && !WS_WAKE) {
+    try {
+      WS_WAKE = await navigator.wakeLock.request("screen");
+      WS_WAKE.addEventListener("release", () => { WS_WAKE = null; });
+    } catch { WS_WAKE = null; }        // refused (battery saver, no gesture yet) — the preference stands
+  } else if (!want && WS_WAKE) {
+    try { await WS_WAKE.release(); } catch {}
+    WS_WAKE = null;
+  }
+}
+function wsWakeSet(on) {
+  WS_WAKE_ON = !!on;
+  try { localStorage.setItem(WS_WAKE_KEY, WS_WAKE_ON ? "1" : "0"); } catch {}
+  wsWakeApply();
+}
+/** null when the browser cannot do it at all — the cockpit then renders no switch, rather than one
+ *  that silently does nothing. */
+const wsWakeState = () => (wsWakeSupported() ? WS_WAKE_ON : null);
+if (typeof document !== "undefined") document.addEventListener("visibilitychange", wsWakeApply);
+
 function render() {
   const v = $("#view");
   // Kill the pollers belonging to whichever tab we just left. Leaving one running does
@@ -841,6 +887,7 @@ function render() {
     else pactChatStop();
   }
   if (VIEW !== "usage") usageStop();   // close the Usage tab's SSE stream when leaving it
+  wsWakeApply();   // held only on the chat views — leaving one gives the screen back
   document.body.classList.toggle("ws-full", VIEW === "workspace" || VIEW === "pact");   // full-height cockpit views
   // The live cockpit views (cockpit / Pact / mirror / localhost / usage) route ALL their data through the
   // work machine — offline they can only render an empty, useless shell (the "blank void" bug). Show a clear
@@ -11568,6 +11615,7 @@ function viewPactMobile() {
           model: (v) => drive((a) => { a.model = v || undefined; if (a.key) wsPost("control", { action: "setModel", args: { sessionKey: a.key, model: a.model || null } }); pactUpdateModelNow(a); }),
           effort: (v) => drive((a) => { a.effort = v || null; if (a.key) wsPost("control", { action: "setEffort", args: { sessionKey: a.key, effort: a.effort } }); pactStateSave(); }),
           permission: (v) => { PACT_CHAT.mode = v; pactPaintPermission(); wsPost("control", { action: "mode", args: { sessionKey: (act() || {}).key, mode: v } }); },
+          wakeLock: (v) => wsWakeSet(v),
           ultracode: (v) => drive((a) => { a.ultracode = v; if (v) { a.effort = "xhigh"; if (a.key) wsPost("control", { action: "setEffort", args: { sessionKey: a.key, effort: "xhigh" } }); } pactStateSave(); }),
           autoWrap: (v) => drive((a) => { a.autoWrap = v; wsPost("control", { action: "setAutoWrap", args: { sessionKey: a.key, enabled: v } }); pactStateSave(); }),
           autoContinue: (v) => drive((a) => pactSetAutoContinue(a, v)),
@@ -11702,6 +11750,7 @@ function viewPactMobile() {
       },
       context: { tokens: Number(usage.totalTokens) || 0, ceiling: Number(usage.maxTokens) || 0,
                  parts: mcContextParts(usage) },
+      wakeLock: wsWakeState(),
       agents: ((a && a._background) || []).filter((t) => t && t.status !== "removed").map((t) => ({
         name: t.label || t.description || "subagent",
         state: t.status === "running" ? "run" : "done",
@@ -13552,6 +13601,7 @@ function viewWorkspace() {
           model: (v) => drive(modelSel, v),
           effort: (v) => drive(effortSel, v),
           permission: (v) => drive(modeSel, v),
+          wakeLock: (v) => wsWakeSet(v),
           ultracode: (v) => drive(ultracodeCb, v),
           autoWrap: (v) => { p.autoWrap = !!v; wsPost("control", { action: "autoWrap", args: { sessionKey: p.sessionKey, on: !!v } }); saveLayout(); },
           // Auto-continue is the package's own control and Core already answers it at `on.autoContinue`
@@ -13663,6 +13713,7 @@ function viewWorkspace() {
       },
       context: { tokens: Number(usage.totalTokens) || 0, ceiling: Number(usage.maxTokens) || 0,
                  parts: mcContextParts(usage) },
+      wakeLock: wsWakeState(),
       /* The task shape is lib/backgroundTasks.mjs's: `{ id, label, description, tokens, status }`.
          `removed` is filtered the same way paintSwarm's swarmState filters it — a retired task is
          not a finished one. (Written first against invented field names, which would have rendered a

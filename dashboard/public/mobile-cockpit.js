@@ -124,6 +124,9 @@
          `composing` is precisely the state that PAUSES the loop. The ghost would stop the countdown
          it is advertising. */
       autoNext: "",
+      /* Keep-awake. `null` means the browser has no Screen Wake Lock API, which is NOT the same as
+         "off": a switch that cannot do anything must not be offered as though it could. */
+      wakeLock: null,
       stats: [], agents: [], repos: [], history: [], marks: [],
       conversations: [],   // the threads of ONE repository
       chats: [],           // the chat BOXES, one per repository — see chatsSheet
@@ -594,7 +597,12 @@
           roleOr("permission", function () { return wheel("Mode", r.permission, function (v) { call("permission", v); }); })])]),
         section("Switches", [
           roleOr("ultracode", function () { return toggle("ultracode", r.ultracode, function (v) { call("ultracode", v); }); }),
-          roleOr("autoWrap", function () { return toggle("auto-wrap", r.autoWrap, function (v) { call("autoWrap", v); }); })]),
+          roleOr("autoWrap", function () { return toggle("auto-wrap", r.autoWrap, function (v) { call("autoWrap", v); }); }),
+          /* KEEP THE SCREEN AWAKE, the way a navigation app does. Offered only where the browser can
+             actually honour it — `null` is "no such capability", and rendering a switch that silently
+             does nothing is worse than rendering none. */
+          state.wakeLock === null ? null
+            : toggle("keep screen awake", state.wakeLock, function (v) { call("wakeLock", v); })]),
         section("Window", [
           meter(ctxPct()),
           roleOr("context", function () {
@@ -993,6 +1001,7 @@
       }
       if ("wrap" in s) state.wrap = s.wrap || null;
       if ("autoNext" in s) state.autoNext = s.autoNext == null ? "" : String(s.autoNext);
+      if ("wakeLock" in s) state.wakeLock = s.wakeLock == null ? null : !!s.wakeLock;
       if ("context" in s) {
         var cx = s.context || {};
         state.context = { tokens: nn(cx.tokens, 0), ceiling: nn(cx.ceiling, 1000000), parts: cx.parts || [] };
