@@ -4,6 +4,39 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.17.6] - 2026-09-09
+### Fixed — the phone's context page reported 0% over a full window, in both workspaces
+
+*"Context is reported incorrectly by the lateral pane on both core and pact space."* — `0 OF
+1,000,000 TOKENS · 0%`, one row reading `Free · 100%`, on a conversation using two thirds of its
+window.
+
+**Two sources for one number, and only one of them was ever fed.** The context page derives its
+total from `parts`, and *neither* mobile feed published parts — `wsMcSync` and `pactMcSync` both sent
+only `{ tokens, ceiling }`. So the page had nothing to list and confidently reported zero, while the
+header medallion — which reads `tokens` directly — showed the true 64% one tap away.
+
+The breakdown now comes from `EXO.popover.shapeContextPopover`, the same shaper the desktop popover
+uses, so the two surfaces cannot disagree about what is in the window. Free is dropped twice over:
+the shaper appends its own free segment, and the engine *also* emits a `Free space` category of its
+own — the page computes the free row itself from the ceiling, and counting either as consumed is what
+makes a breakdown add up to more than its window.
+
+The headline is now the authoritative `tokens`, not the sum of the rows. Those two legitimately
+disagree even when both arrive: the engine's categories include things its own total leaves out
+(deferred tools, the autocompact buffer — measured, 689,091 of parts against a reported 640,835),
+which is why the desktop widens its bar rather than inventing a negative slice. Free is measured
+against whichever is larger, so the rows and the free space can never exceed the window.
+
+Measured after, on a phone: `644,950 of 1,000,000 tokens · 64.5%` against a medallion reading 64%,
+nine breakdown rows, and rows + free summing to exactly 1,000,000.
+
+### Fixed — "no reading yet" was rendered as 0%
+A pane with no session has `ceiling: 0`, which was clamped to 1 and rendered `0 of 1 tokens · 0%`
+with a `Free · 100%` row — a confident statement about a window nobody has measured. The rest of this
+product keeps the two apart deliberately (*"UNAVAILABLE, never 0% used"*); the phone's context page
+did not. It now says so.
+
 ## [1.17.5] - 2026-09-09
 ### Fixed — Pact's auto-continue froze the moment you left the workspace, and fired when you came back
 

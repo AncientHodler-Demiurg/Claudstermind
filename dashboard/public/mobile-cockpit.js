@@ -637,12 +637,30 @@
        read against the same 100% the header medallion shows, and the free space is a row of its own
        — a breakdown that omits what is left does not add up to a window. */
     function contextOverlay() {
+      /* NO READING IS NOT ZERO. A pane with no session yet has ceiling 0, and clamping that to 1
+         rendered "0 of 1 tokens · 0%" with a "Free · 100%" row — a confident statement about a
+         window nobody has measured. The rest of this product is careful about exactly this
+         distinction ("UNAVAILABLE, never 0% used" — shapeContextPopover keeps the two apart); the
+         phone's context page was not. */
+      if (nn(state.context.ceiling, 0) <= 0 && nn(state.context.tokens, 0) <= 0 && !(state.context.parts || []).length)
+        return overlay("Context breakdown", [
+          section("No reading yet", [el("div", { class: "mc-row" },
+            [el("span", {}, ["This conversation has not reported its context window yet — send a message first."])])])]);
       var ceiling = Math.max(1, nn(state.context.ceiling, 1000000));
       var parts = (state.context.parts || []).map(function (p) {
         return { name: String(p.name || ""), tokens: nn(p.tokens, 0), colour: p.colour || p.col || "var(--accent)" };
       });
-      var total = parts.reduce(function (a, p) { return a + p.tokens; }, 0);
-      var free = Math.max(0, ceiling - total);
+      /* THE HEADLINE IS THE AUTHORITATIVE NUMBER, NOT THE SUM OF THE ROWS. It used to be the sum, so a
+         host that published `tokens` but no breakdown — which was BOTH of them — reported "0 of
+         1,000,000 tokens · 0%" and a single "Free · 100%" row over a window that was two thirds full.
+         Two sources for one number, and only one of them was ever fed.
+         They legitimately disagree even when both arrive: the engine's categories include things its
+         own total leaves out (deferred tools, the autocompact buffer), which is why the desktop
+         widens the bar rather than inventing a negative slice. Free is measured against whichever is
+         larger, so the rows and the free space can never add up to more than the window. */
+      var partsSum = parts.reduce(function (a, p) { return a + p.tokens; }, 0);
+      var total = nn(state.context.tokens, 0) || partsSum;
+      var free = Math.max(0, ceiling - Math.max(partsSum, total));
       var pct = function (t) { return Math.round(t / ceiling * 1000) / 10; };
       var ctxRow = function (name, tokens, colour) {
         return el("div", { class: "mc-ctxrow" }, [el("u", { style: "background:" + colour }, []),

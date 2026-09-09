@@ -4141,6 +4141,26 @@ function exoNoteAgents(conv, payload, now) {
   s.agentTrack = L.agents.trackAgentActivity(s.agentTrack, payload, typeof now === "number" ? now : Date.now());
 }
 
+/** THE CONTEXT BREAKDOWN, for the phone's context page — shaped by the SAME function the desktop
+ *  popover uses, so the two can never disagree about what is in the window. Neither mobile feed ever
+ *  sent this: both published only `{ tokens, ceiling }`, and the overlay derives its rows from the
+ *  parts, so it reported "0 of 1,000,000 tokens · 0%" and a single "Free · 100%" row over a window
+ *  that was two thirds full, in BOTH workspaces.
+ *
+ *  Free is dropped, twice over: the shaper appends its own free segment, and the ENGINE also emits a
+ *  "Free space" category of its own. The overlay computes the free row itself, from the ceiling, and
+ *  counting either of these as consumed is what makes a breakdown add up to more than its window. */
+function mcContextParts(usage) {
+  const L = exoLib();
+  if (!L || !L.popover || !usage) return [];
+  let p;
+  try { p = L.popover.shapeContextPopover(usage); } catch { return []; }
+  if (!p || !p.available) return [];
+  return (p.segments || [])
+    .filter((s) => s && !s.isFree && !/^free\b/i.test(String(s.label || "")) && Number(s.tokens) > 0)
+    .map((s) => ({ name: String(s.label || ""), tokens: Number(s.tokens) || 0,
+                   colour: s.color || "var(--ink-mute)" }));
+}
 /** Store a `contextUsage` answer. CONTRACT §1: `contextBreakdown` is ALWAYS an object and `ok:false`
  *  means UNAVAILABLE, not "0% used" — shapeContextPopover keeps those apart, so pass it straight in.
  *  Falls back to the raw SDK `usage` only for an engine that predates the breakdown field. */
@@ -11673,7 +11693,8 @@ function viewPactMobile() {
                       options: WS_MODES.map((m) => ({ value: m.id, label: m.label })) },
         ultracode: !!(a && a.ultracode), autoWrap: !(a && a.autoWrap === false), autoContinue: !!(a && a._autoContinue),
       },
-      context: { tokens: Number(usage.totalTokens) || 0, ceiling: Number(usage.maxTokens) || 0 },
+      context: { tokens: Number(usage.totalTokens) || 0, ceiling: Number(usage.maxTokens) || 0,
+                 parts: mcContextParts(usage) },
       agents: ((a && a._background) || []).filter((t) => t && t.status !== "removed").map((t) => ({
         name: t.label || t.description || "subagent",
         state: t.status === "running" ? "run" : "done",
@@ -13633,7 +13654,8 @@ function viewWorkspace() {
         autoWrap: p.autoWrap !== false,
         autoContinue: !!p._autoContinue,
       },
-      context: { tokens: Number(usage.totalTokens) || 0, ceiling: Number(usage.maxTokens) || 0 },
+      context: { tokens: Number(usage.totalTokens) || 0, ceiling: Number(usage.maxTokens) || 0,
+                 parts: mcContextParts(usage) },
       /* The task shape is lib/backgroundTasks.mjs's: `{ id, label, description, tokens, status }`.
          `removed` is filtered the same way paintSwarm's swarmState filters it — a retired task is
          not a finished one. (Written first against invented field names, which would have rendered a
