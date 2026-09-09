@@ -3005,6 +3005,17 @@ const WS_MOBILE_MQ = window.matchMedia
   ? window.matchMedia("(max-width: 900px), (pointer: coarse) and (max-width: 1180px)")
   : { matches: false, addEventListener() {} };
 
+/* THE COCKPIT'S OWN BREAKPOINT — narrower than the one that governs the rest of the mobile chrome,
+   and deliberately so. `WS_MOBILE_MQ` matches `(pointer: coarse) and (max-width: 1180px)`, which was
+   written to decide whether a BUTTON BAR swaps; using it to decide whether the entire desktop layout
+   is replaced put a touch laptop at 1100px into a phone cockpit — no sidebar, no repository tree, no
+   history, reported as "the desktop view gets broken and locks me out". It did.
+   Both conditions now: phone-WIDTH and a touch pointer. A narrow desktop window keeps the desktop
+   (the safe direction), a wide touch screen keeps the desktop, and a phone gets the phone. */
+const WS_COCKPIT_MQ = window.matchMedia
+  ? window.matchMedia("(max-width: 900px) and (pointer: coarse)")
+  : { matches: false, addEventListener() {} };
+
 /* THE MOBILE COCKPIT (docs/work/mobile-cockpit/design.md).
  * On a phone this IS the layout — the whole point was that a phone gets a phone's arrangement without
  * being asked. It shipped default-OFF for one release because the cockpit had never rendered a real
@@ -13137,10 +13148,10 @@ function viewWorkspace() {
      * `wrap` and `context` ARE re-homed: a meter with a split button and a live context chip are
      * composites, not values, and rebuilding them would be the second implementation this avoids. */
     let mc = null;
-    /* `WS_MOBILE_MQ.matches`, not `st.isMobile`: nothing writes `st.isMobile` until `syncMobile()`,
+    /* `WS_COCKPIT_MQ.matches`, not `st.isMobile`: nothing writes `st.isMobile` until `syncMobile()`,
        which runs at the END of viewWorkspace — after the saved layout has already built its panes.
        Reading it here would be `undefined` on every pane that exists at load, which is all of them. */
-    if (WS_MOBILE_MQ.matches && WS_MOBILE2 && window.MobileCockpit) {
+    if (WS_COCKPIT_MQ.matches && WS_MOBILE2 && window.MobileCockpit) {
       const drive = (node, value) => {
         if (!node) return;
         if (node.type === "checkbox") { if (node.checked === !!value) return; node.checked = !!value; }
@@ -14034,14 +14045,18 @@ function viewWorkspace() {
     // switch is on AND we are actually on a phone. It goes on the BODY, not the workspace root: the
     // way back lives in the app HEADER, which is not inside that root, so a rule scoped to the root
     // could never reach it — the button stayed invisible and the layout had no exit.
-    document.body.classList.toggle("ws-mobile2", st.isMobile && WS_MOBILE2);
+    const cockpit = WS_COCKPIT_MQ.matches && WS_MOBILE2;
+    document.body.classList.toggle("ws-mobile2", cockpit);
     const m2b = document.getElementById("wsM2Btn");
-    if (m2b) { m2b.hidden = !(st.isMobile && WS_MOBILE2); wsMobile2MountHeaderBtn(); }
+    if (m2b) { m2b.hidden = !cockpit; wsMobile2MountHeaderBtn(); }
     closeSheet();   // rotating between phone/desktop: never strand a borrowed controls node in a hidden sheet
     if (st.isMobile) { renderMobileTabs(); buildMobileBar(); syncMobileBar(); }
     else closeDrawer();
   }
   WS_MOBILE_MQ.addEventListener("change", syncMobile);
+  // Crossing the cockpit's own boundary (rotate a phone, resize a touch laptop) must re-evaluate too,
+  // or the body keeps a class describing a layout that is no longer mounted.
+  WS_COCKPIT_MQ.addEventListener("change", syncMobile);
   sideBackdrop.addEventListener("click", closeDrawer);
 
   function rebuildGrid() {

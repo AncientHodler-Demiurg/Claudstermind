@@ -4,6 +4,33 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.15.4] - 2026-09-09
+### Fixed — a touch laptop was getting the phone cockpit, with no sidebar and no way to pick a repo
+
+*"if i switch to mobile, the desktop view i think gets broken, and locks me out."* It did, and the
+cause was a breakpoint I reused without thinking about what it now decides.
+
+`WS_MOBILE_MQ` is `(max-width: 900px), (pointer: coarse) and (max-width: 1180px)`. That second clause
+was written to decide whether a **button bar** swaps — a small, reversible thing. Gating the entire
+layout on it meant **any touch screen under 1180px wide** got the phone cockpit: no sidebar, no
+repository tree, no history, no way to attach a pane to a repo. Reproduced at 1100×800 with touch.
+
+The cockpit now has **its own, narrower gate**: `(max-width: 900px) and (pointer: coarse)` — phone
+width **and** a touch pointer, both. Verified at three shapes:
+
+| viewport | cockpit | sidebar |
+|---|---|---|
+| 1400×900 desktop | no | yes |
+| 1100×800 **touch** | no | yes |
+| 412×915 phone | yes | — |
+
+A narrow desktop window now keeps the desktop, which is the safe direction to fail in. Crossing the
+boundary (rotating a phone, resizing a touch laptop) re-evaluates, so the body cannot keep a class
+describing a layout that is no longer mounted.
+
+The lesson generalises: a media query's meaning is not its text, it is **what it decides**. This one
+was correct for a button bar and wrong for a layout, and nothing about the query itself said so.
+
 ## [1.15.3] - 2026-09-09
 ### Fixed — the cockpit now fills the phone, and attachments stop shrinking the type box
 
