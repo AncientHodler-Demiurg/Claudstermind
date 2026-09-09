@@ -3678,6 +3678,27 @@ function wsTurnRef(convId, kind, number) {
  *                   pasting it is worse than pointing at it. `scripts/recall.mjs` resolves one back
  *                   to its text, so an agent with a shell can read another agent's turn directly.
  *  The tooltip says both, because a modifier nobody knows about is a feature nobody has. */
+/** WHEN A TURN WAS SPAWNED, in the bubble's lower-left corner. Every stored row already carries `at`
+ *  — it is what a bookmark keys on and what `wsScrollToResponse` finds — so this reads existing data
+ *  rather than adding any.
+ *
+ *  The time alone for TODAY, the date as well for anything older: a long conversation spans days, and
+ *  "14:32" on a turn from Tuesday is worse than no stamp at all. The full local date/time is in the
+ *  title either way, because the short form is for scanning, not for citing.
+ *
+ *  Returns "" (not a node) when a row has no `at`, so it can be spread into a kids array unchanged —
+ *  live-streaming rows are built before the engine has stamped one. */
+function wsWhenChip(at) {
+  const t = Number(at);
+  if (!Number.isFinite(t) || t <= 0) return "";
+  const d = new Date(t), now = new Date();
+  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  // `numeric`, not `2-digit`: a 12-hour locale renders the latter as "03:49 PM". The migration line
+  // (pactChatRenderItem) already uses this shape, so the two read alike.
+  const hm = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const label = sameDay ? hm : d.toLocaleDateString([], { day: "numeric", month: "short" }) + " " + hm;
+  return el("span", { class: "ws-when", title: d.toLocaleString() }, [label]);
+}
 function wsCopyMsgBtn(kind, number, text, convIdFn) {
   const b = el("button", { class: "ws-copy-btn", type: "button",
     title: "Copy this " + (kind === "P" ? "prompt" : "answer") + " (raw text).\n"
@@ -9583,7 +9604,7 @@ function pactChatMsgNode(m) {
     }
     const replyBtnP = wsReplyBtn("P", m._pnum, m.text, () => { const at = pactChatActive(); wsAddReplyRef(at, "P", m._pnum, m.text); pactPaintReplyRow(at); });
     const copyBtnP = wsCopyMsgBtn("P", m._pnum, m.text, () => (pactChatActive() || {}).key);
-    return el("div", { class: cls }, [pactNumBadge("P", m._pnum), copyBtnP, replyBtnP, ...kids, ...extra]);
+    return el("div", { class: cls }, [pactNumBadge("P", m._pnum), copyBtnP, replyBtnP, ...kids, ...extra, wsWhenChip(m.at)]);
   }
   if (m.role === "assistant") {
     const kids = [];
@@ -9598,7 +9619,7 @@ function pactChatMsgNode(m) {
     star.addEventListener("click", (e) => { e.stopPropagation(); pactChatToggleBookmark(m); });
     const replyBtnR = wsReplyBtn("R", m._rnum, m.text, () => { const at = pactChatActive(); wsAddReplyRef(at, "R", m._rnum, m.text); pactPaintReplyRow(at); });
     const copyBtnR = wsCopyMsgBtn("R", m._rnum, m.text, () => (pactChatActive() || {}).key);
-    return el("div", { class: "pc-msg pc-asst msg --a" }, [pactNumBadge("R", m._rnum), copyBtnR, wsShareBtn(m.text), replyBtnR, star, ...kids]);
+    return el("div", { class: "pc-msg pc-asst msg --a" }, [pactNumBadge("R", m._rnum), copyBtnR, wsShareBtn(m.text), replyBtnR, star, ...kids, wsWhenChip(m.at)]);
   }
   if (m.kind === "tool_use") {
     // Expandable, like the Core cockpit: the tool names show at a glance; tap to reveal each call's
@@ -12572,6 +12593,7 @@ function viewWorkspace() {
         discard.addEventListener("click", (e) => { e.stopPropagation(); wsDiscardInterrupted(m); });
         kids.push(resume, discard);
       }
+      kids.push(wsWhenChip(m.at));
       return line("ws-user" + (m._intrState === "d" ? " ws-discarded" : m._intrState === "i" ? " ws-interrupted" : ""), kids);
     }
     if (m.role === "assistant" || m.kind === "assistant") {
@@ -12579,7 +12601,8 @@ function viewWorkspace() {
       star.addEventListener("click", (e) => { e.stopPropagation(); wsToggleBookmark(m); });
       const replyBtn = wsReplyBtn("R", m._rnum, m.text, () => { const rp = st.panes.find((x) => x.id === m._paneId); wsAddReplyRef(rp, "R", m._rnum, m.text); wsPaintReplyRow(rp); });
       const copyBtn = wsCopyMsgBtn("R", m._rnum, m.text, () => (st.panes.find((x) => x.id === m._paneId) || {}).sessionKey);
-      return line("ws-assistant", [wsNumBadge("R", m._rnum), copyBtn, wsShareBtn(m.text), replyBtn, star, ...renderAssistantText(m.text)]);
+      return line("ws-assistant", [wsNumBadge("R", m._rnum), copyBtn, wsShareBtn(m.text), replyBtn, star,
+        ...renderAssistantText(m.text), wsWhenChip(m.at)]);
     }
     if (m.kind === "tool_use") return line("ws-tool", [el("i", { class: "ti ti-tool" }, []), " ", (m.tools || []).map((t) => t.name).join(", ")]);
     if (m.kind === "tool_result") {

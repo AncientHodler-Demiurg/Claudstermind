@@ -2785,3 +2785,14 @@ body.pact-wgrip-dragging .pact-wgrip { pointer-events: auto; }
 .ws-model-now.--unknown, .pc-model-now.--unknown { color: var(--ink-dim, #7c8aa5); font-weight: 500; font-style: italic; }
 .pc-model-now { max-width: 210px; }
 @media (max-width: 820px) { .ws-model-now, .pc-model-now { max-width: 130px; } }
+
+/* WHEN A TURN WAS SPAWNED — the bubble's own lower-left corner (wsWhenChip in app.js).
+   A BLOCK on its own line rather than an absolutely-positioned corner: absolute would need every
+   bubble to reserve bottom padding for it whether it has a stamp or not (a live-streaming row has no
+   `at` yet), and it would sit on top of the last line of a message that happens to fill the width.
+   Dim and small enough to read past — it answers "when was this" when you look for it, and stays out
+   of the way when you do not. */
+.ws-line .ws-when, .pc-msg .ws-when {
+  display: block; margin-top: 5px; font-size: 10px; line-height: 1.2;
+  color: var(--ink-mute); opacity: .6; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+.ws-line.ws-user .ws-when { color: var(--bub-u-fg, var(--ink-mute)); opacity: .45; }

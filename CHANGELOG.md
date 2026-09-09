@@ -4,6 +4,26 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.17.0] - 2026-09-09
+### Added — every bubble says when it was spawned
+
+A small dim stamp in the lower-left corner of each prompt and each answer, in **both** workspaces and
+therefore on the phone too — the cockpit adopts these very nodes rather than rendering its own.
+
+It reads data that already existed: `at` is on every stored row (it is what a bookmark keys on and
+what `wsScrollToResponse` finds), so nothing new is recorded or persisted.
+
+Three decisions worth stating:
+
+- **Today's turns show the time; older ones show the date as well.** A long conversation spans days,
+  and `3:49 PM` on a turn from Tuesday is worse than no stamp at all. The full local date and time is
+  in the title either way — the short form is for scanning, not for citing.
+- **A block on its own line, not an absolutely-positioned corner.** Absolute would make every bubble
+  reserve bottom padding whether it has a stamp or not — a live-streaming row has no `at` yet — and
+  would sit on top of the last line of any message that fills the width.
+- **A row without `at` renders nothing rather than a bad date**, which is the state every message
+  passes through while it is still streaming.
+
 ## [1.16.6] - 2026-09-09
 ### Fixed — a sent prompt came back as a queued one. My regression, one release old.
 
