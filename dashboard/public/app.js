@@ -835,7 +835,11 @@ function render() {
   if (VIEW !== "git" && GIT_TIMER) { clearInterval(GIT_TIMER); GIT_TIMER = null; }
   if (VIEW !== "localhost" && LH_TIMER) { clearInterval(LH_TIMER); LH_TIMER = null; }
   if (VIEW !== "pact" && typeof PACT_RUN_ES !== "undefined" && PACT_RUN_ES) { try { PACT_RUN_ES.close(); } catch {} PACT_RUN_ES = null; }
-  if (VIEW !== "pact" && typeof PACT_CHAT !== "undefined" && PACT_CHAT) { pactChatStop(); }
+  if (VIEW !== "pact" && typeof PACT_CHAT !== "undefined" && PACT_CHAT) {
+    // A live auto-continue sweep keeps its stream and its watchdog; everything else is torn down.
+    if ((PACT_CHAT.tabs || []).some((t) => t && t._autoContinue)) pactChatDetachUI();
+    else pactChatStop();
+  }
   if (VIEW !== "usage") usageStop();   // close the Usage tab's SSE stream when leaving it
   document.body.classList.toggle("ws-full", VIEW === "workspace" || VIEW === "pact");   // full-height cockpit views
   // The live cockpit views (cockpit / Pact / mirror / localhost / usage) route ALL their data through the
@@ -8077,6 +8081,11 @@ function pactChatAutosize(ta) {
 }
 let PACT_UNLOAD_HOOKED = false;
 function pactChatInit(host) {
+  /* A DETACHED ENGINE MAY STILL BE RUNNING. When auto-continue is on, leaving the view no longer tears
+     the stream down (see pactChatDetachUI), so re-entering must close that survivor BEFORE the global
+     is replaced — otherwise the old EventSource is orphaned by the very reference that could close it,
+     and two streams deliver every event twice. */
+  if (PACT_CHAT) pactChatStop();
   PACT_CHAT = { host, tabs: [], activeId: null, seq: 0, es: null, mode: "bypassPermissions", conn: connIdentity() };
   // Flush the draft/layout on a page refresh or close too (keepalive lets the PUT outlive the page),
   // so a prompt typed right before reloading isn't lost. Registered once.
@@ -8259,14 +8268,36 @@ function pactTabsDisplayOrder(tabs) {
   return prime.concat(rest);
 }
 // ===== end PACT TAB DISPLAY ORDER pure helper =====
+/** LEAVING THE VIEW IS NOT LEAVING THE CONVERSATION. Navigating away from Pact used to call
+ *  pactChatStop(), which closes the SSE stream and clears PACT_HEAL_TIMER — and that timer is the
+ *  watchdog that re-arms auto-continue, while the stream is what tells it a turn ended. So with
+ *  auto-continue ON, going anywhere else in the dashboard silently froze the sweep: the tab stayed
+ *  `busy` forever with nothing to deliver the result, nothing re-evaluated, and the countdown never
+ *  reached zero. Coming back reopened both, the deadline was already long past, and it fired at once —
+ *  reported as "the auto trigger doesn't trigger correctly, it triggers when I visited".
+ *
+ *  Measured, with auto-continue on one tab: stream readyState 1 on the view, `es: null` the moment you
+ *  leave, still null six seconds later, open again on return.
+ *
+ *  So when a sweep is live we keep the engine and drop only what paints. The host stays referenced but
+ *  detached; every paint that runs writes into that detached tree, which is harmless (and cheaper than
+ *  a null-host audit of 22 dereference sites). What this does NOT survive is the phone going to sleep:
+ *  the browser freezes these timers, and only a server-driven loop fixes that. */
+function pactChatDetachUI() {
+  clearInterval(PACT_TICK_TIMER); PACT_TICK_TIMER = null;   // an elapsed readout nobody can see
+  document.getElementById("pact-sync-cue")?.remove();   // don't leave the sync banner orphaned
+}
 function pactChatStop() {
   // Persist the live draft/layout NOW before tearing down — otherwise the clearTimeout below cancels a
   // pending debounced save and a prompt typed in the last 800ms is silently lost on the way out.
   if (PACT_STATE_READY) pactStateFlush();
   PACT_STATE_READY = false; clearTimeout(PACT_STATE_TIMER);   // leaving Pact — stop persisting a torn-down layout
-  clearInterval(PACT_STREAM_STALE_TIMER);   // the watchdog is per-stream — reopen re-arms it
-  clearInterval(PACT_HEAL_TIMER);
-  clearInterval(PACT_TICK_TIMER);
+  clearInterval(PACT_STREAM_STALE_TIMER); PACT_STREAM_STALE_TIMER = null;   // per-stream — reopen re-arms it
+  /* Nulled, not merely cleared: a stale interval id reads truthy forever, so nothing — a probe, a
+     guard, a future reader — can tell a running watchdog from a stopped one. Core's teardown has
+     always nulled these; this is the same discipline on Pact's side. */
+  clearInterval(PACT_HEAL_TIMER); PACT_HEAL_TIMER = null;
+  clearInterval(PACT_TICK_TIMER); PACT_TICK_TIMER = null;
   document.getElementById("pact-sync-cue")?.remove();   // don't leave the sync banner orphaned after leaving Pact
   if (PACT_CHAT && PACT_CHAT.es) { try { PACT_CHAT.es.close(); } catch {} PACT_CHAT.es = null; }
 }

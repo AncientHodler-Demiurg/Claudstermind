@@ -4,6 +4,41 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.17.5] - 2026-09-09
+### Fixed — Pact's auto-continue froze the moment you left the workspace, and fired when you came back
+
+*"The auto trigger on pact workspace doesn't trigger correctly, it triggers when I visited."*
+
+Not the decider — the **engine being switched off**. Navigating away from Pact called
+`pactChatStop()`, which closes the SSE stream *and* clears `PACT_HEAL_TIMER`. Those two are exactly
+what the loop runs on: the stream delivers the result that ends a turn, and that 4-second watchdog is
+what re-arms auto-continue afterwards (it exists because "every previous round of auto-continue bugs
+was a missed re-arm"). So with auto-continue on, going anywhere else in the dashboard silently froze
+the sweep — the tab stayed `busy` with nothing left to say otherwise, nothing re-evaluated, and the
+countdown never reached zero. Returning reopened both, the deadline was long past, and it fired at
+once.
+
+Measured, with auto-continue on one tab: stream `readyState 1` on the view, `es: null` the moment you
+leave, still null six seconds later, open again on return. After the fix: open throughout, the
+cosmetic ticker stopped, and **no console errors** across a full leave-wait-return cycle.
+
+A live sweep now keeps its stream and its watchdog and drops only what paints. The host stays
+referenced but detached, so the paints that still run write into a detached tree — harmless, and
+much safer than a null-host audit of 22 dereference sites. Re-entering closes the survivor *before*
+the global is replaced, or the old EventSource would be orphaned by the only reference that could
+close it and every event would arrive twice.
+
+Also: `pactChatStop` now **nulls** the intervals it clears. A cleared interval leaves a stale, truthy
+id, so nothing can tell a running watchdog from a stopped one — that misled a probe written to check
+exactly this. Core's teardown has always nulled its timers.
+
+### Still not fixed — a sleeping phone
+This makes the loop survive leaving the *view*. It does not survive the *device*: browsers freeze
+timers in a backgrounded tab or a locked phone, so an unattended sweep still stalls there and fires on
+wake. Only a server-driven loop fixes that. Core's teardown has the same shape as Pact's had, so the
+same freeze applies there — the state it needs (`st.panes`) is not in scope at the teardown site, so
+it wants a small accessor and its own verification round rather than a blind edit.
+
 ## [1.17.4] - 2026-09-09
 ### Fixed — the type box stuck at one line while holding several
 
