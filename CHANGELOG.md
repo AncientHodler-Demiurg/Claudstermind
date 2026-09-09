@@ -4,6 +4,27 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.14.8] - 2026-09-09
+### Fixed — the repository chooser could not scroll, because its content was being squashed
+
+*"there isn't a scroll bar, and i cant scroll down."* The list was not overflowing — it was being
+**compressed**. Every scrolling surface on the page is also a flex column (that is how the sections
+stack with a gap), and **a flex item shrinks by default**, so the organisation cards squeezed
+themselves down to fit and `scrollHeight` never exceeded `clientHeight`. There was nothing to scroll
+because the list had quietly become shorter than its own content.
+
+`flex: 0 0 auto` on the direct children, applied to **every** one of these containers rather than the
+one where it was noticed. Measured in Chromium at 412×915, before → after: `scrollHeight` 810 → 910
+against a `clientHeight` of 810. The conversation list in the left pane had the same latent bug and is
+also fixed (316 vs 232 now scrolls).
+
+### Noted — ☰ is dropped from Core, and kept in Pact
+Same glyph, different job. In Core it opened the tree column, which on the phone *is* the repository
+chooser — already reachable from the left pane, which is itself reachable from its rail and the Chats
+riser. In **Pact** it moves between BOXES (the tree, the editor groups, the REPL), which this pane has
+no equivalent of. Dropping it from one is not a reason to drop it from the other; the lab records
+that where the port will read it.
+
 ## [1.14.7] - 2026-09-09
 ### Fixed — two callbacks that named functions nobody ever wrote
 

@@ -208,6 +208,14 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
 .m-ctxrow u{width:10px;height:10px;border-radius:3px;flex:0 0 auto;text-decoration:none}
 .m-ctxrow span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .m-ctxrow em{font-style:normal;color:var(--dim);font-variant-numeric:tabular-nums}
+/* WHY A SCROLL CONTAINER HERE NEEDS THIS. Every scrolling surface on this page is also a flex column
+   (that is how the sections stack with a gap), and a flex item SHRINKS by default. So the cards did
+   not overflow the repository chooser — they compressed inside it, `scrollHeight` stayed equal to
+   `clientHeight`, and there was nothing to scroll: the list simply got quietly shorter than its own
+   content. `flex-shrink: 0` on the direct children is the fix, and it belongs to every one of these
+   containers, not just the one where it was noticed. */
+.m-over-body > *, .m-sheet-body > *, .m-pbody > *, .m-list > *, .m-sec > * { flex: 0 0 auto; }
+
 /* a search field, for any list long enough to need one */
 .m-find{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
 .m-find input{flex:1;min-width:0;height:38px;border-radius:10px;background:var(--field);border:1px solid var(--field-line);
@@ -990,10 +998,13 @@ function proposed() {
   box.addEventListener("input", grow);
 
   /* 2. THE BUTTON ROW — menu + upload left, retractor centred under the medallion, auto/Stop/Send right. */
-  /* NO ☰. On the desktop it opens the tree column; here the tree column IS the repository chooser,
-     which the left pane already reaches with one button — and the left pane itself is reachable from
-     its rail and from the Chats riser. Three doors to one room, in a row where every slot is width
-     taken from Send. */
+  /* NO ☰ — IN CORE. On the desktop it opens the tree column; here the tree column IS the repository
+     chooser, which the left pane already reaches with one button, and the left pane itself is
+     reachable from its rail and from the Chats riser. Three doors to one room, in a row where every
+     slot is width taken from Send.
+     PACT KEEPS ITS ☰ (app.js .pactm-cbar): there it moves between BOXES — the tree, the editor
+     groups, the REPL — which is navigation this pane has no equivalent of. Same glyph, different
+     job; dropping it from Core is not a reason to drop it there. */
   var upB = el("button", { class: "m-ico", type: "button", title: "Attach" }, ["📎"]);
   var autoB = el("div", { class: "m-auto" + (S.autoContinue ? " on" : "") }, [el("div", { class: "m-sw" }, [el("i", {}, [])]), "auto"]);
   onTap(autoB, function () { S.autoContinue = !S.autoContinue; render(); });
