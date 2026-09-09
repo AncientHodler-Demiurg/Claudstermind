@@ -148,3 +148,22 @@ one-line default change once it has been used on a real conversation.
   that should probably not be listed, `stoa-js` still flagged "pre-split"). The chooser reads whatever
   `MAP` holds; fixing the data needs role/org decisions and is its own topic.
 - **The wheel as a shared component.** It stays inside the mobile module until something else needs it.
+
+## Host mapping (found while preparing T3 — every callback already has a home)
+
+The module's callbacks are not new behaviour; they are existing Core functions under a phone-shaped
+surface. Recorded here so T3 wires rather than invents:
+
+| callback | existing Core function |
+|---|---|
+| `pickConversation` / `newConversation` / `multiChat` | `wsSwitchConvSlot(p, slot)` · `wsAddConvSlot(p)` · `wsSetMultiChat(p, on)` — a repository's conversations are `p.convSlots`, and **slot 0 is already the ★ master**, which is exactly the design's "main" |
+| `copyTurn` / `shareTurn` | `wsCopyMsgBtn(kind, number, text, convIdFn)` — one button that copies the raw text, or (alt/shift) the address `wsTurnRef(convId, kind, n)`. The design's two buttons are its two existing paths |
+| `replyTurn` | the `_replyRefs` queue (`lib/replyQuote.test.mjs`) — chips above the compose box, prepended to the next send |
+| `starTurn` | `wsToggleBookmark(m)` → `p.bookmarks` |
+| `pickRepo` / `pickWorktree` | the existing repo/worktree change paths; `p.repo`, `p.worktree` |
+| `openHistory` | `loadHistory(repo)` — already scoped by repo, which is the overlay's scope toggle |
+| `stats` / `context` | `wsPaintStatsRow(p, ui)` → `ChatShell.buildStatsChips`; `view.els.contextBtn` |
+
+`wsDefaultConvSlots()` returns `[{ slot: 0, name: "Master" }]`. The design calls that conversation
+`★ <repo> · Main`; T3 should render slot 0 with the ★ and the repository's name rather than renaming
+the stored slot, so persisted layouts (`WS_STORE_KEY`) keep loading.
