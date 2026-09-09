@@ -116,6 +116,9 @@
       running: { model: normPick(null), effort: normPick(null), permission: normPick(null),
                  ultracode: false, autoWrap: true, autoContinue: false, auto: null },
       context: { tokens: 0, ceiling: 1000000, parts: [] },
+      /* What the host says about wrapping RIGHT NOW: the threshold in the label, and whether it can
+         fire. Absent means "no opinion" — the button then behaves as it always did. */
+      wrap: null,
       stats: [], agents: [], repos: [], history: [], marks: [],
       conversations: [],   // the threads of ONE repository
       chats: [],           // the chat BOXES, one per repository — see chatsSheet
@@ -553,8 +556,17 @@
                result is the transcript behind you; Wrap opens a confirmation, which would otherwise
                appear UNDER the sheet that launched it. A surface that stays open after its own button
                has fired asks you to dismiss something you already finished with. */
-            return btns([btn("🗜 Compact", "", function () { setSheet(null); call("compact"); }),
-                         btn("↺ Wrap", "--acc", function () { setSheet(null); call("wrap"); })]);
+            /* THE LINE HAS TO SAY WHETHER IT CAN FIRE. Core substitutes its own control here, which
+               reads "⟳ Wrap at 60%" and dims when the window is too light to wrap; this fallback said
+               a flat "↺ Wrap" whatever the state, so a button that was going to refuse looked exactly
+               like one that was going to work. It is dimmed but still PRESSABLE on purpose: a phone
+               has no tooltip to hover, so the tap is how you get told why — the host answers with the
+               reason. A disabled button would show the same dimming and explain nothing. */
+            var w = state.wrap || {};
+            var wrapBtn = btn(w.label || "↺ Wrap", "--acc" + (w.can === false ? " --off" : ""),
+                              function () { setSheet(null); call("wrap"); });
+            if (w.note) wrapBtn.title = w.note;
+            return btns([btn("🗜 Compact", "", function () { setSheet(null); call("compact"); }), wrapBtn]);
           })])
       ]);
     }
@@ -910,6 +922,7 @@
         if ("autoContinue" in r) state.running.autoContinue = !!r.autoContinue;
         if ("auto" in r) state.running.auto = r.auto || null;
       }
+      if ("wrap" in s) state.wrap = s.wrap || null;
       if ("context" in s) {
         var cx = s.context || {};
         state.context = { tokens: nn(cx.tokens, 0), ceiling: nn(cx.ceiling, 1000000), parts: cx.parts || [] };

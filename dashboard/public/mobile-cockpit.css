@@ -393,6 +393,21 @@ body.ws-mobile2 .pactm-cbar, body.ws-mobile2 .pactm-modebar{display:none}
 .ws-mobile2 .mc-btns{display:flex;gap:8px}
 .ws-mobile2 .mc-btn{flex:1;min-height:44px;border-radius:11px;border:1px solid var(--line);background:var(--chip);color:var(--ink);
   font:inherit;font-size:13px;font-weight:700;cursor:pointer}
+/* Dimmed, not disabled: the button still answers, and on a phone the tap IS how you are told why
+   (there is no tooltip to hover). See the wrap fallback in mobile-cockpit.js. */
+.ws-mobile2 .mc-btn.--off{opacity:.45}
+
+/* A RE-HOMED CONTROL STILL HAS TO FIT THE PHONE. Core substitutes the package's own compact/wrap
+   group into this sheet instead of the fallback above, and it arrived with its desktop geometry:
+   measured at 412px, the group sat in 185px of the 388 available, right-aligned, with 27px-tall
+   buttons — under any touch target, against a 44px fallback in the very same slot in Pact. The
+   package's row keeps its own alignment logic on the desktop; inside this sheet it fills the width
+   and its buttons take the height every other button here has. Scoped to the sheet so the same
+   group in the compose row is untouched. */
+.ws-mobile2 .mc-sheet .cs-grp,
+.ws-mobile2 .mc-sheet .cs-grp .cs-grow{width:100%}
+.ws-mobile2 .mc-sheet .cs-grp .split{flex:1 1 auto;width:100%}
+.ws-mobile2 .mc-sheet .cs-grp .split > button{flex:1 1 0;min-height:40px}
 .ws-mobile2 .mc-btn.--acc{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 50%,var(--line))}
 .ws-mobile2 .mc-meter{height:6px;border-radius:99px;background:var(--panel-2);overflow:hidden}
 .ws-mobile2 .mc-meter i{display:block;height:100%;background:var(--accent)}

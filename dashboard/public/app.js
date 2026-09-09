@@ -10558,10 +10558,27 @@ const PACT_WRAP_ARM_MS = 600;
 function pactOpenWrapDialog(t) {
   if (!t || !t.key) { pactChatFlashNote("Pick a repository for this chat first."); return; }
   if (t._wrapDialog) return;
-  const paneEl = PACT_CHAT.host.querySelector(".pact-right"); if (!paneEl) return;
+  /* WHY IS READINESS CHECKED BEFORE THE HOST? Because the host lookup used to come first, and on a
+     phone it always failed: it asked for `.pact-right`, which is the DESKTOP pane, and the mobile
+     cockpit replaces that whole node with its own. So `Wrap` on a phone returned right here — no
+     dialog, no note, no console line. A button that answers nothing is indistinguishable from one
+     that is not wired at all, which is exactly how it was reported. Core's equivalent has always run
+     in this order (guards → readiness → mount); this now matches it, so the REASON you cannot wrap
+     reaches you on either layout. */
   const usage = t.contextUsage || {};
   const readiness = window.ChatShell.wrapReadiness({ tokens: Number(usage.totalTokens) || 0, ceiling: Number(usage.maxTokens) || 0 });
   if (!readiness.canWrapManually) { pactChatFlashNote("⟳ " + readiness.reason); return; }
+  /* The pane on the desktop, the cockpit on a phone — both are `position: relative`, which is all an
+     `inset: 0` overlay needs. The cockpit wrap is reached with `closest`, NOT `querySelector`: the
+     cockpit ADOPTS the chat host into itself, so the wrap is an ANCESTOR. Searching downwards found
+     nothing and fell through to the host — which is `.mc-core`, the SCROLLING transcript, where an
+     absolutely-positioned overlay scrolls away with the content instead of covering the pane. Core
+     mounts on its pane root for the same reason. `PACT_CHAT.host` remains the last resort so this can
+     never silently do nothing again. */
+  const paneEl = PACT_CHAT.host.querySelector(".pact-right")
+              || (PACT_CHAT.host.closest && PACT_CHAT.host.closest(".pactm-chatwrap"))
+              || PACT_CHAT.host;
+  if (!paneEl) { pactChatFlashNote("⟳ Nowhere to open the wrap dialog."); return; }
 
   const dlg = wsOpenPaneDialog(paneEl, { title: "⟳ Wrap to a fresh context window" });
   const body = el("div", { class: "ws-pane-dialog-body" }, ["Checking what this would archive…"]);
@@ -11578,6 +11595,15 @@ function viewPactMobile() {
       // No `worktree` for Pact: the module's Workspace row would tap nothing, because Pact's real
       // control is the pill re-homed into the pane above. One control, not a row that looks like one.
       worktree: "",
+      /* THE WRAP LINE'S OWN STATE. Core substitutes the package's real control into this slot, which
+         has always carried its threshold and dimmed itself; Pact renders the cockpit's fallback, which
+         had no way to know either. Same readiness helper both workspaces already decide with. */
+      wrap: (() => {
+        const u = (a && a.contextUsage) || {};
+        const r = window.ChatShell.wrapReadiness({ tokens: Number(u.totalTokens) || 0, ceiling: Number(u.maxTokens) || 0 });
+        return { can: !!r.canWrapManually, note: r.reason || "",
+                 label: "⟳ Wrap at " + Math.round((r.manualAt || 0.6) * 100) + "%" };
+      })(),
       running: {
         // The catalogue both workspaces' pickers already share (readCachedModels), the package's own
         // effort ladder, and Core's mode list — three lists that exist, rather than a fourth.
@@ -11585,7 +11611,19 @@ function viewPactMobile() {
         // "claude-opus-5" — resolved through the catalogue both pickers already share. The raw id
         // wrapped the strip onto two lines and told you nothing the friendly name does not.
         model: (() => {
-          const opts = readCachedModels().map((m) => ({ value: m.id || m.name || String(m), label: m.label || m.id || m.name || String(m) }));
+          /* THE CATALOGUE'S ID FIELD IS `value`. This read `m.id || m.name || String(m)` — three
+             names, none of which the catalogue has — so every entry fell through to `String(m)` and
+             the wheel listed "[object Object]" once per model. Worse than ugly: picking one wrote
+             that string back as the model id. Nothing failed loudly because a wheel renders whatever
+             string it is handed. It goes through the same helper both desktop pickers use, with the
+             same omni filter, so the phone offers exactly the list the desktop offers. */
+          const list = readCachedModels().filter((m) => m && typeof m.value === "string"
+                                                     && (routingOmniVisible() || !m.value.startsWith("omni/")));
+          const groups = modelOptionGroups(list);
+          const opts = groups.anthropic.concat(groups.combos).map((o) => ({ value: o.value, label: o.label }));
+          // A cold load has no catalogue yet (the "models" answer is asynchronous). The aliases the
+          // SDK always accepts beat an empty wheel that cannot be used at all.
+          if (!opts.length) WS_FALLBACK_MODELS.forEach((m) => opts.push({ value: m.value, label: m.label }));
           const raw = (a && (a.activeModel || a.model)) || "";
           const hit = opts.find((o) => o.value === raw);
           // `prettyModel` is Core's own fallback for exactly this: the catalogue may not have arrived

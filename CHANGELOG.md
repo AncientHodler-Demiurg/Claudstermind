@@ -4,6 +4,49 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.17.3] - 2026-09-09
+### Fixed — on a phone, Pact's Wrap did nothing at all, and said nothing about it
+
+*"I think the pact workspace doesn't show properly the compact and wrap line."*
+
+**Wrap was inert on mobile.** `pactOpenWrapDialog` looked up `.pact-right` — the *desktop* pane —
+before doing anything else, and the mobile cockpit replaces that node wholesale. Measured:
+`document.querySelector('.pact-right')` is `null` in Pact's phone layout, so every tap returned at
+that line. No dialog, no note, no console error. Worse, the host lookup sat *before* the readiness
+check, so even the "too light to wrap" explanation could never be reached. The order now matches
+Core's (guards → readiness → mount), and the host resolves through `closest('.pactm-chatwrap')` —
+`closest`, not `querySelector`, because the cockpit **adopts** the chat host into its wrap, making the
+wrap an ancestor. Searching downwards found nothing and fell through to `.mc-core`, the scrolling
+transcript, where an `inset: 0` overlay scrolls away with the content instead of covering the pane.
+
+**And the line showed no state.** Core substitutes the package's own control, which has always read
+`⟳ Wrap at 60%` and dimmed itself; Pact rendered the cockpit's fallback, a flat `↺ Wrap` in every
+state — so a button about to refuse looked exactly like one about to work. It now carries the
+threshold and dims, fed by the same `ChatShell.wrapReadiness` the dialog itself gates on, so the
+button and the action cannot disagree. It stays **pressable** on purpose: a phone has no tooltip to
+hover, so the tap is how the reason reaches you.
+
+### Fixed — Pact's model wheel listed `[object Object]`, once per model
+
+Found while measuring the sheet above. The phone's model options were built with
+`m.id || m.name || String(m)`; cached catalogue rows carry none of those names — their id field is
+`value` — so every row fell through to `String(m)`. Not merely ugly: picking one wrote that literal
+string back as the model id. Options now come from `modelOptionGroups`, the helper both desktop
+pickers already use, with the same OmniRoute filter and the same cold-load fallback.
+
+### Fixed — Core's compact/wrap line arrived at desktop size
+
+Re-homing moves a node *with its geometry*. Measured at 412px: the group occupied 185px of the 388
+available, right-aligned, with 27px-tall buttons — under any touch target, in the same slot where
+Pact's fallback renders 44px. Inside the sheet it now fills the width with 40px halves. The nesting
+is the trap worth recording: the buttons sit in `.split` inside `.cs-grow`, so a rule aimed at the
+group's direct children stretches the group and moves nothing you can press.
+
+### Known, not fixed
+Core's Window section shows an **auto-wrap** toggle that already exists in the Switches section right
+above it — one control, drawn twice, because it comes bundled inside the re-homed group. Removing it
+means editing a control the desktop shares, so it is reported rather than silently changed.
+
 ## [1.17.2] - 2026-09-09
 ### Fixed — the phone's type field looked different in Core and Pact, and the auto switch showed no numbers
 
