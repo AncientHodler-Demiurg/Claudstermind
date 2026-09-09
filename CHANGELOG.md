@@ -4,6 +4,24 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.14.6] - 2026-09-09
+### Changed — Mobile Cockpit Lab: one state medallion in the header, not three
+
+Five things on a 40px row was crowding, and the three state chips were never equal citizens:
+
+| | was | now |
+|---|---|---|
+| **Connection** | `● Live` | unchanged — the one state that must always be legible, now alone |
+| **Agents running** | `◉ 4` chip | the count rides the **right rail**, which opens the pane that lists them — the number *and* the reason to press, in the pixels the grip was using. The rail turns amber with it. |
+| **Reconnected** | `↻` chip, forever | an **event**: it says `↻ caught up` in words, fades in, and clears itself after six seconds |
+
+The `↻` was the clearest mistake: a permanent arrow reads as a **reload button** — it was read as one —
+and a thing that has *finished happening* does not deserve a chip that never leaves. In its steady
+state the header is now three items: the conversation name, the connection, the context.
+
+Nothing was removed. Each moved to the surface that owns it, one tap away: the agents to the pane
+that lists them, the reconnect to the activity it belongs to.
+
 ## [1.14.5] - 2026-09-09
 ### Changed — Mobile Cockpit Lab: the rails straddle the seam and reserve nothing
 

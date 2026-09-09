@@ -89,6 +89,9 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
 .m-hmed.--busy{color:var(--work);background:color-mix(in srgb,var(--work) 12%,transparent);border-color:color-mix(in srgb,var(--work) 40%,transparent)}
 .m-hmed.--dim{color:var(--dim);background:var(--chip);border-color:var(--line);font-weight:400}
 .m-hmed.--ok{color:var(--acc);background:color-mix(in srgb,var(--accent) 12%,transparent);border-color:color-mix(in srgb,var(--accent) 40%,transparent)}
+.m-hmed.--fade{animation:mFade .35s ease}
+@keyframes mFade{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.m-hmed.--fade{animation:none}}
 .m-ttl{font-weight:700;font-size:13px;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
 .m-ctx{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);background:var(--chip);
   border:1px solid var(--line);border-radius:999px;padding:3px 9px;cursor:pointer}
@@ -291,6 +294,10 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
 .m-stat b{color:var(--ok)}.m-stat .bad{color:var(--err)}
 .m-cyc{margin-left:10px;padding:1px 7px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--acc);cursor:pointer}
 .m-rlbl{writing-mode:vertical-rl;text-orientation:mixed;font-size:9px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+/* the running-agent count, on the rail that opens the pane listing them: the number AND the reason
+   to press, in the pixels the grip was using. */
+.m-rail-n{font-size:12px;font-weight:800;line-height:1;color:var(--work)}
+.m-rail.--busy{border-color:color-mix(in srgb,var(--work) 55%,var(--line))}
 .m-rail.--arc{width:26px;height:52px;gap:0}
 .m-rail.--arc.--l{border-radius:0 999px 999px 0}
 .m-rail.--arc.--r{border-radius:999px 0 0 999px}
@@ -477,7 +484,7 @@ var S = {
       { name: "LocalHost", path: "LocalHost", kind: "tool" },
       { name: "AncientWisdom", path: "Tools/AncientWisdom", kind: "tool" }]}
   ],
-  reconnected: true,
+  reconnected: true,         // an EVENT: shown in words, then cleared by itself (see reconnectTimer)
   runningModel: "Opus 5",    // what is ACTUALLY running — the strip is a readout, never a selector
   convo: { name: "Claudstermind · Main", star: true },   // ★ = the repository's main conversation
   model: "Opus 5",
@@ -877,9 +884,17 @@ function proposed() {
      page, because "21%" tells you there is a problem and nothing about what is causing it. */
   var ctx = el("div", { class: "m-ctx" }, [el("div", { class: "m-bar" }, [el("i", { style: "width:" + ctxPct() + "%" }, [])]), el("b", {}, [ctxPct() + "%"])]);
   onTap(ctx, function () { setOverlay("context"); });
+  /* ONE medallion, not three. Five things on a 40px row is crowding, and the three state chips were
+     not equal citizens:
+       · CONNECTION is a state, and the only one that must always be legible → it stays, alone.
+       · AGENTS RUNNING is a count with a destination — the right pane lists them — so it moves onto
+         the rail that opens that pane, where it is both the number and the reason to press.
+       · RECONNECTED is an EVENT, not a state. A permanent ↻ reads as a reload button (it was read as
+         one), and a thing that has finished happening does not deserve a permanent chip: it says so
+         in words for a few seconds and then gets out of the way.
+     Nothing is lost — the sentence behind each is one tap away in the pane that owns it. */
   var meds = [el("span", { class: "m-hmed" + (S.busy ? " --busy" : "") }, [el("i", {}, []), S.busy ? "Working" : "Live"])];
-  if (S.agents) meds.push(el("span", { class: "m-hmed --dim" }, ["◉ " + (S.agents.match(/^\d+/) || ["?"])[0]]));
-  if (S.reconnected) meds.push(el("span", { class: "m-hmed --ok" }, ["↻"]));
+  if (S.reconnected) meds.push(el("span", { class: "m-hmed --ok --fade" }, ["↻ caught up"]));
   var medBar = el("span", { class: "m-meds" }, meds);
   onTap(medBar, function () { setPanel("left"); });   // the full sentence lives in the left pane
   var title = el("span", { class: "m-ttl" }, [S.convo.star ? "★ " : "", S.convo.name]);
@@ -964,7 +979,10 @@ function proposed() {
   if (S.rail !== "none") {
     var cls = " --" + S.rail;
     var railL = el("div", { class: "m-rail --l" + cls }, [el("div", { class: "m-grip" }, []), el("span", { class: "m-rlbl" }, ["Chat"])]);
-    var railR = el("div", { class: "m-rail --r" + cls }, [el("div", { class: "m-grip" }, []), el("span", { class: "m-rlbl" }, ["Stats"])]);
+    var agentN = (S.agentList || []).filter(function (a) { return a.state === "run"; }).length;
+    var railR = el("div", { class: "m-rail --r" + cls + (agentN ? " --busy" : "") },
+      [agentN ? el("span", { class: "m-rail-n" }, [String(agentN)]) : el("div", { class: "m-grip" }, []),
+       el("span", { class: "m-rlbl" }, ["Stats"])]);
     onTap(railL, function () { setPanel("left"); });
     onTap(railR, function () { setPanel("right"); });
     low.appendChild(railL); low.appendChild(railR);
@@ -1058,6 +1076,7 @@ function render() {
   var host = $("#mob"), next = S.view === "today" ? today() : proposed();
   host.replaceWith(next);
   document.querySelectorAll("#sw button").forEach(function (b) { b.classList.toggle("on", b.dataset.v === S.view); });
+  armReconnectFade();
   requestAnimationFrame(function () { fitRisers(); measure(); });
 }
 
@@ -1090,7 +1109,16 @@ window.addEventListener("resize", function () { fitRisers(); measure(); });
 
 /* A handle on the mock's own state, for driving it from the console (and for the screenshots that go
    into a review). Lab furniture: production has no such thing. */
-window.LAB = { S: S, render: render, setPanel: setPanel, setSheet: setSheet, setOverlay: setOverlay };
+/* The reconnect notice clears itself after a few seconds, which is what makes it an event rather
+   than a chip you stop seeing. `LAB.reconnect()` fires another one so it can be watched. */
+var reconnectTimer = null;
+function armReconnectFade() {
+  clearTimeout(reconnectTimer);
+  if (!S.reconnected) return;
+  reconnectTimer = setTimeout(function () { S.reconnected = false; render(); }, 6000);
+}
+window.LAB = { S: S, render: render, setPanel: setPanel, setSheet: setSheet, setOverlay: setOverlay,
+  reconnect: function () { S.reconnected = true; render(); } };
 document.body.dataset.theme = "core";
 fetch("/api/version").then(function (r) { return r.json(); })
   .then(function (v) { S.build = v.version; $("#stamp").textContent = "build " + v.version; render(); })
