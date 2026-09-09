@@ -11970,6 +11970,18 @@ function viewWorkspace() {
   // always survives; images ride along too but are dropped on a quota failure so at least the prompt text
   // is kept (a queued image is rare; a lost prompt is not acceptable). Its own key — never the layout — so
   // this can never corrupt or bloat the layout save.
+  /** THE ONE WAY TO CHANGE A PANE'S QUEUE. Since 1.16.4 the queue is persisted so it survives a view
+   *  switch (viewWorkspace rebuilds every pane from storage on entry) — but only the enqueue and the
+   *  drain wrote it back. Four other sites CLEAR the queue (a repo change, a worktree change, a
+   *  session change, a repo set), and each left the stored copy holding a message memory had dropped.
+   *  `wsQueueRestore` then resurrected it on the next view entry: the same prompt appeared as a fresh
+   *  orange "queued" bubble AFTER it had already been sent, and would have been sent a second time.
+   *  Reported as "why was this captured 2 times". Memory and storage change together or not at all. */
+  function wsQueueSet(p, items) {
+    p._queue = items && items.length ? items : null;
+    wsQueueSave();
+  }
+  function wsQueuePush(p, item) { wsQueueSet(p, (p._queue || []).concat([item])); }
   function wsQueueSave() {
     const build = (withImages) => {
       const map = {};
@@ -11996,7 +12008,7 @@ function viewWorkspace() {
       const q = map[p.id];
       if (Array.isArray(q) && q.length) {
         const items = q.filter((x) => x && typeof x.text === "string" && x.text).map((x) => ({ text: x.text, images: Array.isArray(x.images) ? x.images : [] }));
-        if (items.length) p._queue = (p._queue || []).concat(items);
+        if (items.length) wsQueueSet(p, (p._queue || []).concat(items));
       }
     }
   }
@@ -13221,7 +13233,7 @@ function viewWorkspace() {
     // never started a turn, so a stale "thinking" carried over from the old identity would spin
     // the busy indicator forever (no event for the OLD session can ever arrive to correct it once
     // sessionKey has moved on).
-    repoSel.addEventListener("change", () => { p.repo = repoSel.value; p.worktree = "main"; p.readonly = false; p.resume = null; p.status = "idle"; p._queue = null; p._gen = (p._gen || 0) + 1; assignKey(p); paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p); if (p.repo) wsPost("control", { action: "worktrees", args: { repo: p.repo } }); });
+    repoSel.addEventListener("change", () => { p.repo = repoSel.value; p.worktree = "main"; p.readonly = false; p.resume = null; p.status = "idle"; wsQueueSet(p, null); p._gen = (p._gen || 0) + 1; assignKey(p); paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p); if (p.repo) wsPost("control", { action: "worktrees", args: { repo: p.repo } }); });
     wtSel.addEventListener("change", () => {
       const v = wtSel.value;
       if (v === "__new__") {   // "+ new worktree…" — create one, then switch this pane to it
@@ -13234,7 +13246,7 @@ function viewWorkspace() {
       }
       // A different worktree is a different session — anything queued for the OLD one must
       // never fire into it (see clearPane's same _queue reset).
-      p.worktree = v || "main"; p.readonly = false; p.resume = null; p.status = "idle"; p._queue = null; p._gen = (p._gen || 0) + 1; assignKey(p);
+      p.worktree = v || "main"; p.readonly = false; p.resume = null; p.status = "idle"; wsQueueSet(p, null); p._gen = (p._gen || 0) + 1; assignKey(p);
       paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p);
     });
     // Applies live: the server calls the SDK's setPermissionMode on a running session, so
@@ -14364,7 +14376,7 @@ function viewWorkspace() {
     endSessions([p.sessionKey]);
     p.sessionKey = wsUuid(); p.transcript = []; p.usage = {}; p.status = "idle"; p.readonly = false; p.resume = null;
     p._expandedGroups = new Set();   // a cleared pane starts a fresh transcript — stale group keys don't apply
-    p._queue = null;   // anything queued for the OLD session must never fire into the fresh one
+    wsQueueSet(p, null);   // anything queued for the OLD session must never fire into the fresh one
     p._gen = (p._gen || 0) + 1;   // invalidate any in-flight open still targeting the OLD identity
     paintPane(p); setUsageTotal(); saveLayout();
   }
@@ -14491,7 +14503,7 @@ function viewWorkspace() {
     // fixes the key in memory on send but never persisted it, so a refresh reattached to the stale uuid →
     // "could not open" → the conversation vanished (yet still showed in History under its real repo@worktree
     // key, which is why reopening from there worked). THE root cause of "my stoa-explorer chat disappears".
-    p.repo = localPath; p.worktree = "main"; p.readonly = false; p.resume = null; p.status = "idle"; p._queue = null; p._gen = (p._gen || 0) + 1;
+    p.repo = localPath; p.worktree = "main"; p.readonly = false; p.resume = null; p.status = "idle"; wsQueueSet(p, null); p._gen = (p._gen || 0) + 1;
     assignKey(p);
     paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p);
     if (p.repo) wsPost("control", { action: "worktrees", args: { repo: p.repo } });
@@ -14911,9 +14923,7 @@ function viewWorkspace() {
       if (data.kind === "busy") {
         for (const p of targets) {
           if (p._pendingText) {
-            p._queue = p._queue || [];
-            p._queue.push({ text: p._pendingText, images: p._pendingImages || [] });
-            wsQueueSave();
+            wsQueuePush(p, { text: p._pendingText, images: p._pendingImages || [] });
             p._pendingText = null; p._pendingImages = null;
             schedulePaint(p);
             logActivity(p, "⏳ Queued — sending once the current turn finishes…");
@@ -15364,8 +15374,7 @@ function viewWorkspace() {
   function drainQueue(p) {
     if (paneBusy(p) || !p._queue || !p._queue.length) return;
     const items = p._queue;
-    p._queue = null;
-    wsQueueSave();   // the stored copy must go too, or a later view switch resurrects a sent message
+    wsQueueSet(p, null);   // the stored copy goes with it, or a later view entry resurrects a sent message
     const text = items.map((i) => i.text).join("\n\n");
     // Every queued message's images ride along too, in the order they were typed — a merged turn
     // is still just one prompt, so it respects the same WS_IMG_MAX_COUNT cap a single send does.
@@ -15400,9 +15409,7 @@ function viewWorkspace() {
     // transcript, sent automatically the instant the current turn actually finishes. Mirrors
     // typing ahead in Claude's own desktop app while it's still replying.
     if (paneBusy(p)) {
-      p._queue = p._queue || [];
-      p._queue.push({ text, images: attachedImages });
-      wsQueueSave();   // survive a VIEW SWITCH, not just a reload — see wsQueueSave
+      wsQueuePush(p, { text, images: attachedImages });
       paintPane(p);
       return;
     }
@@ -15414,7 +15421,7 @@ function viewWorkspace() {
   function wsCompact(p) {
     if (p.readonly) { note("This pane is read-only — Resume the conversation first, then Compact."); return; }
     if (!p.repo) { note("Pick a repository for this pane first."); return; }
-    if (paneBusy(p)) { p._queue = p._queue || []; p._queue.push({ text: "/compact", images: [] }); paintPane(p); note("⏳ Compact queued — runs when the current turn finishes."); return; }
+    if (paneBusy(p)) { wsQueuePush(p, { text: "/compact", images: [] }); paintPane(p); note("⏳ Compact queued — runs when the current turn finishes."); return; }
     logActivity(p, "🗜 Compacting — summarising the conversation to shrink context…");
     dispatchPrompt(p, "/compact", []);
   }

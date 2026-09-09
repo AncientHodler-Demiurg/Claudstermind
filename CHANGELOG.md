@@ -4,6 +4,28 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.16.6] - 2026-09-09
+### Fixed — a sent prompt came back as a queued one. My regression, one release old.
+
+*"why was this captured 2 times"* — the same message shown as delivered (`P#778`) **and** sitting
+below it in an orange bubble reading "queued — sending once this turn finishes". It would have been
+sent a second time.
+
+1.16.5's fix made the queue durable across a **view switch** (not just an unload) by writing it to
+storage on enqueue and clearing it on drain. But a pane's queue is cleared in **four other places** —
+a repo change, a worktree change, a session change, a repo set — and none of them wrote back. Storage
+kept a message that memory had dropped, and `wsQueueRestore` resurrected it on the next view entry,
+**after it had already been sent**.
+
+The fix is not four more calls, because the fifth site would forget again. **A pane's queue now
+changes in exactly one place** — `wsQueueSet(p, items)`, with `wsQueuePush` on top of it — which
+writes memory and storage together, in that order, with nothing in between. Every clear site and every
+enqueue site goes through the pair, and a test asserts that **exactly one** `p._queue =` assignment
+exists in the file and that nothing pushes onto it directly.
+
+That test is the real repair: the bug was never the four missing calls, it was that a durable
+invariant was being maintained by convention across nine call sites.
+
 ## [1.16.5] - 2026-09-09
 ### Fixed — opening a pane with the keyboard up left half a pane to render in
 
