@@ -4,6 +4,38 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.16.4] - 2026-09-09
+### Fixed — four reports from using it, three of them data loss or worse
+
+**A queued prompt vanished on a view switch.** The orange bubble is a message queued while a turn is
+running, and Core keeps a durable copy of that queue — but it was written on `pagehide` only, and a
+view switch is not an unload. `viewWorkspace` builds a fresh `st` and reloads its panes from storage
+on every entry, so the in-memory queue went with the old one and **the message was never sent**. The
+queue is now saved when it CHANGES and cleared when it drains, so the stored copy is always current
+and a sent message cannot come back.
+
+**A typed prompt was lost when the page came back.** The type box is the cockpit's own element and
+nothing ever handed the saved draft back to it, so any rebuild — a reload, or in Core a view switch —
+left it empty while the host still had the text. Both workspaces now feed it, and **Pact also
+persists it**: it set `a.draft` on every keystroke but never saved, so a reload dropped it. Written
+back only when it differs and the box is not focused, or assigning `value` moves the caret to the end
+mid-sentence.
+
+**`auto` looked shared between the workspaces — it is not, and the truth was worse.** Measured: tap it
+in Pact, the switch stays off; navigate away and back, it is on. The cockpit deliberately renders what
+the **host** says is true rather than what was last pressed (a locally toggled control claims a state
+that may never have been written), and the price of that honesty is that nothing repaints until the
+host pushes state back — and these setters do not run through `paintPane`. So the control answered a
+second later, which is indistinguishable from one that is broken, or one that belongs to another
+workspace. **Every callback now re-syncs**, in both workspaces; `input` is exempt, because it fires per
+keystroke.
+
+**Pact showed no size and ceilings.** `pactPaintStatsRow`'s first line was
+`if (!PACT_CHAT || !PACT_CHAT._view) return;` — and on a phone there is no view, because Pact mounts
+the chat-shell package only on the desktop. It returned before computing anything. The numbers are now
+computed for either consumer and the chips built by the same `buildStatsChips` the package would have
+used, inside the package's own scope so they are styled by it rather than by a copy of its rules.
+
 ## [1.16.3] - 2026-09-09
 ### Fixed — the repository map, reconciled against disk (31 → 35)
 

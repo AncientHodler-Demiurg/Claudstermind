@@ -889,6 +889,15 @@
       // The chat BOXES, distinct from `conversations` (the threads of one repository) — see chatsSheet.
       if ("chats" in s) state.chats = s.chats || [];
       if ("busy" in s) state.busy = !!s.busy;
+      /* THE DRAFT COMES BACK. The box is the cockpit's own element, so a reload — or, in Core, a view
+         switch, which rebuilds every pane from storage — left it empty even though the host had the
+         text saved all along. Written only when it actually differs AND the box is not focused: this
+         runs on every streamed token, and assigning `value` to a focused textarea moves the caret to
+         the end mid-sentence. */
+      if ("draft" in s) {
+        var d = s.draft == null ? "" : String(s.draft);
+        if (d !== box.value && doc.activeElement !== box) { box.value = d; grow(); }
+      }
       // The whole presentation, as ChatShell.sendPresentation returns it — see paintRisers' send/stop.
       if ("sending" in s) state.sending = s.sending || null;
       if ("stick" in s) state.stick = !!s.stick;

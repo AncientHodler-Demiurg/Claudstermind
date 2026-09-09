@@ -5317,6 +5317,7 @@ function pactNode(it) {
   return row;
 }
 let PACT_MC = null;   // the mobile cockpit mounted in Pact's chat stage (null on desktop / classic)
+let PACT_MC_DRAFT_T = 0;   // debounce for persisting the draft — `input` fires on every keystroke
 let PACT_MOBILE_FILE_TAP = null;   // (path,row)=>… set by viewPactMobile; the tree's file tap → donut picker
 let PACT_MOBILE_SESSIONS_CB = null;   // ()=>… set by viewPactMobile while its history sheet is open; re-renders it when a `sessions` fetch lands
 let PACT_MOBILE_PAINT_CB = null;      // ()=>… set by viewPactMobile's chatStage; syncs the mobile control bar's send/stop + chat count to the active tab (called at the end of pactChatPaint)
@@ -9683,7 +9684,11 @@ function pactExoCtx(t) {
 // Built through the SAME chat-shell.js function Core and the Lab use (CS.buildStatsChips) — see the
 // comment on wsPaintStatsRow. This used to be a third independent hand-copy of the same row.
 function pactPaintStatsRow(t) {
-  if (!PACT_CHAT || !PACT_CHAT._view) return;
+  // The `_view` guard used to be the FIRST line, and on a phone there is no view — Pact mounts the
+  // chat-shell package only on the desktop. So this returned before computing anything, and the
+  // cockpit's "Size and ceilings" section had nothing to show. The numbers are worth computing for
+  // either consumer; each is checked where it is used, below.
+  if (!PACT_CHAT || (!PACT_CHAT._view && !PACT_MC)) return;
   const msgs = Array.isArray(t.msgs) ? t.msgs : [];
   // Window-scoped, for the same reason and by the same rule as Core's wsPaintStatsRow: the ceilings
   // are per-window, the transcript keeps every wrapped turn, and the boundary is the last `wrapped`
@@ -9706,15 +9711,23 @@ function pactPaintStatsRow(t) {
   // `buildStatsChips(...) + replaceChildren` (which is what this was). That mattered the moment the
   // context readout moved into this row: it is a stable node the package re-appends across repaints,
   // and a caller clearing the row itself would have dropped it on the first paint after mount.
-  PACT_CHAT._view.setState({
-    stats: { prompts: nP, responses: nR, bytes, tokens: Number(usage.totalTokens) || 0,
-      ceiling: Number(usage.maxTokens) || 1000000, maxTurns: 1000, maxBytes: 25 * 1024 * 1024,
-      pFrom, rFrom,
-      compactCount: t._compactCount || 0, wrapCount: Math.max(nWraps, t._wrapCount || 0), tailTurns: 200,
-      // The Lab's own class names (see Core's identical call) — one chip system, not two.
-      chipClass: "chip", warnClass: "--warn", mutedClass: "--far",
-      fmtNum: wsNumFmt, fmtBytes: wsFmtBytes },
-  });
+  const statsData = { prompts: nP, responses: nR, bytes, tokens: Number(usage.totalTokens) || 0,
+    ceiling: Number(usage.maxTokens) || 1000000, maxTurns: 1000, maxBytes: 25 * 1024 * 1024,
+    pFrom, rFrom,
+    compactCount: t._compactCount || 0, wrapCount: Math.max(nWraps, t._wrapCount || 0), tailTurns: 200,
+    // The Lab's own class names (see Core's identical call) — one chip system, not two.
+    chipClass: "chip", warnClass: "--warn", mutedClass: "--far",
+    fmtNum: wsNumFmt, fmtBytes: wsFmtBytes };
+  if (PACT_CHAT._view) PACT_CHAT._view.setState({ stats: statsData });
+  /* THE PHONE HAS NO PACKAGE TO HAND THEM TO. Pact mounts the chat-shell package only on the desktop,
+     so on a phone this function computed the window's numbers and then had nowhere to put them — the
+     cockpit's "Size and ceilings" section was simply empty ("Pact workspace doesn't display size and
+     ceilings"). The chips are built by the SAME function the package would have used, wrapped in the
+     package's own scope so they are styled by it rather than by a copy of its rules. */
+  if (PACT_MC) {
+    const box = el("div", { class: "cs-shell mc-chips" }, window.ChatShell.buildStatsChips(statsData));
+    PACT_MC.setState({ stats: [box] });
+  }
 }
 // Compact/Wrap/auto-wrap, built through the SAME shared function Core and the Chat Shell Lab use
 // (window.ChatShell.buildWrapControls). Repainted on every pactChatPaint() — the meter and Wrap's
@@ -11413,8 +11426,22 @@ function viewPactMobile() {
             return [ws, find];
           })()].flat(),
         },
-        on: {
-          input: (v) => { const t = input(); if (t) { t.value = v; drive((a) => { a.draft = v; }); } },
+        /* EVERY CALLBACK RE-SYNCS. The cockpit deliberately shows what the HOST says is true rather
+           than what was last pressed (a locally toggled control claims a state that may never have
+           been written). The cost of that honesty is that nothing repaints until the host pushes
+           state back — and these setters do not go through pactChatPaint, so tapping `auto` changed
+           the tab and left the switch looking untouched until the next full render. Measured: off →
+           tap → still off → navigate away and back → on. A control that answers a second later is
+           indistinguishable from one that is broken, or one that belongs to another workspace. */
+        on: (() => {
+          const sync = (fn) => (...args) => { const r = fn(...args); pactMcSync(); return r; };
+          const raw = {
+          input: (v) => {
+            const t = input(); if (t) t.value = v;
+            drive((a) => { a.draft = v; });
+            clearTimeout(PACT_MC_DRAFT_T);
+            PACT_MC_DRAFT_T = setTimeout(pactStateSave, 400);   // debounced: this fires on every keystroke
+          },
           send: () => { const t = input(); pactChatSend(act()); if (t) t.value = ""; return true; },
           stop: () => drive((a) => { if (!a.key) return; a._stopping = Date.now(); pactChatPaint(a); wsPost("stop", { sessionKey: a.key }); }),
           attach: () => { const inp = chatHost.querySelector(".pc-img-input"); if (inp) inp.click(); },
@@ -11440,7 +11467,13 @@ function viewPactMobile() {
           },
           newChat: () => { pactChatNewTab(); renderStage(); },
           pickMark: (at) => drive((a) => pactChatScrollToResponse(a, at)),
-        },
+          };
+          const out = {};
+          // `input` is exempt: it fires on every keystroke, and a full re-sync per character would
+          // repaint the risers, the panes and the chips sixty times a second.
+          Object.keys(raw).forEach((k) => { out[k] = k === "input" ? raw[k] : sync(raw[k]); });
+          return out;
+        })(),
       });
       requestAnimationFrame(dockModeBulb);
       PACT_MOBILE_PAINT_CB = () => { pactMcSync(); };
@@ -11497,6 +11530,7 @@ function viewPactMobile() {
       star: !!(a && prime && a.id === prime.id),
       connection: busy ? { text: deep ? "Deep work" : "Working", tone: "busy" } : { text: "Live", tone: "ok" },
       busy, sending: pres,
+      draft: (a && a.draft) || "",
       stick: (() => { const sc = PACT_CHAT.host && PACT_CHAT.host.querySelector(".pc-scroll"); return !sc || !sc._stick || sc._stick.pinned !== false; })(),
       // No `worktree` for Pact: the module's Workspace row would tap nothing, because Pact's real
       // control is the pill re-homed into the pane above. One control, not a row that looks like one.
@@ -13350,7 +13384,12 @@ function viewWorkspace() {
           // are the package's own rows with Core's listeners already on them.
           composeExtra: [imgPreviewWrap, imgErr, replyRowWrap],
         },
-        on: {
+        /* Same rule as Pact's: the cockpit shows what the HOST says, so a control that changes state
+           without a repaint looks like a control that did nothing. `input` is exempt — it fires per
+           keystroke and a full re-sync per character would repaint the risers, panes and chips. */
+        on: (() => {
+          const sync = (fn) => (...args) => { const r = fn(...args); wsMcSync(p); return r; };
+          const raw = {
           input: mirror,
           send: () => { send(p); return true; },
           stop: () => { assignKey(p); p._stopping = Date.now(); wsApplyStall(p); wsPost("stop", { sessionKey: p.sessionKey }); logActivity(p, "■ Stopping…"); },
@@ -13381,7 +13420,11 @@ function viewWorkspace() {
           // read-only vs resume means exactly what it means there.
           openConversation: (key) => reopen(key, "open"),
           resumeConversation: (key) => reopen(key, "resume"),
-        },
+          };
+          const out = {};
+          Object.keys(raw).forEach((k) => { out[k] = k === "input" ? raw[k] : sync(raw[k]); });
+          return out;
+        })(),
       });
       // The body carries the class for the page; the pane carries it too so a pane built BEFORE
       // syncMobile() has run is still styled (panes are built from the saved layout first).
@@ -13448,6 +13491,7 @@ function viewWorkspace() {
       star: active === 0,
       connection: busy ? { text: "Working", tone: "busy" } : { text: "Live", tone: "ok" },
       busy,
+      draft: p.draft || "",   // the box is the cockpit's own; without this a view switch empties it
       // The presentation itself, straight from ChatShell.sendPresentation via paintPane — amber for a
       // running turn, red for deep work, a pulsing ring for background work, "Stopping…" on a pressed
       // Stop. `busy` stays as the fallback for the first paint, before paintPane has run once.
@@ -14869,6 +14913,7 @@ function viewWorkspace() {
           if (p._pendingText) {
             p._queue = p._queue || [];
             p._queue.push({ text: p._pendingText, images: p._pendingImages || [] });
+            wsQueueSave();
             p._pendingText = null; p._pendingImages = null;
             schedulePaint(p);
             logActivity(p, "⏳ Queued — sending once the current turn finishes…");
@@ -15320,6 +15365,7 @@ function viewWorkspace() {
     if (paneBusy(p) || !p._queue || !p._queue.length) return;
     const items = p._queue;
     p._queue = null;
+    wsQueueSave();   // the stored copy must go too, or a later view switch resurrects a sent message
     const text = items.map((i) => i.text).join("\n\n");
     // Every queued message's images ride along too, in the order they were typed — a merged turn
     // is still just one prompt, so it respects the same WS_IMG_MAX_COUNT cap a single send does.
@@ -15356,6 +15402,7 @@ function viewWorkspace() {
     if (paneBusy(p)) {
       p._queue = p._queue || [];
       p._queue.push({ text, images: attachedImages });
+      wsQueueSave();   // survive a VIEW SWITCH, not just a reload — see wsQueueSave
       paintPane(p);
       return;
     }
