@@ -12743,9 +12743,16 @@ function viewWorkspace() {
         input: (v) => { p.draft = v; saveDraftsSoon(); },   // remember typed-but-unsent text across a view switch
         attach: () => imgFileInput.click(),
         drop: (files) => wsAttachImageFiles(p, files),
-        paste: (e) => wsHandlePastedImages(p, e),
+        // NO `paste` OR `history` CALLBACK HERE, and that is the fix rather than the omission:
+        // both named functions that were never written (`wsHandlePastedImages`, `wsOpenHistory`), so
+        // every paste into the type box and every click of the 🕐 button threw
+        // `ReferenceError: … is not defined`. Neither failure was visible, because Core ALREADY wires
+        // both on the very same nodes — its own `promptEl` paste listener attaches the images, its own
+        // `histBtn` listener scopes the history column — and those listeners run regardless of the
+        // package's callback throwing after them. Two handlers for one event, one of them broken, and
+        // the working one hiding it. lib/appScopeLeaks.test.mjs now fails on a call to a name this
+        // file never defines.
         expand: (on) => { p.expanded = on; saveLayout(); },
-        history: () => wsOpenHistory(p),
         bookmarks: () => {
           const showIt = !bmPop.classList.contains("--show");
           document.querySelectorAll(".ws-bm-pop.--show").forEach((x) => x.classList.remove("--show"));   // one open at a time

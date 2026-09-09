@@ -254,6 +254,15 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
 .m-kind.--website{color:#22d3ee;border-color:#22d3ee55}
 .m-kind.--orchestrator{color:#f0abfc;border-color:#f0abfc55}
 
+/* a history row: what it was, when, its first prompt, and whether resuming it rebuilds a worktree */
+.m-hist{display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:11px;background:var(--chip);border:1px solid var(--line)}
+.m-hist.--gone{border-color:color-mix(in srgb,var(--warn) 45%,var(--line))}
+.m-hist-1{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700}
+.m-hist-1 span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.m-hist-1 em{font-style:normal;font-size:11px;font-weight:400;color:var(--dim)}
+.m-hist-2{font-size:11.5px;color:var(--dim);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.m-hist-warn{font-size:11px;color:var(--warn)}
+
 /* agent tabs, in the right pane beside the numbers they summarise */
 .m-agent{display:flex;align-items:center;gap:9px;min-height:42px;padding:4px 10px;border-radius:10px;background:var(--chip);
   border:1px solid var(--line);font-size:12.5px}
@@ -424,6 +433,15 @@ var S = {
   sheet: null,               // "model" | "convos" | "marks" | null — which pull-up sheet is open
   overlay: null,             // "context" | null — the full-page readouts
   repo: "Claudstermind",
+  histScope: "repo",         // the sidebar's scope toggle, kept: this repository or all of them
+  history: [
+    { name: "Claudstermind · Main", repo: "Claudstermind", when: "live", first: "the mobile view is broken. rework it…", gone: false },
+    { name: "Claudstermind · mobile rework", repo: "Claudstermind", when: "20m", first: "lets move the live/held button…", gone: false },
+    { name: "Claudstermind · relay deploy", repo: "Claudstermind", when: "1d", first: "tried to deploy the remote it errored out", gone: false },
+    { name: "Claudstermind · wrap audit", repo: "Claudstermind", when: "2d", first: "why would wrap show 127 answers…", gone: true },
+    { name: "OuronetUI · Main", repo: "OuroborosNetwork/daimons/OuronetUI", when: "2h", first: "i want to start working on the dev branch…", gone: false },
+    { name: "Khronoton · Main", repo: "AncientPantheon/constructors/Khronoton", when: "1d", first: "publish 0.9.0 end to end", gone: false }
+  ],
   busy: false,               // a turn in flight: colours the medallion, Stop and Send
   big: false,                // the retractor: does the type box get ~30% or ~52% of the screen
   stick: true,               // transcript pinned to the bottom (the bulb's Live) vs held where you left it
@@ -665,6 +683,56 @@ function contextOverlay() {
   ]);
 }
 
+/* HISTORY — every conversation that has ever existed, which is a different question from "which of
+   this repository's conversations do I want open" (that is the left pane, level 2). It is its own
+   page because it carries what a list of open chats does not: a SEARCH across archived turns, a
+   SCOPE (this repository or all of them), and the difference between OPEN and RESUME — a conversation
+   whose worktree is gone can still be resumed, and has to say so before you pick it. */
+function historyOverlay() {
+  var x = el("button", { class: "m-px", type: "button" }, ["✕"]);
+  onTap(x, function () { setOverlay(null); });
+  var body = el("div", { class: "m-over-body rg-core" }, []);
+  var count = el("b", {}, [""]);
+  var input = el("input", { type: "search", placeholder: "Search conversations and archived turns…", autocomplete: "off" }, []);
+  var scopeBtn = function (label, on, fn) {
+    var b = el("button", { class: "m-btn" + (on ? " --acc" : ""), type: "button" }, [label]);
+    onTap(b, fn);
+    return b;
+  };
+  var paint = function () {
+    var q = String(input.value || "").trim().toLowerCase();
+    var rows = S.history.filter(function (h) {
+      if (S.histScope === "repo" && h.repo !== S.repo) return false;
+      return !q || (h.name + " " + h.first + " " + h.repo).toLowerCase().indexOf(q) >= 0;
+    });
+    count.textContent = rows.length + " of " + S.history.length;
+    body.replaceChildren(
+      el("div", { class: "m-btns" }, [
+        scopeBtn("This repository", S.histScope === "repo", function () { S.histScope = "repo"; paint(); }),
+        scopeBtn("All repositories", S.histScope === "all", function () { S.histScope = "all"; paint(); })
+      ]),
+      el("div", { class: "m-sec" }, rows.length ? rows.map(function (h) {
+        var r = el("div", { class: "m-hist" + (h.gone ? " --gone" : "") }, [
+          el("div", { class: "m-hist-1" }, [el("span", {}, [h.name]), el("em", {}, [h.when])]),
+          el("div", { class: "m-hist-2" }, [h.first]),
+          h.gone ? el("div", { class: "m-hist-warn" }, ["⚠ worktree removed — Resume recreates it"]) : null,
+          el("div", { class: "m-btns" }, [
+            el("button", { class: "m-btn", type: "button" }, [h.gone ? "Open read-only" : "Open"]),
+            el("button", { class: "m-btn --acc", type: "button" }, ["Resume here"])])
+        ].filter(Boolean));
+        return r;
+      }) : [el("div", { class: "m-row" }, [el("span", {}, ["Nothing matches."])])])
+    );
+  };
+  input.addEventListener("input", paint);
+  paint();
+  return el("div", { class: "m-over" }, [
+    el("div", { class: "m-over-hd" }, [el("b", {}, ["History"]), x]),
+    el("div", { class: "m-find" }, [input, count]),
+    body
+  ]);
+}
+
 /* THE REPOSITORY CHOOSER — the whole page, grouped by ORGANISATION exactly as the Overview groups
    them, because that grouping is how this workspace is actually organised and a phone has no room to
    invent a second one. Picking a repository moves this chat box to that repository's ★ main
@@ -784,6 +852,12 @@ function leftPanel() {
     el("div", { class: "m-pbody rg-core" }, [
       section("1 · Repository", repoRows),
       section("2 · Conversations in " + S.repo.split("/").pop(), convoBlock),
+      section("History", [(function () {
+        var b = el("div", { class: "m-row" }, [el("span", {}, ["🕐 All conversations"]),
+          el("em", {}, [S.history.length + " · searchable"])]);
+        onTap(b, function () { setPanel(null); setOverlay("history"); });
+        return b;
+      })()]),
       section("Workspace for this conversation", [ws,
         el("div", { class: "m-btns" }, [el("button", { class: "m-btn", type: "button" }, ["Select worktree"]),
                                         el("button", { class: "m-btn --acc", type: "button" }, ["＋ Create"])])])
@@ -916,8 +990,10 @@ function proposed() {
   box.addEventListener("input", grow);
 
   /* 2. THE BUTTON ROW — menu + upload left, retractor centred under the medallion, auto/Stop/Send right. */
-  var menuB = el("button", { class: "m-ico", type: "button", title: "Session" }, ["☰"]);
-  onTap(menuB, function () { setPanel("left"); });
+  /* NO ☰. On the desktop it opens the tree column; here the tree column IS the repository chooser,
+     which the left pane already reaches with one button — and the left pane itself is reachable from
+     its rail and from the Chats riser. Three doors to one room, in a row where every slot is width
+     taken from Send. */
   var upB = el("button", { class: "m-ico", type: "button", title: "Attach" }, ["📎"]);
   var autoB = el("div", { class: "m-auto" + (S.autoContinue ? " on" : "") }, [el("div", { class: "m-sw" }, [el("i", {}, [])]), "auto"]);
   onTap(autoB, function () { S.autoContinue = !S.autoContinue; render(); });
@@ -944,7 +1020,7 @@ function proposed() {
      is the Live/Held bulb, which is a STATE and belongs where the eye already goes. */
   /* Menu and upload left; auto, Stop and Send right with the whole remaining width to sit in. The
      middle is empty on purpose now — the bulb it used to hold moved up onto the core's own edge. */
-  var btnrow = el("div", { class: "m-btnrow" }, [menuB, upB, el("div", { class: "m-mid" }, []), autoB, stopB, send]);
+  var btnrow = el("div", { class: "m-btnrow" }, [upB, el("div", { class: "m-mid" }, []), autoB, stopB, send]);
 
   /* 1. THE STRIP glued to the nav. The middle is a READOUT of what is running; pulling it up (or
      tapping it) opens the right pane, which is where the selector lives. */
@@ -994,6 +1070,7 @@ function proposed() {
   else if (S.sheet === "marks") kids.push(marksSheet());
   if (S.overlay === "context") kids.push(contextOverlay());
   else if (S.overlay === "repos") kids.push(repoOverlay());
+  else if (S.overlay === "history") kids.push(historyOverlay());
   var wrap = el("div", { class: "mob" }, kids);
   wrap.id = "mob";
   requestAnimationFrame(function () { if (S.stick) core.scrollTop = core.scrollHeight; });

@@ -4,6 +4,33 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.14.7] - 2026-09-09
+### Fixed — two callbacks that named functions nobody ever wrote
+
+Found by clicking the desktop 🕐 button in a real browser:
+`ReferenceError: wsOpenHistory is not defined`. A scan for the same shape found a second one on the
+paste path: **`wsHandlePastedImages`**. Both were passed to the chat-shell package as `on.history` and
+`on.paste`, and neither has ever existed.
+
+Neither failure was visible, which is the interesting part. **Core already wires both on the very same
+nodes** — its own `promptEl` paste listener attaches the images, its own `histBtn` listener scopes the
+history column — so the working handler ran, the dead one threw after it, and the feature looked fine.
+Two handlers for one event, one of them broken, and the live one covering for it.
+
+The fix is to delete the dead callbacks. `lib/appScopeLeaks.test.mjs` now fails on any call to a
+`ws*` / `pact*` / `exo*` name the file never defines — the check `node --check` cannot do, because a
+ReferenceError is a runtime event and no test had ever clicked the button.
+
+### Changed — Mobile Cockpit Lab: no ☰, and History becomes its own page
+- **The menu button is gone.** On the desktop it opens the tree column; here the tree column *is* the
+  repository chooser, which the left pane already reaches with one button — and the left pane is
+  reachable from its rail and from the Chats riser. Three doors to one room, in a row where every slot
+  is width taken from Send.
+- **History is its own page**, reached from the left pane, and it carries what the sidebar's history
+  half carries and a list of open chats does not: a **search** across archived turns, a **scope**
+  (this repository / all repositories), and the distinction between **Open** and **Resume** — a
+  conversation whose worktree is gone can still be resumed, and says so before you pick it.
+
 ## [1.14.6] - 2026-09-09
 ### Changed — Mobile Cockpit Lab: one state medallion in the header, not three
 
