@@ -4,6 +4,42 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.16.3] - 2026-09-09
+### Fixed — the repository map, reconciled against disk (31 → 35)
+
+`dashboard/data/map.json` was generated 2026-07-14 and had drifted. It matters more than it used to:
+since 1.15.0 it is not only what the Overview draws but what the **mobile cockpit's repository chooser
+lists**, so a stale entry is a repository you cannot open from a phone.
+
+**Two were not missing — they were frozen mid-move.** `ouronet-libs` and `stoa-chain-libs` both carried
+the path `"StoaChain/_infra/stoa-js (pre-split)"`, a placeholder written while they were one
+repository, while `ouronet-libs`' own movement note already read `✅ Phase-4 done (2026-07-22): split
+from stoa-js`. **The record of the move landed; the path it moved to never did.** Both exist on disk,
+separately, with their own remotes — and nothing reading this file could find either.
+
+**Four were genuinely absent**, added with the role read from what each contains and `org.current ==
+org.target`, so no movement is invented for a repository the greenlit reorg never mentioned:
+
+| repo | role | evidence |
+|---|---|---|
+| `StoicDigest` | website | `stoicdigest` 0.1.0, under `websites/`, remote `StoaChain/stoic-digest` |
+| `DemiourgosMotionPictures` | client | `demiourgos-site` 1.0.0 — a Node app with its own Dockerfile and db |
+| `Tago` | client | documents only (assessment v2.4.0), no code, no remote — `status: wip` |
+| `StoaVerify` | client | business plan + handoff + tooling, no code, no remote — `status: wip` |
+
+**Fifteen other git checkouts under the workspace are deliberately not listed** — `_upstream/*`,
+`_exocortex-study/*`, `_Archive/*` and a vendored font source. That decision is now written into
+`meta.reconciledNote`, because a decision that is not written down reads as an omission the next time
+someone runs the diff.
+
+`lib/repoMap.test.mjs` guards the shape that hid this for seven weeks: **a finished move may not keep
+an unfinished path**, a placeholder must say which honest state it means (`(no repo yet)`,
+`(embedded)`), and no two entries may claim the same path. Checked against the pre-fix file: three of
+its five tests fail on it.
+
+Verified in both surfaces: the Overview reads **35 repositories**, and the phone's chooser lists 35
+across all five organisations.
+
 ## [1.16.2] - 2026-09-09
 ### Fixed — Compact and Wrap now close the surface they were pressed in
 
