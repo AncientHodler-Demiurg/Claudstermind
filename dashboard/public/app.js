@@ -9343,7 +9343,9 @@ function pactPaintAutoControl(t, d) {
   // The same decision, to the phone's own switch. It was shaped for the desktop package only, so on
   // a phone the loop counted down with nothing saying so — "the round number, and the timer to send
   // the recommended input. That's missing."
-  if (PACT_MC) PACT_MC.setState({ running: { auto: ac, autoContinue: !!d.on } });
+  if (PACT_MC) PACT_MC.setState({ running: { auto: ac, autoContinue: !!d.on },
+    // What it will actually send, shown as the box's ghost while the clock runs.
+    autoNext: (d.arm && !d.fire) ? pactAutoNextText(t) : "" });
 }
 function pactChatUpdateSuggest(t) {
   if (!PACT_CHAT || !PACT_CHAT.host) return;
@@ -13956,7 +13958,8 @@ function viewWorkspace() {
       const ac = { shown: d.show || d.on, on: d.on, n: d.autoCount, max: d.autoCap,
                    in: d.arm && !d.fire ? Math.max(1, Math.ceil(d.msLeft / 1000)) : null };
       ui.view.setState({ autoContinue: ac });
-      if (ui.mc) ui.mc.setState({ running: { auto: ac, autoContinue: !!d.on } });
+      if (ui.mc) ui.mc.setState({ running: { auto: ac, autoContinue: !!d.on },
+                                  autoNext: (d.arm && !d.fire) ? WS_AUTO_TEXT : "" });
       if (ui.view.els.sendGrp) ui.view.els.sendGrp.title = title;
     }
     if (!d.arm) { wsAutoStop(p); return d; }

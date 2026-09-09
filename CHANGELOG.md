@@ -4,6 +4,39 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.17.8] - 2026-09-09
+### Added — while auto-continue is armed, the field ghosts the message it is about to send
+
+*"When auto is on the field should be populated with the recommended message in ghost form, and after
+the countdown expires it should be released."* A send that happens on its own should never be a
+surprise — now you can read it before it goes, and the countdown on the auto chip tells you how long
+you have to stop it.
+
+The ghost is the box's **placeholder**, never its value, and that is not a shortcut. `composing` —
+any text at all in the compose box — is precisely the state that pauses auto-continue (your
+half-typed message outranks the robot). Writing the suggestion into the field would suspend the very
+countdown it is advertising, and the loop would sit there forever displaying what it means to send.
+
+Published only while `arm && !fire` — the one window in which a pending send actually exists — from
+both engines, so the ghost cannot outlive the decision that produced it.
+
+### Where the recommended message comes from
+Worth recording, since it is easy to assume otherwise: **the engine does not supply it.** There is no
+"next recommended message" anywhere in the SDK, `lib/claudeSession.mjs`, `lib/workspace.mjs` or the
+relay — the string is composed in the browser.
+
+- **Pact** reads the last assistant message and looks for a named next step — `next: <token>`,
+  `next up — <token>`, `continue with <token>` — and turns it into `Continue with <token>.`
+  (`pactSuggestNext`). It deliberately returns nothing when the reply named no next step: *"a
+  suggestion nobody suggested is noise occupying the one place the real next prompt goes."*
+- **Core** has no suggestion logic at all: `WS_AUTO_TEXT` is the constant `Continue where you left
+  off.`, always.
+- Auto-continue keeps its own fallback (`pactAutoNextText`) because the loop must send *something* —
+  which is a different question from what is worth advertising.
+
+So the ghost reads `Continue with <token>.` in Pact when the agent actually named one, and
+`Continue where you left off.` otherwise.
+
 ## [1.17.7] - 2026-09-09
 ### Fixed — the Live/Held bulb was watching a node that cannot scroll
 

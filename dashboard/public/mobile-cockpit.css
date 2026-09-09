@@ -168,6 +168,9 @@ body.ws-mobile2 .pactm-cbar, body.ws-mobile2 .pactm-modebar{display:none}
 .ws-mobile2 .mc-box{flex:1 1 auto;min-width:0;height:40px;max-height:42vh;resize:none;overflow-y:auto;background:color-mix(in srgb, var(--panel) 94%, var(--ink) 6%);
   border:1px solid var(--field-line);border-radius:12px;color:var(--ink);font:inherit;font-size:15px;line-height:1.45;padding:10px 12px}
 .ws-mobile2 .mc-box:focus{outline:none;border-color:var(--accent)}
+/* The ghost is the placeholder, so it is already dim — this only marks it as a PENDING SEND rather
+   than an invitation to type. See `autoNext` in mobile-cockpit.js for why it can never be a value. */
+.ws-mobile2 .mc-box.--ghost::placeholder{color:var(--accent);opacity:.55;font-style:italic}
 .ws-mobile2 .mc-btnrow{flex:0 0 auto;position:relative;display:flex;align-items:center;gap:8px;padding:8px 10px;background:transparent}
 .ws-mobile2 .mc-ico{flex:0 0 auto;width:40px;height:40px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;
   background:var(--chip);border:1px solid var(--line);color:var(--ink);font-size:17px;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}

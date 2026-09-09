@@ -119,6 +119,11 @@
       /* What the host says about wrapping RIGHT NOW: the threshold in the label, and whether it can
          fire. Absent means "no opinion" — the button then behaves as it always did. */
       wrap: null,
+      /* What auto-continue is about to send, while it is counting down. Shown as the box's GHOST —
+         its placeholder — and never as its value: a value would make the compose box non-empty, and
+         `composing` is precisely the state that PAUSES the loop. The ghost would stop the countdown
+         it is advertising. */
+      autoNext: "",
       stats: [], agents: [], repos: [], history: [], marks: [],
       conversations: [],   // the threads of ONE repository
       chats: [],           // the chat BOXES, one per repository — see chatsSheet
@@ -166,7 +171,8 @@
     /* ======================= THE FOOTER, in three strips ===================================== */
     /* 3. THE TYPE BOX, FULL WIDTH. An attach button beside it is precisely what made the field
        narrow enough to be worth reporting. */
-    var box = el("textarea", { class: "mc-box rg-typebox", rows: "1", placeholder: "Message Claude…" }, []);
+    var BOX_PLACEHOLDER = "Message Claude…";
+    var box = el("textarea", { class: "mc-box rg-typebox", rows: "1", placeholder: BOX_PLACEHOLDER }, []);
     /* THE SEAM BULB. On the desktop this sits ON the boundary between the transcript and the footer
        (components.css .seambulb, top:-11px, zero flow height) — it belongs to the core's lower edge,
        which is the line it reports on. Same here: absolutely placed on the compose row's top border,
@@ -986,6 +992,7 @@
         if ("auto" in r) state.running.auto = r.auto || null;
       }
       if ("wrap" in s) state.wrap = s.wrap || null;
+      if ("autoNext" in s) state.autoNext = s.autoNext == null ? "" : String(s.autoNext);
       if ("context" in s) {
         var cx = s.context || {};
         state.context = { tokens: nn(cx.tokens, 0), ceiling: nn(cx.ceiling, 1000000), parts: cx.parts || [] };
@@ -1017,6 +1024,11 @@
          the text arrives AND the box is unfocused; a box that was hidden, or not yet laid out, when
          that happened kept a height measured against nothing. One string compare per paint, and it
          measures only when the text is not the text it last sized for. */
+      /* THE GHOST. While the loop is armed the field shows the exact text it is about to release, so
+         a send that happens on its own is never a surprise; the moment it is not armed the box goes
+         back to inviting you to write. */
+      box.placeholder = state.autoNext || BOX_PLACEHOLDER;
+      box.classList.toggle("--ghost", !!state.autoNext);
       growIfNeeded();
       paintHead();
       paintBulb();
