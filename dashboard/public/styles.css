@@ -416,7 +416,6 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .ws-sheet-row-x { color: var(--ink-mute); font-size: 18px; padding: 0 4px; }
 .ws-sheet-add { justify-content: center; color: var(--accent); font-weight: 600; }
 /* The borrowed pane-controls node, shown inside the settings sheet (it's display:none while in the pane). */
-.ws-sheet-body .ws-pane-controls { display: flex; flex-wrap: wrap; gap: 8px; border: none; padding: 0; background: transparent; }
 .ws-toolbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .ws-spacer { flex: 1; }
 .ws-trust { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink); }
@@ -647,10 +646,8 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 /* The interactive controls (repo/worktree/mode/history/usage) — moved down here, next to the
    compose row, rather than pinned in a header far from where you're actually typing. Mirrors
    Claude's own chat UI, which keeps its controls near the input, not in a fixed top bar. */
-.ws-pane-controls { display: flex; align-items: center; gap: 6px; padding: 6px 9px; border-top: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
 /* Core's model bar now sits at the BOTTOM of the pane (was above the composer) — matching Pact's
    .pc-modelbar so the two workspaces read identically. Same surface treatment as Pact's. */
-.ws-pane-controls.--modelbar { background: var(--panel2); border-top: 1px solid var(--line); border-bottom: 0; }
 /* Pane turn-lock status icon — plain CSS spinner (no glyph, no dependency): a muted ring
    at rest, spinning while the pane's session is mid-turn (busy), still again the moment
    that turn concludes (success or error). Toggled by paintPane() from p.status. */
@@ -1297,11 +1294,9 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
      column and the text box owns the rest of the width — maximizing the typing area. */
   .ws-compose { align-items: stretch; gap: 8px; }
   .ws-prompt { flex: 1; min-height: 96px; font-size: 16px; }
-  /* Compose-collapse (the ⌄/⌃ mobile button): cap the textarea to one line so a long draft stops eating the
-     transcript. Overrides wsAutoResizePrompt's inline height, like the Pact mobile compose collapse. */
-  .ws-mcompose-big .ws-prompt { min-height: 42vh !important; height: 42vh !important; max-height: 42vh !important; overflow-y: auto !important; }
-  .ws-mcbtn-collapse { font-size: 15px; }
-  .ws-mcompose-big .ws-mcbtn-collapse { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+  /* (The compose-collapse rules that sat here, and `.ws-mobile .ws-compose-btns/.ws-compose`, were
+     keyed to `.ws-prompt` and `.ws-compose-btns` — Core class names the chat-shell migration replaced
+     with the package's `.rg-typebox` and its own action row. They had matched nothing for months.) */
   .ws-compose-btns { flex-direction: column; justify-content: flex-end; gap: 8px; }
   .ws-compose-btns .ws-send,
   .ws-compose-btns .ws-stop,
@@ -1323,19 +1318,15 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
      room for two selects and a text chip. History stays (it's a single compact icon, same footprint
      as attach/expand, which already shared this column). */
   .ws-compose-btns select, .ws-compose-btns .ws-lines-chip { display: none; }
-  .ws-pane-controls { gap: 5px; }
   .wsel, .wsel-sm { font-size: 12.5px; }   /* keep selects legible + tappable */
 
   /* Stage-1 Core-mobile overhaul (Pact model): the per-pane compose buttons move to a global bottom
      control bar, so the textarea owns the full width — matching the Pact mobile chat. */
-  .ws-mobile .ws-compose-btns { display: none; }
-  .ws-mobile .ws-compose { gap: 0; }
   /* Conversations/Bookmarks as RISER TABS glued to the footer nav's top edge (Ouronet "Controls [N]" style):
      "💬 Conversations [n]" bottom-LEFT, "★ Bookmarks" bottom-RIGHT, flanking the centered Live/Held bulb.
      align-items:flex-end + zero bottom padding drops the tabs onto the fixed footer bar below. */
   .ws-mobile .ws-mmodebar { display: flex; justify-content: space-between; align-items: flex-end; gap: 8px;
     padding: 3px max(6px, env(safe-area-inset-left)) 0 max(6px, env(safe-area-inset-right)); flex: 0 0 auto; }
-  .ws-mmodebar-bulb { flex: 1 1 auto; display: flex; justify-content: center; align-items: center; min-width: 0; margin-bottom: 3px; }
   .ws-mbtn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; height: 19px; padding: 0 8px;
     border-radius: 7px 7px 0 0; border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--line)); border-bottom: none;
     background: color-mix(in srgb, var(--accent) 13%, var(--panel)); color: var(--accent);
@@ -1368,7 +1359,6 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .ws-mobile .ws-mtabs { display: none; }
   .ws-mobile .ws-toolbar { display: none; }
   /* Per-pane controls live in the ⚙ sheet on mobile — hidden while sitting in the pane. */
-  .ws-mobile .ws-pane .ws-pane-controls { display: none; }
   /* Stage 3: New folder / New repo, relocated into the ☰ drawer on mobile (their toolbar home is hidden). */
   .ws-mobile .ws-drawer-actions { display: flex; gap: 8px; margin-bottom: 10px; }
   .ws-mobile .ws-drawer-actions .ghost { flex: 1; min-height: 42px; border-radius: 10px; }

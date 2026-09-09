@@ -91,7 +91,7 @@ file is the specification — read the named selector or function in it.
     `lib/mobileCockpitWiring.test.mjs`
 
 ## Wave 3 (depends on Wave 2)
-- [ ] T4: Delete the mobile code that no longer matches anything, in `dashboard/public/app.js` and
+- [x] T4: Delete the mobile code that no longer matches anything, in `dashboard/public/app.js` and
   `dashboard/public/styles.css`. Remove `openSettingsSheet` and the `⚙` button that calls it (it
   targets `.ws-pane-controls`, deleted by the chat-shell migration, so it opens an empty sheet); the
   `⌃`/`⌄` compose-expand button and `WS_COMPOSE_BIG` (its only CSS effect is keyed to `.ws-prompt`,
@@ -106,3 +106,28 @@ file is the specification — read the named selector or function in it.
   both pass; `node scripts/mobile-smoke.mjs` is clean with the switch on and off; and a 412×915
   screenshot of the switch-**off** layout is pixel-identical to one taken before the task.
   - files: `dashboard/public/app.js`, `dashboard/public/styles.css`
+
+### T4 as executed — one part deliberately deferred
+
+Removed: the `⚙` pane-settings sheet and its button (it borrowed `.ws-pane-controls`, a node the
+chat-shell migration deleted, so it opened an empty sheet and returned); the `⌃`/`⌄` compose-expand
+button and `WS_COMPOSE_BIG` (its only rule was keyed to `.ws-prompt`, replaced by the package's
+`.rg-typebox`, so it swapped its own glyph and changed nothing); and the orphaned rules
+`.ws-pane-controls` (×5), `.ws-mcompose-big .ws-prompt`, `.ws-mcbtn-collapse`,
+`.ws-mobile .ws-compose-btns`, `.ws-mobile .ws-compose`, `.ws-mmodebar-bulb`.
+
+**Not removed: `renderMobileTabs` / `syncMobileTabDots` / the `.ws-mtabs` strip.** They are inert (the
+strip is `display: none`), but the removal touches eight call sites in the file the classic mobile
+layout — the fallback while the cockpit is behind a switch — depends on. The gain is dead weight; the
+risk lands on the layout someone falls back to. Deferred deliberately, as its own task:
+
+- [ ] T5: Remove `renderMobileTabs`, `syncMobileTabDots`, the `mobileTabs` element and its eight call
+  sites, plus the `.ws-mtabs*` rules in `dashboard/public/styles.css`. Do it once the cockpit is the
+  default and the classic layout is no longer the fallback.
+  — done when: `git diff` touches only those symbols and rules; the full suites pass; and
+  `node scripts/mobile-smoke.mjs` is clean with the switch on and off.
+  - files: `dashboard/public/app.js`, `dashboard/public/styles.css`
+
+**Note on "no rendered pixel":** two buttons DID leave the classic mobile bar (`⚙` and `⌃`). Both were
+controls in appearance only — pressing either did nothing at all — and a button that looks like a
+control and is not is worse than an absent one. The criterion held for every CSS rule removed.

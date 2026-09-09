@@ -3032,7 +3032,6 @@ function wsMobile2Toggle() {
   try { if (WS_MOBILE2) localStorage.removeItem("ws.mobile.v2"); else localStorage.setItem("ws.mobile.v2", "1"); } catch {}
   location.reload();
 }
-let WS_COMPOSE_BIG = (() => { try { return localStorage.getItem("ws.compose.big") === "1"; } catch { return false; } })();
 // Close any open ★-bookmark popup when clicking outside it (registered once, module load).
 document.addEventListener("mousedown", (e) => { if (!e.target.closest || !e.target.closest(".ws-bm-wrap")) document.querySelectorAll(".ws-bm-pop.--show").forEach((x) => x.classList.remove("--show")); });
 let WS_EVER_CONNECTED = false;   // true after the FIRST successful "hello" — so only a later hello logs as a "reconnect"
@@ -13264,10 +13263,17 @@ function viewWorkspace() {
         autoContinue: !!p._autoContinue,
       },
       context: { tokens: Number(usage.totalTokens) || 0, ceiling: Number(usage.maxTokens) || 0 },
-      agents: (Array.isArray(p._background) ? p._background : []).map((t) => ({
-        name: t.name || t.description || "agent", state: t.done ? "done" : "run",
-        meta: t.tokens ? (Math.round(t.tokens / 1000) + "k tok") : "",
-      })),
+      /* The task shape is lib/backgroundTasks.mjs's: `{ id, label, description, tokens, status }`.
+         `removed` is filtered the same way paintSwarm's swarmState filters it — a retired task is
+         not a finished one. (Written first against invented field names, which would have rendered a
+         column of rows all called "agent" and all shown as running.) */
+      agents: (Array.isArray(p._background) ? p._background : [])
+        .filter((t) => t && t.status !== "removed")
+        .map((t) => ({
+          name: t.label || t.description || "subagent",
+          state: t.status === "running" ? "run" : "done",
+          meta: t.tokens ? (Math.round(t.tokens / 1000) + "k tok") : "",
+        })),
       conversations: convos,
       marks: (Array.isArray(p.bookmarks) ? p.bookmarks : []).map((at) => ({ at, note: "marked" })),
       // The chooser reads the SAME map the Overview reads, grouped the same way — a phone must not
@@ -13277,10 +13283,15 @@ function viewWorkspace() {
         org: repoOrg(r), scope: (MAP.orgs && MAP.orgs[repoOrg(r)] || {}).scope || "",
         colour: (MAP.orgs && MAP.orgs[repoOrg(r)] || {}).color || "",
       })),
+      /* The row shape is histItem's, read from it rather than guessed: the plain history list is one
+         row per WORKSPACE, so `workspaceId` is the key `reopen()` wants — `sessionKey` is the search
+         result's key and would reopen the wrong thing. `updatedAt` is a timestamp, not a phrase, and
+         the flag is `missingWorktree`. */
       history: (Array.isArray(st.history) ? st.history : []).map((h) => ({
-        id: h.sessionKey || h.sessionId || h.workspaceId, repo: h.repo || "",
-        name: (shortRepo(h.repo || "") || "?") + (h.worktree && h.worktree !== "main" ? " · " + h.worktree : " · Main"),
-        when: h.when || "", first: h.firstPrompt || "", gone: !!h.worktreeMissing,
+        id: h.workspaceId, repo: h.repo || "",
+        name: (shortRepo(h.repo || "") || "—") + (h.worktree && h.worktree !== "main" ? " · " + h.worktree : " · Main"),
+        when: h.updatedAt ? new Date(h.updatedAt).toLocaleDateString() : "",
+        first: h.firstPrompt || "", gone: !!h.missingWorktree,
       })),
     });
   }
@@ -13913,19 +13924,13 @@ function viewWorkspace() {
     addRow.addEventListener("click", () => { addPaneMobile(); closeSheet(); });
     return el("div", { class: "ws-sheet-list" }, [...rows, addRow]);
   }
-  // The active pane's own controls (repo / worktree / model / effort / mode) — BORROW the live
-  // .ws-pane-controls node into the sheet (all its handlers come with it), and put it back on close.
-  function openSettingsSheet() {
-    const ui = paneUI.get(st.activeId); if (!ui) return;
-    const controls = ui.root.querySelector(".ws-pane-controls"); if (!controls) return;
-    const extras = ui.root.querySelector(".ws-compose-extras");
-    openSheet("Pane settings", controls);
-    // The model bar is now the LAST child of the pane (it moved below the composer). Restoring it before
-    // .ws-compose-extras — its old position — would silently put it back above the type box and undo the
-    // unified layout the moment the mobile settings sheet was opened and closed once.
-    _sheetReturn = () => { ui.root.appendChild(controls); };
-    void extras;   // kept for the older ordering; no longer part of the restore path
-  }
+  /* THE ⚙ "PANE SETTINGS" SHEET IS GONE, and it was dead long before it was removed: it borrowed the
+     pane's `.ws-pane-controls` node into a bottom sheet and handed it back on close, and that node has
+     not existed since the chat-shell migration moved every control into the package's own rows. The
+     lookup returned null and the function returned — the button opened nothing, silently, for months.
+     Not repaired, because there is nowhere for it to go: on the classic layout those controls are in
+     the pane's own footer, and on a phone they are the mobile cockpit's model sheet and right pane
+     (docs/work/mobile-cockpit/design.md). */
   // Build the mobile bottom control bar ONCE — its buttons act on whatever pane is active at click time.
   function buildMobileBar() {
     const mb = (label, title, fn, cls) => {
@@ -13934,23 +13939,16 @@ function viewWorkspace() {
       return b;
     };
     const menuB = mb("☰", "Repositories & history", openDrawer);
-    const setB = mb("⚙", "Pane settings — repo, worktree, model, effort, mode", openSettingsSheet);
     const attachB = mb("📎", "Attach image", () => { const ui = paneUI.get(st.activeId); if (ui && ui.attachBtn) ui.attachBtn.click(); });
     const syncB = mb("↻", "Sync now — re-fetch the latest state (no page reload)", () => { const p = activePane(); if (p && p.sessionKey) wsPost("control", { action: "resync", args: { sessionKey: p.sessionKey, full: !!p._revealAll, limit: p._loadWindow } }); });
     const stopB = mb("■", "Stop the current response (keeps the conversation)", () => { const p = activePane(); if (!p || !p.sessionKey) return; p._stopping = Date.now(); paintPane(p); wsPost("stop", { sessionKey: p.sessionKey }); }, "ws-mcbtn-stop");
     stopB.hidden = true;
     const sendB = mb("➤", "Send", () => send(activePane()), "ws-mcbtn-send");
-    // Collapse/expand the compose box to one line (parity with the Pact mobile view, which the normal
-    // workspace was missing) — so a long prompt draft stops pushing the transcript up.
-    root.classList.toggle("ws-mcompose-big", WS_COMPOSE_BIG);
-    const collapseB = mb(WS_COMPOSE_BIG ? "⌄" : "⌃", WS_COMPOSE_BIG ? "Shrink the typing box" : "Enlarge the typing box", () => {
-      WS_COMPOSE_BIG = !WS_COMPOSE_BIG;
-      try { localStorage.setItem("ws.compose.big", WS_COMPOSE_BIG ? "1" : "0"); } catch {}
-      root.classList.toggle("ws-mcompose-big", WS_COMPOSE_BIG);
-      collapseB.textContent = WS_COMPOSE_BIG ? "⌄" : "⌃";
-      collapseB.title = WS_COMPOSE_BIG ? "Shrink the typing box" : "Enlarge the typing box";
-      const ui = paneUI.get(st.activeId); if (ui && ui.promptEl && !WS_COMPOSE_BIG) wsAutoResizePrompt(ui.promptEl);
-    }, "ws-mcbtn-collapse");
+    /* THE ⌃/⌄ "ENLARGE THE TYPING BOX" BUTTON IS GONE. It toggled `ws-mcompose-big`, whose only rule
+       was keyed to `.ws-prompt` — a Core class the chat-shell migration replaced with the package's
+       `.rg-typebox`. So it swapped its own glyph and changed nothing else, which is worse than not
+       being there: it looked like a control. The box already grows with what you type, and on the
+       phone layout the cap is 40% of the screen (mobile-cockpit.js). */
     // Too many square icon buttons overflowed the bar. Conversations + Bookmarks become thin LABELED bars
     // (Ouronet-Controls style) in the mode strip below, flanking the Live/Held bulb — freeing the icon row.
     const mbar = (label, cls, fn) => {
@@ -13977,7 +13975,7 @@ function viewWorkspace() {
     // is deliberate: the two layouts build a pane differently, and rebuilding one in place is a
     // bigger promise than a switch needs to make.
     const m2B = mb(WS_MOBILE2 ? "⇄1" : "⇄2", WS_MOBILE2 ? "Back to the current mobile layout" : "Try the new mobile cockpit", wsMobile2Toggle);
-    wsMBar.replaceChildren(menuB, setB, attachB, collapseB, m2B, el("span", { class: "ws-spacer" }, []), syncB, stopB, sendB);
+    wsMBar.replaceChildren(menuB, attachB, m2B, el("span", { class: "ws-spacer" }, []), syncB, stopB, sendB);
     // Bottom controls row: the two corner tabs flanking the model picker; the Live/Held bulb moved UP into the pane header.
     wsModeStrip.replaceChildren(chatsBar, modelSel, bmBar);
   }
