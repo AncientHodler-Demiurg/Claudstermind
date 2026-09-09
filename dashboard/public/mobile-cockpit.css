@@ -146,6 +146,21 @@ body.ws-mobile2 .ws-root > .hint{display:none}
 .ws-mobile2 .mc-snd{flex:0 0 auto;min-width:62px;height:40px;border-radius:12px;border:1px solid var(--accent);background:var(--accent);
   color:#1b0b2a;font:inherit;font-size:17px;font-weight:800;cursor:pointer;touch-action:manipulation}
 .ws-mobile2 .mc-snd.--busy{background:var(--work);border-color:var(--work);color:var(--work-fg);font-size:13px}
+/* DEEP WORK IS ITS OWN COLOUR, not a louder shade of busy: it is open-ended background activity
+   rather than a turn you are waiting through, and the desktop has said so in red since 1.13.
+   A phone showing amber for both told you less than the same session on a laptop. */
+.ws-mobile2 .mc-snd.--deep{background:var(--work-deep);border-color:var(--work-deep);color:var(--work-deep-fg);font-size:13px}
+/* THE RING PULSES BY OPACITY, on a promoted pseudo-element — the compositor owns it, so there is no
+   style recalc and no paint per frame. Animating the box-shadow itself was measured at 54% of all
+   main-thread work in this app (components.css csWorkPulse); this is the same look, same timing. */
+@keyframes mcWorkPulse{0%,100%{opacity:0}50%{opacity:1}}
+.ws-mobile2 .mc-snd.--pulse{position:relative}
+.ws-mobile2 .mc-snd.--pulse::after{content:"";position:absolute;inset:-2px;border-radius:13px;pointer-events:none;
+  box-shadow:0 0 0 2px rgba(148,163,184,.9);opacity:0;will-change:opacity;animation:mcWorkPulse 1.15s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){.ws-mobile2 .mc-snd.--pulse::after{animation:none;opacity:.8}}
+/* A pressed Stop is acknowledged instantly and stays acknowledged — the engine's interrupt can take
+   seconds, and without this the tap reads as ignored. */
+.ws-mobile2 .mc-stp.--pending{opacity:.55;color:var(--work);border-color:color-mix(in srgb,var(--work) 55%,var(--line))}
 /* Stop ALWAYS occupies its slot and switches enabled/disabled: a button that appears and vanishes
    makes Send jump sideways under your thumb the moment a turn starts or ends. */
 .ws-mobile2 .mc-stp{flex:0 0 auto;min-width:48px;height:40px;border-radius:12px;border:1px solid color-mix(in srgb,var(--work-deep) 55%,var(--line));

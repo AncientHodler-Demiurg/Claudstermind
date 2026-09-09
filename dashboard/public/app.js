@@ -13268,6 +13268,10 @@ function viewWorkspace() {
       star: active === 0,
       connection: busy ? { text: "Working", tone: "busy" } : { text: "Live", tone: "ok" },
       busy,
+      // The presentation itself, straight from ChatShell.sendPresentation via paintPane — amber for a
+      // running turn, red for deep work, a pulsing ring for background work, "Stopping…" on a pressed
+      // Stop. `busy` stays as the fallback for the first paint, before paintPane has run once.
+      sending: ui._pres || null,
       stick: !ui.stick || ui.stick.pinned !== false,
       multiChat: !!p.multiChat,
       worktree: p.worktree || "main",
@@ -13732,6 +13736,10 @@ function viewWorkspace() {
     const _pres = window.ChatShell.sendPresentation({ busy, deep, stopping: !!p._stopping,
       background: (Array.isArray(p._background) ? p._background : []).length > 0,
       suffix: busy ? wsBusyElapsedLabel(p) : "" });
+    // ONE decision, two surfaces. The cockpit paints Send/Stop from this same object (wsMcSync) —
+    // recomputing it there would be a second reading of the same state, which is exactly how the
+    // phone came to show a plain Send button while the desktop showed deep work.
+    ui._pres = _pres;
     ui.sendBtn.classList.toggle("busy", _pres.state === "busy" || _pres.state === "deep");
     ui.sendBtn.classList.toggle("deepwork", _pres.state === "deep");
     // Hidden background work: a workflow / backgrounded task the agent spawned that runs

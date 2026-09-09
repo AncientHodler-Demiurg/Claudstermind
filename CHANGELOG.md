@@ -4,6 +4,26 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.15.6] - 2026-09-09
+### Fixed — Send and Stop on the phone were a second reading of the same state
+
+*"the stop and working buttons appear correctly [on desktop], but they didnt change colour on mobile,
+so they seem not to be wired on the same thing."* They were not.
+
+The desktop paints those two buttons from `ChatShell.sendPresentation` — one function that decides
+amber for a running turn, **red for deep work**, a pulsing ring when a backgrounded agent is still
+going while the chat itself is free, and `Stopping…` the instant Stop is pressed. The cockpit painted
+`busy ? amber : accent` and nothing else, so the same session showed a plain Send button on a phone
+and deep work on a laptop.
+
+`paintPane` now stashes the decision it already computes, and the cockpit is **given** it rather than
+deriving its own — one decision, two surfaces. `busy` survives only as the fallback for the first
+paint, before `paintPane` has run once.
+
+The pulse ring animates **opacity on a promoted pseudo-element**, not the box-shadow itself: animating
+the shadow was measured at 54% of all main-thread work in this app when the same effect was built for
+the desktop (`components.css`, `csWorkPulse`). Same look, same timing, no per-frame paint.
+
 ## [1.15.5] - 2026-09-09
 ### Fixed — "Chats" was counting the wrong thing, and a mark showed a timestamp
 

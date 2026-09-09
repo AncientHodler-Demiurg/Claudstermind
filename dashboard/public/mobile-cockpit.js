@@ -119,7 +119,7 @@
       stats: [], agents: [], repos: [], history: [], marks: [],
       conversations: [],   // the threads of ONE repository
       chats: [],           // the chat BOXES, one per repository — see chatsSheet
-      busy: false, stick: true, multiChat: false, worktree: "",
+      busy: false, sending: null, stick: true, multiChat: false, worktree: "",
       panel: null, sheet: null, overlay: null, histScope: "repo", openTurn: null,
     };
     var ctxPct = function () { return Math.round(nn(state.context.tokens, 0) / Math.max(1, nn(state.context.ceiling, 1000000)) * 100); };
@@ -780,12 +780,23 @@
       /* Auto-continue is a state, and the host owns it: the toggle asks, and shows what came back. A
          button that flipped its own class would claim an armed loop the host never started. */
       autoBtn.classList.toggle("on", state.running.autoContinue);
-      stopBtn.disabled = !state.busy;
-      /* Spelled out rather than removed, because this node is patched in place: a screen reader that
-         is told "disabled" once and never told otherwise keeps saying it for the rest of the turn. */
-      stopBtn.setAttribute("aria-disabled", state.busy ? "false" : "true");
-      sendBtn.className = "mc-snd" + (state.busy ? " --busy" : "");
-      txt(sendBtn, state.busy ? "…" : "➤");
+      /* SEND AND STOP ARE THE SHARED DECISION, not a local reading of `busy`. The desktop paints them
+         from ChatShell.sendPresentation — amber while a turn runs, RED for deep work, a pulsing ring
+         when a backgrounded agent is still going, "Stopping…" the moment Stop is pressed. This
+         painted `busy ? amber : accent` and nothing else, so on a phone the same session showed a
+         plain Send button while the desktop showed deep work: "they seem not to be wired on the same
+         thing". They are now — the host passes the presentation through, and `busy` remains only as
+         the fallback for a host that has no such function. */
+      var pres = state.sending || {};
+      var mode = pres.state || (state.busy ? "busy" : "idle");
+      var running = mode === "busy" || mode === "deep";
+      stopBtn.disabled = pres.stopDisabled != null ? !!pres.stopDisabled : !running;
+      stopBtn.setAttribute("aria-disabled", stopBtn.disabled ? "true" : "false");
+      stopBtn.className = "mc-stp" + (pres.stopPending ? " --pending" : "");
+      txt(stopBtn, pres.stopLabel || "■");
+      sendBtn.className = "mc-snd" + (mode === "deep" ? " --deep" : mode === "busy" ? " --busy" : "")
+        + (pres.pulse ? " --pulse" : "");
+      txt(sendBtn, pres.sendLabel || (running ? "…" : "➤"));
       railR.className = "mc-rail --r --arc" + (runningAgents() ? " --busy" : "");
       if (runningAgents()) {
         railRMark.className = "mc-rail-n";
@@ -852,6 +863,8 @@
       // The chat BOXES, distinct from `conversations` (the threads of one repository) — see chatsSheet.
       if ("chats" in s) state.chats = s.chats || [];
       if ("busy" in s) state.busy = !!s.busy;
+      // The whole presentation, as ChatShell.sendPresentation returns it — see paintRisers' send/stop.
+      if ("sending" in s) state.sending = s.sending || null;
       if ("stick" in s) state.stick = !!s.stick;
       if ("multiChat" in s) state.multiChat = !!s.multiChat;
       if ("worktree" in s) state.worktree = s.worktree == null ? "" : String(s.worktree);
