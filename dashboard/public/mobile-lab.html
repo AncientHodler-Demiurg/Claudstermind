@@ -221,10 +221,14 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
   touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .m-act:active{filter:brightness(1.3)}
 .m-act.--on{color:#fbbf24;border-color:#fbbf2455}
-/* THE LOW ZONE — compose + buttons. The rails live HERE now, at the level of the thing you are
-   typing into, so they cannot sit over a bubble and the transcript keeps the entire width. */
-.m-low{position:relative;flex:0 0 auto;display:flex;flex-direction:column;padding:0 24px}
-.m-low .m-compose,.m-low .m-btnrow{padding-left:0;padding-right:0}
+/* THE LOW ZONE — compose + buttons. The rails hang off its TOP edge: that edge is the seam between
+   the transcript and the footer, so a rail centred on it (translateY(-50%), the same trick the bulb
+   uses) straddles the boundary rather than belonging to either side.
+   AND THEY RESERVE NOTHING. The zone has no side padding for them; they are drawn OVER its corners,
+   which are the emptiest pixels on the screen — the type box's rounded ends and the gap beside the
+   outermost button. Reserving 24px each side to keep them clear was 48px taken from the field you
+   type into, to protect two corners that had nothing in them. */
+.m-low{position:relative;flex:0 0 auto;display:flex;flex-direction:column}
 
 /* the repository chooser: one card per organisation, the same reading order the Overview uses */
 .m-org{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel)}
@@ -274,7 +278,7 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
 /* No gutter any more: the rails moved down to the low zone, so nothing overlaps the transcript and
    the bubbles get the full width. The class stays only for the `rail: core` comparison below. */
 .m-core.--gutter{padding-left:26px;padding-right:26px}
-.m-rail{position:absolute;top:50%;transform:translateY(-50%);width:22px;height:76px;z-index:40;cursor:pointer;
+.m-rail{position:absolute;top:0;transform:translateY(-50%);width:22px;height:64px;z-index:40;cursor:pointer;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;
   background:color-mix(in srgb,var(--panel) 90%,transparent);border:1px solid var(--line);
   touch-action:manipulation;-webkit-tap-highlight-color:transparent}
@@ -287,12 +291,12 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
 .m-stat b{color:var(--ok)}.m-stat .bad{color:var(--err)}
 .m-cyc{margin-left:10px;padding:1px 7px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--acc);cursor:pointer}
 .m-rlbl{writing-mode:vertical-rl;text-orientation:mixed;font-size:9px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
-.m-rail.--arc{width:26px;height:64px;gap:0}
+.m-rail.--arc{width:26px;height:52px;gap:0}
 .m-rail.--arc.--l{border-radius:0 999px 999px 0}
 .m-rail.--arc.--r{border-radius:999px 0 0 999px}
 .m-rail.--arc .m-rlbl{display:none}
 .m-rail.--arc .m-grip{height:22px}
-.m-rail.--tab{height:84px}
+.m-rail.--tab{height:72px}
 .m-rail.--tab .m-rlbl{font-size:8px}
 
 /* PANELS: the same slide + backdrop mechanic as Pact mobile's drawer, mirrored for the right edge. */

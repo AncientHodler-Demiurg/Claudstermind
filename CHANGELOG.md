@@ -4,6 +4,26 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.14.5] - 2026-09-09
+### Changed — Mobile Cockpit Lab: the rails straddle the seam and reserve nothing
+
+Two corrections, both of them the same principle applied twice.
+
+- **Position:** each rail is now centred on the **seam between the transcript and the footer** —
+  `top: 0; translateY(-50%)` on the low zone, the same trick the Live/Held bulb uses on that exact
+  line. It belongs to the boundary rather than to either side of it.
+- **Cost:** they **reserve no space at all**. The zone had 24px of padding on each side to keep them
+  clear, which is 48px taken from the field you type into in order to protect two corners that had
+  nothing in them. They are drawn over those corners instead — the emptiest pixels on the screen: the
+  type box's rounded ends and the gap beside the outermost button.
+
+The type box is back to full width, and the transcript never had a gutter after 1.14.4. Both are now
+as wide as the phone allows, with the reveals costing zero pixels of either.
+
+**The one trade-off, stated:** a tap inside the outer ~26px of the type box's left or right end now
+opens a pane instead of focusing the field. That is padding, not text — the caret starts 12px further
+in — but it is a real overlap and the reason the rail is kept small.
+
 ## [1.14.4] - 2026-09-09
 ### Changed — Mobile Cockpit Lab: bubble actions, and the rails move down to the input
 
