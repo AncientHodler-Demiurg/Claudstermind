@@ -9154,6 +9154,17 @@ const PACT_AUTO_CAP = 10, PACT_AUTO_DELAY_MS = 6000;
  *
  *  A dismissed SUGGESTION (the ✕) is deliberately NOT an input here. Dismissing hides the chip; it does not
  *  stop the loop — which is what the ✕'s own tooltip has always promised. */
+/** IS A MESSAGE ALREADY WAITING FOR THIS CONVERSATION? A send made while a turn is finishing does not
+ *  start a turn — it is QUEUED ("your message will send once it lands") — so `busy` stays false, the
+ *  auto-continue loop re-arms, and after the delay it fires again. And again: three copies of
+ *  "Continue where you left off." landed as P#119/120/121, each one a full agent turn.
+ *
+ *  A queued message is a round that has not started yet, so for the purposes of deciding whether to
+ *  send ANOTHER one it counts exactly as "a round is running". Both workspaces queue the same way and
+ *  both loops asked the same wrong question. */
+function pactAutoPending(t) {
+  return !!(t && ((Array.isArray(t._queue) && t._queue.length) || t._pendingText));
+}
 function pactAutoDecide(s) {
   s = s || {};
   const now = typeof s.now === "number" ? s.now : Date.now();
@@ -9194,6 +9205,20 @@ function pactAutoWhy(d) {
   return "";
 }
 // ===== end PACT AUTO-CONTINUE pure helper =====
+/** TURNING AUTO-CONTINUE ON OR OFF — one implementation, every surface. The mobile cockpit had its
+ *  own copy of this and it was missing two lines: the deadline reset (so a stale deadline already in
+ *  the past could fire the moment it was switched on) and the ceiling re-grant (so re-ticking at the
+ *  cap looked like it did nothing). A setting with two implementations has two behaviours. */
+function pactSetAutoContinue(a, v) {
+  if (!a) return;
+  a._autoContinue = !!v;
+  const cap = a._autoCap || PACT_AUTO_CAP;
+  if (v && (a._autoCount || 0) >= cap) a._autoCap = (a._autoCount || 0) + PACT_AUTO_CAP;
+  a._autoDeadline = 0;             // a deliberate toggle always starts a fresh countdown
+  if (!v) pactAutoStop(a);
+  pactChatUpdateSuggest(a);
+  pactStateSave();
+}
 function pactSuggestNext(t) {
   if (!t || !Array.isArray(t.msgs)) return null;
   const lastAsst = [...t.msgs].reverse().find((m) => m.role === "assistant" && m.text);
@@ -9215,7 +9240,10 @@ function pactSuggestNext(t) {
 function pactAutoNextText(t) { return ((pactSuggestNext(t) || {}).text) || "Continue where you left off."; }
 function pactAutoStop(t) { if (t && t._autoTimer) { clearInterval(t._autoTimer); t._autoTimer = null; } if (t) t._autoDeadline = 0; }
 function pactChatDispatchSuggest(t, text) {
-  if (!t || pactChatBusy(t)) return;
+  // Stop the countdown even when we decline to send: returning with the deadline still in the past
+  // means the next 250ms tick fires again, and the one after that.
+  if (!t) return;
+  if (pactChatBusy(t) || pactAutoPending(t)) { pactAutoStop(t); return; }
   t._autoCount = (t._autoCount || 0) + 1;   // an auto/suggested send counts toward the ceiling (a human send resets it)
   pactAutoStop(t);                          // the round owns the tab now — no countdown while it runs
   pactChatDispatch(t, text, [], { auto: true });
@@ -9234,7 +9262,7 @@ function pactAutoEnsure(t) {
   if (!t) return null;
   const ta = PACT_CHAT.host && PACT_CHAT.host.querySelector(".pc-input");
   const d = pactAutoDecide({
-    autoContinue: t._autoContinue, busy: pactChatBusy(t), hasReply: pactAutoHasReply(t.msgs),
+    autoContinue: t._autoContinue, busy: pactChatBusy(t) || pactAutoPending(t), hasReply: pactAutoHasReply(t.msgs),
     active: t.id === PACT_CHAT.activeId, composeText: ta ? ta.value : (t.draft || ""),
     autoCount: t._autoCount, autoCap: t._autoCap, deadline: t._autoDeadline, now: Date.now(),
   });
@@ -10892,18 +10920,7 @@ function pactChatRender() {
           if (v) { a.effort = "xhigh"; if (a.key) wsPost("control", { action: "setEffort", args: { sessionKey: a.key, effort: "xhigh" } }); }
           pactStateSave();
         },
-        autoContinue: (v) => {
-          const a = pactChatActive(); if (!a) return;
-          a._autoContinue = v;
-          // Re-ticking at the ceiling grants the next batch, exactly as the suggest bar's own toggle
-          // does — otherwise switching it back on at the cap would look like it did nothing.
-          const cap = a._autoCap || PACT_AUTO_CAP;
-          if (v && (a._autoCount || 0) >= cap) a._autoCap = (a._autoCount || 0) + PACT_AUTO_CAP;
-          a._autoDeadline = 0;             // a deliberate toggle always starts a fresh countdown
-          if (!v) pactAutoStop(a);
-          pactChatUpdateSuggest(a);
-          pactStateSave();
-        },
+        autoContinue: (v) => pactSetAutoContinue(pactChatActive(), v),
         compact: () => pactCompact(),
         wrap: () => pactOpenWrapDialog(pactChatActive()),
         // Onto the hidden REAL exocortex chip (Core's `on.context` does exactly this) — never onto
@@ -11473,7 +11490,7 @@ function viewPactMobile() {
           permission: (v) => { PACT_CHAT.mode = v; pactPaintPermission(); wsPost("control", { action: "mode", args: { sessionKey: (act() || {}).key, mode: v } }); },
           ultracode: (v) => drive((a) => { a.ultracode = v; if (v) { a.effort = "xhigh"; if (a.key) wsPost("control", { action: "setEffort", args: { sessionKey: a.key, effort: "xhigh" } }); } pactStateSave(); }),
           autoWrap: (v) => drive((a) => { a.autoWrap = v; wsPost("control", { action: "setAutoWrap", args: { sessionKey: a.key, enabled: v } }); pactStateSave(); }),
-          autoContinue: (v) => drive((a) => { a._autoContinue = v; if (!v) pactAutoStop(a); pactChatUpdateSuggest(a); pactStateSave(); }),
+          autoContinue: (v) => drive((a) => pactSetAutoContinue(a, v)),
           compact: () => pactCompact(),
           wrap: () => pactOpenWrapDialog(act()),
           openHistory: () => openChatHistory(),
@@ -13812,7 +13829,9 @@ function viewWorkspace() {
   function wsAutoEnsure(p) {
     const ui = paneUI.get(p.id); if (!ui || !ui.view) return null;
     const d = pactAutoDecide({
-      autoContinue: p._autoContinue, busy: wsPaneBusy(p),
+      // `|| p._queue.length`: a send made while a turn is finishing is QUEUED, not started, so `busy`
+      // stays false and the loop would arm again and queue a second copy. See pactAutoPending.
+      autoContinue: p._autoContinue, busy: wsPaneBusy(p) || !!(p._queue && p._queue.length),
       hasReply: (p.transcript || []).some((m) => m && (m.role === "assistant" || m.kind === "assistant") && m.text),
       active: true,                                  // every Core pane is on screen; each owns its loop
       composeText: ui.promptEl ? ui.promptEl.value : (p.draft || ""),

@@ -4,6 +4,31 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.17.1] - 2026-09-09
+### Fixed — auto-continue sent the same prompt three times, and each copy was a full agent turn
+
+*"Why was this send multiple times, it must be sent once and let the agent do its job."*
+`Continue where you left off.` landed as **P#119, P#120 and P#121**, with two "Busy finishing the
+current reply — your message will send once it lands" notices between them.
+
+**A queued send is not a started turn.** When a message goes out while a turn is finishing it is
+QUEUED, so `pactChatBusy()` stays false — the loop re-armed, counted down, and fired again. Both
+workspaces queue the same way and both loops asked the same wrong question. A message already waiting
+now counts as a round that has not started yet (`pactAutoPending`), in Pact and in Core.
+
+Two supporting faults, each of which alone would have kept it firing:
+
+- **Declining to send left the countdown armed.** `pactChatDispatchSuggest` returned early when busy
+  without stopping the loop, so the next 250 ms tick tried again, and the one after that.
+- **The cockpit had its own copy of the on/off handler**, and the copy was missing two lines: the
+  deadline reset (a stale deadline already in the past can fire the instant the switch goes on) and
+  the ceiling re-grant. **One `pactSetAutoContinue` now**, called from both surfaces — a setting with
+  two implementations has two behaviours, which is the trap the rest of this port exists to avoid.
+
+`pactSetAutoContinue` sits **outside** the pure decision block: it renders and it persists, and
+`lib/pactAutoContinue.test.mjs` evaluates that block on its own precisely because a renderer reference
+inside it is the shape of the recursion crash it was written for. That test caught the placement.
+
 ## [1.17.0] - 2026-09-09
 ### Added — every bubble says when it was spawned
 
