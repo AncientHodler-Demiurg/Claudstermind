@@ -114,7 +114,7 @@
       title: "", star: false,
       connection: { text: "", tone: "ok", note: "" },
       running: { model: normPick(null), effort: normPick(null), permission: normPick(null),
-                 ultracode: false, autoWrap: true, autoContinue: false },
+                 ultracode: false, autoWrap: true, autoContinue: false, auto: null },
       context: { tokens: 0, ceiling: 1000000, parts: [] },
       stats: [], agents: [], repos: [], history: [], marks: [],
       conversations: [],   // the threads of ONE repository
@@ -177,8 +177,15 @@
        taken from Send. Pact keeps its ☰ (app.js .pactm-cbar): there it moves between BOXES — tree,
        editor groups, REPL — which is navigation this pane has no equivalent of. */
     var attachBtn = el("button", { class: "mc-ico", type: "button", title: "Attach" }, ["📎"]);
+    /* THE COUNTDOWN BELONGS ON THE SWITCH THAT OWNS IT — the same rule the desktop send group follows
+       (chat-shell-ui.js roundsEl), and the same format: "3/10" for the batch, "3/10 · 6s" while it is
+       counting down to the next send. A loop whose ticker lives somewhere else means the thing about
+       to happen and the thing that stops it are in two places, and the switch reads as inert while it
+       is counting — which on a phone is the difference between "it is about to send" and "did my tap
+       register at all". */
+    var autoNum = el("span", { class: "mc-auto-n" }, []);
     var autoBtn = el("div", { class: "mc-auto", title: "Auto-continue: send the next prompt automatically when idle" },
-                     [el("div", { class: "mc-sw" }, [el("i", {}, [])]), "auto"]);
+                     [el("div", { class: "mc-sw" }, [el("i", {}, [])]), el("span", { class: "mc-auto-lbl" }, ["auto"]), autoNum]);
     /* Stop ALWAYS occupies its slot and switches enabled/disabled, exactly as it does on the desktop:
        a button that appears and vanishes makes Send jump sideways under your thumb the moment a turn
        starts or ends, which is how you press the wrong one. */
@@ -821,7 +828,6 @@
     function paintButtons() {
       /* Auto-continue is a state, and the host owns it: the toggle asks, and shows what came back. A
          button that flipped its own class would claim an armed loop the host never started. */
-      autoBtn.classList.toggle("on", state.running.autoContinue);
       /* SEND AND STOP ARE THE SHARED DECISION, not a local reading of `busy`. The desktop paints them
          from ChatShell.sendPresentation — amber while a turn runs, RED for deep work, a pulsing ring
          when a backgrounded agent is still going, "Stopping…" the moment Stop is pressed. This
@@ -829,6 +835,17 @@
          plain Send button while the desktop showed deep work: "they seem not to be wired on the same
          thing". They are now — the host passes the presentation through, and `busy` remains only as
          the fallback for a host that has no such function. */
+      /* `auto` is `{ on, n, max, in }` — the batch position and the seconds left, exactly as the
+         package's send group is fed. `in` is null when the loop is armed but not counting (busy, at
+         the cap, or you are typing), and the counter then shows the batch alone rather than a
+         countdown that is not running. */
+      var ac = state.running.auto || {};
+      var acOn = ac.on != null ? !!ac.on : !!state.running.autoContinue;
+      autoBtn.className = "mc-auto" + (acOn ? " on" : "");
+      var secs = ac.in == null ? null : Math.max(0, Math.ceil(nn(ac.in, 0)));
+      var rounds = nn(ac.n, 0) + "/" + nn(ac.max, 10);
+      txt(autoNum, !acOn ? "" : secs != null ? rounds + " · " + secs + "s" : rounds);
+      autoNum.className = "mc-auto-n" + (acOn && secs != null ? " --arm" : "");
       var pres = state.sending || {};
       var mode = pres.state || (state.busy ? "busy" : "idle");
       var running = mode === "busy" || mode === "deep";
@@ -891,6 +908,7 @@
         if ("ultracode" in r) state.running.ultracode = !!r.ultracode;
         if ("autoWrap" in r) state.running.autoWrap = !!r.autoWrap;
         if ("autoContinue" in r) state.running.autoContinue = !!r.autoContinue;
+        if ("auto" in r) state.running.auto = r.auto || null;
       }
       if ("context" in s) {
         var cx = s.context || {};

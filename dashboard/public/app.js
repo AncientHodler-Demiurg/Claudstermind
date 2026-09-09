@@ -9282,12 +9282,17 @@ function pactAutoTick(t) {
  *  were in two places, and the switch looked inert while the loop was counting. The Chat Shell Lab
  *  puts both inside the send group; this is what makes Pact actually do that. */
 function pactPaintAutoControl(t, d) {
-  if (!PACT_CHAT || !PACT_CHAT._view || !d) return;
-  PACT_CHAT._view.setState({ autoContinue: {
+  if (!PACT_CHAT || !d) return;
+  const ac = {
     on: d.on, n: d.autoCount, max: d.autoCap,
     in: d.arm && !d.fire ? Math.max(1, Math.ceil(d.msLeft / 1000)) : null,
     note: pactAutoWhy(d) || "",
-  } });
+  };
+  if (PACT_CHAT._view) PACT_CHAT._view.setState({ autoContinue: ac });
+  // The same decision, to the phone's own switch. It was shaped for the desktop package only, so on
+  // a phone the loop counted down with nothing saying so — "the round number, and the timer to send
+  // the recommended input. That's missing."
+  if (PACT_MC) PACT_MC.setState({ running: { auto: ac, autoContinue: !!d.on } });
 }
 function pactChatUpdateSuggest(t) {
   if (!PACT_CHAT || !PACT_CHAT.host) return;
@@ -13852,7 +13857,10 @@ function viewWorkspace() {
     const sig = [d.show || d.on, d.on, d.autoCount, d.autoCap, title].join("\u0001");
     if (p._autoSig !== sig) {
       p._autoSig = sig;
-      ui.view.setState({ autoContinue: { shown: d.show || d.on, on: d.on, n: d.autoCount, max: d.autoCap } });
+      const ac = { shown: d.show || d.on, on: d.on, n: d.autoCount, max: d.autoCap,
+                   in: d.arm && !d.fire ? Math.max(1, Math.ceil(d.msLeft / 1000)) : null };
+      ui.view.setState({ autoContinue: ac });
+      if (ui.mc) ui.mc.setState({ running: { auto: ac, autoContinue: !!d.on } });
       if (ui.view.els.sendGrp) ui.view.els.sendGrp.title = title;
     }
     if (!d.arm) { wsAutoStop(p); return d; }

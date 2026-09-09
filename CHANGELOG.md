@@ -4,6 +4,42 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.17.2] - 2026-09-09
+### Fixed — the phone's type field looked different in Core and Pact, and the auto switch showed no numbers
+
+*"The typing field looks different core vs pact workspace — in pact workspace it's the whole,
+incorporating the buttons below."*
+
+**The palette never reached Pact's cockpit.** The shared theme is scoped `.pact-right`; the phone
+cockpit mounts on its own host, which is not inside it. Every token fell through to the app's `:root`
+palette, or to nothing where the app has no such name. Measured on a phone: the compose painted
+`rgb(18,25,51)` — styles.css `--panel`, not Pact's `#131b26` — the field and bubbles resolved to
+Core-ish blues, and `border-top: var(--seam-w) solid var(--edge)` computed to **0px**, because an
+undefined `--seam-w` does not thin a border, it invalidates the whole shorthand and drops it. So Pact
+drew no seam at all, which is *why* it read as one continuous container: the right look for the wrong
+reason. The cockpit host is now listed on Pact's palette rule, dark-scoped exactly as `.pact-right`
+is, so a light-mode phone does not inherit dark hexes.
+
+**And the low zone was painted twice.** `.mc-compose` carried a background and the seam, `.mc-btnrow`
+carried its own; where they happened to agree it only looked unified by coincidence. The zone owns
+the surface and the single seam now, and the rows inside it are transparent — the field and the
+buttons under it are one container, in both workspaces, each in its own colours (Core keeps its
+accent edge, Pact its grey line).
+
+### Added — the round number and the countdown, on the switch that owns them
+
+*"We also need to show tied to the auto button the round number, and the timer to send the recommended
+input. That's missing."* The desktop package has carried both on its send group since auto-continue
+existed; the phone got the switch without them, so the loop counted down with nothing on screen saying
+which round it was on or how long there was to stop it. The switch now reads `3/10 · 7s` while armed,
+`3/10` at rest, and nothing when off, fed from the same decision both engines already publish.
+
+One trap worth recording: Core does not push every tick — `wsAutoEnsure` runs on a 250 ms timer per
+pane and `setState` forces a synchronous layout, so it publishes only when a signature changes. That
+guard predates a value that moves every second. It happens to be safe, because the signature includes
+a title that spells out the remaining seconds; a test now pins that, since simplifying the wording
+would silently freeze the countdown at whatever second it first rendered.
+
 ## [1.17.1] - 2026-09-09
 ### Fixed — auto-continue sent the same prompt three times, and each copy was a full agent turn
 

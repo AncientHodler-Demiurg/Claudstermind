@@ -72,7 +72,17 @@ body[data-theme="dark"] .ws-pane, body[data-theme="core"] {
  * actually sit in front of. */
 body[data-theme="dark"] .ws-pane.on, body[data-theme="light"] .ws-pane.on,
 .ws-pane.on, body[data-theme="core"] { --edge: var(--accent); }
-body[data-theme="dark"] .pact-right, body[data-theme="pact"] {
+/* `.pactm-cockpit` IS PACT, TOO. The phone cockpit mounts on its own host outside `.pact-right`,
+ * and a theme scoped to `.pact-right` therefore stopped at its door: every token below — --field,
+ * --chip, --line, --edge, --accent, --bub-a/--bub-u — fell through to the APP's :root palette, or to
+ * nothing where the app has no such name. Measured on a phone: the cockpit's compose painted
+ * rgb(18,25,51), which is styles.css `--panel`, not Pact's #131b26; and `border-top: var(--seam-w)
+ * solid var(--edge)` computed to 0px, because an undefined --seam-w makes the whole shorthand
+ * invalid. That is the "the type field looks different core vs pact" report: not a rule that
+ * disagreed, a palette that never arrived. Listing the host here is the whole fix — the cockpit is
+ * Pact's chat, so it takes Pact's colours. */
+body[data-theme="dark"] .pact-right, body[data-theme="pact"],
+body[data-theme="dark"] .pactm-cockpit {
   --accent: #4ecdc4; --accent-dim: #2f9e97;
   --panel: #131b26; --bg-2: #25303f; --panel-2: #1c2634; --line: #3a4757; --ink: #eef4fa; --ink-soft: #a8b6c6;
   --bub-a: #1d2735; --bub-a-line: #ffffff1f; --bub-u: #2b4152; --bub-u-line: #4a6a80; --bub-u-fg: #f2f8fc;
@@ -82,7 +92,7 @@ body[data-theme="dark"] .pact-right, body[data-theme="pact"] {
   --core-bg: color-mix(in srgb, var(--panel) 94%, var(--ink) 6%);
   --edge: var(--line);          /* Pact's frame is its dark grey --line, and so are its seams */
 }
-.ws-pane, .pact-right {
+.ws-pane, .pact-right, .pactm-cockpit {
   /* lab-native aliases, theme-independent: they resolve THROUGH the canonical tokens above, so a
    * light-mode pane gets light-mode values from the same names the shared component stylesheet
    * reads. Without this the aliases existed only under body[data-theme="dark"] and every
@@ -96,7 +106,7 @@ body[data-theme="dark"] .pact-right, body[data-theme="pact"] {
 /* Accent-only fallback (production's light mode has no lab design to copy — see above — so light
  * mode keeps just its own distinct accent, same as before this file existed). */
 .ws-pane { --accent: #c77dff; --accent-dim: #9d5fd1; }
-.pact-right { --accent: #4ecdc4; --accent-dim: #2f9e97; }
+.pact-right, .pactm-cockpit { --accent: #4ecdc4; --accent-dim: #2f9e97; }
 body[data-theme="light"] .ws-pane { --accent: #9d5fd1; --accent-dim: #7c3fae; }
 body[data-theme="light"] .pact-right { --accent: #14807a; --accent-dim: #0f645f; }
 

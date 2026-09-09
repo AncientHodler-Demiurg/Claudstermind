@@ -54,6 +54,15 @@ body.ws-mobile2 .ws-root > .hint{display:none}
    everything" the port exists to end. The way back moved to the app header, since it lived here. */
 .ws-mobile2 .ws-mcbar, .ws-mobile2 .ws-mmodebar { display: none; }
 
+/* THE ROUND COUNTER, on the switch that owns the loop. Dim while it is only reporting the batch,
+   accented once a countdown is actually running — the same distinction the desktop makes with
+   `.rounds.--arm`, because "3/10" and "3/10 · 6s" mean different things: one is where you are, the
+   other is what is about to happen. */
+.ws-mobile2 .mc-auto-n{font-size:10.5px;font-variant-numeric:tabular-nums;color:var(--dim);letter-spacing:.01em}
+.ws-mobile2 .mc-auto-n:empty{display:none}
+.ws-mobile2 .mc-auto-n.--arm{color:var(--acc)}
+.ws-mobile2 .mc-auto-lbl{font-size:12px}
+
 /* THE ADOPTED TRANSCRIPT. In production the node handed over is Core's stick WRAPPER, not the
    scrolling region itself: the wrapper owns the jump-to-latest pill and the controller that follows
    the live end, and the two cannot be separated without leaving one of them behind. So when `mc-core`
@@ -149,11 +158,11 @@ body.ws-mobile2 .pactm-cbar, body.ws-mobile2 .pactm-modebar{display:none}
    that started this whole redesign. They belong on top of the box: they describe what the message
    will carry, so they read as part of it, and the box keeps the full width either way. */
 .ws-mobile2 .mc-compose{position:relative;flex:0 0 auto;display:flex;flex-direction:column;align-items:stretch;gap:6px;
-  background:var(--panel);padding:12px 10px 0;border-top:var(--seam-w) solid var(--edge)}
+  background:transparent;padding:12px 10px 0}
 .ws-mobile2 .mc-box{flex:1 1 auto;min-width:0;height:40px;max-height:42vh;resize:none;overflow-y:auto;background:var(--field);
   border:1px solid var(--field-line);border-radius:12px;color:var(--ink);font:inherit;font-size:15px;line-height:1.45;padding:10px 12px}
 .ws-mobile2 .mc-box:focus{outline:none;border-color:var(--accent)}
-.ws-mobile2 .mc-btnrow{flex:0 0 auto;position:relative;display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--panel)}
+.ws-mobile2 .mc-btnrow{flex:0 0 auto;position:relative;display:flex;align-items:center;gap:8px;padding:8px 10px;background:transparent}
 .ws-mobile2 .mc-ico{flex:0 0 auto;width:40px;height:40px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;
   background:var(--chip);border:1px solid var(--line);color:var(--ink);font-size:17px;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .ws-mobile2 .mc-ico:active{filter:brightness(1.25)}
@@ -277,7 +286,13 @@ body.ws-mobile2 .pactm-cbar, body.ws-mobile2 .pactm-modebar{display:none}
    which are the emptiest pixels on the screen — the type box's rounded ends and the gap beside the
    outermost button. Reserving 24px each side to keep them clear was 48px taken from the field you
    type into, to protect two corners that had nothing in them. */
-.ws-mobile2 .mc-low{position:relative;flex:0 0 auto;display:flex;flex-direction:column}
+/* ONE SURFACE for the type field and the buttons under it. They used to be two: `.mc-compose`
+   carried the panel background and the seam, `.mc-btnrow` carried its own, and where those two
+   painted the same colour it only looked unified by coincidence. The zone owns the background and
+   the single seam now; the rows inside it are transparent. The bulb still straddles that seam,
+   which is the line between what has been said and what you are about to say. */
+.ws-mobile2 .mc-low{position:relative;flex:0 0 auto;display:flex;flex-direction:column;
+  background:var(--panel);border-top:var(--seam-w,1px) solid var(--edge,var(--line))}
 
 /* the repository chooser: one card per organisation, the same reading order the Overview uses */
 .ws-mobile2 .mc-org{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel)}
