@@ -4,6 +4,45 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.16.0] - 2026-09-09
+### Added — Pact runs on the mobile cockpit
+
+*"the pact workspace isnt wired in on mobile, still looks like the old workspace."* It does now: same
+head bar, same seam bulb, same three-strip footer, same rails and panes, same sheets.
+
+Two things are genuinely different in Pact, and both are Pact's nature rather than an omission:
+
+- **Pact does not mount the chat-shell package on a phone.** It builds its own header, tool row and
+  compose inside one node and re-renders them freely. So the cockpit adopts **that whole node**, not
+  the scroller inside it — `pactChatRender` replaces the scroller on every render, and an adopted node
+  that gets replaced is an empty box. Pact's own chrome inside it is hidden by CSS; the transcript
+  stays. The auto-compaction **warning card stays too** — it is not chrome, it is the thing you must
+  not miss.
+- **Pact keeps its `☰`.** In Core it opened the tree column, which on a phone *is* the repository
+  chooser the left pane already reaches. Here it moves between **boxes** — the file tree, the editor
+  groups, the REPL — which this pane has no equivalent of. It rides a new `slots.buttons`, costing a
+  slot in the button row rather than a row of its own.
+
+Everything else is the same decision made once: **Send and Stop come from `ChatShell.sendPresentation`
+in all three surfaces now** (Core's pane, Pact's desktop pane, Pact's cockpit — the count is asserted,
+because a fourth surface with its own ternaries is how these drifted apart in 1.13.0), the wheels drive
+Pact's existing setters, and the type box mirrors into Pact's own `.pc-input` so drafts, attachments
+and auto-continue keep reading the field they always read.
+
+**In Pact a CHAT is a conversation tab** — there is no repository level above it, so the second list
+stays empty rather than repeating the first.
+
+### Fixed while wiring it
+- **The switch class never reached Pact.** Every rule that reaches *out* of the cockpit is
+  `body.ws-mobile2 …`, and that class is set by `syncMobile()` — which lives inside the **Core** view
+  and never runs in Pact. The module had put the class on its own host, enough for its own descendants
+  and nothing else, so every rule hiding Pact's header, tool row and compose silently missed and both
+  layouts rendered at once.
+- **The running strip read as the wire spells it** — `claude-opus-5 · effort: xhigh · Bypass
+  permissions`, wrapped onto two lines. Now `opus-5 · xhigh · Bypass`, using the catalogue both
+  pickers share, `prettyModel` as the fallback for a cold load, and the `short` word `WS_MODES`
+  already carries for exactly this spot.
+
 ## [1.15.6] - 2026-09-09
 ### Fixed — Send and Stop on the phone were a second reading of the same state
 

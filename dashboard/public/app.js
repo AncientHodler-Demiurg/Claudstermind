@@ -5316,6 +5316,7 @@ function pactNode(it) {
   });
   return row;
 }
+let PACT_MC = null;   // the mobile cockpit mounted in Pact's chat stage (null on desktop / classic)
 let PACT_MOBILE_FILE_TAP = null;   // (path,row)=>… set by viewPactMobile; the tree's file tap → donut picker
 let PACT_MOBILE_SESSIONS_CB = null;   // ()=>… set by viewPactMobile while its history sheet is open; re-renders it when a `sessions` fetch lands
 let PACT_MOBILE_PAINT_CB = null;      // ()=>… set by viewPactMobile's chatStage; syncs the mobile control bar's send/stop + chat count to the active tab (called at the end of pactChatPaint)
@@ -5400,7 +5401,8 @@ if (PACT_MOBILE_MQ.addEventListener) PACT_MOBILE_MQ.addEventListener("change", (
   if (typeof PACT_CHAT !== "undefined" && PACT_CHAT) pactChatStop();   // close the old chat stream before the rebuild reopens one
   // Drop the mobile-only hooks so the discarded stage's closures (a gone donut / history sheet) can't fire
   // into detached DOM after the swap; viewPactMobile re-installs its own on the way back.
-  PACT_MOBILE_FILE_TAP = null; PACT_MOBILE_SESSIONS_CB = null; PACT_MOBILE_PAINT_CB = null;
+  PACT_MOBILE_FILE_TAP = null; PACT_MOBILE_SESSIONS_CB = null; PACT_MOBILE_PAINT_CB = null; PACT_MC = null;
+  if (!WS_COCKPIT_MQ.matches) document.body.classList.remove("ws-mobile2");
   render();
 });
 let PACT_TREE_FONT = 12.5;   // tree font size (px), adjustable via the tree header A-/A+
@@ -11358,6 +11360,70 @@ function viewPactMobile() {
       const sc = chatHost.querySelector(".pc-scroll"); const host = chatHost.querySelector(".pc-head-bulb");
       if (sc && sc._stick && host) { host.replaceChildren(); sc._stick.dockMode(host, "stick-mode--head"); }
     };
+    /* ================= PACT ON THE MOBILE COCKPIT ============================================
+     * Same layout as Core's, wired to Pact's own state. Two differences that are Pact's, not
+     * oversights:
+     *   • Pact does not mount the chat-shell package on a phone — it builds its own header, tool row
+     *     and compose inside `chatHost`. So the cockpit adopts THAT NODE, not the scroller inside it:
+     *     `pactChatRender` replaces the scroller on every render, and an adopted node that gets
+     *     replaced is an empty box. Pact's own chrome inside it is hidden by CSS; the transcript stays.
+     *   • Pact keeps its ☰. In Core it opened the tree column, which on a phone IS the repository
+     *     chooser the left pane already reaches. Here it moves between BOXES — the file tree, the
+     *     editor groups, the REPL — which this pane has no equivalent of. It rides `slots.buttons`,
+     *     so it costs a slot in the button row rather than a row of its own.
+     * Everything else is the same decision made once: Send/Stop come from ChatShell.sendPresentation,
+     * the wheels drive Pact's existing setters, and the type box mirrors into Pact's own `.pc-input`
+     * so drafts, attachments and auto-continue keep reading the field they always read. */
+    const pactCockpit = WS_COCKPIT_MQ.matches && WS_MOBILE2 && window.MobileCockpit;
+    if (pactCockpit) {
+      /* The stylesheet is scoped `body.ws-mobile2 …` and `syncMobile()` — which sets that class —
+         lives inside the CORE view, so it never runs here. The module puts the class on its own host,
+         which is enough for its own rules (they are descendant selectors) but not for the ones that
+         reach OUT of it: Pact's own header, tool row and compose are hidden by rules qualified with
+         `body`, and every one of them silently missed. Set here, cleared when the phone rotates out
+         (the PACT_MOBILE_MQ listener). */
+      document.body.classList.add("ws-mobile2");
+      const wrap2 = el("div", { class: "pactm-chatwrap pactm-cockpit" }, []);
+      const input = () => chatHost.querySelector(".pc-input");
+      const act = () => pactChatActive();
+      const drive = (fn) => { const a = act(); if (a) fn(a); };
+      PACT_MC = window.MobileCockpit.mount(wrap2, {
+        transcript: chatHost,
+        slots: { buttons: [menuB] },
+        on: {
+          input: (v) => { const t = input(); if (t) { t.value = v; drive((a) => { a.draft = v; }); } },
+          send: () => { const t = input(); pactChatSend(act()); if (t) t.value = ""; return true; },
+          stop: () => drive((a) => { if (!a.key) return; a._stopping = Date.now(); pactChatPaint(a); wsPost("stop", { sessionKey: a.key }); }),
+          attach: () => { const inp = chatHost.querySelector(".pc-img-input"); if (inp) inp.click(); },
+          jumpBottom: () => { const sc = chatHost.querySelector(".pc-scroll"); if (sc && sc._stick) sc._stick.pin(); },
+          // The same setters Pact's desktop package callbacks use — one behaviour, two surfaces.
+          model: (v) => drive((a) => { a.model = v || undefined; if (a.key) wsPost("control", { action: "setModel", args: { sessionKey: a.key, model: a.model || null } }); pactUpdateModelNow(a); }),
+          effort: (v) => drive((a) => { a.effort = v || null; if (a.key) wsPost("control", { action: "setEffort", args: { sessionKey: a.key, effort: a.effort } }); pactStateSave(); }),
+          permission: (v) => { PACT_CHAT.mode = v; pactPaintPermission(); wsPost("control", { action: "mode", args: { sessionKey: (act() || {}).key, mode: v } }); },
+          ultracode: (v) => drive((a) => { a.ultracode = v; if (v) { a.effort = "xhigh"; if (a.key) wsPost("control", { action: "setEffort", args: { sessionKey: a.key, effort: "xhigh" } }); } pactStateSave(); }),
+          autoWrap: (v) => drive((a) => { a.autoWrap = v; wsPost("control", { action: "setAutoWrap", args: { sessionKey: a.key, enabled: v } }); pactStateSave(); }),
+          autoContinue: (v) => drive((a) => { a._autoContinue = v; if (!v) pactAutoStop(a); pactChatUpdateSuggest(a); pactStateSave(); }),
+          compact: () => pactCompact(),
+          wrap: () => pactOpenWrapDialog(act()),
+          openHistory: () => openChatHistory(),
+          // Exactly what Pact's own conversations sheet does on a row tap (openChatConvos) — saving
+          // the draft first, because switching without it loses whatever is half-typed.
+          pickChat: (id) => {
+            const t = (PACT_CHAT.tabs || []).find((x) => x.id === id);
+            if (t && t.id !== PACT_CHAT.activeId) {
+              pactChatSaveDraft(); PACT_CHAT.activeId = t.id; pactChatRender(); pactStateSave(); pactChatCatchUp(t);
+            }
+            renderStage();
+          },
+          newChat: () => { pactChatNewTab(); renderStage(); },
+          pickMark: (at) => drive((a) => pactChatScrollToResponse(a, at)),
+        },
+      });
+      requestAnimationFrame(dockModeBulb);
+      PACT_MOBILE_PAINT_CB = () => { pactMcSync(); };
+      PACT_MOBILE_PAINT_CB();
+      return wrap2;
+    }
     const wrap = el("div", { class: "pactm-chatwrap" + (PACT_COMPOSE_BIG ? " pactm-compose-big" : "") }, [chatHost, bar, modeBar]);
     requestAnimationFrame(dockModeBulb);   // .pc-scroll + its controller are set up by pactChatRender; grab the bulb once laid out
     const collapseB = tbtn(PACT_COMPOSE_BIG ? "⌄" : "⌃", PACT_COMPOSE_BIG ? "Shrink the typing box" : "Enlarge the typing box", () => {
@@ -11387,6 +11453,79 @@ function viewPactMobile() {
     PACT_MOBILE_PAINT_CB();
     return wrap;
   }
+  /** PACT'S STATE FEED — the same shape Core pushes (wsMcSync), read from Pact's own state. Called
+   *  from PACT_MOBILE_PAINT_CB, which pactChatPaint already fires on every event, so there is no
+   *  second painting schedule to keep in step. A no-op unless the cockpit is mounted. */
+  function pactMcSync() {
+    if (!PACT_MC || !PACT_CHAT) return;
+    const a = pactChatActive();
+    const busy = !!(a && pactChatBusy(a));
+    const deep = !!(a && a.status === "deepwork");
+    const stopping = !!(a && a._stopping && busy);
+    const usage = (a && a.contextUsage) || {};
+    const tabs = PACT_CHAT.tabs || [];
+    const prime = tabs[0];
+    /* THE SAME DECISION AS EVERY OTHER SURFACE. Pact's own bar used to compute its send/stop
+       presentation with its own chain of ternaries, which is how Core's and Pact's drifted apart in
+       the first place (1.13.0). One function, three surfaces. */
+    const pres = window.ChatShell.sendPresentation({ busy, deep, stopping, background: ((a && a._background) || []).length > 0 });
+    PACT_MC.setState({
+      title: (a && a.name) || "Pact",
+      star: !!(a && prime && a.id === prime.id),
+      connection: busy ? { text: deep ? "Deep work" : "Working", tone: "busy" } : { text: "Live", tone: "ok" },
+      busy, sending: pres,
+      stick: (() => { const sc = PACT_CHAT.host && PACT_CHAT.host.querySelector(".pc-scroll"); return !sc || !sc._stick || sc._stick.pinned !== false; })(),
+      worktree: (a && a.worktree) || "main",
+      running: {
+        // The catalogue both workspaces' pickers already share (readCachedModels), the package's own
+        // effort ladder, and Core's mode list — three lists that exist, rather than a fourth.
+        // The strip is READ at a glance, so it gets the name a person uses — "Opus 5", not
+        // "claude-opus-5" — resolved through the catalogue both pickers already share. The raw id
+        // wrapped the strip onto two lines and told you nothing the friendly name does not.
+        model: (() => {
+          const opts = readCachedModels().map((m) => ({ value: m.id || m.name || String(m), label: m.label || m.id || m.name || String(m) }));
+          const raw = (a && (a.activeModel || a.model)) || "";
+          const hit = opts.find((o) => o.value === raw);
+          // `prettyModel` is Core's own fallback for exactly this: the catalogue may not have arrived
+          // (a cold load answers "models" asynchronously), and "claude-opus-5" wrapped the strip onto
+          // two lines. It strips the vendor prefix and the date suffix — "opus-5" beats the wire id.
+          return { value: (a && a.model) || "", label: (hit && hit.label) || prettyModel(raw) || "—", options: opts };
+        })(),
+        effort: { value: (a && a.effort) || "", label: (a && a.effort) || "Default",
+                  options: [{ value: "", label: "Default effort" }].concat(
+                    ["low", "medium", "high", "xhigh", "max"].map((x) => ({ value: x, label: "effort: " + x }))) },
+        permission: { value: PACT_CHAT.mode,
+                      // `short` — the strip is a glance, and WS_MODES already carries the word the
+                      // desktop uses there ("Bypass", not "Bypass permissions").
+                      label: (WS_MODES.find((m) => m.id === PACT_CHAT.mode) || {}).short
+                             || (WS_MODES.find((m) => m.id === PACT_CHAT.mode) || {}).label || PACT_CHAT.mode,
+                      options: WS_MODES.map((m) => ({ value: m.id, label: m.label })) },
+        ultracode: !!(a && a.ultracode), autoWrap: !(a && a.autoWrap === false), autoContinue: !!(a && a._autoContinue),
+      },
+      context: { tokens: Number(usage.totalTokens) || 0, ceiling: Number(usage.maxTokens) || 0 },
+      agents: ((a && a._background) || []).filter((t) => t && t.status !== "removed").map((t) => ({
+        name: t.label || t.description || "subagent",
+        state: t.status === "running" ? "run" : "done",
+        meta: t.tokens ? (Math.round(t.tokens / 1000) + "k tok") : "",
+      })),
+      // In Pact a CHAT is a conversation tab — there is no repository level above it, so the two
+      // lists Core keeps apart collapse into one here, and only the chats list is fed.
+      chats: tabs.map((t) => ({
+        id: t.id, name: t.name, active: t.id === PACT_CHAT.activeId,
+        star: !!(prime && t.id === prime.id),
+        sub: t.id === PACT_CHAT.activeId ? (busy ? "working" : "live") : (t.worktree || ""),
+      })),
+      conversations: [],
+      marks: (Array.isArray(a && a.bookmarks) ? a.bookmarks : []).slice().sort((x, y) => x - y).map((at) => {
+        const m = (a.msgs || []).find((x) => x && (x.role === "assistant" || x.kind === "assistant") && x.at === at);
+        return { at, note: m ? "R#" + wsNumFmt(m._rnum || 0) : "R#?",
+                 text: m ? String(m.text || "").replace(/[#*`>_~-]/g, "").replace(/\s+/g, " ").trim().slice(0, 76)
+                         : "(older — loads on open)" };
+      }),
+      history: [], repos: [],
+    });
+  }
+
   // Riser #1 — the OPEN conversations (PACT_CHAT.tabs): a ＋New row, then one row per conversation (active
   // highlighted); tapping switches the active tab, the × closes it (reusing pactChatCloseTab so desktop +
   // mobile stay consistent). Rebuilds in place so the sheet stays open after a close.

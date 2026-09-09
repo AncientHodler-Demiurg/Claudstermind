@@ -184,7 +184,13 @@
        starts or ends, which is how you press the wrong one. */
     var stopBtn = el("button", { class: "mc-stp", type: "button", title: "Stop the current response" }, ["■"]);
     var sendBtn = el("button", { class: "mc-snd", type: "button" }, ["➤"]);
-    var btnrow = el("div", { class: "mc-btnrow" }, [attachBtn, el("div", { class: "mc-mid" }, []), autoBtn, stopBtn, sendBtn]);
+    /* `slots.buttons` — extra HOST buttons at the left of the row, beside attach. Core needs none:
+       everything its ☰ opened is reachable from the rails and the risers. PACT needs exactly one —
+       its ☰ moves between BOXES (the file tree, the editor groups, the REPL), which this pane has no
+       equivalent of, so dropping it from Core was never a reason to drop it there. A slot rather than
+       a second row, because the row is the scarcest space on the screen. */
+    var btnrow = el("div", { class: "mc-btnrow" }, (slots.buttons || []).concat(
+      [attachBtn, el("div", { class: "mc-mid" }, []), autoBtn, stopBtn, sendBtn]));
 
     /* THE LOW ZONE — compose + buttons, and the rails hang off its TOP edge. That edge is the seam
        between the transcript and the footer, so a rail centred on it (translateY(-50%), the same

@@ -63,6 +63,27 @@ body.ws-mobile2 .ws-root > .hint{display:none}
 .ws-mobile2 .mc-core.stick-wrap > .rg-core{flex:1 1 auto;min-height:0;overflow-y:auto;
   padding:12px 10px 14px;background:var(--core-bg);overscroll-behavior:contain}
 
+/* PACT'S ADOPTED HOST. Pact does not mount the chat-shell package on a phone — it builds its own
+   header, tool row and compose inside one node and re-renders them freely. So the cockpit adopts that
+   whole node rather than the scroller inside it (which `pactChatRender` replaces on every render, and
+   an adopted node that gets replaced is an empty box). Pact's own chrome inside it is hidden: the
+   cockpit's head bar, button row and risers say all of it, and two of each is what this port exists
+   to end. What stays visible is the transcript. */
+body.ws-mobile2 .pactm-cockpit .mc-core > .pc-head,
+body.ws-mobile2 .pactm-cockpit .mc-core > .pc-toolrow,
+body.ws-mobile2 .pactm-cockpit .mc-core > .pc-compose,
+body.ws-mobile2 .pactm-cockpit .mc-core > .pact-zone-hd{display:none}
+/* Pact's exocortex bar carries two different things in one node: a P#/R# search row, and the CUE
+   CARD that says the window is about to auto-compact. The row duplicates what the left pane's Find
+   does; the card is a warning you must not miss, so it stays. */
+body.ws-mobile2 .pactm-cockpit .mc-core .exo-bar{display:none}
+body.ws-mobile2 .pactm-cockpit .mc-core{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;padding:0;overflow:hidden;background:transparent}
+body.ws-mobile2 .pactm-cockpit .mc-core > .pc-scroll,
+body.ws-mobile2 .pactm-cockpit .mc-core > .stick-wrap{flex:1 1 auto;min-height:0;max-height:none}
+body.ws-mobile2 .pactm-cockpit{position:relative;flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+/* Pact's own bars are what the cockpit replaces — the same two-of-everything Core's port removed. */
+body.ws-mobile2 .pactm-cbar, body.ws-mobile2 .pactm-modebar{display:none}
+
 /* THE HOST. The module mounts onto the pane root itself and adds `mc-root` — there is no wrapper,
    because the pane root is already the flex column these strips stack in. So this states only what
    the cockpit REQUIRES of whatever it is mounted on, rather than describing a container it does not
