@@ -4,6 +4,25 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.16.5] - 2026-09-09
+### Fixed — opening a pane with the keyboard up left half a pane to render in
+
+*"if the cursor is in the type space, and I open panes, mobile keyboard also opens … opening the pane
+with the keyboard open makes the pane lose size and I don't see anything, and I have to take out the
+keyboard every time."*
+
+On a phone the on-screen keyboard takes roughly half the viewport, so a reveal opened over it has half
+a screen to draw in. A browser would normally drop focus when you tap something else — but `onTap`
+calls `preventDefault()` on the touch (the guard that stops a tap firing twice as a ghost click), and
+that is exactly what suppresses the focus change. The reveal never took the caret, so the keyboard
+never went away.
+
+Both edge panes, every sheet and both full-page overlays now dismiss the keyboard as they open.
+
+**Only on open.** Blurring on close would fight a caller that wants the caret back, and refocusing is
+never this component's decision — a surface that closes and puts the keyboard back up has decided
+something about what you meant to do next.
+
 ## [1.16.4] - 2026-09-09
 ### Fixed — four reports from using it, three of them data loss or worse
 

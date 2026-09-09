@@ -467,7 +467,21 @@
 
     /* Which surface is open is a mode, and only one of them may be — a sheet over a pane leaves two
        dismissal targets stacked and neither of them where your thumb is. */
+    /* OPENING A REVEAL DISMISSES THE KEYBOARD. On a phone the on-screen keyboard takes roughly half
+       the viewport, and a pane opened over it has half a pane to render in — "opening the pane with
+       the keyboard open makes the pane lose size and I don't see anything". The browser would
+       normally drop focus when you tap something else, but `onTap` calls `preventDefault()` on the
+       touch (the ghost-tap guard), and that is exactly what suppresses the focus change. So the
+       reveal has to take the focus itself. Only on OPEN: blurring on close would fight a host that
+       wants the caret back, and refocusing is never this component's decision. */
+    function dismissKeyboard() {
+      try {
+        var a = doc && doc.activeElement;
+        if (a && a !== doc.body && typeof a.blur === "function") a.blur();
+      } catch (e) { /* a detached document during teardown — nothing to blur */ }
+    }
     function setPanel(which) {
+      if (which) dismissKeyboard();
       state.panel = which;
       paneL.node.classList.toggle("open", which === "left");
       paneR.node.classList.toggle("open", which === "right");
@@ -476,6 +490,7 @@
       if (which === "right") paintPaneR();
     }
     function setOverlay(which) {
+      if (which) dismissKeyboard();
       state.overlay = which;
       if (overlayNode) { overlayNode.remove(); overlayNode = null; }
       if (!which) return;
@@ -485,6 +500,7 @@
     }
     var overlayNode = null, sheetNode = null;
     function setSheet(which) {
+      if (which) dismissKeyboard();
       state.sheet = which;
       if (sheetNode) { sheetNode.remove(); sheetNode = null; }
       if (!which) return;
