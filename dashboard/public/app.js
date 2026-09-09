@@ -2997,31 +2997,31 @@ let WS_HEAL_TIMER = null;    // fast (~4s) local self-heal — surfaces a droppe
 let WS_TICK_TIMER = null;    // 1s live elapsed tick — updates each busy pane's "Working… M:SS" + stall cue (Pact parity)
 // Mobile: collapse the compose textarea to one line so a long draft stops eating the transcript (mirrors the
 // Pact mobile compose collapse). Persisted so it sticks across reloads.
-/* THE MOBILE COCKPIT SWITCH (docs/work/mobile-cockpit/design.md).
- * The phone layout is a different arrangement of the SAME pane — one head row, the transcript, and a
- * three-strip footer, with everything else behind two edge panes and a set of sheets. It ships behind
- * a switch and defaults OFF, because this cockpit is used daily from a phone and a half-finished
- * layout is worse than a cramped one. `?m2=1` turns it on and REMEMBERS (so a reload or a hash change
- * keeps it), `?m2=0` turns it off again, and the ⇄ button in the mobile bar flips it without a URL. */
 /* The phone breakpoint, in ONE place. 900px rather than 760 is deliberate: large low-DPI Androids
    report ~800px of CSS width. The identical query string is also the CSS breakpoint (styles.css) and
-   PACT_MOBILE_MQ's — a comment there already says the three must never disagree.
-   Module scope, because `buildPane` reads it and is defined earlier in the file than the workspace
-   view that used to own it: correct at runtime, but indistinguishable from a temporal-dead-zone bug,
-   and lib/appScopeLeaks.test.mjs cannot tell the two apart. It should not have to. */
+   PACT_MOBILE_MQ's — a comment there already says the three must never disagree. Module scope because
+   `buildPane` reads it and is defined earlier in the file than the workspace view that used to own it. */
 const WS_MOBILE_MQ = window.matchMedia
   ? window.matchMedia("(max-width: 900px), (pointer: coarse) and (max-width: 1180px)")
   : { matches: false, addEventListener() {} };
+
+/* THE MOBILE COCKPIT (docs/work/mobile-cockpit/design.md).
+ * On a phone this IS the layout — the whole point was that a phone gets a phone's arrangement without
+ * being asked. It shipped default-OFF for one release because the cockpit had never rendered a real
+ * conversation and changing a daily driver unannounced is its own kind of rude; the answer to that was
+ * "then say so", not "make everyone find a button". Default ON, with a way out that costs one tap:
+ * `⇄` in the app header, or `?m2=0`. The opt-out is REMEMBERED as "0" — an absent key means "never
+ * chose", which is not the same as "chose the old one" and must not read as it. */
 const WS_MOBILE2 = (() => {
   const q = String(location.search || "");
   try {
     if (/[?&]m2=1\b/.test(q)) { localStorage.setItem("ws.mobile.v2", "1"); return true; }
-    if (/[?&]m2=0\b/.test(q)) { localStorage.removeItem("ws.mobile.v2"); return false; }
-    return localStorage.getItem("ws.mobile.v2") === "1";
-  } catch { return /[?&]m2=1\b/.test(q); }   // private mode: the URL still works, it just won't stick
+    if (/[?&]m2=0\b/.test(q)) { localStorage.setItem("ws.mobile.v2", "0"); return false; }
+    return localStorage.getItem("ws.mobile.v2") !== "0";
+  } catch { return !/[?&]m2=0\b/.test(q); }   // private mode: the URL still decides, it just won't stick
 })();
-/* Reveal the header's ⇄ only when it means something: on a phone, with the cockpit on. On the
-   classic layout the switch stays in the mobile bar, where you are standing when you want it. */
+/* Reveal the header's ⇄ only when it means something: on a phone, with the cockpit on. On the classic
+   layout the way back is the ⇄ in the mobile bar, where you are standing when you want it. */
 function wsMobile2MountHeaderBtn() {
   const b = document.getElementById("wsM2Btn");
   if (!b || b._wired) return;
@@ -3029,7 +3029,9 @@ function wsMobile2MountHeaderBtn() {
   b.addEventListener("click", wsMobile2Toggle);
 }
 function wsMobile2Toggle() {
-  try { if (WS_MOBILE2) localStorage.removeItem("ws.mobile.v2"); else localStorage.setItem("ws.mobile.v2", "1"); } catch {}
+  // Both directions are RECORDED. Removing the key would mean "never chose", and the next load would
+  // read that as the default — so turning the cockpit off would silently undo itself.
+  try { localStorage.setItem("ws.mobile.v2", WS_MOBILE2 ? "0" : "1"); } catch {}
   location.reload();
 }
 // Close any open ★-bookmark popup when clicking outside it (registered once, module load).

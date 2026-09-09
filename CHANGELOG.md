@@ -4,6 +4,31 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.15.2] - 2026-09-09
+### Changed — the mobile cockpit is the layout on a phone, not an opt-in
+
+*"why do i have to tap a switch button at all, i thought it goes automatically to this view, when on
+mobile."* Fair, and my call to make wrong: I shipped it default-OFF to avoid changing a daily driver
+unannounced. The answer to that concern was to **say so**, not to make the phone layout something you
+have to find a button for.
+
+**On a phone the cockpit is now the layout.** The way out costs one tap — `⇄` in the app header — or
+`?m2=0`. The opt-out is written as `"0"` rather than by clearing the key: an absent key means *never
+chose*, which is not the same as *chose the old one*, and reading it as such would have made turning
+the cockpit off silently undo itself on the next load.
+
+### Fixed — two symbols deleted by an over-wide edit, both caught by running the page
+Rewriting the switch block removed the two declarations that sat inside it: `WS_MOBILE_MQ` (the phone
+breakpoint, hoisted to module scope in 1.15.0) and `wsMobile2MountHeaderBtn`. Each took the Workspace
+view down with a `ReferenceError`, and **neither was caught by the test suite** — `node --check` sees
+only syntax, and a name that is deleted along with its callers leaves nothing for the scope guard to
+compare. What caught them was loading the real page and reading its error boundary.
+
+The lesson is procedural, not technical: after any edit to `dashboard/public/app.js`, run
+`scripts/mobile-smoke.mjs` before claiming anything. The second of the two was in fact catchable —
+`wsMobile2MountHeaderBtn` is called and never defined, exactly what `lib/appScopeLeaks.test.mjs` now
+checks — and it was found only because the page was opened.
+
 ## [1.15.1] - 2026-09-09
 ### Fixed — two state mappings written from inference, both wrong
 
