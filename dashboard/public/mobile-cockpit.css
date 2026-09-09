@@ -159,7 +159,13 @@ body.ws-mobile2 .pactm-cbar, body.ws-mobile2 .pactm-modebar{display:none}
    will carry, so they read as part of it, and the box keeps the full width either way. */
 .ws-mobile2 .mc-compose{position:relative;flex:0 0 auto;display:flex;flex-direction:column;align-items:stretch;gap:6px;
   background:transparent;padding:12px 10px 0}
-.ws-mobile2 .mc-box{flex:1 1 auto;min-width:0;height:40px;max-height:42vh;resize:none;overflow-y:auto;background:var(--field);
+/* THE FIELD IS ONE SMALL STEP ABOVE THE SURFACE IT SITS ON — not a panel of its own. `--field`
+   resolves to `--panel-2`, and in Core that is a much bigger jump than in Pact: measured on a phone,
+   Core's box sat +11/+17/+28 off its background where Pact's sat +9/+11/+14, so the same component
+   read as a rectangle dropped onto the footer in one workspace and as part of it in the other
+   ("it's its own rectangle, whereas on pact workspace it's incorporated in the background"). Derived
+   from `--panel` so the step is the SAME in both palettes, the way `--core-bg` is derived. */
+.ws-mobile2 .mc-box{flex:1 1 auto;min-width:0;height:40px;max-height:42vh;resize:none;overflow-y:auto;background:color-mix(in srgb, var(--panel) 94%, var(--ink) 6%);
   border:1px solid var(--field-line);border-radius:12px;color:var(--ink);font:inherit;font-size:15px;line-height:1.45;padding:10px 12px}
 .ws-mobile2 .mc-box:focus{outline:none;border-color:var(--accent)}
 .ws-mobile2 .mc-btnrow{flex:0 0 auto;position:relative;display:flex;align-items:center;gap:8px;padding:8px 10px;background:transparent}

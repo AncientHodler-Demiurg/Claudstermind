@@ -4,6 +4,44 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.17.4] - 2026-09-09
+### Fixed — the type box stuck at one line while holding several
+
+*"Sometimes it's stuck at a single line even though more text sits in it."* Two faults compounded.
+
+Growth hung off the `input` event alone, so text that arrived any other way — a restored draft, a
+queued prompt put back, anything the host writes — landed in a box still one line tall. Measured:
+setting the value without an input event leaves height 40px against a `scrollHeight` of 151.
+
+And when the box could not be measured, the attempt was **lost**. An element that is not laid out
+reports `scrollHeight: 0`, and `Math.min(0, cap)` collapsed the box to nothing rather than leaving it
+alone; nothing retried until the next keystroke. That is the "sometimes" — it depended on whether the
+box happened to be laid out at the instant the text arrived. Sizing is now clamped so it can never
+write a height it could not measure, retried from the paint path (one string compare per repaint,
+measuring only when the text changed), and recomputed on `resize`, since the cap is a fraction of a
+viewport that moves when the phone rotates or the keyboard opens.
+
+### Fixed — Core's type field read as its own rectangle
+
+*"I still notice it's its own rectangle, whereas on pact workspace it's incorporated in the
+background."* `--field` resolves to `--panel-2`, and that is a much bigger jump in Core's palette than
+in Pact's. Measured on a phone: Core's box sat **+11/+17/+28** off its background where Pact's sat
++9/+11/+14 — the same component and the same rule reading as a panel dropped onto the footer in one
+workspace and as part of it in the other. The field is now derived from `--panel`, the way `--core-bg`
+already is, so the step is identical in both palettes (measured after: +13/+13/+14 and +13/+13/+13).
+
+### Known — auto-continue does not run while you are away
+
+*"The work only resumed the moment I came back."* That is exactly what happens, and it is not a bug in
+the loop: **auto-continue is entirely client-side.** Both engines drive it from
+`setInterval(…, 250)` in the browser (`pactAutoTick`, `wsAutoEnsure`); the server has no
+auto-continue at all. A locked phone or a backgrounded tab has its timers throttled or frozen, so the
+countdown never reaches zero and the next prompt is never sent. When you return, the deadline is
+already past and it fires at once — which is precisely the behaviour reported. No client-side change
+can fix this; only a server-driven loop can. Recorded here rather than half-fixed, because moving the
+loop to the server means the ceiling that stops a runaway becomes the only thing standing between an
+unattended agent and its own budget, and that is a decision to take deliberately.
+
 ## [1.17.3] - 2026-09-09
 ### Fixed — on a phone, Pact's Wrap did nothing at all, and said nothing about it
 

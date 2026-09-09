@@ -342,17 +342,36 @@
     host.appendChild(paneR.node);
 
     /* ======================= BEHAVIOUR ======================================================= */
+    /* The last value we actually sized for. Growth used to hang off the `input` event alone, so text
+       that arrived any other way — a restored draft, a queued prompt put back, anything the host
+       writes — sat in a box still one line tall. Measured: value set without an input event leaves
+       height 40px against a scrollHeight of 151. */
+    var grownFor = null;
     function grow() {
+      var prev = box.style.height;
       box.style.height = "40px";
+      var sh = box.scrollHeight;
+      /* NEVER WRITE A HEIGHT WE COULD NOT MEASURE. An element that is not laid out — the host hidden
+         behind a pane, a paint that runs before first layout — reports scrollHeight 0, and
+         `Math.min(0, cap)` COLLAPSES the box to nothing rather than leaving it as it was. Measured: 0
+         while the host is display:none, 151 the moment it is shown again. */
+      if (!sh) { box.style.height = prev; return; }
       var cap = Math.round(0.40 * (host.clientHeight || 915));
-      box.style.height = Math.min(box.scrollHeight, cap) + "px";
+      grownFor = box.value;
+      box.style.height = Math.max(40, Math.min(sh, cap)) + "px";
       /* PUSH, DON'T COVER: the core is the only flexing region, so a taller box shrinks it — but the
          transcript then has to be re-pinned or the bottom slides out of view, which is what reads as
          "it went over the chat". Only while the bulb says Live, though: re-pinning a transcript you
          deliberately scrolled up in is the same bug from the other side. */
       if (state.stick) core.scrollTop = core.scrollHeight;
     }
+    /* Called from the paint path: sizing is a write-then-read (a forced layout), so it must not run on
+       every repaint of every pane — only when the text is not the text we last sized for. */
+    function growIfNeeded() { if (box.value !== grownFor) grow(); }
     box.addEventListener("input", function () { call("input", box.value); grow(); });
+    /* The cap is a fraction of the host, so it moves when the phone rotates or the keyboard opens and
+       closes. Without this the box keeps a height computed against a viewport that is gone. */
+    if (root.addEventListener) root.addEventListener("resize", function () { grow(); });
     function submit() {
       /* The host may veto — no session yet, socket down, empty prompt — by returning false, and then
          the text stays put instead of being silently eaten. */
@@ -950,6 +969,11 @@
       if ("stick" in s) state.stick = !!s.stick;
       if ("multiChat" in s) state.multiChat = !!s.multiChat;
       if ("worktree" in s) state.worktree = s.worktree == null ? "" : String(s.worktree);
+      /* SIZE WHATEVER IS IN THE BOX NOW. The draft write above grows it, but only on the paint where
+         the text arrives AND the box is unfocused; a box that was hidden, or not yet laid out, when
+         that happened kept a height measured against nothing. One string compare per paint, and it
+         measures only when the text is not the text it last sized for. */
+      growIfNeeded();
       paintHead();
       paintBulb();
       paintButtons();
