@@ -4,6 +4,49 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.18.1] - 2026-09-09
+### Added — the chat refuses to send when the page and the engine are on different builds
+
+*"I think we should gate somehow that both local and remote should be running the same version,
+otherwise we should show a message, chat disabled until both are the same version."*
+
+Exactly right, and it had just bitten. The web is served by the relay; the **engine** runs on the work
+machine; they are deployed and restarted separately, so they can differ at any moment — that is the
+normal state between two deploys, not an exotic one. A browser shipped with the auto-continue loop
+*removed* (the engine owns it now) met an engine that did not yet have that loop: the loop belonged to
+nobody, prompts sat queued, and nothing on screen said why.
+
+The engine now stamps `ENGINE_VERSION` — read from the package it actually loaded — onto the session
+snapshot every client receives. When it differs from the page's own build, a banner names **both**
+numbers and every send refuses at the one choke point each workspace funnels through
+(`pactChatDispatch`, `send`) — a prompt, a queued drain, an auto-continue round and a slash command
+all pass there, so no path can quietly bypass it. The conversation stays readable; only sending stops.
+
+**Silence is not a mismatch.** An engine too old to stamp anything, or a cold start before the first
+frame, leaves the version unknown — and refusing on silence would mean a dead chat every time you open
+it, a far worse failure than the one this prevents.
+
+### Fixed — a queued prompt in Pact was released only when you left and came back
+
+*"I go to core workspace, and come back to pact workspace, and when I do, it's as if the prompt was
+released in that moment."* It was. The `state` frame — the very frame the 4-second self-heal fetches
+to recover a tab stuck on "Working…" — adopted the new status, painted, and returned **one line before
+draining the queue**. So the client learned the turn had ended and left the prompt waiting for it
+anyway. Core's equivalent path has always drained there; Pact's did not.
+
+### Fixed — auto-continue could belong to nobody
+The browser now hands the loop over only when the engine *says* it owns it, by publishing its own auto
+state. Until then the browser keeps driving, exactly as before. Version skew is permanent in this
+architecture, so this is a property of the design rather than a migration step.
+
+### Known — deploying restarts the engine and interrupts in-flight turns
+This is what caused tonight's incident: the deploy plan restarts `["web", "sessiond"]`, and
+`lib/controlPlane.mjs` says it plainly — *"restarting THIS interrupts in-flight turns."* Two live
+sessions were flushed mid-turn (`[sessiond] flushed 2 in-flight session(s) before shutdown`), which is
+what read as a stuck loop and an engine error. Deploys should be taken when nothing is running; a
+pre-deploy check that refuses while a turn is in flight is the obvious next guard and is **not** built
+yet.
+
 ## [1.18.0] - 2026-09-09
 ### Changed — auto-continue moved to the server, so a sweep keeps running with the phone off
 

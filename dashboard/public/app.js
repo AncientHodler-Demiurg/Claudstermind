@@ -430,6 +430,48 @@ function renderIdentity() {
 // agent engine (not the shared sessiond daemon) — the state that makes a prompt sent here invisible to your
 // other clients (e.g. your phone) until the turn finishes and persists. Cleared on sessiond, or when the
 // field is absent (e.g. the relay). The at-a-glance diagnostic for the localhost↔remote desync.
+/* ===== THE VERSION GATE ================================================================ *
+ * "I think we should gate somehow that both local and remote should be running the same version,
+ *  otherwise we should show a message, chat disabled until both are the same version."
+ *
+ * Exactly right, and this is the failure it prevents. The web is served by the relay; the ENGINE runs
+ * on the work machine; they restart separately. Tonight a browser that had had the auto-continue loop
+ * REMOVED (the engine owns it now) met an engine that did not yet have it — so the loop belonged to
+ * nobody, prompts sat queued, and nothing on screen said why. A mismatch is not rare or exotic: it is
+ * the normal state for the seconds or minutes between two deploys, and any protocol change makes it
+ * dangerous. Better to refuse loudly for a moment than to behave subtly wrongly.
+ *
+ * The engine stamps `engineVersion` on its session frames (lib/workspace.mjs); the page knows its own
+ * from /api/version. Different ⇒ sending is blocked and the banner says both numbers. Unknown (an
+ * engine too old to stamp anything, or no frame yet) is NOT treated as a mismatch: refusing on
+ * silence would lock the chat on every cold start. */
+let WS_WEB_VERSION = "";      // this page's build
+let WS_ENGINE_VERSION = "";   // what the work machine's engine reports
+function wsVersionMismatch() {
+  return !!(WS_WEB_VERSION && WS_ENGINE_VERSION && WS_WEB_VERSION !== WS_ENGINE_VERSION);
+}
+/** The one sentence every refusal shows, so the reason is identical wherever it surfaces. */
+function wsVersionWhy() {
+  return "Chat disabled — this page is v" + WS_WEB_VERSION + " but the work machine's engine is v" +
+         WS_ENGINE_VERSION + ". They must match; restart the engine (or reload once it has been updated).";
+}
+function wsNoteEngineVersion(v) {
+  const next = v == null ? "" : String(v);
+  if (next === WS_ENGINE_VERSION) return;
+  WS_ENGINE_VERSION = next;
+  wsVersionGateApply();
+}
+function wsVersionGateApply() {
+  const bad = wsVersionMismatch();
+  document.body.classList.toggle("ws-version-blocked", bad);
+  let bar = document.getElementById("wsVersionBar");
+  if (!bad) { if (bar) bar.remove(); return; }
+  if (!bar) {
+    bar = el("div", { id: "wsVersionBar", class: "ws-version-bar" }, []);
+    document.body.appendChild(bar);
+  }
+  bar.replaceChildren(el("b", {}, ["⚠ Version mismatch"]), el("span", {}, [wsVersionWhy()]));
+}
 function showEngineBadge(engine) {
   const existing = document.getElementById("phEngineBadge");
   if (existing) existing.remove();
@@ -596,7 +638,7 @@ async function boot() {
   if (ME.mode === "live" && !ME.canRead) return renderDenied();
 
   // Version chip in the medallion (§10) — public, so it shows on every surface.
-  try { const v = await (await fetch("/api/version", { cache: "no-store" })).json(); const vc = $("#phVer"); if (vc) { vc.textContent = "v" + v.version; vc.title = `v${v.version}${v.gitSha ? " · " + v.gitSha : ""}${v.builtAt ? " · " + v.builtAt : ""}${v.engine ? " · engine: " + v.engine : ""}`; } showEngineBadge(v.engine); } catch {}
+  try { const v = await (await fetch("/api/version", { cache: "no-store" })).json(); WS_WEB_VERSION = v.version || ""; wsVersionGateApply(); const vc = $("#phVer"); if (vc) { vc.textContent = "v" + v.version; vc.title = `v${v.version}${v.gitSha ? " · " + v.gitSha : ""}${v.builtAt ? " · " + v.builtAt : ""}${v.engine ? " · engine: " + v.engine : ""}`; } showEngineBadge(v.engine); } catch {}
   // Routing preference is a GLOBAL server setting (dashboard/data/routing.json). Read it from the server —
   // works on both surfaces now (local direct; relay forwards over the tunnel). No per-browser divergence.
   for (let a = 1; a <= 3 && !ROUTING_LOADED; a++) {   // retry so a flaky link doesn't strand us on defaults (which saveRouting is then blocked from persisting)
@@ -8496,7 +8538,8 @@ function pactChatRoute({ kind, sessionKey, data }) {
     return;
   }
   // The per-session history list (state frame, no sessionKey) — refresh the history panel.
-  if (kind === "state" && data && Array.isArray(data.pactSessions)) { PACT_CHAT.sessions = data.pactSessions; pactChatRenderHistory(); if (typeof PACT_MOBILE_SESSIONS_CB === "function") PACT_MOBILE_SESSIONS_CB(); return; }
+  if (kind === "state" && data && "engineVersion" in data) wsNoteEngineVersion(data.engineVersion);
+    if (kind === "state" && data && Array.isArray(data.pactSessions)) { PACT_CHAT.sessions = data.pactSessions; pactChatRenderHistory(); if (typeof PACT_MOBILE_SESSIONS_CB === "function") PACT_MOBILE_SESSIONS_CB(); return; }
   // A saved chat's transcript arriving to rehydrate a Resume / Load-into-box tab. The frame is keyed
   // by the session's OWN id; a "Load into new box" tab has a different key, so correlate via the
   // pending-open map first, then fall back to a direct key match (Resume, whose key IS the sessionId).
@@ -8538,7 +8581,17 @@ function pactChatRoute({ kind, sessionKey, data }) {
   }
   const t = sessionKey ? pactChatByKey(sessionKey) : null;
   if (!t) return;
-  if (kind === "state") { if (data && data.session) { if (data.session.auto) pactAdoptAuto(t, data.session.auto); if (data.session.status) t.status = data.session.status; if (data.session.usage) t.usage = data.session.usage; exoNoteAgents(t, data.session, Date.now()); pactAdoptServerClock(t, data.session); pactChatMarkTurnBusy(t); pactChatPaint(t); } return; }
+  if (kind === "state") { if (data && data.session) { if (data.session.auto) pactAdoptAuto(t, data.session.auto); if (data.session.status) t.status = data.session.status; if (data.session.usage) t.usage = data.session.usage; exoNoteAgents(t, data.session, Date.now()); pactAdoptServerClock(t, data.session); pactChatMarkTurnBusy(t); pactChatPaint(t);
+    /* AND RELEASE ANYTHING THAT WAS WAITING ON THAT STATUS. This frame is what the 4s self-heal
+       fetches to recover a tab stuck on "Working…" — it is the moment the client learns the turn
+       actually ended. Adopting the status without draining left the queued prompt sitting there,
+       held for a turn that had already finished, with the UI correctly showing it as queued. It only
+       went out when something ELSE drained it — which is what leaving the workspace and coming back
+       does, and is exactly how it was reported: "it's as if the prompt was released in that moment."
+       Core's equivalent path has always drained here (see drainQueue after its status change); Pact's
+       returned one line too early. The drain is guarded on `busy` itself, so calling it on every
+       state frame is idempotent. */
+    pactChatDrainQueue(t); } return; }
   if (kind === "permission") { t.perm = { requestId: data.requestId, tool: data.tool || data.name || data.title || "a tool" }; t.status = "awaiting-permission"; pactChatPaint(t); return; }
   if (kind !== "event") return;
   const d = data || {};
@@ -8920,6 +8973,10 @@ function pactMergeQueued(items, imgCap) {
 // entry points inherit them.
 async function pactChatDispatch(t, text, images, opts) {
   if (!PACT_CHAT || !t) return;
+  /* THE VERSION GATE, at the choke point every send passes through — a prompt, a queued drain, an
+     auto-continue round, a slash command. Refusing here rather than at each button means no path can
+     quietly bypass it, and the message says WHICH two versions disagree. */
+  if (wsVersionMismatch()) { pactChatFlashNote("⚠ " + wsVersionWhy()); return; }
   opts = opts || {};
   t._suggestDismissed = false;   // a new turn is starting — un-dismiss so the next idle suggestion shows
   t._autoDeadline = 0;           // …and it owns the tab now: the next auto-continue round gets a FULL fresh countdown
@@ -9314,6 +9371,13 @@ function pactAutoWhy(d) {
  * countdown and the ghost are reports rather than guesses, and every device shows the same sweep. */
 function wsAdoptAutoInto(o, auto) {
   if (!o || !auto) return;
+  /* THE HANDOVER FLAG. The relay serves this page; the ENGINE runs on the work machine, and the two
+     are deployed separately — so a browser can always be newer than the server it is talking to. When
+     the client stopped firing and the engine had not yet been restarted, auto-continue was owned by
+     nobody and simply did nothing. `auto` on a session frame is the engine SAYING it owns the loop;
+     until it says so, the browser keeps driving exactly as it always did. Version skew is permanent
+     in this architecture, so this is a property of the design and not a migration step. */
+  o._autoServer = true;
   o._autoContinue = !!auto.on;
   o._autoCount = auto.count | 0;
   o._autoCap = (auto.cap | 0) || PACT_AUTO_CAP;
@@ -9387,9 +9451,9 @@ function pactAutoEnsure(t) {
   });
   if (!d.arm) { pactAutoStop(t); return d; }
   t._autoDeadline = d.deadline;
-  /* THE CLIENT NO LONGER SENDS. The server owns the loop; a browser that also fired would double
-     every round, and this codebase has already shipped that bug twice from here. The countdown below
-     is a READOUT of the server's deadline, nothing more. */
+  /* WHOEVER OWNS IT SENDS — never both. With a server-side loop the browser is a readout; against an
+     engine that has not taken ownership it still drives, or auto-continue belongs to no one. */
+  if (d.fire && !t._autoServer) { pactChatDispatchSuggest(t, pactAutoNextText(t)); return d; }
   if (!t._autoTimer) t._autoTimer = setInterval(() => pactAutoTick(t), 250);
   return d;
 }
@@ -14044,9 +14108,17 @@ function viewWorkspace() {
     }
     if (!d.arm) { wsAutoStop(p); return d; }
     p._autoDeadline = d.deadline;
-    /* THE CLIENT NO LONGER SENDS — the server owns the loop (lib/autoContinue.mjs). A browser that
-       also fired would double every round. What was here is the countdown's readout now. */
-    if (d.fire) { wsAutoStop(p); }
+    /* WHOEVER OWNS IT SENDS — never both. `_autoServer` is set the first time the engine publishes its
+       own auto state; until then this browser is still the loop. */
+    if (d.fire) {
+      if (p._autoServer) { wsAutoStop(p); return d; }   // the engine is driving; this is a readout
+      wsAutoStop(p);
+      p._autoCount = (p._autoCount || 0) + 1;        // an AUTO send counts toward the ceiling
+      if (ui.promptEl) ui.promptEl.value = WS_AUTO_TEXT;
+      p._autoSending = true;
+      try { send(p); } finally { p._autoSending = false; }
+      return d;
+    }
     if (!p._autoTimer) p._autoTimer = setInterval(() => wsAutoEnsure(p), 250);
     return d;
   }
@@ -15002,6 +15074,7 @@ function viewWorkspace() {
       // NOTE (CONTRACT §2b): the agents tracker MUST see every state frame as well as every
       // background event, keyed per sessionKey — its staleness heuristic measures "when did THIS
       // client last see THIS agent change", and skipped frames make a healthy fleet read as stalled.
+      if (data && "engineVersion" in data) wsNoteEngineVersion(data.engineVersion);
       if (Array.isArray(data.sessions)) { setLiveSessions(data.sessions); for (const s of data.sessions) for (const p of panesOf(s.sessionKey)) { p.status = s.status || p.status; if (s.mode) p.mode = s.mode; if (s.usage) p.usage = s.usage; if (s.background) p._background = s.background; exoNoteAgents(p, s, Date.now()); schedulePaint(p); } }
       if (data.session) { upsertLiveSession(data.session); for (const p of panesOf(data.session.sessionKey)) { if (data.session.auto) wsAdoptAuto(p, data.session.auto); Object.assign(p, { status: data.session.status ?? p.status, mode: data.session.mode ?? p.mode, usage: data.session.usage ?? p.usage }); if (data.session.background) p._background = data.session.background; exoNoteAgents(p, data.session, Date.now()); schedulePaint(p); } }
       // NOTE: the server's own defaultMode is deliberately NOT mirrored here. Every pane sends
@@ -15609,6 +15682,9 @@ function viewWorkspace() {
     dispatchPrompt(p, text, images);
   }
   async function send(p) {
+    // See wsVersionGateApply: a page and an engine on different builds can disagree about the wire in
+    // ways that fail silently. Refuse, and say which two numbers differ.
+    if (wsVersionMismatch()) { note(wsVersionWhy()); return; }
     if (p.readonly) return;
     const ui = paneUI.get(p.id); const typed = ui.promptEl.value.trim();
     const pendingRefs = Array.isArray(p._replyRefs) ? p._replyRefs : [];

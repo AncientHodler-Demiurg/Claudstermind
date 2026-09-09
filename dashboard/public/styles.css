@@ -2796,3 +2796,14 @@ body.pact-wgrip-dragging .pact-wgrip { pointer-events: auto; }
   display: block; margin-top: 5px; font-size: 10px; line-height: 1.2;
   color: var(--ink-mute); opacity: .6; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
 .ws-line.ws-user .ws-when { color: var(--bub-u-fg, var(--ink-mute)); opacity: .45; }
+
+/* THE VERSION-MISMATCH BANNER — see wsVersionGateApply in app.js. Fixed to the bottom above the nav so
+   it is visible on a phone without scrolling, and unmissable: a silently-wrong chat is worse than a
+   loudly-refused one. */
+.ws-version-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 9999; display: flex; flex-wrap: wrap;
+  align-items: baseline; gap: 8px; padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+  background: color-mix(in srgb, #f87171 22%, var(--panel)); border-top: 2px solid #f87171;
+  color: var(--ink); font-size: 12.5px; line-height: 1.45; box-shadow: 0 -6px 18px rgba(0,0,0,.45); }
+.ws-version-bar b { color: #f87171; }
+/* The type box stays visible and readable — you can still SEE the conversation; only sending refuses. */
+body.ws-version-blocked .ws-send, body.ws-version-blocked .pc-send { opacity: .5; }
