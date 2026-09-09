@@ -11511,6 +11511,11 @@ function viewPactMobile() {
       const input = () => chatHost.querySelector(".pc-input");
       const act = () => pactChatActive();
       const drive = (fn) => { const a = act(); if (a) fn(a); };
+      /* RETIRE THE PREVIOUS COCKPIT FIRST. renderStage() runs on every chat switch, new chat, saved
+         session and file open, and each run mounts a fresh cockpit on the SAME adopted transcript.
+         destroy() was never called, so every remount left another live scroll watcher on that node —
+         they accumulate for the life of the page and all of them run on every scroll. */
+      if (PACT_MC) { try { PACT_MC.destroy(); } catch {} PACT_MC = null; }
       PACT_MC = window.MobileCockpit.mount(wrap2, {
         transcript: chatHost,
         slots: {

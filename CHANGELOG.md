@@ -4,6 +4,38 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.17.7] - 2026-09-09
+### Fixed — the Live/Held bulb was watching a node that cannot scroll
+
+*"Live and held medallion don't work properly when scrolling, morphing between states."*
+
+`opts.transcript` is a **wrapper** in both workspaces — Pact hands over the host that contains
+`.pc-scroll`, Core hands over the stick wrapper around its core — and **scroll events do not
+bubble**. So the cockpit's watcher sat on a node that never scrolls and was never called. Measured
+with the debugger: the adopted node carried the cockpit's scroll listeners and `overflow: hidden`,
+while the element doing the scrolling (30,448px of content in 490px) carried only the host's own.
+
+The bulb therefore only changed when the **host** happened to repaint — constant during a streaming
+turn, which is exactly why it looked like it half-worked, and absent the moment the conversation went
+idle. It is now watched in the capture phase, which reaches a non-bubbling event on the way down, and
+the state is read from the event's target, so one listener follows whichever descendant really
+scrolls. Tapping the bulb and re-pinning after the type box grows now move that same element, rather
+than setting `scrollTop` on a wrapper where it does nothing.
+
+### Fixed — every remount left another live scroll watcher on the transcript
+
+Found while measuring the above: **two** capture-phase scroll listeners on one adopted node with a
+single cockpit on screen. `renderStage()` remounts the cockpit on every chat switch, new chat, saved
+session and file open, and `PACT_MC.destroy()` was never called — so each remount abandoned a cockpit
+that went on listening to the same transcript, painting a bulb nobody can see. They accumulated for
+the life of the page and all of them ran on every scroll event, on the one surface where smoothness
+is the whole point.
+
+Two halves, because either alone leaves it broken: `destroy()` now removes the listener it put on the
+host's element (the transcript was never ours — the module already says so about the node itself),
+and the remount retires the cockpit it replaces. Measured after: 1 listener, still 1 across three
+chat switches.
+
 ## [1.17.6] - 2026-09-09
 ### Fixed — the phone's context page reported 0% over a full window, in both workspaces
 

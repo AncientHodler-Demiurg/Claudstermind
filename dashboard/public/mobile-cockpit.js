@@ -363,8 +363,22 @@
          transcript then has to be re-pinned or the bottom slides out of view, which is what reads as
          "it went over the chat". Only while the bulb says Live, though: re-pinning a transcript you
          deliberately scrolled up in is the same bug from the other side. */
-      if (state.stick) core.scrollTop = core.scrollHeight;
+      if (state.stick) toBottom();
     }
+    /* THE ELEMENT THAT ACTUALLY SCROLLS. Cached, because finding it walks the transcript and that is
+       the largest subtree on the page; re-resolved only when the cached one stops being scrollable
+       (the host may rebuild its transcript under us). Deliberately generic — the cockpit knows no
+       host class names, so it asks the DOM which node scrolls rather than being told. */
+    var scrollEl = null;
+    function scroller() {
+      if (scrollEl && scrollEl.scrollHeight - scrollEl.clientHeight > 8) return scrollEl;
+      if (core.scrollHeight - core.clientHeight > 8) { scrollEl = core; return scrollEl; }
+      var kids = core.querySelectorAll ? core.querySelectorAll("*") : [];
+      for (var i = 0; i < kids.length; i++)
+        if (kids[i].scrollHeight - kids[i].clientHeight > 8) { scrollEl = kids[i]; return scrollEl; }
+      return core;
+    }
+    function toBottom() { var s = scroller(); s.scrollTop = s.scrollHeight; }
     /* Called from the paint path: sizing is a write-then-read (a forced layout), so it must not run on
        every repaint of every pane — only when the text is not the text we last sized for. */
     function growIfNeeded() { if (box.value !== grownFor) grow(); }
@@ -386,11 +400,23 @@
     /* THE BULB IS THE SCROLL STATE, not the turn state: "Live" means the transcript is pinned to the
        bottom and new turns push into view, "Held" means you scrolled up and it is staying put.
        Tapping it goes back to the bottom — and tells the host, which owns whether it stays there. */
-    onTap(bulb, function () { core.scrollTop = core.scrollHeight; call("jumpBottom"); });
-    core.addEventListener("scroll", function () {
-      var atEnd = core.scrollHeight - core.scrollTop - core.clientHeight < 24;
+    onTap(bulb, function () { toBottom(); call("jumpBottom"); });
+    /* WATCHED IN THE CAPTURE PHASE, because scroll events DO NOT BUBBLE. `opts.transcript` is whatever
+       the host hands over, and both hosts hand over a WRAPPER whose child does the scrolling — Pact's
+       `.pc-scroll`, Core's stick wrapper around its core. So this listener sat on a node that cannot
+       scroll: measured with the debugger, the adopted node carried the cockpit's scroll listeners and
+       `overflow: hidden`, while the element that actually scrolled (30448px of content in 490px)
+       carried only the host's own. The bulb therefore changed only when the HOST happened to repaint
+       — constant during a streaming turn, which is exactly why it looked like it worked, and absent
+       the moment the conversation went idle. Capture reaches a non-bubbling event on the way DOWN, so
+       one listener here sees whichever descendant is really scrolling. */
+    function onCoreScroll(e) {
+      var n = e && e.target && typeof e.target.scrollHeight === "number" ? e.target : core;
+      if (n !== core) scrollEl = n;                 // remember what the host is really scrolling
+      var atEnd = n.scrollHeight - n.scrollTop - n.clientHeight < 24;
       if (atEnd !== state.stick) { state.stick = atEnd; paintBulb(); }
-    }, { passive: true });
+    }
+    core.addEventListener("scroll", onCoreScroll, true);
     onTap(railL, function () { setPanel("left"); });
     onTap(railR, function () { setPanel("right"); });
     onTap(scrim, function () { setPanel(null); });
@@ -1040,6 +1066,12 @@
         /* The transcript was the HOST's element before it was ours; leaving with it would take the
            conversation off the screen and leave the host holding a detached node. It is handed back
            as a child of the host — not to the position it was in, which only its owner knows. */
+        /* GIVE BACK THE NODE AS WE FOUND IT. The scroll watcher is attached to the HOST's element,
+           not to ours, so leaving it behind outlives this cockpit entirely: `renderStage()` remounts
+           on every chat switch, and each abandoned mount kept listening to the same transcript,
+           painting a bulb nobody can see. Measured before this: two capture-phase scroll listeners on
+           one adopted node with only one cockpit on screen. */
+        core.removeEventListener("scroll", onCoreScroll, true);
         if (adopted) { core.classList.remove("mc-core"); core.classList.remove("rg-core"); }
         else core.remove();
         head.remove();
