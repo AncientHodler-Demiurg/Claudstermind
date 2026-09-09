@@ -4,6 +4,37 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.14.3] - 2026-09-09
+### Changed — Mobile Cockpit Lab: the bulb goes back on the seam, and repositories get their own page
+
+- **The Live/Held bulb moved to the core's lower border** — the desktop seam, where it already lives
+  (`components.css .seambulb`, absolutely placed, zero flow height). It reports on the boundary
+  between the transcript and the compose row, so that is the line it sits on. The button row keeps
+  nothing in the middle, which gives `auto` / Stop / Send the width they actually need.
+- **Conversations and Marks are as small as their contents allow, and equal** — measured after render
+  (`fitRisers`) rather than pinned to a round number, so neither label clips and no pixel is spent
+  past the wider of the two. Everything left over belongs to the model strip.
+- **The left pane names ONE repository and offers ONE button to change it.** Thirty repositories is
+  not a section of a panel: `⇄ Change repository` opens a chooser over the whole page, **grouped by
+  organisation** with the same colours, scopes and role badges the Overview uses. Picking one moves
+  the chat box to that repository's ★ main conversation.
+
+### Known stale — the Overview's map is 7 weeks old (not fixed; needs decisions)
+`dashboard/data/map.json` was generated **2026-07-14** and still describes 31 repositories. Compared
+against the disk today (48 git repositories under the workspace root):
+
+**Six are real repositories the Overview does not know about:**
+`AncientClients/Tago` · `AncientClients/StoaVerify` · `AncientClients/DemiourgosMotionPictures/site` ·
+`OuroborosNetwork/_libs/ouronet-libs` · `StoaChain/websites/StoicDigest` · `StoaChain/_infra/stoa-js`
+(the map still lists that last one as *"pre-split"*, but it exists on disk now).
+
+**Fifteen more are on disk and probably should NOT be listed**: `_upstream/*` (6 vendored clones),
+`_exocortex-study/*` (4), `_Archive/*` (4), and `Media/OuroborosFont/iosevka-src`.
+
+Each map entry carries a role, a layer, an ecosystem, org current/target and package versions —
+inventing those would put wrong data on the one page that is supposed to be the map. The diff is
+recorded here; the entries need saying, not guessing.
+
 ## [1.14.2] - 2026-09-09
 ### Changed — Mobile Cockpit Lab: four surfaces, each with one job
 

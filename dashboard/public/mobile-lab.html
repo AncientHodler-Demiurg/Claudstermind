@@ -118,7 +118,7 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
       auto / Stop / Send right
    1. a strip glued to the nav: Conversations left, Bookmarks right, and in the middle a READ-ONLY
       readout of the model that is actually running — pull it up (or tap) for the whole right pane. */
-.m-compose{flex:0 0 auto;display:flex;background:var(--panel);padding:8px 10px 0;border-top:var(--seam-w) solid var(--edge)}
+.m-compose{position:relative;flex:0 0 auto;display:flex;background:var(--panel);padding:12px 10px 0;border-top:var(--seam-w) solid var(--edge)}
 .m-box{flex:1 1 auto;min-width:0;height:40px;max-height:42vh;resize:none;overflow-y:auto;background:var(--field);
   border:1px solid var(--field-line);border-radius:12px;color:var(--ink);font:inherit;font-size:15px;line-height:1.45;padding:10px 12px}
 .m-box:focus{outline:none;border-color:var(--accent)}
@@ -128,30 +128,38 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
   background:var(--chip);border:1px solid var(--line);color:var(--ink);font-size:17px;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .m-ico:active{filter:brightness(1.25)}
 .m-ico.--retract{width:64px;font-size:14px}
-.m-auto{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--dim);cursor:pointer;flex:0 0 auto}
+.m-auto{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);cursor:pointer;flex:0 0 auto;
+  height:40px;padding:0 10px;border-radius:12px;background:var(--chip);border:1px solid var(--line)}
+.m-auto.on{color:var(--ink);border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
 .m-auto .m-sw{width:34px;height:20px}.m-auto .m-sw i{width:14px;height:14px}
 .m-auto.on .m-sw{background:color-mix(in srgb,var(--accent) 62%,#2b3868)}
 .m-auto.on .m-sw i{transform:translateX(14px);background:#fff}
-.m-snd{flex:0 0 auto;min-width:52px;height:40px;border-radius:12px;border:1px solid var(--accent);background:var(--accent);
+.m-snd{flex:0 0 auto;min-width:62px;height:40px;border-radius:12px;border:1px solid var(--accent);background:var(--accent);
   color:#1b0b2a;font:inherit;font-size:17px;font-weight:800;cursor:pointer;touch-action:manipulation}
 .m-snd.--busy{background:var(--work);border-color:var(--work);color:var(--work-fg);font-size:13px}
-.m-stp{flex:0 0 auto;min-width:44px;height:40px;border-radius:12px;border:1px solid color-mix(in srgb,var(--work-deep) 55%,var(--line));
+.m-stp{flex:0 0 auto;min-width:48px;height:40px;border-radius:12px;border:1px solid color-mix(in srgb,var(--work-deep) 55%,var(--line));
   background:var(--chip);color:var(--work-deep);font-size:15px;cursor:pointer}
 .m-mid{flex:1;display:flex;justify-content:center}
 /* THE LIVE/HELD MEDALLION — straddling the top edge of the button row, centred over the retractor,
    deliberately shorter than the buttons so it reads as a badge rather than a control. Production
    already re-homes this exact bulb between docks (stick.dockMode); this is one more dock. */
-.m-med{height:28px;display:inline-flex;align-items:center;gap:5px;
+/* THE SEAM BULB. On the desktop this sits ON the boundary between the transcript and the footer
+   (components.css .seambulb, top:-11px, zero flow height) — it belongs to the core's lower edge,
+   which is exactly the line it reports on. Same here: absolutely placed on the compose row's top
+   border, so it costs the button row nothing and the right-hand group gets the whole width it needs. */
+.m-med{position:absolute;left:50%;top:-14px;transform:translateX(-50%);z-index:6;height:26px;display:inline-flex;align-items:center;gap:5px;
   padding:0 10px;border-radius:999px;font-size:10.5px;font-weight:700;background:var(--panel);color:var(--ok);
   border:1px solid color-mix(in srgb,var(--ok) 45%,transparent);white-space:nowrap}
 .m-med i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block}
 .m-med.--held{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 45%,transparent)}
 /* strip 1 — riser tabs glued to the nav below, exactly like .ws-mbtn/.pactm-mbtn do today */
 .m-risers{flex:0 0 auto;display:flex;align-items:flex-end;justify-content:space-between;gap:6px;padding:4px 6px 0;background:var(--bg)}
-/* EQUAL SIDES. Conversations and Marks are the same control in two directions — which chat, and
-   which mark inside it — so they get the same width and the model strip is centred between them
-   rather than pushed off-centre by whichever label happens to be longer. */
-.m-riser{flex:0 0 104px;justify-content:center;height:22px;padding:0 9px;display:inline-flex;align-items:center;gap:4px;border-radius:8px 8px 0 0;
+/* EQUAL AND MINIMAL. Conversations and Marks are the same control in two directions — which chat,
+   and which mark inside it — so they get the SAME width, and that width is the smaller of what fits
+   both: measured after render (fitRisers) rather than guessed at a round number, so neither label is
+   clipped and no pixel is spent past the wider of the two. Everything left over is the model strip's,
+   because that is the one that has something to say. */
+.m-riser{flex:0 0 auto;justify-content:center;height:22px;padding:0 9px;display:inline-flex;align-items:center;gap:4px;border-radius:8px 8px 0 0;
   border:1px solid color-mix(in srgb,var(--accent) 48%,var(--line));border-bottom:none;background:color-mix(in srgb,var(--accent) 13%,var(--panel));
   color:var(--accent);font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;touch-action:manipulation}
 .m-riser.--bm{color:#fbbf24;border-color:color-mix(in srgb,#fbbf24 45%,var(--line));background:color-mix(in srgb,#fbbf24 11%,var(--panel))}
@@ -190,6 +198,27 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
 .m-ctxrow u{width:10px;height:10px;border-radius:3px;flex:0 0 auto;text-decoration:none}
 .m-ctxrow span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .m-ctxrow em{font-style:normal;color:var(--dim);font-variant-numeric:tabular-nums}
+/* the repository chooser: one card per organisation, the same reading order the Overview uses */
+.m-org{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel)}
+.m-org-hd{display:flex;align-items:center;gap:8px;padding:9px 11px;border-bottom:1px solid var(--line);background:var(--panel-2)}
+.m-org-hd i{width:9px;height:9px;border-radius:50%;flex:0 0 auto;display:block}
+.m-org-hd b{flex:1;font-size:12.5px}
+.m-org-hd em{font-style:normal;font-size:10.5px;color:var(--dim)}
+.m-org-body{display:flex;flex-direction:column}
+.m-repo{display:flex;align-items:center;gap:9px;min-height:42px;padding:6px 11px;font-size:13px;cursor:pointer;
+  border-top:1px solid #ffffff0d}
+.m-repo:first-child{border-top:0}
+.m-repo.--on{background:color-mix(in srgb,var(--accent) 13%,transparent);color:#fff}
+.m-repo span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.m-kind{text-decoration:none;font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:999px;flex:0 0 auto;
+  border:1px solid var(--line);color:var(--dim);background:var(--chip)}
+.m-kind.--constructor{color:#c084fc;border-color:#c084fc55}
+.m-kind.--automaton{color:#f472b6;border-color:#f472b655}
+.m-kind.--daimon{color:#fbbf24;border-color:#fbbf2455}
+.m-kind.--seer{color:#38bdf8;border-color:#38bdf855}
+.m-kind.--website{color:#22d3ee;border-color:#22d3ee55}
+.m-kind.--orchestrator{color:#f0abfc;border-color:#f0abfc55}
+
 /* agent tabs, in the right pane beside the numbers they summarise */
 .m-agent{display:flex;align-items:center;gap:9px;min-height:42px;padding:4px 10px;border-radius:10px;background:var(--chip);
   border:1px solid var(--line);font-size:12.5px}
@@ -388,8 +417,30 @@ var S = {
     { name: "OuronetUI · dev", repo: "OuroborosNetwork/daimons/OuronetUI", tree: "dev", on: false, star: true },
     { name: "Khronoton · Main", repo: "AncientPantheon/constructors/Khronoton", tree: "main", on: false, star: true }
   ],
-  repos: ["Claudstermind", "OuroborosNetwork/daimons/OuronetUI", "AncientPantheon/constructors/Khronoton",
-          "StoaChain/seers/StoaExplorer", "AncientClients/Tago"],
+  /* The organisations, their colours and their kind badges are the Overview's own (dashboard/data/
+     map.json). A phone should not invent a second way to group a workspace it already groups. */
+  orgs: [
+    { name: "AncientPantheon", scope: "@ancientpantheon", col: "#c084fc", repos: [
+      { name: "Pythia", path: "AncientPantheon/constructors/Pythia", kind: "constructor" },
+      { name: "Codex", path: "AncientPantheon/constructors/Codex", kind: "constructor" },
+      { name: "Khronoton", path: "AncientPantheon/constructors/Khronoton", kind: "constructor" },
+      { name: "Mnemosyne", path: "AncientPantheon/automatons/Mnemosyne", kind: "automaton" }]},
+    { name: "StoaChain", scope: "@stoachain", col: "#38bdf8", repos: [
+      { name: "StoaExplorer", path: "StoaChain/seers/StoaExplorer", kind: "seer" },
+      { name: "stoa-js", path: "StoaChain/_infra/stoa-js", kind: "infra" },
+      { name: "StoicDigest", path: "StoaChain/websites/StoicDigest", kind: "website" }]},
+    { name: "OuroborosNetwork", scope: "@ouronet", col: "#34d399", repos: [
+      { name: "OuronetUI", path: "OuroborosNetwork/daimons/OuronetUI", kind: "daimon" },
+      { name: "Ouronet", path: "OuroborosNetwork/_onchain/Ouronet", kind: "infra" },
+      { name: "ouronet-libs", path: "OuroborosNetwork/_libs/ouronet-libs", kind: "infra" }]},
+    { name: "AncientClients", scope: null, col: "#fbbf24", repos: [
+      { name: "Tago", path: "AncientClients/Tago", kind: "client" },
+      { name: "DemiourgosMotionPictures", path: "AncientClients/DemiourgosMotionPictures", kind: "client" }]},
+    { name: "AncientHodler-Demiurg", scope: null, col: "#9aa6c7", repos: [
+      { name: "Claudstermind", path: "Claudstermind", kind: "orchestrator" },
+      { name: "LocalHost", path: "LocalHost", kind: "tool" },
+      { name: "AncientWisdom", path: "Tools/AncientWisdom", kind: "tool" }]}
+  ],
   reconnected: true,
   runningModel: "Opus 5",    // what is ACTUALLY running — the strip is a readout, never a selector
   convo: { name: "Claudstermind · Main", star: true },   // ★ = the repository's main conversation
@@ -568,6 +619,38 @@ function contextOverlay() {
   ]);
 }
 
+/* THE REPOSITORY CHOOSER — the whole page, grouped by ORGANISATION exactly as the Overview groups
+   them, because that grouping is how this workspace is actually organised and a phone has no room to
+   invent a second one. Picking a repository moves this chat box to that repository's ★ main
+   conversation. */
+function repoOverlay() {
+  var x = el("button", { class: "m-px", type: "button" }, ["✕"]);
+  onTap(x, function () { setOverlay(null); });
+  var groups = S.orgs.map(function (o) {
+    return el("div", { class: "m-org" }, [
+      el("div", { class: "m-org-hd" }, [el("i", { style: "background:" + o.col }, []), el("b", {}, [o.name]),
+        el("em", {}, [o.scope || ""])]),
+      el("div", { class: "m-org-body" }, o.repos.map(function (r) {
+        var row = el("div", { class: "m-repo" + (r.path === S.repo ? " --on" : "") }, [
+          el("span", {}, [r.name]), el("u", { class: "m-kind --" + r.kind }, [r.kind])]);
+        onTap(row, function () {
+          S.repo = r.path;
+          var main = S.convos.filter(function (c) { return c.repo === r.path && c.star; })[0];
+          S.convo = { name: main ? main.name : r.name + " · Main", star: true };
+          S.worktree = main ? main.tree : "main";
+          S.convos.forEach(function (c) { c.on = !!(main && c === main); });
+          setOverlay(null);
+        });
+        return row;
+      }))
+    ]);
+  });
+  return el("div", { class: "m-over" }, [
+    el("div", { class: "m-over-hd" }, [el("b", {}, ["Repositories"]), x]),
+    el("div", { class: "m-over-body rg-core" }, groups)
+  ]);
+}
+
 /* ---------------- panels ---------------- */
 function section(title, kids) { return el("div", { class: "m-sec" }, [el("b", {}, [title])].concat(kids)); }
 function toggle(label, on, fn) {
@@ -594,19 +677,13 @@ function leftPanel() {
                  lets more than one of them be open at once, all live under the repository above them.
      This is the same arrangement as the desktop cockpit — repo, then worktree, then conversation —
      stacked instead of laid out in a row. */
-  var repoRows = S.repos.map(function (r) {
-    var on = r === S.repo;
-    var row = el("div", { class: "m-row" + (on ? " --on" : "") }, [el("span", {}, [r]), el("em", {}, [on ? "open" : "→ ★ main"])]);
-    onTap(row, function () {
-      S.repo = r;
-      var main = S.convos.filter(function (c) { return c.repo === r && c.star; })[0];
-      S.convo = { name: main ? main.name : r + " · Main", star: true };
-      S.worktree = main ? main.tree : "main";
-      S.convos.forEach(function (c) { c.on = !!(main && c === main); });
-      render();
-    });
-    return row;
-  });
+  /* ONE repository — the one this chat box is on — and ONE button to change it. A list of thirty
+     repositories is not a section of a panel; it is its own page, grouped the way the Overview groups
+     them, which is what the button opens. */
+  var repoNow = el("div", { class: "m-row --on" }, [el("span", {}, [S.repo]), el("em", {}, ["current"])]);
+  var repoBtn = el("button", { class: "m-btn --acc", type: "button" }, ["⇄ Change repository"]);
+  onTap(repoBtn, function () { setPanel(null); setOverlay("repos"); });
+  var repoRows = [repoNow, el("div", { class: "m-btns" }, [repoBtn])];
   var mine = S.convos.filter(function (c) { return c.repo === S.repo; });
   var convoRows = mine.map(function (c) {
     var row = el("div", { class: "m-row" + (c.on ? " --on" : "") }, [
@@ -742,7 +819,9 @@ function proposed() {
   /* The expansion button is gone: the box already grows with what you type, and a control that
      duplicates what the box does anyway was the odd one out in this row. What is left in the middle
      is the Live/Held bulb, which is a STATE and belongs where the eye already goes. */
-  var btnrow = el("div", { class: "m-btnrow" }, [menuB, upB, el("div", { class: "m-mid" }, [med]), autoB, stopB, send]);
+  /* Menu and upload left; auto, Stop and Send right with the whole remaining width to sit in. The
+     middle is empty on purpose now — the bulb it used to hold moved up onto the core's own edge. */
+  var btnrow = el("div", { class: "m-btnrow" }, [menuB, upB, el("div", { class: "m-mid" }, []), autoB, stopB, send]);
 
   /* 1. THE STRIP glued to the nav. The middle is a READOUT of what is running; pulling it up (or
      tapping it) opens the right pane, which is where the selector lives. */
@@ -766,7 +845,7 @@ function proposed() {
 
   var scrim = el("div", { class: "m-scrim" + (S.panel ? " on" : "") }, []);
   onTap(scrim, function () { setPanel(null); });
-  var kids = [appBar(), head, core, el("div", { class: "m-compose" }, [box]), btnrow, risers, nav(),
+  var kids = [appBar(), head, core, el("div", { class: "m-compose" }, [med, box]), btnrow, risers, nav(),
               el("div", { class: "m-stat" }, [])];
   if (S.rail !== "none") {
     var cls = " --" + S.rail;
@@ -781,6 +860,7 @@ function proposed() {
   else if (S.sheet === "convos") kids.push(convosSheet());
   else if (S.sheet === "marks") kids.push(marksSheet());
   if (S.overlay === "context") kids.push(contextOverlay());
+  else if (S.overlay === "repos") kids.push(repoOverlay());
   var wrap = el("div", { class: "mob" }, kids);
   wrap.id = "mob";
   requestAnimationFrame(function () { if (S.stick) core.scrollTop = core.scrollHeight; });
@@ -820,6 +900,17 @@ function today() {
   return wrap;
 }
 
+/* Both risers to the SAME width, and that width to the wider of their two natural widths — measured
+   after the row exists, because a label's width is a fact about the font, not a number to pick. */
+function fitRisers() {
+  var rs = document.querySelectorAll(".m-riser");
+  if (!rs.length) return;
+  rs.forEach(function (r) { r.style.width = "auto"; });
+  var w = 0;
+  rs.forEach(function (r) { w = Math.max(w, r.offsetWidth); });
+  rs.forEach(function (r) { r.style.width = w + "px"; });
+}
+
 /* The readout is measured from the DOM, not asserted in prose — the claim this page makes is a
    number, so the page has to keep proving it after every edit. */
 function measure() {
@@ -852,7 +943,7 @@ function render() {
   var host = $("#mob"), next = S.view === "today" ? today() : proposed();
   host.replaceWith(next);
   document.querySelectorAll("#sw button").forEach(function (b) { b.classList.toggle("on", b.dataset.v === S.view); });
-  requestAnimationFrame(measure);
+  requestAnimationFrame(function () { fitRisers(); measure(); });
 }
 
 /* Wiring: the view switch, Escape closes a panel, and a swipe from either edge opens its panel —
@@ -864,7 +955,7 @@ document.addEventListener("keydown", function (e) {
   if (e.key !== "Escape") return;
   if (S.overlay) setOverlay(null); else if (S.sheet) setSheet(null); else if (S.panel) setPanel(null);
 });
-window.addEventListener("resize", measure);
+window.addEventListener("resize", function () { fitRisers(); measure(); });
 (function swipes() {
   var x0 = 0, y0 = 0, live = false;
   document.addEventListener("touchstart", function (e) {
@@ -882,6 +973,9 @@ window.addEventListener("resize", measure);
   }, { passive: true });
 })();
 
+/* A handle on the mock's own state, for driving it from the console (and for the screenshots that go
+   into a review). Lab furniture: production has no such thing. */
+window.LAB = { S: S, render: render, setPanel: setPanel, setSheet: setSheet, setOverlay: setOverlay };
 document.body.dataset.theme = "core";
 fetch("/api/version").then(function (r) { return r.json(); })
   .then(function (v) { S.build = v.version; $("#stamp").textContent = "build " + v.version; render(); })
