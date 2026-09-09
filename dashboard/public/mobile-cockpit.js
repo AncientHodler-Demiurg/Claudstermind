@@ -116,7 +116,9 @@
       running: { model: normPick(null), effort: normPick(null), permission: normPick(null),
                  ultracode: false, autoWrap: true, autoContinue: false },
       context: { tokens: 0, ceiling: 1000000, parts: [] },
-      stats: [], agents: [], conversations: [], repos: [], history: [], marks: [],
+      stats: [], agents: [], repos: [], history: [], marks: [],
+      conversations: [],   // the threads of ONE repository
+      chats: [],           // the chat BOXES, one per repository — see chatsSheet
       busy: false, stick: true, multiChat: false, worktree: "",
       panel: null, sheet: null, overlay: null, histScope: "repo", openTurn: null,
     };
@@ -394,8 +396,14 @@
       }
       return null;
     };
+    /* A mark's identity is the ADDRESS of the turn it was made on, not the handle the host uses to
+       find it again — those became two different fields the moment `at` turned out to be a timestamp.
+       Compared with punctuation stripped so "R#7,281" and "R7281" are the same turn, because the host
+       formats for a reader and the transcript stamps for a machine. */
+    var markAddr = function (v) { return String(v == null ? "" : v).replace(/[^A-Za-z0-9]/g, ""); };
     var isMarked = function (addr) {
-      return state.marks.some(function (m) { return String(m.at) === addr; });
+      var a = markAddr(addr);
+      return state.marks.some(function (m) { return markAddr(m.addr || m.note || m.at) === a; });
     };
     var openTurnNode = null, actsNode = null;
     function tapTarget(e) {
@@ -517,27 +525,39 @@
           })])
       ]);
     }
-    /* THE CHAT SELECTOR — whole chats, across repositories. That is what makes it a different list
-       from the left pane's, which is the conversations of the ONE repository this box points at. */
-    function convosSheet() {
-      return sheet("Conversations", [
-        section("Open chats", state.conversations.map(function (c) {
-          return row((c.star ? "★ " : "") + (c.name || c.id), c.worktree || "",
-                     function () { setSheet(null); call("pickConversation", c.id); }, !!c.active);
-        }).concat([btns([btn("＋ New chat", "--acc", function () { call("newConversation"); })])]))
+    /* CHATS ARE NOT CONVERSATIONS, and this sheet used to render the wrong one of the two.
+     *   A CHAT is a whole chat box — one per repository, several open at once. This sheet, and the
+     *     "Chats N" tab that opens it, count and switch between THOSE.
+     *   A CONVERSATION is one of several threads inside a single repository (the ★ main and any
+     *     others multi-chat has added). Those live in the left pane, under the repository they
+     *     belong to.
+     * Rendering `state.conversations` here made "Chats 1" while two chat boxes were open — it was
+     * counting the threads of one repository and calling them chats. */
+    function chatsSheet() {
+      return sheet("Chats", [
+        section("Open chat boxes", (state.chats.length ? state.chats : []).map(function (c) {
+          return row((c.star ? "★ " : "") + (c.name || c.id), c.sub || "",
+                     function () { setSheet(null); call("pickChat", c.id); }, !!c.active);
+        }).concat([btns([btn("＋ New chat", "--acc", function () { call("newChat"); })])]))
       ]);
     }
     /* Marks are made ON turns — that is what makes each row an address rather than a label. */
     function marksSheet() {
       return sheet("Marks", [
+        /* A mark's POINT is that it takes you back to the turn. Rendered as the turn's address with
+           its first line underneath, and tapping one asks the host to scroll there — a row that shows
+           a raw timestamp and does nothing is a worse answer than no list at all. */
         section("Marked turns", state.marks.length
-          ? state.marks.map(function (m) { return row(String(m.note || "marked"), String(m.at || "")); })
+          ? state.marks.map(function (m) {
+              return row(String(m.note || "marked"), String(m.text || ""),
+                         function () { setSheet(null); call("pickMark", m.at); });
+            })
           : [row("No marks yet — star a turn to make one")])
       ]);
     }
     function buildSheet(which) {
       if (which === "model") return modelSheet();
-      if (which === "convos") return convosSheet();
+      if (which === "convos") return chatsSheet();
       if (which === "marks") return marksSheet();
       return null;
     }
@@ -777,7 +797,7 @@
     }
     var lastFit = "";
     function paintRisers() {
-      var chats = "💬 Chats " + state.conversations.length, marks = "★ Marks " + state.marks.length;
+      var chats = "💬 Chats " + state.chats.length, marks = "★ Marks " + state.marks.length;
       txt(chatsTab, chats);
       txt(marksTab, marks);
       var r = state.running;
@@ -829,6 +849,8 @@
       if ("repos" in s) state.repos = s.repos || [];
       if ("history" in s) state.history = s.history || [];
       if ("marks" in s) state.marks = s.marks || [];
+      // The chat BOXES, distinct from `conversations` (the threads of one repository) — see chatsSheet.
+      if ("chats" in s) state.chats = s.chats || [];
       if ("busy" in s) state.busy = !!s.busy;
       if ("stick" in s) state.stick = !!s.stick;
       if ("multiChat" in s) state.multiChat = !!s.multiChat;

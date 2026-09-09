@@ -4,6 +4,28 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.15.5] - 2026-09-09
+### Fixed — "Chats" was counting the wrong thing, and a mark showed a timestamp
+
+Two names for two things that had been collapsed into one list.
+
+**A CHAT is a chat box** — one per repository, several open at once.
+**A CONVERSATION is a thread inside one repository** — the ★ main and whatever multi-chat has added.
+
+The riser was fed the second and labelled the first, so it read **"Chats 1" with two chat boxes
+open**. It now counts `st.panes` (the boxes) and its sheet lists them across repositories and switches
+between them; the left pane keeps the conversations of the one repository this box points at. The
+module carries the two as separate state (`chats` / `conversations`) with separate callbacks, so they
+cannot be confused again by whoever wires the next host.
+
+**Marks showed the handle instead of the address.** `p.bookmarks` stores each bookmarked turn's `at`
+timestamp — what the host scrolls to, not something a person reads — so the sheet said
+`marked · 1787188479777`. Each mark now resolves to `R#n` plus the turn's first line, exactly as the
+desktop's bookmark list resolves it, and tapping one scrolls to that turn (`wsScrollToResponse`) —
+previously the rows were inert. A mark is matched to its turn by address with punctuation stripped, so
+`R#7,281` and `R7281` are the same turn: the host formats for a reader, the transcript stamps for a
+machine.
+
 ## [1.15.4] - 2026-09-09
 ### Fixed — a touch laptop was getting the phone cockpit, with no sidebar and no way to pick a repo
 

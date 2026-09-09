@@ -13197,6 +13197,10 @@ function viewWorkspace() {
           // label. Resolved by query rather than by a name that would have been silently undefined.
           autoContinue: (v) => drive(view.els.sendGrp && view.els.sendGrp.querySelector(".autolbl input"), v),
           multiChat: (v) => wsSetMultiChat(p, v),
+          // Chats: the boxes. Conversations: the threads inside this one's repository.
+          pickChat: (id) => setActive(id),
+          newChat: () => addPaneMobile(),
+          pickMark: (at) => wsScrollToResponse(p, at),
           pickConversation: (slot) => wsSwitchConvSlot(p, Number(slot) || 0),
           newConversation: () => wsAddConvSlot(p),
           pickRepo: (path) => { const sel = repoSel; if (sel) drive(sel, path); },
@@ -13288,7 +13292,26 @@ function viewWorkspace() {
           meta: t.tokens ? (Math.round(t.tokens / 1000) + "k tok") : "",
         })),
       conversations: convos,
-      marks: (Array.isArray(p.bookmarks) ? p.bookmarks : []).map((at) => ({ at, note: "marked" })),
+      /* CHATS ARE THE BOXES. "the chats on mobile shows 1, but there were 2 Main chat boxes opened" —
+         it was being fed the conversations of ONE repository. `st.panes` is the list of boxes. */
+      chats: st.panes.map((x) => ({
+        id: x.id,
+        name: (shortRepo(x.repo || "") || "Pick a repository") + (x.worktree && x.worktree !== "main" ? " · " + x.worktree : " · Main"),
+        sub: x.id === st.activeId ? (x.status === "running" || x.status === "deepwork" ? "working" : "live") : "",
+        active: x.id === st.activeId, star: (x.convSlot || 0) === 0,
+      })),
+      /* A MARK IS AN ADDRESS, not a handle. `p.bookmarks` stores the turn's `at` timestamp, which is
+         what the host scrolls to — but showing it read "marked · 1787188479777". Resolved to `R#n`
+         and the turn's first line, exactly as the desktop's bookmark list does (wsBookmarkRows). */
+      marks: (Array.isArray(p.bookmarks) ? p.bookmarks : []).slice().sort((a, b) => a - b).map((at) => {
+        const m = (p.transcript || []).find((x) => x && (x.role === "assistant" || x.kind === "assistant") && x.at === at);
+        return {
+          at,
+          note: m ? "R#" + wsNumFmt(m._rnum || 0) : "R#?",
+          text: m ? String(m.text || "").replace(/[#*`>_~-]/g, "").replace(/\s+/g, " ").trim().slice(0, 76)
+                  : "(older — loads on open)",
+        };
+      }),
       // The chooser reads the SAME map the Overview reads, grouped the same way — a phone must not
       // invent a second grouping for a workspace that already has one.
       repos: (MAP && Array.isArray(MAP.repos) ? MAP.repos : []).map((r) => ({
