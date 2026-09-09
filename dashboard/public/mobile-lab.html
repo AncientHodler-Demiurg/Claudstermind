@@ -111,6 +111,12 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
 .m-n{position:absolute;top:-8px;font-size:9.5px;font-weight:800;letter-spacing:.04em;padding:1px 6px;border-radius:5px}
 .m-turn.--p .m-n{right:10px;background:var(--tag-p-bg);color:var(--tag-p-fg)}
 .m-turn.--r .m-n{left:10px;background:var(--tag-r-bg);color:var(--tag-r-fg)}
+.m-turn.--open{border-color:color-mix(in srgb,var(--accent) 55%,var(--line))}
+/* the reply cue, above the type box, so a reply never looks like an ordinary message */
+.m-reply{display:flex;align-items:center;gap:8px;margin-bottom:6px;padding:5px 10px;border-radius:9px;font-size:11.5px;
+  background:color-mix(in srgb,var(--accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);color:var(--ink)}
+.m-reply b{color:var(--acc)}.m-reply span{flex:1}
+.m-reply button{appearance:none;border:0;background:transparent;color:var(--dim);font-size:15px;cursor:pointer}
 
 /* ===== THE FOOTER, in three strips, bottom-up — the shape Pact mobile already proved:
    3. the type box, FULL WIDTH (an attach button beside it is what stole the width)
@@ -139,6 +145,7 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
 .m-snd.--busy{background:var(--work);border-color:var(--work);color:var(--work-fg);font-size:13px}
 .m-stp{flex:0 0 auto;min-width:48px;height:40px;border-radius:12px;border:1px solid color-mix(in srgb,var(--work-deep) 55%,var(--line));
   background:var(--chip);color:var(--work-deep);font-size:15px;cursor:pointer}
+.m-stp:disabled{opacity:.35;cursor:default;border-color:var(--line);color:var(--dim)}
 .m-mid{flex:1;display:flex;justify-content:center}
 /* THE LIVE/HELD MEDALLION — straddling the top edge of the button row, centred over the retractor,
    deliberately shorter than the buttons so it reads as a badge rather than a control. Production
@@ -198,6 +205,27 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
 .m-ctxrow u{width:10px;height:10px;border-radius:3px;flex:0 0 auto;text-decoration:none}
 .m-ctxrow span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .m-ctxrow em{font-style:normal;color:var(--dim);font-variant-numeric:tabular-nums}
+/* a search field, for any list long enough to need one */
+.m-find{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+.m-find input{flex:1;min-width:0;height:38px;border-radius:10px;background:var(--field);border:1px solid var(--field-line);
+  color:var(--ink);font:inherit;font-size:14px;padding:0 12px}
+.m-find input:focus{outline:none;border-color:var(--accent)}
+.m-find b{font-size:10.5px;color:var(--dim);font-weight:400;flex:0 0 auto}
+/* a list that is allowed to grow past the panel gets its own scroll, with the package's scrollbar */
+.m-list{max-height:232px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;overscroll-behavior:contain}
+/* BUBBLE ACTIONS. Four per bubble, permanently, is 22px x every turn on a phone — so they are one tap
+   away instead: tapping a bubble reveals its own row, and only one is open at a time. */
+.m-acts{display:flex;gap:6px;justify-content:flex-end;margin-top:8px;padding-top:7px;border-top:1px solid #ffffff12}
+.m-act{min-width:34px;height:30px;padding:0 8px;display:inline-flex;align-items:center;justify-content:center;gap:4px;
+  border-radius:9px;background:var(--chip);border:1px solid var(--line);color:var(--dim);font-size:13px;cursor:pointer;
+  touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.m-act:active{filter:brightness(1.3)}
+.m-act.--on{color:#fbbf24;border-color:#fbbf2455}
+/* THE LOW ZONE — compose + buttons. The rails live HERE now, at the level of the thing you are
+   typing into, so they cannot sit over a bubble and the transcript keeps the entire width. */
+.m-low{position:relative;flex:0 0 auto;display:flex;flex-direction:column;padding:0 24px}
+.m-low .m-compose,.m-low .m-btnrow{padding-left:0;padding-right:0}
+
 /* the repository chooser: one card per organisation, the same reading order the Overview uses */
 .m-org{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel)}
 .m-org-hd{display:flex;align-items:center;gap:8px;padding:9px 11px;border-bottom:1px solid var(--line);background:var(--panel-2)}
@@ -243,8 +271,10 @@ body{background:#070b17;color:var(--ink);font:13.5px/1.45 -apple-system,Segoe UI
    footer's own buttons already open both panes, which makes a permanent rail optional rather than
    structural. In every variant the core carries side padding equal to the widest rail, so a bubble
    is never underneath one. */
+/* No gutter any more: the rails moved down to the low zone, so nothing overlaps the transcript and
+   the bubbles get the full width. The class stays only for the `rail: core` comparison below. */
 .m-core.--gutter{padding-left:26px;padding-right:26px}
-.m-rail{position:absolute;top:50%;transform:translateY(-50%);width:22px;height:112px;z-index:40;cursor:pointer;
+.m-rail{position:absolute;top:50%;transform:translateY(-50%);width:22px;height:76px;z-index:40;cursor:pointer;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;
   background:color-mix(in srgb,var(--panel) 90%,transparent);border:1px solid var(--line);
   touch-action:manipulation;-webkit-tap-highlight-color:transparent}
@@ -386,6 +416,8 @@ var S = {
   busy: false,               // a turn in flight: colours the medallion, Stop and Send
   big: false,                // the retractor: does the type box get ~30% or ~52% of the screen
   stick: true,               // transcript pinned to the bottom (the bulb's Live) vs held where you left it
+  openTurn: null,            // which bubble is showing its copy/reply/share/star row (one at a time)
+  replyTo: null,             // the turn a reply is aimed at — shown above the type box
   rail: "arc",               // "arc" | "tab" | "none" — the edge affordance, a lab choice (see below)
   agents: "4 agents · 4 done",
   /* The agent tabs the right pane lists — a running one and its finished siblings. */
@@ -476,7 +508,10 @@ var S = {
     { name: "Claudstermind · mobile rework", repo: "Claudstermind", tree: "wt/mobile", sub: "20m ago", on: false, star: false },
     { name: "Claudstermind · relay deploy", repo: "Claudstermind", tree: "wt/relay", sub: "yesterday", on: false, star: false },
     { name: "OuronetUI · Main", repo: "OuroborosNetwork/daimons/OuronetUI", tree: "dev", sub: "2h ago", on: false, star: true },
-    { name: "Khronoton · Main", repo: "AncientPantheon/constructors/Khronoton", tree: "main", sub: "yesterday", on: false, star: true }
+    { name: "Khronoton · Main", repo: "AncientPantheon/constructors/Khronoton", tree: "main", sub: "yesterday", on: false, star: true },
+    { name: "Claudstermind · wrap audit", repo: "Claudstermind", tree: "wt/wrap", sub: "2d ago", on: false, star: false },
+    { name: "Claudstermind · perf", repo: "Claudstermind", tree: "wt/perf", sub: "3d ago", on: false, star: false },
+    { name: "Claudstermind · exocortex", repo: "Claudstermind", tree: "wt/exo", sub: "5d ago", on: false, star: false }
   ]
 };
 var nPrompts = function () { return S.turns.filter(function (t) { return t.role === "user"; }).length; };
@@ -626,28 +661,49 @@ function contextOverlay() {
 function repoOverlay() {
   var x = el("button", { class: "m-px", type: "button" }, ["✕"]);
   onTap(x, function () { setOverlay(null); });
-  var groups = S.orgs.map(function (o) {
-    return el("div", { class: "m-org" }, [
-      el("div", { class: "m-org-hd" }, [el("i", { style: "background:" + o.col }, []), el("b", {}, [o.name]),
-        el("em", {}, [o.scope || ""])]),
-      el("div", { class: "m-org-body" }, o.repos.map(function (r) {
-        var row = el("div", { class: "m-repo" + (r.path === S.repo ? " --on" : "") }, [
-          el("span", {}, [r.name]), el("u", { class: "m-kind --" + r.kind }, [r.kind])]);
-        onTap(row, function () {
-          S.repo = r.path;
-          var main = S.convos.filter(function (c) { return c.repo === r.path && c.star; })[0];
-          S.convo = { name: main ? main.name : r.name + " · Main", star: true };
-          S.worktree = main ? main.tree : "main";
-          S.convos.forEach(function (c) { c.on = !!(main && c === main); });
-          setOverlay(null);
-        });
-        return row;
-      }))
-    ]);
-  });
+  var body = el("div", { class: "m-over-body rg-core" }, []);
+  var count = el("b", {}, [""]);
+  var input = el("input", { type: "search", placeholder: "Filter repositories…", autocomplete: "off" }, []);
+  /* FILTER, not search-and-jump: it narrows the same grouped list in place, so the grouping you are
+     learning to read stays put. An organisation with no match disappears rather than showing an
+     empty card. */
+  var paint = function () {
+    var q = String(input.value || "").trim().toLowerCase();
+    var shown = 0;
+    var groups = S.orgs.map(function (o) {
+      var hits = o.repos.filter(function (r) {
+        return !q || (o.name + " " + r.name + " " + r.path + " " + r.kind).toLowerCase().indexOf(q) >= 0;
+      });
+      shown += hits.length;
+      if (!hits.length) return null;
+      return el("div", { class: "m-org" }, [
+        el("div", { class: "m-org-hd" }, [el("i", { style: "background:" + o.col }, []), el("b", {}, [o.name]),
+          el("em", {}, [o.scope || ""])]),
+        el("div", { class: "m-org-body" }, hits.map(function (r) {
+          var row = el("div", { class: "m-repo" + (r.path === S.repo ? " --on" : "") }, [
+            el("span", {}, [r.name]), el("u", { class: "m-kind --" + r.kind }, [r.kind])]);
+          onTap(row, function () {
+            S.repo = r.path;
+            var main = S.convos.filter(function (c) { return c.repo === r.path && c.star; })[0];
+            S.convo = { name: main ? main.name : r.name + " · Main", star: true };
+            S.worktree = main ? main.tree : "main";
+            S.convos.forEach(function (c) { c.on = !!(main && c === main); });
+            setOverlay(null);
+          });
+          return row;
+        }))
+      ]);
+    }).filter(Boolean);
+    count.textContent = shown + " of " + S.orgs.reduce(function (a, o) { return a + o.repos.length; }, 0);
+    body.replaceChildren.apply(body, groups.length ? groups
+      : [el("div", { class: "m-row" }, [el("span", {}, ["Nothing matches “" + q + "”."])])]);
+  };
+  input.addEventListener("input", paint);
+  paint();
   return el("div", { class: "m-over" }, [
     el("div", { class: "m-over-hd" }, [el("b", {}, ["Repositories"]), x]),
-    el("div", { class: "m-over-body rg-core" }, groups)
+    el("div", { class: "m-find" }, [input, count]),
+    body
   ]);
 }
 
@@ -684,8 +740,13 @@ function leftPanel() {
   var repoBtn = el("button", { class: "m-btn --acc", type: "button" }, ["⇄ Change repository"]);
   onTap(repoBtn, function () { setPanel(null); setOverlay("repos"); });
   var repoRows = [repoNow, el("div", { class: "m-btns" }, [repoBtn])];
+  /* ONE conversation until you ask for more. A repository means its ★ main conversation; multi-chat
+     is the switch that says "I want more than one open here", and only then is there a list to pick
+     from or add to. Showing an empty list and an ＋ under a toggle that is off invites the question
+     "what are these for". */
   var mine = S.convos.filter(function (c) { return c.repo === S.repo; });
-  var convoRows = mine.map(function (c) {
+  var visible = S.multiChat ? mine : mine.filter(function (c) { return c.star || c.on; });
+  var convoRows = visible.map(function (c) {
     var row = el("div", { class: "m-row" + (c.on ? " --on" : "") }, [
       el("span", {}, [(c.star ? "★ " : "") + c.name]), el("em", {}, [c.tree + " · " + c.sub])]);
     onTap(row, function () {
@@ -694,6 +755,16 @@ function leftPanel() {
     });
     return row;
   });
+  /* Its own scroll once there are more than a panel's worth — with the package's scrollbar, like
+     every other scrolling surface here. */
+  var convoList = el("div", { class: "m-list rg-core" }, convoRows);
+  var convoBlock = [convoList, toggle("multi-chat — more than one at once", S.multiChat, function (v) {
+    S.multiChat = v; render();
+  })];
+  if (S.multiChat) convoBlock.push(el("div", { class: "m-btns" }, [
+    el("button", { class: "m-btn --acc", type: "button" }, ["＋ Add conversation"]),
+    el("button", { class: "m-btn", type: "button" }, ["★ Make main"])]));
+
   var ws = el("div", { class: "m-row" }, [el("span", {}, ["Workspace"]), el("em", {}, [S.worktree + "  ⌄"])]);
   return el("div", { class: "m-panel --l" + (S.panel === "left" ? " open" : ""), id: "pl" }, [
     el("div", { class: "m-phd" }, [el("b", {}, ["This chat"]), (function () {
@@ -701,10 +772,7 @@ function leftPanel() {
     })()]),
     el("div", { class: "m-pbody rg-core" }, [
       section("1 · Repository", repoRows),
-      section("2 · Conversations in " + S.repo.split("/").pop(), convoRows.concat([
-        toggle("multi-chat — more than one at once", S.multiChat, function (v) { S.multiChat = v; render(); }),
-        el("div", { class: "m-btns" }, [el("button", { class: "m-btn --acc", type: "button" }, ["＋ New conversation"]),
-                                        el("button", { class: "m-btn", type: "button" }, ["★ Make main"])])])),
+      section("2 · Conversations in " + S.repo.split("/").pop(), convoBlock),
       section("Workspace for this conversation", [ws,
         el("div", { class: "m-btns" }, [el("button", { class: "m-btn", type: "button" }, ["Select worktree"]),
                                         el("button", { class: "m-btn --acc", type: "button" }, ["＋ Create"])])])
@@ -755,17 +823,49 @@ function nav() {
   }));
 }
 function turns() {
+  /* PER-BUBBLE ACTIONS — copy, reply, share, star. Four buttons on every bubble, permanently, is
+     ~30px times every turn on a phone, so they are one tap away instead: tapping a bubble opens its
+     own row and closes whichever was open before. `copy` is the one this exists for — showing another
+     agent what this one said — so it is first and it reports back when it has taken the text. */
   return S.turns.map(function (t) {
+    var addr = (t.role === "user" ? "P#" : "R#") + t.n;
     var p = el("p", {}, []);
     p.innerHTML = t.text;
-    return el("div", { class: "m-turn " + (t.role === "user" ? "--p" : "--r") },
-      [el("span", { class: "m-n" }, [(t.role === "user" ? "P#" : "R#") + t.n]), p]);
+    var kids = [el("span", { class: "m-n" }, [addr]), p];
+    if (S.openTurn === t.n) {
+      var act = function (label, title, fn, on) {
+        var b = el("button", { class: "m-act" + (on ? " --on" : ""), type: "button", title: title }, [label]);
+        onTap(b, function (e) { if (e && e.stopPropagation) e.stopPropagation(); fn(b); });
+        return b;
+      };
+      kids.push(el("div", { class: "m-acts" }, [
+        act("⧉", "Copy this turn", function (b) {
+          try { navigator.clipboard.writeText(t.text.replace(/<[^>]*>/g, "")); } catch (e) {}
+          b.textContent = "✓"; setTimeout(function () { b.textContent = "⧉"; }, 900);
+        }),
+        act("↩", "Reply to this turn", function () { S.replyTo = addr; render(); }),
+        act("⤴", "Share — hand this turn to another agent as " + addr, function (b) {
+          try { navigator.clipboard.writeText(S.repo.split("/").pop() + "#" + addr.replace("#", "")); } catch (e) {}
+          b.textContent = "✓"; setTimeout(function () { b.textContent = "⤴"; }, 900);
+        }),
+        act("★", "Mark this turn", function () {
+          var i = S.marks.map(function (m) { return m.at; }).indexOf(addr);
+          if (i >= 0) S.marks.splice(i, 1); else S.marks.unshift({ at: addr, note: "marked", kind: t.role === "user" ? "p" : "r" });
+          render();
+        }, S.marks.some(function (m) { return m.at === addr; }))
+      ]));
+    }
+    var bub = el("div", { class: "m-turn " + (t.role === "user" ? "--p" : "--r") + (S.openTurn === t.n ? " --open" : "") }, kids);
+    onTap(bub, function () { S.openTurn = S.openTurn === t.n ? null : t.n; render(); });
+    return bub;
   });
 }
 function paintHead() { var m = $("#mmodel"); if (m) m.textContent = S.model; }
 
 function proposed() {
-  var core = el("div", { class: "m-core rg-core" + (S.rail === "none" ? "" : " --gutter") }, turns());
+  /* No gutter: the rails sit in the low zone now, beside what you are typing into, where they cannot
+     cover a bubble. The transcript gets the whole width. */
+  var core = el("div", { class: "m-core rg-core" }, turns());
 
   /* HEAD — the state medallions live here, because "is it connected, did it reconnect" has to be
      answerable without opening anything. Identity is a tap target for the left pane. */
@@ -802,9 +902,13 @@ function proposed() {
   var upB = el("button", { class: "m-ico", type: "button", title: "Attach" }, ["📎"]);
   var autoB = el("div", { class: "m-auto" + (S.autoContinue ? " on" : "") }, [el("div", { class: "m-sw" }, [el("i", {}, [])]), "auto"]);
   onTap(autoB, function () { S.autoContinue = !S.autoContinue; render(); });
+  /* Stop ALWAYS occupies its slot and switches enabled/disabled, exactly as it does on the desktop:
+     a button that appears and vanishes makes Send jump sideways under your thumb the moment a turn
+     starts or ends, which is how you press the wrong one. */
   var stopB = el("button", { class: "m-stp", type: "button", title: "Stop" }, ["■"]);
-  stopB.hidden = !S.busy;
-  onTap(stopB, function () { S.busy = false; render(); });
+  stopB.disabled = !S.busy;
+  if (!S.busy) stopB.setAttribute("aria-disabled", "true");
+  onTap(stopB, function () { if (S.busy) { S.busy = false; render(); } });
   var send = el("button", { class: "m-snd" + (S.busy ? " --busy" : ""), type: "button" }, [S.busy ? "…" : "➤"]);
   onTap(send, function () { S.busy = !S.busy; render(); });
   /* THE STICK BULB. Not the turn state — the SCROLL state: "Live" means the transcript is pinned to
@@ -845,16 +949,23 @@ function proposed() {
 
   var scrim = el("div", { class: "m-scrim" + (S.panel ? " on" : "") }, []);
   onTap(scrim, function () { setPanel(null); });
-  var kids = [appBar(), head, core, el("div", { class: "m-compose" }, [med, box]), btnrow, risers, nav(),
-              el("div", { class: "m-stat" }, [])];
+  var reply = S.replyTo ? (function () {
+    var x = el("button", { type: "button" }, ["✕"]);
+    onTap(x, function () { S.replyTo = null; render(); });
+    return el("div", { class: "m-reply" }, [el("b", {}, [S.replyTo]), el("span", {}, ["replying to this turn"]), x]);
+  })() : null;
+  var compose = el("div", { class: "m-compose" }, reply ? [med, reply, box] : [med, box]);
+  if (reply) compose.style.flexDirection = "column";
+  var low = el("div", { class: "m-low" }, [compose, btnrow]);
   if (S.rail !== "none") {
     var cls = " --" + S.rail;
-    var railL = el("div", { class: "m-rail --l" + cls }, [el("div", { class: "m-grip" }, []), el("span", { class: "m-rlbl" }, ["Session"])]);
-    var railR = el("div", { class: "m-rail --r" + cls }, [el("div", { class: "m-grip" }, []), el("span", { class: "m-rlbl" }, ["Controls"])]);
+    var railL = el("div", { class: "m-rail --l" + cls }, [el("div", { class: "m-grip" }, []), el("span", { class: "m-rlbl" }, ["Chat"])]);
+    var railR = el("div", { class: "m-rail --r" + cls }, [el("div", { class: "m-grip" }, []), el("span", { class: "m-rlbl" }, ["Stats"])]);
     onTap(railL, function () { setPanel("left"); });
     onTap(railR, function () { setPanel("right"); });
-    kids.push(railL, railR);
+    low.appendChild(railL); low.appendChild(railR);
   }
+  var kids = [appBar(), head, core, low, risers, nav(), el("div", { class: "m-stat" }, [])];
   kids.push(scrim, leftPanel(), rightPanel());
   if (S.sheet === "model") kids.push(modelSheet());
   else if (S.sheet === "convos") kids.push(convosSheet());

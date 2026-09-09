@@ -4,6 +4,31 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.14.4] - 2026-09-09
+### Changed — Mobile Cockpit Lab: bubble actions, and the rails move down to the input
+
+- **The rails moved to the input level** — your suggestion, and it is the better answer to the
+  question I had been arguing about. At the level of the thing you are typing into they cannot sit
+  over a bubble, so the transcript's gutter is gone and **the chat box has the whole width**.
+- **Every bubble carries copy · reply · share · star**, one tap away rather than four buttons on
+  every turn (~30px × every turn on a phone). Tapping a bubble opens its own row and closes whichever
+  was open. `copy` takes the text; `share` takes the *address* (`Claudstermind#R6991`) — the case this
+  exists for, handing one agent's answer to another; `star` writes a mark, which is what the
+  right-hand riser selects between; `reply` names the turn above the type box so a reply never looks
+  like an ordinary message.
+- **Stop keeps its slot beside Send and is disabled when there is no turn**, exactly as on the
+  desktop. A button that appears and vanishes moves Send sideways under your thumb the moment a turn
+  starts or ends, which is how you press the wrong one.
+- **The repository chooser has a search field** that filters the grouped list in place, with a
+  `3 of 15` count so a filter can never hide a repository silently. An organisation with no match
+  disappears rather than showing an empty card.
+- **Conversations show the ★ main alone until multi-chat is on** — a repository *means* its main
+  conversation; multi-chat is the switch that says "more than one here", and only then is there a
+  list to pick from or add to. The list has its own scroll (with the package's scrollbar) so a
+  repository with a dozen conversations does not push the workspace controls off the panel.
+- **No line numbers on the phone's type box.** The gutter is a desktop affordance: it earns its width
+  next to a multi-line prompt on a wide pane and costs a phone width it cannot spare.
+
 ## [1.14.3] - 2026-09-09
 ### Changed — Mobile Cockpit Lab: the bulb goes back on the seam, and repositories get their own page
 
