@@ -5,6 +5,7 @@
 // a mobile viewport, so nothing could have caught them.
 //
 //   node scripts/mobile-smoke.mjs                      # against http://127.0.0.1:3001
+//   node scripts/mobile-smoke.mjs 'http://127.0.0.1:3001/?m2=1'   # the new cockpit, behind its switch
 //   node scripts/mobile-smoke.mjs https://host  '#workspace,#workspace/pact'
 //
 // Exits 1 if any route throws, renders the error boundary, or logs a console error — so it can gate
@@ -60,7 +61,9 @@ await send("Runtime.enable"); await send("Log.enable"); await send("Page.enable"
 // `(pointer: coarse)` media query, and the mobile-only branches live behind it.
 await send("Emulation.setDeviceMetricsOverride", { width: 412, height: 915, deviceScaleFactor: 2, mobile: true });
 await send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
-await send("Page.navigate", { url: BASE + "/" });
+// BASE may carry a query string (`http://127.0.0.1:3001/?m2=1`) — the mobile cockpit lives behind a
+// switch, so "is it clean" has to be answerable in BOTH states from the same script.
+await send("Page.navigate", { url: BASE.includes("?") ? BASE : BASE + "/" });
 await sleep(6000);
 
 const evaluate = async (expr) => (await send("Runtime.evaluate", { expression: expr, returnByValue: true })).result?.value;

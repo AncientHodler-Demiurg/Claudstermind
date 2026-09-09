@@ -1,0 +1,321 @@
+/* MOBILE COCKPIT — the Core workspace as a phone cockpit: one 40px head row, the transcript, and a
+ * three-strip footer, with everything the header and the footer used to say moved behind five
+ * surfaces you open. Measured on the live dashboard at 412x915 the transcript got 284px, 31% of the
+ * screen; the target here is 65%. See docs/work/mobile-cockpit/design.md.
+ *
+ * Ported from the <style> block of dashboard/public/mobile-lab.html — the mock the design was
+ * settled against, and still the place to look at a change at full size before wiring it. What that
+ * file has and this one does not is its own page furniture: the framed device, the Today/Proposed
+ * switch, the live measurement strip and the rebuild of the current layout it is compared against.
+ * Production supplies the app header and the bottom navigation, and the transcript's bubbles are
+ * the chat-shell package's own nodes, so none of those are dressed here either. The mock's `.m-`
+ * classes are `.mc-` here, because both stylesheets can be loaded on the same page (/mobile-lab.html
+ * links the package too) and one prefix must not answer for two designs.
+ *
+ * EVERY selector sits behind `.ws-mobile2`, the switch class. This file is linked by index.html for
+ * everyone, phone and desktop, and the switch defaults to OFF: an unscoped rule here would re-lay
+ * out the workspace of people who never turned the cockpit on.
+ *
+ * Colours, seams and scrollbars are the chat-shell package's (theme.css / frame.css, already linked
+ * by index.html). Nothing here declares a palette, and no scrolling surface declares a scrollbar —
+ * they carry the package's `.rg-core` / `.rg-typebox` instead, so there is one scrollbar design in
+ * the product and one place to change it.
+ */
+
+/* THE COCKPIT ROOT. It fills its host — a `.ws-pane`, whose `contain: layout paint` already makes it
+   the containing block — and is in turn the containing block for everything that opens: the rails,
+   the scrim, the two panes, the sheets and the overlays are all placed against these four edges.
+   A flex column, so the transcript is the one region that grows (see .mc-core). */
+.ws-mobile2 .mc-mob{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--bg);overflow:hidden}
+
+/* ============================== the head bar ==============================
+   ONE row; everything the header used to say lives in the left pane. */
+.ws-mobile2 .mc-head{flex:0 0 auto;height:40px;display:flex;align-items:center;gap:8px;padding:0 10px;background:var(--panel);
+  border-bottom:var(--seam-w) solid var(--edge)}
+/* STATE MEDALLIONS, in the header where they can be seen. These are the one thing a reveal must
+   never hide — you cannot decide to open a panel about a state you cannot see. They scroll
+   horizontally rather than wrap, so a second one never costs a row, and the bar that scrolling would
+   draw is hidden outright: under three pills it reads as a control rather than as a scroll region.
+   Hidden with ::-webkit-scrollbar alone — this file declares no scrollbar property of its own. */
+.ws-mobile2 .mc-meds{flex:0 1 auto;display:flex;align-items:center;gap:5px;overflow-x:auto;min-width:0}
+.ws-mobile2 .mc-meds::-webkit-scrollbar{display:none}
+.ws-mobile2 .mc-hmed{flex:0 0 auto;display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;border-radius:999px;padding:2px 8px;
+  color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent);border:1px solid color-mix(in srgb,var(--ok) 40%,transparent)}
+.ws-mobile2 .mc-hmed i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block}
+.ws-mobile2 .mc-hmed.--busy{color:var(--work);background:color-mix(in srgb,var(--work) 12%,transparent);border-color:color-mix(in srgb,var(--work) 40%,transparent)}
+.ws-mobile2 .mc-hmed.--dim{color:var(--dim);background:var(--chip);border-color:var(--line);font-weight:400}
+.ws-mobile2 .mc-hmed.--ok{color:var(--acc);background:color-mix(in srgb,var(--accent) 12%,transparent);border-color:color-mix(in srgb,var(--accent) 40%,transparent)}
+/* A reconnection is an EVENT, not a state: it arrives in words and then clears itself, so it fades
+   IN to say it just happened. The keyframes name is global whatever it is nested under, hence the
+   prefix — nothing about an @rule can be scoped by .ws-mobile2. */
+.ws-mobile2 .mc-hmed.--fade{animation:mcFade .35s ease}
+@keyframes mcFade{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.ws-mobile2 .mc-hmed.--fade{animation:none}}
+.ws-mobile2 .mc-ttl{font-weight:700;font-size:13px;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.ws-mobile2 .mc-ctx{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);background:var(--chip);
+  border:1px solid var(--line);border-radius:999px;padding:3px 9px;cursor:pointer}
+.ws-mobile2 .mc-ctx b{color:var(--ink)}
+.ws-mobile2 .mc-bar{width:32px;height:4px;border-radius:99px;background:var(--panel);overflow:hidden}
+.ws-mobile2 .mc-bar i{display:block;height:100%;background:var(--accent)}
+
+/* ============================== the transcript ==============================
+   `.rg-core` / `.rg-typebox` are the PACKAGE's scrolling surfaces (frame.css): thin, rounded, inset,
+   transparent track — the treatment production's transcript and type box already use. Every
+   scrolling surface in the cockpit carries one of those classes rather than restating the values, so
+   there is one scrollbar design and one place to change it. The browser default is what they exist
+   to replace. No side gutter: the rails moved down to the low zone, where they cannot cover a
+   bubble, so the conversation gets the whole width. */
+.ws-mobile2 .mc-core{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px 10px 14px;display:flex;flex-direction:column;gap:11px;
+  background:var(--core-bg);overscroll-behavior:contain}
+/* the reply cue, above the type box, so a reply never looks like an ordinary message */
+.ws-mobile2 .mc-reply{display:flex;align-items:center;gap:8px;margin-bottom:6px;padding:5px 10px;border-radius:9px;font-size:11.5px;
+  background:color-mix(in srgb,var(--accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);color:var(--ink)}
+.ws-mobile2 .mc-reply b{color:var(--acc)}
+.ws-mobile2 .mc-reply span{flex:1}
+.ws-mobile2 .mc-reply button{appearance:none;border:0;background:transparent;color:var(--dim);font-size:15px;cursor:pointer}
+
+/* ===== THE FOOTER, in three strips, bottom-up — the shape Pact mobile already proved:
+   3. the type box, FULL WIDTH (an attach button beside it is what stole the width)
+   2. a row of buttons: upload left, auto / Stop / Send right, and an empty middle the seam bulb
+      straddles from the row above
+   1. a strip glued to the nav: Chats left, Marks right, and in the middle a READ-ONLY readout of the
+      model that is actually running — pull it up (or tap) for the model sheet. */
+.ws-mobile2 .mc-compose{position:relative;flex:0 0 auto;display:flex;background:var(--panel);padding:12px 10px 0;border-top:var(--seam-w) solid var(--edge)}
+.ws-mobile2 .mc-box{flex:1 1 auto;min-width:0;height:40px;max-height:42vh;resize:none;overflow-y:auto;background:var(--field);
+  border:1px solid var(--field-line);border-radius:12px;color:var(--ink);font:inherit;font-size:15px;line-height:1.45;padding:10px 12px}
+.ws-mobile2 .mc-box:focus{outline:none;border-color:var(--accent)}
+.ws-mobile2 .mc-btnrow{flex:0 0 auto;position:relative;display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--panel)}
+.ws-mobile2 .mc-ico{flex:0 0 auto;width:40px;height:40px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;
+  background:var(--chip);border:1px solid var(--line);color:var(--ink);font-size:17px;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.ws-mobile2 .mc-ico:active{filter:brightness(1.25)}
+.ws-mobile2 .mc-auto{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);cursor:pointer;flex:0 0 auto;
+  height:40px;padding:0 10px;border-radius:12px;background:var(--chip);border:1px solid var(--line)}
+.ws-mobile2 .mc-auto.on{color:var(--ink);border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+.ws-mobile2 .mc-auto .mc-sw{width:34px;height:20px}
+.ws-mobile2 .mc-auto .mc-sw i{width:14px;height:14px}
+.ws-mobile2 .mc-auto.on .mc-sw{background:color-mix(in srgb,var(--accent) 62%,#2b3868)}
+.ws-mobile2 .mc-auto.on .mc-sw i{transform:translateX(14px);background:#fff}
+.ws-mobile2 .mc-snd{flex:0 0 auto;min-width:62px;height:40px;border-radius:12px;border:1px solid var(--accent);background:var(--accent);
+  color:#1b0b2a;font:inherit;font-size:17px;font-weight:800;cursor:pointer;touch-action:manipulation}
+.ws-mobile2 .mc-snd.--busy{background:var(--work);border-color:var(--work);color:var(--work-fg);font-size:13px}
+/* Stop ALWAYS occupies its slot and switches enabled/disabled: a button that appears and vanishes
+   makes Send jump sideways under your thumb the moment a turn starts or ends. */
+.ws-mobile2 .mc-stp{flex:0 0 auto;min-width:48px;height:40px;border-radius:12px;border:1px solid color-mix(in srgb,var(--work-deep) 55%,var(--line));
+  background:var(--chip);color:var(--work-deep);font-size:15px;cursor:pointer}
+.ws-mobile2 .mc-stp:disabled{opacity:.35;cursor:default;border-color:var(--line);color:var(--dim)}
+.ws-mobile2 .mc-mid{flex:1;display:flex;justify-content:center}
+/* THE SEAM BULB. On the desktop this sits ON the boundary between the transcript and the footer
+   (components.css .seambulb, top:-11px, zero flow height) — it belongs to the core's lower edge,
+   which is exactly the line it reports on. Same here: absolutely placed on the compose row's top
+   border, so it costs the button row nothing and auto / Stop / Send get the whole width they need.
+   Deliberately shorter than the buttons, so it reads as a badge rather than as a control. */
+.ws-mobile2 .mc-med{position:absolute;left:50%;top:-14px;transform:translateX(-50%);z-index:6;height:26px;display:inline-flex;align-items:center;gap:5px;
+  padding:0 10px;border-radius:999px;font-size:10.5px;font-weight:700;background:var(--panel);color:var(--ok);
+  border:1px solid color-mix(in srgb,var(--ok) 45%,transparent);white-space:nowrap}
+.ws-mobile2 .mc-med i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block}
+.ws-mobile2 .mc-med.--held{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 45%,transparent)}
+/* strip 1 — riser tabs glued to the nav below, exactly like .ws-mbtn/.pactm-mbtn do today */
+.ws-mobile2 .mc-risers{flex:0 0 auto;display:flex;align-items:flex-end;justify-content:space-between;gap:6px;padding:4px 6px 0;background:var(--bg)}
+/* EQUAL AND MINIMAL. Chats and Marks are the same control in two directions — which chat, and which
+   mark inside it — so they get the SAME width, and that width is the smaller of what fits both:
+   measured after render (fitRisers) rather than guessed at a round number, so neither label is
+   clipped and no pixel is spent past the wider of the two. Everything left over is the model strip's,
+   because that is the one that has something to say. */
+.ws-mobile2 .mc-riser{flex:0 0 auto;justify-content:center;height:22px;padding:0 9px;display:inline-flex;align-items:center;gap:4px;border-radius:8px 8px 0 0;
+  border:1px solid color-mix(in srgb,var(--accent) 48%,var(--line));border-bottom:none;background:color-mix(in srgb,var(--accent) 13%,var(--panel));
+  color:var(--accent);font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;touch-action:manipulation}
+.ws-mobile2 .mc-riser.--bm{color:#fbbf24;border-color:color-mix(in srgb,#fbbf24 45%,var(--line));background:color-mix(in srgb,#fbbf24 11%,var(--panel))}
+/* the middle of that strip: what is RUNNING, not what is selected. Read-only on purpose — the
+   selector lives in the model sheet, and a strip saying "Opus 5" beside a dropdown saying "Opus 5"
+   makes the difference between them invisible. */
+.ws-mobile2 .mc-running{flex:1 1 auto;min-width:0;height:26px;display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer;
+  border-radius:9px 9px 0 0;border:1px solid var(--line);border-bottom:none;background:var(--panel);
+  color:var(--ink);font-size:11px;font-weight:700;touch-action:manipulation}
+.ws-mobile2 .mc-running em{font-style:normal;color:var(--dim);font-weight:400}
+.ws-mobile2 .mc-running .mc-pull{color:var(--dim);font-size:9px;letter-spacing:.2em}
+.ws-mobile2 .mc-running:active{background:color-mix(in srgb,var(--accent) 16%,var(--panel))}
+
+/* ===== SHEETS AND OVERLAYS =====
+   A sheet is the same primitive Pact mobile already uses (openSheet/closeSheet): a panel anchored to
+   the bottom over a backdrop, dismissed by the close button or the backdrop. The context breakdown,
+   the repository chooser and History are not sheets — each takes the WHOLE page, because they are
+   what you open to study or to search rather than to glance at. */
+.ws-mobile2 .mc-sheet{position:absolute;inset:0;z-index:70;display:flex;flex-direction:column;justify-content:flex-end}
+.ws-mobile2 .mc-sheet-back{position:absolute;inset:0;background:#000a}
+.ws-mobile2 .mc-sheet-panel{position:relative;max-height:88%;display:flex;flex-direction:column;background:var(--panel);
+  border-top:1px solid var(--line);border-radius:15px 15px 0 0;box-shadow:0 -8px 28px #0008}
+.ws-mobile2 .mc-sheet-hd{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:0 12px;height:46px;border-bottom:1px solid var(--line)}
+.ws-mobile2 .mc-sheet-hd b{flex:1;font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
+.ws-mobile2 .mc-sheet-grip{position:absolute;top:6px;left:50%;transform:translateX(-50%);width:42px;height:4px;border-radius:99px;background:var(--line)}
+.ws-mobile2 .mc-sheet-body{flex:1 1 auto;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:14px}
+.ws-mobile2 .mc-over{position:absolute;inset:0;z-index:80;display:flex;flex-direction:column;background:var(--bg)}
+.ws-mobile2 .mc-over-hd{flex:0 0 auto;display:flex;align-items:center;gap:8px;height:46px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+.ws-mobile2 .mc-over-hd b{flex:1;font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
+.ws-mobile2 .mc-over-body{flex:1 1 auto;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:14px}
+/* the stacked context bar: one row, each slice a real share of the window */
+.ws-mobile2 .mc-ctxbar{display:flex;height:22px;border-radius:7px;overflow:hidden;border:1px solid var(--line);background:var(--field)}
+.ws-mobile2 .mc-ctxbar i{display:block;height:100%;min-width:2px}   /* a 0.1% slice still has to be visible to be a slice */
+.ws-mobile2 .mc-ctxrow{display:flex;align-items:center;gap:9px;min-height:38px;padding:4px 10px;border-radius:10px;background:var(--chip);
+  border:1px solid var(--line);font-size:12.5px}
+.ws-mobile2 .mc-ctxrow u{width:10px;height:10px;border-radius:3px;flex:0 0 auto;text-decoration:none}
+.ws-mobile2 .mc-ctxrow span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ws-mobile2 .mc-ctxrow em{font-style:normal;color:var(--dim);font-variant-numeric:tabular-nums}
+/* WHY EVERY SCROLL CONTAINER HERE NEEDS THIS. Each of them is also a flex column (that is how the
+   sections stack with a gap), and a flex item SHRINKS by default. So the cards did not overflow the
+   repository chooser — they compressed inside it, `scrollHeight` stayed equal to `clientHeight`, and
+   there was nothing to scroll: the list simply got quietly shorter than its own content.
+   `flex-shrink: 0` on the direct children is the fix, and it belongs to every one of these
+   containers, not just the one where it was noticed. */
+.ws-mobile2 .mc-over-body > *, .ws-mobile2 .mc-sheet-body > *, .ws-mobile2 .mc-pbody > *,
+.ws-mobile2 .mc-list > *, .ws-mobile2 .mc-sec > * { flex: 0 0 auto; }
+
+/* a search field, for any list long enough to need one */
+.ws-mobile2 .mc-find{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+.ws-mobile2 .mc-find input{flex:1;min-width:0;height:38px;border-radius:10px;background:var(--field);border:1px solid var(--field-line);
+  color:var(--ink);font:inherit;font-size:14px;padding:0 12px}
+.ws-mobile2 .mc-find input:focus{outline:none;border-color:var(--accent)}
+.ws-mobile2 .mc-find b{font-size:10.5px;color:var(--dim);font-weight:400;flex:0 0 auto}
+/* a list that is allowed to grow past the panel gets its own scroll, with the package's scrollbar */
+.ws-mobile2 .mc-list{max-height:232px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;overscroll-behavior:contain}
+/* BUBBLE ACTIONS. Four per bubble, permanently, is 22px x every turn on a phone — so they are one tap
+   away instead: tapping a bubble reveals its own row, and only one is open at a time. The bubble
+   itself is the chat-shell package's node; this row is what the cockpit adds inside it. */
+.ws-mobile2 .mc-acts{display:flex;gap:6px;justify-content:flex-end;margin-top:8px;padding-top:7px;border-top:1px solid #ffffff12}
+.ws-mobile2 .mc-act{min-width:34px;height:30px;padding:0 8px;display:inline-flex;align-items:center;justify-content:center;gap:4px;
+  border-radius:9px;background:var(--chip);border:1px solid var(--line);color:var(--dim);font-size:13px;cursor:pointer;
+  touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.ws-mobile2 .mc-act:active{filter:brightness(1.3)}
+.ws-mobile2 .mc-act.--on{color:#fbbf24;border-color:#fbbf2455}
+/* THE LOW ZONE — compose + buttons. The rails hang off its TOP edge: that edge is the seam between
+   the transcript and the footer, so a rail centred on it (translateY(-50%), the same trick the bulb
+   uses) straddles the boundary rather than belonging to either side.
+   AND THEY RESERVE NOTHING. The zone has no side padding for them; they are drawn OVER its corners,
+   which are the emptiest pixels on the screen — the type box's rounded ends and the gap beside the
+   outermost button. Reserving 24px each side to keep them clear was 48px taken from the field you
+   type into, to protect two corners that had nothing in them. */
+.ws-mobile2 .mc-low{position:relative;flex:0 0 auto;display:flex;flex-direction:column}
+
+/* the repository chooser: one card per organisation, the same reading order the Overview uses */
+.ws-mobile2 .mc-org{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel)}
+.ws-mobile2 .mc-org-hd{display:flex;align-items:center;gap:8px;padding:9px 11px;border-bottom:1px solid var(--line);background:var(--panel-2)}
+.ws-mobile2 .mc-org-hd i{width:9px;height:9px;border-radius:50%;flex:0 0 auto;display:block}
+.ws-mobile2 .mc-org-hd b{flex:1;font-size:12.5px}
+.ws-mobile2 .mc-org-hd em{font-style:normal;font-size:10.5px;color:var(--dim)}
+.ws-mobile2 .mc-org-body{display:flex;flex-direction:column}
+.ws-mobile2 .mc-repo{display:flex;align-items:center;gap:9px;min-height:42px;padding:6px 11px;font-size:13px;cursor:pointer;
+  border-top:1px solid #ffffff0d}
+.ws-mobile2 .mc-repo:first-child{border-top:0}
+.ws-mobile2 .mc-repo.--on{background:color-mix(in srgb,var(--accent) 13%,transparent);color:#fff}
+.ws-mobile2 .mc-repo span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ws-mobile2 .mc-kind{text-decoration:none;font-size:9.5px;font-weight:700;padding:2px 7px;border-radius:999px;flex:0 0 auto;
+  border:1px solid var(--line);color:var(--dim);background:var(--chip)}
+.ws-mobile2 .mc-kind.--constructor{color:#c084fc;border-color:#c084fc55}
+.ws-mobile2 .mc-kind.--automaton{color:#f472b6;border-color:#f472b655}
+.ws-mobile2 .mc-kind.--daimon{color:#fbbf24;border-color:#fbbf2455}
+.ws-mobile2 .mc-kind.--seer{color:#38bdf8;border-color:#38bdf855}
+.ws-mobile2 .mc-kind.--website{color:#22d3ee;border-color:#22d3ee55}
+.ws-mobile2 .mc-kind.--orchestrator{color:#f0abfc;border-color:#f0abfc55}
+
+/* a history row: what it was, when, its first prompt, and whether resuming it rebuilds a worktree */
+.ws-mobile2 .mc-hist{display:flex;flex-direction:column;gap:6px;padding:10px;border-radius:11px;background:var(--chip);border:1px solid var(--line)}
+.ws-mobile2 .mc-hist.--gone{border-color:color-mix(in srgb,var(--warn) 45%,var(--line))}
+.ws-mobile2 .mc-hist-1{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700}
+.ws-mobile2 .mc-hist-1 span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ws-mobile2 .mc-hist-1 em{font-style:normal;font-size:11px;font-weight:400;color:var(--dim)}
+.ws-mobile2 .mc-hist-2{font-size:11.5px;color:var(--dim);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ws-mobile2 .mc-hist-warn{font-size:11px;color:var(--warn)}
+
+/* agent rows, in the right pane beside the numbers they summarise */
+.ws-mobile2 .mc-agent{display:flex;align-items:center;gap:9px;min-height:42px;padding:4px 10px;border-radius:10px;background:var(--chip);
+  border:1px solid var(--line);font-size:12.5px}
+.ws-mobile2 .mc-agent i{width:7px;height:7px;border-radius:50%;flex:0 0 auto;display:block}
+.ws-mobile2 .mc-agent.--run i{background:var(--work);box-shadow:0 0 0 3px color-mix(in srgb,var(--work) 22%,transparent)}
+.ws-mobile2 .mc-agent.--done i{background:var(--ok)}
+.ws-mobile2 .mc-agent span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ws-mobile2 .mc-agent em{font-style:normal;color:var(--dim);font-size:11px}
+
+/* ============================== the reveals ==============================
+   RAILS: thumb-reachable, vertically centred on the low zone's top edge — the seam between the
+   transcript and the footer — and floating over its corners, so they cost the conversation no width
+   and no bubble renders underneath one. They were a vertical bar over the middle of the transcript
+   first, which covered a bubble edge and had to be paid for with a gutter. The left rail carries the
+   live status colour and the right one the running-agent count, so "is it working" is answerable
+   without opening anything. `arc` (a half-disc) and `tab` (a taller, labelled tab) are the two
+   shapes; the footer's own controls open both panes as well, so the rail is an affordance rather
+   than the only door. */
+.ws-mobile2 .mc-rail{position:absolute;top:0;transform:translateY(-50%);width:22px;height:64px;z-index:40;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;
+  background:color-mix(in srgb,var(--panel) 90%,transparent);border:1px solid var(--line);
+  touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.ws-mobile2 .mc-rail:active{background:color-mix(in srgb,var(--accent) 24%,var(--panel))}
+.ws-mobile2 .mc-rail.--l{left:0;border-left:0;border-radius:0 11px 11px 0;border-color:color-mix(in srgb,var(--ok) 42%,var(--line));color:var(--ok)}
+.ws-mobile2 .mc-rail.--r{right:0;border-right:0;border-radius:11px 0 0 11px;border-color:color-mix(in srgb,var(--accent) 42%,var(--line));color:var(--accent)}
+.ws-mobile2 .mc-grip{width:3px;height:32px;border-radius:99px;background:currentColor;opacity:.5}
+.ws-mobile2 .mc-rlbl{writing-mode:vertical-rl;text-orientation:mixed;font-size:9px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+/* the running-agent count, on the rail that opens the pane listing them: the number AND the reason
+   to press, in the pixels the grip was using. */
+.ws-mobile2 .mc-rail-n{font-size:12px;font-weight:800;line-height:1;color:var(--work)}
+.ws-mobile2 .mc-rail.--busy{border-color:color-mix(in srgb,var(--work) 55%,var(--line))}
+.ws-mobile2 .mc-rail.--arc{width:26px;height:52px;gap:0}
+.ws-mobile2 .mc-rail.--arc.--l{border-radius:0 999px 999px 0}
+.ws-mobile2 .mc-rail.--arc.--r{border-radius:999px 0 0 999px}
+.ws-mobile2 .mc-rail.--arc .mc-rlbl{display:none}
+.ws-mobile2 .mc-rail.--arc .mc-grip{height:22px}
+.ws-mobile2 .mc-rail.--tab{height:72px}
+.ws-mobile2 .mc-rail.--tab .mc-rlbl{font-size:8px}
+
+/* PANES: the same slide + backdrop mechanic as Pact mobile's drawer, mirrored for the right edge. */
+.ws-mobile2 .mc-scrim{position:absolute;inset:0;z-index:50;background:#000a;opacity:0;pointer-events:none;transition:opacity .18s ease}
+.ws-mobile2 .mc-scrim.on{opacity:1;pointer-events:auto}
+.ws-mobile2 .mc-panel{position:absolute;top:0;bottom:0;z-index:60;width:86%;max-width:352px;display:flex;flex-direction:column;
+  background:var(--panel);transition:transform .22s ease}
+.ws-mobile2 .mc-panel.--l{left:0;border-right:1px solid var(--line);transform:translateX(-102%)}
+.ws-mobile2 .mc-panel.--r{right:0;border-left:1px solid var(--line);transform:translateX(102%)}
+.ws-mobile2 .mc-panel.open{transform:translateX(0)}
+.ws-mobile2 .mc-phd{flex:0 0 auto;display:flex;align-items:center;gap:8px;height:46px;padding:0 12px;border-bottom:1px solid var(--line)}
+.ws-mobile2 .mc-phd b{font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);flex:1}
+.ws-mobile2 .mc-px{appearance:none;border:0;background:transparent;color:var(--dim);font-size:19px;cursor:pointer;padding:4px 6px}
+.ws-mobile2 .mc-pbody{flex:1 1 auto;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:14px;overscroll-behavior:contain}
+/* rg-core's own gap is 8px; these are section stacks */
+.ws-mobile2 .mc-pbody.rg-core,.ws-mobile2 .mc-sheet-body.rg-core,.ws-mobile2 .mc-over-body.rg-core{gap:14px}
+.ws-mobile2 .mc-sec{display:flex;flex-direction:column;gap:8px}
+.ws-mobile2 .mc-sec>b{font-size:9.5px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--dim)}
+.ws-mobile2 .mc-row{display:flex;align-items:center;gap:10px;min-height:46px;padding:6px 10px;border-radius:11px;background:var(--chip);
+  border:1px solid var(--line);font-size:13px;cursor:pointer}
+.ws-mobile2 .mc-row.--on{border-color:var(--accent)}
+.ws-mobile2 .mc-row span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ws-mobile2 .mc-row em{font-style:normal;font-size:11px;color:var(--dim)}
+.ws-mobile2 .mc-tog{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:44px;padding:4px 10px;border-radius:11px;
+  background:var(--chip);border:1px solid var(--line);font-size:13px;cursor:pointer}
+.ws-mobile2 .mc-sw{width:42px;height:24px;border-radius:99px;background:#2b3868;position:relative;flex:0 0 auto;transition:background .15s}
+.ws-mobile2 .mc-sw i{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#93a3d0;display:block;transition:transform .15s,background .15s}
+.ws-mobile2 .mc-tog.on .mc-sw{background:color-mix(in srgb,var(--accent) 62%,#2b3868)}
+.ws-mobile2 .mc-tog.on .mc-sw i{transform:translateX(18px);background:#fff}
+.ws-mobile2 .mc-btns{display:flex;gap:8px}
+.ws-mobile2 .mc-btn{flex:1;min-height:44px;border-radius:11px;border:1px solid var(--line);background:var(--chip);color:var(--ink);
+  font:inherit;font-size:13px;font-weight:700;cursor:pointer}
+.ws-mobile2 .mc-btn.--acc{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 50%,var(--line))}
+.ws-mobile2 .mc-meter{height:6px;border-radius:99px;background:var(--panel-2);overflow:hidden}
+.ws-mobile2 .mc-meter i{display:block;height:100%;background:var(--accent)}
+.ws-mobile2 .mc-chips{display:flex;flex-wrap:wrap;gap:6px}
+
+/* THE WHEEL — the one new mechanic. A scroll-snap column with a fixed selection band: whatever sits
+   under the band is the value. Rows are 44px (a thumb), the column is masked at both ends so it
+   reads as a dial rather than as a list, and tapping a row scrolls it into the band. A dial with a
+   scrollbar down its side reads as a list again, so the bar is hidden outright — with
+   ::-webkit-scrollbar alone, since this file declares no scrollbar property of its own. */
+.ws-mobile2 .mc-wheels{display:flex;gap:8px}
+.ws-mobile2 .mc-wheel{flex:1 1 0;min-width:0;position:relative;background:var(--field);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.ws-mobile2 .mc-wheel>b{display:block;font-size:9px;font-weight:800;letter-spacing:.11em;text-transform:uppercase;color:var(--dim);padding:7px 8px 2px;text-align:center}
+.ws-mobile2 .mc-view{position:relative;height:132px;overflow-y:auto;scroll-snap-type:y mandatory;overscroll-behavior:contain;
+  -webkit-mask-image:linear-gradient(180deg,transparent,#000 30%,#000 70%,transparent);
+          mask-image:linear-gradient(180deg,transparent,#000 30%,#000 70%,transparent)}
+.ws-mobile2 .mc-view::-webkit-scrollbar{display:none}
+.ws-mobile2 .mc-pad{height:44px}
+.ws-mobile2 .mc-opt{height:44px;display:flex;align-items:center;justify-content:center;scroll-snap-align:center;font-size:13px;color:var(--dim);
+  padding:0 6px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color .12s,transform .12s}
+.ws-mobile2 .mc-opt.on{color:#fff;font-weight:800;transform:scale(1.06)}
+.ws-mobile2 .mc-band{position:absolute;left:6px;right:6px;top:calc(50% + 9px);height:44px;transform:translateY(-50%);pointer-events:none;border-radius:9px;
+  border-top:1px solid color-mix(in srgb,var(--accent) 55%,transparent);
+  border-bottom:1px solid color-mix(in srgb,var(--accent) 55%,transparent);
+  background:color-mix(in srgb,var(--accent) 8%,transparent)}
