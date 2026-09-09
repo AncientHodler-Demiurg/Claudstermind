@@ -11389,7 +11389,30 @@ function viewPactMobile() {
       const drive = (fn) => { const a = act(); if (a) fn(a); };
       PACT_MC = window.MobileCockpit.mount(wrap2, {
         transcript: chatHost,
-        slots: { buttons: [menuB] },
+        slots: {
+          buttons: [menuB],
+          /* PACT'S RECALL, restored. The cockpit hides Pact's exocortex bar — it duplicates the head
+             medallion and the right pane — and hiding it took the P#/R# search row with it, which was
+             a real capability lost to this port rather than a duplicate removed. The row is MOVED here
+             (it keeps every handler it was built with) into the pane that already means "find things
+             in this conversation". */
+          leftPane: [(() => {
+            const find = el("div", { class: "mc-sec" }, [el("b", {}, ["Find in this conversation"])]);
+            const ws = el("div", { class: "mc-sec" }, [el("b", {}, ["Workspace"])]);
+            /* Both rows are MOVED, not rebuilt — the recall row and the worktree pill each carry
+               their own handlers (the pill binds, migrates and merges worktrees; rebuilding it would
+               be a second, poorer implementation of the richest control Pact has). They live in
+               `.pc-toolrow`, which the cockpit hides, so they are re-homed on the next frame, once
+               Pact has finished rendering the host. */
+            requestAnimationFrame(() => {
+              const jump = chatHost.querySelector(".exo-jump");
+              if (jump && jump.parentNode !== find) find.appendChild(jump);
+              const pill = chatHost.querySelector(".pc-wtpill");
+              if (pill && pill.parentNode !== ws) ws.appendChild(pill);
+            });
+            return [ws, find];
+          })()].flat(),
+        },
         on: {
           input: (v) => { const t = input(); if (t) { t.value = v; drive((a) => { a.draft = v; }); } },
           send: () => { const t = input(); pactChatSend(act()); if (t) t.value = ""; return true; },
@@ -11475,7 +11498,9 @@ function viewPactMobile() {
       connection: busy ? { text: deep ? "Deep work" : "Working", tone: "busy" } : { text: "Live", tone: "ok" },
       busy, sending: pres,
       stick: (() => { const sc = PACT_CHAT.host && PACT_CHAT.host.querySelector(".pc-scroll"); return !sc || !sc._stick || sc._stick.pinned !== false; })(),
-      worktree: (a && a.worktree) || "main",
+      // No `worktree` for Pact: the module's Workspace row would tap nothing, because Pact's real
+      // control is the pill re-homed into the pane above. One control, not a row that looks like one.
+      worktree: "",
       running: {
         // The catalogue both workspaces' pickers already share (readCachedModels), the package's own
         // effort ladder, and Core's mode list — three lists that exist, rather than a fourth.
@@ -11522,7 +11547,15 @@ function viewPactMobile() {
                  text: m ? String(m.text || "").replace(/[#*`>_~-]/g, "").replace(/\s+/g, " ").trim().slice(0, 76)
                          : "(older — loads on open)" };
       }),
-      history: [], repos: [],
+      /* Pact's saved conversations, in the shape the overlay reads. Without this the History page
+         opened empty over Pact's own sheet — two answers to one question, one of them blank. */
+      history: ((PACT_CHAT && PACT_CHAT.sessions) || []).map((r) => ({
+        id: r.sessionId, repo: PACT_REPO,
+        name: pactHistName(r),
+        when: r.updatedAt ? new Date(r.updatedAt).toLocaleDateString() : "",
+        first: r.firstPrompt || "", gone: false,
+      })),
+      repos: [],
     });
   }
 
@@ -12008,10 +12041,9 @@ function viewWorkspace() {
   const root = el("div", { class: "ws-root" }, []);
   const bridgeNote = el("div", { class: "hint" }, ["Connecting to the work machine…"]);
   const grid = el("div", { class: "ws-grid" }, []);
-  // Mobile (Phase 2): the grid gives way to a TAB strip — one chat box visible at a time, switch by
-  // tapping a tab — and the sidebar (repos/history) becomes a slide-in drawer. Both are hidden on
-  // desktop via CSS; renderMobileTabs()/syncMobile() below drive them.
-  const mobileTabs = el("div", { class: "ws-mtabs" }, []);
+  // Mobile: the grid gives way to ONE chat box at a time, and the sidebar (repos/history) becomes a
+  // slide-in drawer. The tab strip that used to switch between boxes is gone — the cockpit's "Chats"
+  // riser lists them and switches between them (docs/work/mobile-cockpit/design.md).
   // Mobile bottom control bar (Stage 1 of the Pact-model overhaul): the active pane's actions move HERE
   // — send / stop / attach / history / sync — so the compose box gets the full width, and a thin mode
   // strip above it hosts the active pane's Live/Held bulb. Populated once by buildMobileBar(); both are
@@ -12066,7 +12098,7 @@ function viewWorkspace() {
   // When a pane picks a repo, ask what's already live on it — so a second terminal learns "this
   // is also open elsewhere" and can decide to share or (Phase 5) branch a new worktree.
   function onRepoChosen(p) {
-    if (st.isMobile) { renderMobileTabs(); closeDrawer(); }   // reflect the new tab label; a repo pick is "done with the drawer"
+    if (st.isMobile) closeDrawer();   // a repo pick is "done with the drawer"
     if (!p.repo) return;
     wsPost("control", { action: "workspacesOn", args: { repo: p.repo } });
   }
@@ -14017,7 +14049,6 @@ function viewWorkspace() {
     // transcript's layout is still settling (code blocks, wrapping) — re-pin on the next frame so it's truly
     // at the latest message, not a few lines above it.
     if (forceBottom) _raf(() => { const el2 = ui.transcriptEl; if (el2) { if (ui.stick && ui.stick.pin) ui.stick.pin(); else el2.scrollTop = el2.scrollHeight; } });
-    syncMobileTabDots();   // keep the mobile tab's status dot in step (cheap; no-op on desktop)
     // reflect the active pane's busy state in the bottom bar
     if (st.isMobile && p.id === st.activeId) syncMobileBar();
     wsMcSync(p);   // no-op unless the mobile cockpit is mounted on this pane
@@ -14029,7 +14060,7 @@ function viewWorkspace() {
     for (const p of st.panes) paneUI.get(p.id)?.root.classList.toggle("on", p.id === id);
     renderSidebar();
     if (st.isMobile) {
-      renderMobileTabs(); syncMobileBar();
+      syncMobileBar();
       // On a phone every pane is in the DOM but CSS-hidden; a pane whose transcript loaded WHILE hidden
       // couldn't scroll (scrollHeight was ~0), so it sits at the top. Now it's the visible one — re-follow the
       // tail so switching to a chat lands on its latest response. Only when it was pinned to the bottom (i.e.
@@ -14050,29 +14081,13 @@ function viewWorkspace() {
   // One chat box at a time on a phone: a tab per pane (status dot + short label + close), a menu
   // button that opens the repos/history drawer, and a "＋" to add a chat box. CSS shows only the
   // active pane; this strip is how you move between them.
-  function renderMobileTabs() {
-    const menuBtn = el("button", { class: "ws-mtab-menu", title: "Repositories & history" }, ["☰"]);
-    menuBtn.addEventListener("click", openDrawer);
-    const tabs = st.panes.map((p) => {
-      const label = p.repo ? shortRepo(p.repo) + (p.worktree && p.worktree !== "main" ? "@" + p.worktree : "") : "New chat";
-      const busy = paneBusy(p);
-      const dotCls = "ws-mtab-dot" + (busy ? " busy" : "") + (p.status === "deepwork" ? " deep" : "");
-      const kids = [el("span", { class: dotCls }, []), el("span", { class: "ws-mtab-lbl" }, [label])];
-      if (st.panes.length > 1) {
-        const x = el("span", { class: "ws-mtab-x", title: "Close this chat box" }, ["×"]);
-        x.addEventListener("click", (e) => { e.stopPropagation(); removePaneMobile(p); });
-        kids.push(x);
-      }
-      const t = el("button", { class: "ws-mtab" + (p.id === st.activeId ? " on" : ""), "data-pid": p.id }, kids);
-      t.addEventListener("click", () => setActive(p.id));
-      return t;
-    });
-    const addBtn = el("button", { class: "ws-mtab-add", title: "New chat box" }, ["＋"]);
-    addBtn.addEventListener("click", addPaneMobile);
-    const diagBtn = el("button", { class: "ws-mtab-add", title: "Restore diagnostic log" }, ["🐞"]);
-    diagBtn.addEventListener("click", () => { window.alert("RESTORE LOG (newest last):\n\n" + wsDiagText()); });
-    mobileTabs.replaceChildren(menuBtn, el("div", { class: "ws-mtabs-scroll" }, tabs), addBtn, diagBtn);
-  }
+  /* THE MOBILE TAB STRIP IS GONE (T5, docs/work/mobile-cockpit/plan.md). It painted one tab per pane
+     into `.ws-mtabs`, which `styles.css` has hidden with `display: none` since the ⚙-sheet overhaul —
+     the pane switcher moved into a sheet, and now into the cockpit's "Chats" riser, which lists the
+     boxes and switches between them. Two painters kept in step with a strip nobody could see.
+     Deferred until the cockpit stopped being optional (it is the phone's layout since 1.15.2), because
+     the strip belonged to the layout you would have fallen back to. */
+
   // ---- mobile bottom sheets (Stage 2): a slide-up panel reused for the conversations switcher and the
   // active pane's settings. One sheet element; openSheet swaps its title + body. `_sheetReturn` restores
   // any DOM borrowed into the sheet (the pane's live controls) when it closes.
@@ -14187,27 +14202,20 @@ function viewWorkspace() {
     const p = newPane(); st.panes.push(p);
     st.cols = 1; st.rows = st.panes.length;   // on a phone the grid is a flat 1×N — one pane per "tab"
     st.activeId = p.id;
-    rebuildGrid(); renderLayoutPicker(); renderMobileTabs(); saveLayout(); reportAttach();
+    rebuildGrid(); renderLayoutPicker(); saveLayout(); reportAttach();
   }
   function removePaneMobile(p) {
-    if (st.panes.length <= 1) { clearPane(p); renderMobileTabs(); return; }   // last one: reset, don't remove
+    if (st.panes.length <= 1) { clearPane(p); return; }   // last one: reset, don't remove
     if (paneBusy(p) && !window.confirm("Claude is still working here. Close this chat box and let it finish in the background? The reply is saved — reopen the conversation anytime.")) return;
     endSessions([p.sessionKey]);
     st.panes = st.panes.filter((x) => x !== p);
     st.cols = 1; st.rows = st.panes.length;
     if (!st.panes.some((x) => x.id === st.activeId)) st.activeId = st.panes[0].id;
-    rebuildGrid(); renderLayoutPicker(); renderMobileTabs(); saveLayout(); reportAttach();
+    rebuildGrid(); renderLayoutPicker(); saveLayout(); reportAttach();
   }
   // Cheap per-paint update of the tab status dots (busy/deepwork) + active highlight WITHOUT
   // rebuilding the whole strip — so streaming doesn't thrash the tab DOM (or reset its scroll).
-  function syncMobileTabDots() {
-    if (!st.isMobile) return;
-    for (const t of mobileTabs.querySelectorAll(".ws-mtab")) {
-      const p = st.panes.find((x) => x.id === t.dataset.pid); if (!p) continue;
-      const dot = t.querySelector(".ws-mtab-dot"); if (dot) { const busy = paneBusy(p); dot.classList.toggle("busy", busy); dot.classList.toggle("deep", p.status === "deepwork"); }
-      t.classList.toggle("on", p.id === st.activeId);
-    }
-  }
+
   function syncMobile() {
     st.isMobile = !!WS_MOBILE_MQ.matches;
     root.classList.toggle("ws-mobile", st.isMobile);
@@ -14220,7 +14228,7 @@ function viewWorkspace() {
     const m2b = document.getElementById("wsM2Btn");
     if (m2b) { m2b.hidden = !cockpit; wsMobile2MountHeaderBtn(); }
     closeSheet();   // rotating between phone/desktop: never strand a borrowed controls node in a hidden sheet
-    if (st.isMobile) { renderMobileTabs(); buildMobileBar(); syncMobileBar(); }
+    if (st.isMobile) { buildMobileBar(); syncMobileBar(); }
     else closeDrawer();
   }
   WS_MOBILE_MQ.addEventListener("change", syncMobile);
@@ -15510,7 +15518,6 @@ function viewWorkspace() {
       el("span", { class: "ws-spacer" }, []),
       liveStatsEl, usageEl, usageLimitsEl, newFolderBtn, newRepoBtn, phCollapseBtn("ghost"),
     ]),
-    mobileTabs,
     bridgeNote,
     el("div", { class: "ws-body" }, [
       sideBackdrop,

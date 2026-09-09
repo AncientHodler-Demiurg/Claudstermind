@@ -706,30 +706,45 @@
                    function () { call("pickConversation", c.id); }, !!c.active);
       }));
       var active = activeConvo();
-      paneL.body.replaceChildren(
-        /* ONE repository and ONE button to change it: a list of thirty repositories is not a section
-           of a panel, it is its own page, grouped the way the Overview groups them. */
-        section("1 · Repository", [
+      /* SECTIONS ONLY FOR WHAT THIS HOST HAS. Core has a repository above its conversations; PACT
+         does not — there a CHAT is a conversation tab and there is nothing above it. Rendering the
+         empty sections anyway gave Pact "No repository · current" over a "⇄ Change repository" button
+         that opened an empty page, which is worse than an absent section: it describes a structure
+         that is not there. Driven by the state itself, so no host has to declare its own shape. */
+      var kids = [];
+      var levelled = state.repos.length && state.conversations.length;
+      if (state.repos.length) {
+        kids.push(section((levelled ? "1 · " : "") + "Repository", [
           row(repoNow() || "No repository", "current", null, true),
-          btns([btn("⇄ Change repository", "--acc", function () { setOverlay("repos"); })])]),
-        section("2 · Conversations in " + (repoTail() || "this repository"), [
+          btns([btn("⇄ Change repository", "--acc", function () { setOverlay("repos"); })])]));
+      }
+      if (state.conversations.length) {
+        kids.push(section((levelled ? "2 · " : "") + "Conversations in " + (repoTail() || "this repository"), [
           list,
           toggle("multi-chat — more than one at once", state.multiChat, function (v) { call("multiChat", v); }),
           state.multiChat ? btns([
             btn("＋ Add conversation", "--acc", function () { call("newConversation"); }),
-            btn("★ Make main", "", function () { call("makeMain", active ? active.id : null); })]) : null]),
-        section("History", [
-          /* Every conversation that has ever existed is a different question from "which of this
-             repository's conversations do I want open", so it is its own page — and the host is asked
-             for it as the page opens, because the cockpit keeps no archive. */
-          row("🕐 All conversations", state.history.length + " · searchable", function () {
-            call("openHistory");
-            setOverlay("history");
-          })]),
-        section("Workspace for this conversation", [
+            btn("★ Make main", "", function () { call("makeMain", active ? active.id : null); })]) : null]));
+      }
+      kids.push(section("History", [
+        /* Every conversation that has ever existed is a different question from "which of this
+           repository's conversations do I want open", so it is its own page — and the host is asked
+           for it as the page opens, because the cockpit keeps no archive. */
+        row("🕐 All conversations", (state.history.length ? state.history.length + " · " : "") + "searchable", function () {
+          call("openHistory");
+          setOverlay("history");
+        })]));
+      if (state.worktree) {
+        kids.push(section("Workspace for this conversation", [
           row("Workspace", (state.worktree || "—") + "  ⌄", function () { call("pickWorktree"); }),
-          btns([btn("Select worktree", "", function () { call("pickWorktree"); })])])
-      );
+          btns([btn("Select worktree", "", function () { call("pickWorktree"); })])]));
+      }
+      /* `slots.leftPane` — host content that belongs to THIS pane and has no general shape. Pact puts
+         its P#/R# recall row here: the cockpit hides Pact's exocortex bar (it duplicates the head
+         medallion and the right pane), and hiding it took recall with it. Re-homed rather than
+         rebuilt, so the row keeps every handler it was built with. */
+      (slots.leftPane || []).forEach(function (n) { if (n) kids.push(n); });
+      paneL.body.replaceChildren.apply(paneL.body, kids);
     }
 
     /* ======================= THE RIGHT PANE — this conversation ============================== *

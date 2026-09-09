@@ -4,6 +4,36 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.16.1] - 2026-09-09
+### Fixed — Pact's recall came back, and its left pane stopped describing a structure it does not have
+
+Two loose ends from the Pact port, both mine.
+
+**Recall was lost, not deduplicated.** The cockpit hides Pact's exocortex bar because it duplicates the
+head medallion and the right pane — and hiding it took the **P#/R# search row** with it. It is now
+**moved** into the left pane, under "Find in this conversation", keeping every handler it was built
+with. The **worktree pill** moved there too, for the same reason: it lives in the tool row the cockpit
+hides, and it is the richest control Pact has (it binds, migrates and merges worktrees), so a rebuilt
+row would have been a poorer copy. The module's generic Workspace row is suppressed in Pact rather
+than left as a row that taps nothing.
+
+**The pane rendered sections for levels Pact does not have.** Core has a repository above its
+conversations; in Pact a CHAT *is* a conversation tab and there is nothing above it. The empty
+sections read `No repository · current` over a `⇄ Change repository` button that opened an empty page —
+worse than an absent section, because it describes a structure that is not there. Sections are now
+driven by the state itself, so no host declares its own shape, and the `1 ·` / `2 ·` numbering only
+appears when both levels exist.
+
+**Pact's History page opened empty** over Pact's own sheet — two answers to one question, one blank.
+It is fed the saved conversations Pact already holds, named the way Pact names them everywhere else.
+
+### Removed — the mobile tab strip (T5)
+`renderMobileTabs`, `syncMobileTabDots`, the `mobileTabs` element, its eight call sites and its nine
+stylesheet rules. It painted one tab per pane into a strip `styles.css` has hidden since the ⚙-sheet
+overhaul: two painters kept in step with something nobody could see. Deferred deliberately in 1.15.1
+because it belonged to the layout you would have fallen back to — the cockpit has been the phone's
+layout since 1.15.2, so the deferral's condition is met. The Chats riser is what switches boxes now.
+
 ## [1.16.0] - 2026-09-09
 ### Added — Pact runs on the mobile cockpit
 

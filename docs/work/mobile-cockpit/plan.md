@@ -121,9 +121,9 @@ strip is `display: none`), but the removal touches eight call sites in the file 
 layout — the fallback while the cockpit is behind a switch — depends on. The gain is dead weight; the
 risk lands on the layout someone falls back to. Deferred deliberately, as its own task:
 
-- [ ] T5: Remove `renderMobileTabs`, `syncMobileTabDots`, the `mobileTabs` element and its eight call
-  sites, plus the `.ws-mtabs*` rules in `dashboard/public/styles.css`. Do it once the cockpit is the
-  default and the classic layout is no longer the fallback.
+- [x] T5: Remove `renderMobileTabs`, `syncMobileTabDots`, the `mobileTabs` element and its eight call
+  sites, plus the `.ws-mtabs*` rules in `dashboard/public/styles.css`. Done once the cockpit became the
+  default (1.15.2), which is what the deferral was waiting for.
   — done when: `git diff` touches only those symbols and rules; the full suites pass; and
   `node scripts/mobile-smoke.mjs` is clean with the switch on and off.
   - files: `dashboard/public/app.js`, `dashboard/public/styles.css`

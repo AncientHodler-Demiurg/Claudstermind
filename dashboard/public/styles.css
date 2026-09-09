@@ -1356,7 +1356,6 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   /* Stage 2: the top tab strip and the desktop toolbar are RECLAIMED — the pane switcher moves to the
      bar's 💬 sheet, and per-pane controls move to the ⚙ sheet. The active pane now owns nearly the
      whole screen. (renderMobileTabs still runs, harmlessly, into the hidden strip.) */
-  .ws-mobile .ws-mtabs { display: none; }
   .ws-mobile .ws-toolbar { display: none; }
   /* Per-pane controls live in the ⚙ sheet on mobile — hidden while sitting in the pane. */
   /* Stage 3: New folder / New repo, relocated into the ☰ drawer on mobile (their toolbar home is hidden). */
@@ -1366,20 +1365,6 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
   .ws-mcbtn { touch-action: manipulation; }
 
   /* PHASE 2 — one chat box at a time via a tab strip; the sidebar becomes a slide-in drawer. */
-  .ws-mtabs { display: flex; align-items: center; gap: 6px; margin: 2px 0 4px; }
-  .ws-mtabs-scroll { display: flex; gap: 6px; overflow-x: auto; flex: 1; scrollbar-width: none; padding-bottom: 2px; }
-  .ws-mtabs-scroll::-webkit-scrollbar { display: none; }
-  .ws-mtab { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; max-width: 46vw; min-height: 36px;
-    background: var(--chip); border: 1px solid var(--line); color: var(--ink-dim); border-radius: 9px; padding: 6px 10px; font-size: 12.5px; cursor: pointer; }
-  .ws-mtab.on { color: var(--ink); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-  .ws-mtab-lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ws-mtab-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-mute); flex: 0 0 auto; }
-  .ws-mtab-dot.busy { background: #f59e0b; }
-  .ws-mtab-dot.deep { background: #f87171; }
-  .ws-mtab-x { color: var(--ink-mute); font-size: 15px; line-height: 1; padding: 0 2px; }
-  .ws-mtab-x:hover { color: var(--ink); }
-  .ws-mtab-add, .ws-mtab-menu { flex: 0 0 auto; min-width: 38px; min-height: 38px; display: inline-flex; align-items: center; justify-content: center;
-    background: var(--chip); border: 1px solid var(--line); color: var(--ink); border-radius: 9px; font-size: 18px; cursor: pointer; }
 
   /* Only the active chat box is shown; the rest are just tabs. It fills most of the screen.
      CRITICAL: collapse the grid to ONE row too. The desktop template keeps `--ws-rows` explicit
@@ -1467,12 +1452,12 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 
 /* Bottom nav exists only for the phone layout. Hidden on desktop via a width-scoped rule (NOT a
    plain rule, which — sitting after the mobile block with equal specificity — would win and hide it
-   on mobile too). Same pattern as .ws-mtabs above. */
+   on mobile too). Same pattern the drawer's own desktop rule uses below. */
 @media (min-width: 901px) and (pointer: fine), (min-width: 1181px) { .ph-tabbar, .ph-tabdrawer, .ph-tabbar-backdrop { display: none !important; } }
 
 /* Hidden on desktop — these only exist for the phone layout above. Scoped to desktop width (not a
    plain rule) so it can't override the mobile block, which sits earlier and has equal specificity. */
-@media (min-width: 901px) and (pointer: fine), (min-width: 1181px) { .ws-mtabs, .ws-side-backdrop, .ws-drawer-close { display: none; } }
+@media (min-width: 901px) and (pointer: fine), (min-width: 1181px) { .ws-side-backdrop, .ws-drawer-close { display: none; } }
 
 /* Only the tiniest phones go one-stat-per-row; normal phones keep the two-up grid above. */
 @media (max-width: 330px) { .stat { flex-basis: 100%; } }
