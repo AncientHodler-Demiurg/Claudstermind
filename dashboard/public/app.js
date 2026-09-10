@@ -7670,8 +7670,20 @@ let PACT_HIST_TAB = "open";   // "open" | "retired" — which half of the histor
 // A debounced (~800ms) snapshot of the whole IDE layout, PUT to the shared store. No-op until a
 // restore has completed (or a fresh view is ready), so a burst of layout changes coalesces into one
 // write. A read-only remote viewer's PUT is refused server-side (403) and simply ignored here.
+const PACT_LAYOUT_KEY = "pact.layout.v1";
 function pactStatePut(state, keepalive) {
+  /* MIRRORED ON THE DEVICE. The transcript cache cannot draw anything until the client knows which
+     conversations exist, and that answer came only from the network — so a cold start still waited a
+     round trip through the tunnel before it could show a single row, and the device cache appeared to
+     do nothing. Measured: a warm transcript cache still showed a loading bar 2s into a fresh load.
+     Small (names, keys, drafts — no transcripts), so localStorage is the right size of tool. */
+  try { localStorage.setItem(PACT_LAYOUT_KEY, JSON.stringify(state)); } catch {}
   fetch("/api/pact/ide-state", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state }), keepalive: !!keepalive }).catch(() => {});
+}
+/** The last layout this device saw. Used to DRAW immediately; never to decide what is true. */
+function pactLayoutLocal() {
+  try { const s = JSON.parse(localStorage.getItem(PACT_LAYOUT_KEY) || "null"); return s && typeof s === "object" ? s : null; }
+  catch { return null; }
 }
 function pactStateSave() {
   if (!PACT_STATE_READY || !PACT_ED || !PACT_CHAT) return;
@@ -7719,19 +7731,48 @@ async function pactRestoreState() {
   // OVERWRITE your real saved state with that empty view — actual data loss. So: retry a few times, and if we
   // never get a good response, leave PACT_STATE_READY false (saving stays OFF → your server state is untouched)
   // and surface a retry cue instead of masquerading as an empty workspace. `{}` is a legit "empty" success.
+  /* DRAW FIRST, CONFIRM AFTER. The fetch below is the slow leg on a phone, and until it lands there
+     is nothing on screen — not even the rows the device already holds. So paint the last layout this
+     device saw, seeded from the transcript cache, and let the authoritative copy arrive and correct
+     it. Saving stays OFF (`PACT_STATE_READY` is untouched here) until the server has answered: a
+     stale local copy must never be able to overwrite the real one. That guard is the whole reason
+     this function retries instead of falling back to an empty workspace. */
+  try {
+    await pactIdbLoad();
+    const local = pactLayoutLocal();
+    if (local && local.chat && Array.isArray(local.chat.tabs) && local.chat.tabs.length) {
+      pactRestoreChat(local.chat);
+      pactChatRender();
+    }
+  } catch {}
   let saved = null;
   for (let attempt = 1; attempt <= 4 && saved === null; attempt++) {
     try { const r = await (await fetch("/api/pact/ide-state")).json(); if (r && r.ok) saved = (r.state && typeof r.state === "object") ? r.state : {}; } catch {}
     if (saved === null && attempt < 4) await new Promise((res) => setTimeout(res, 700 * attempt));
   }
   if (saved === null) { PACT_RESTORE_STATE = "failed"; return; }   // could not load — do NOT arm saving; the cue offers retry
+  /* The device's transcript cache, before any tab is built — pactRestoreChat seeds each tab from it,
+     and that seeding is synchronous, so it has to be here rather than racing behind it. Failing soft
+     is the whole contract: no IndexedDB, private browsing, a full disk → an empty cache and the old
+     cold-start behaviour, never an exception on the path that rebuilds your workspace. */
+  try { await pactIdbLoad(); } catch {}
   PACT_CHAT_NAMES = (saved.chatNames && typeof saved.chatNames === "object" && !Array.isArray(saved.chatNames)) ? saved.chatNames : {};
   if (PACT_ED && saved.ackBase && typeof saved.ackBase === "object" && !Array.isArray(saved.ackBase)) { PACT_ED._ackBase = saved.ackBase; pactEdRefreshDiffstats(); }   // restore acknowledged baselines → footer reflects changes since them
   try { if (saved.editor && Array.isArray(saved.editor.groups) && saved.editor.groups.length) pactRestoreEditor(saved.editor); } catch (e) { console.warn("pact editor restore failed", e); }
+  /* KEEP WHAT WAS TYPED IN THE MEANTIME. Drawing the local layout first created a window that did not
+     exist before: the box is now usable while the authoritative copy is still in flight, and that copy
+     REPLACES every tab object. Anything typed in those few seconds would have been thrown away by the
+     correction — a new way to lose a prompt, introduced by a change meant to remove a loading bar. */
+  const typed = new Map();
+  try { for (const t of (PACT_CHAT && PACT_CHAT.tabs) || []) if (t.key && t.draft) typed.set(t.key, t.draft); } catch {}
   try { if (saved.chat && Array.isArray(saved.chat.tabs) && saved.chat.tabs.length) pactRestoreChat(saved.chat); } catch (e) { console.warn("pact chat restore failed", e); }
+  try { for (const t of (PACT_CHAT && PACT_CHAT.tabs) || []) if (t.key && typed.has(t.key) && !t.draft) t.draft = typed.get(t.key); } catch {}
   // …and tell the engine which of them were left with auto-continue on, so a restarted engine
   // re-arms the loop instead of leaving a lit switch with nothing behind it.
   try { for (const t of (PACT_CHAT && PACT_CHAT.tabs) || []) wsAssertAuto(t.key, t._autoContinue); } catch {}
+  /* Now that the tabs are real and seeded, say which of them genuinely have nothing to show. A tab
+     restored from the device cache never gets a loader; one with no cached rows gets it here. */
+  try { for (const t of (PACT_CHAT && PACT_CHAT.tabs) || []) if (t.key && !(t.msgs && t.msgs.length)) pactChatSetLoading(t, true); } catch {}
   try { if (saved.collapse) pactRestoreCollapse(saved.collapse); } catch {}
   PACT_RESTORE_STATE = "ok";
   PACT_STATE_READY = true;   // from here on, user changes persist — only AFTER a confirmed load, never after a failure
@@ -7813,7 +7854,12 @@ function pactRestoreChat(ch) {
     /* A LOADER IS FOR AN EMPTY BOX. With the render cache seeded, a returning tab already has its
        conversation on screen and the refresh is invisible; covering it with a bar would be strictly
        worse than showing the rows we hold. Only a tab with nothing to show gets one. */
-    if (!(t.msgs && t.msgs.length)) pactChatSetLoading(t, true);
+    /* …AND NOT WHILE THE RESTORE IS STILL IN FLIGHT. This runs from the stream's `hello`, which can
+       beat the saved layout home: at that moment every tab is the fresh empty one, so a loader went
+       up over conversations the device cache was about to fill in — a bar flashing on exactly the
+       reload this feature exists to make instant. The restore sets it for whatever is genuinely
+       empty once it knows. */
+    if (!(t.msgs && t.msgs.length) && PACT_RESTORE_STATE !== "loading") pactChatSetLoading(t, true);
     // Scoped `open` (by session key) finds the conversation regardless of which worktree it now runs in — a
     // Pact conversation persists under repo@main even after migration (see workspace.mjs) — and ships only the
     // capped tail. The old worktree-specific `sessionOpen` looked in repo@<worktree>, so a migrated tab missed
@@ -8278,6 +8324,86 @@ function pactHaveArgs(t) {
   const last = tx[tx.length - 1];
   return { have: { n: tx.length, at: last && typeof last === "object" ? last.at : undefined } };
 }
+/* ===== THE TRANSCRIPT CACHE, ON THE DEVICE ============================================= *
+ * The Map above dies with the page, so reopening the app still started cold and still showed the
+ * loading bar. IndexedDB makes it survive a reload, a PWA restart, a phone reboot — and it needs no
+ * network at all, so it renders instantly even with the tunnel down.
+ *
+ * WHY HERE AND NOT ON THE RELAY. The relay is a pipe: it authenticates, serves files and forwards
+ * frames, and it stores no conversation content at all. Caching there would make it a stateful
+ * participant in the workspace protocol, with invalidation to get right across three hops, and would
+ * put transcripts — code, file contents, whatever was discussed — at rest on a rented box. On the
+ * device the data is already on screen, it costs no hops rather than one, and the relay stays dumb.
+ *
+ * STILL A RENDER CACHE, NEVER A SOURCE OF TRUTH. The engine's copy arrives and replaces it, exactly
+ * as before. This only decides what you look at in the meantime.
+ *
+ * Everything here fails soft: private browsing, a full disk, a browser with IndexedDB disabled, or a
+ * schema we do not recognise all end with an empty cache and the old behaviour, never an exception. */
+const PACT_IDB_NAME = "claudstermind";
+const PACT_IDB_STORE = "transcripts";
+const PACT_IDB_MAX = 12;             // same bound as the in-memory Map — transcripts are the big thing
+let PACT_IDB_READY = null;           // a promise, so callers can await one shared open
+
+function pactIdbOpen() {
+  if (PACT_IDB_READY) return PACT_IDB_READY;
+  PACT_IDB_READY = new Promise((resolve) => {
+    let req;
+    try { req = indexedDB.open(PACT_IDB_NAME, 1); } catch { return resolve(null); }
+    req.onupgradeneeded = () => {
+      try { if (!req.result.objectStoreNames.contains(PACT_IDB_STORE)) req.result.createObjectStore(PACT_IDB_STORE, { keyPath: "key" }); } catch {}
+    };
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => resolve(null);
+    req.onblocked = () => resolve(null);
+  }).catch(() => null);
+  return PACT_IDB_READY;
+}
+/** Read the stored transcripts into the in-memory cache. Awaited once, before tabs are rebuilt.
+ *  The in-memory copy always wins: it is this session's, and therefore newer than anything on disk. */
+async function pactIdbLoad() {
+  const db = await pactIdbOpen();
+  if (!db) return;
+  try {
+    const tx = db.transaction(PACT_IDB_STORE, "readonly");
+    const rq = tx.objectStore(PACT_IDB_STORE).getAll();
+    await new Promise((res) => { rq.onsuccess = res; rq.onerror = res; tx.onabort = res; });
+    for (const r of (rq.result || [])) {
+      if (!r || !r.key || !Array.isArray(r.msgs) || !r.msgs.length) continue;
+      if (!PACT_MSG_CACHE.has(r.key))
+        PACT_MSG_CACHE.set(r.key, { msgs: r.msgs, truncated: !!r.truncated, pnum: r.pnum || 0, rnum: r.rnum || 0 });
+    }
+  } catch {}
+}
+/** Write the cache out. Debounced: this runs when you leave a workspace, not per message. */
+let PACT_IDB_SAVE_T = null;
+function pactIdbSave() {
+  clearTimeout(PACT_IDB_SAVE_T);
+  PACT_IDB_SAVE_T = setTimeout(async () => {
+    const db = await pactIdbOpen();
+    if (!db) return;
+    try {
+      const tx = db.transaction(PACT_IDB_STORE, "readwrite");
+      const os = tx.objectStore(PACT_IDB_STORE);
+      // Mirror the in-memory bound rather than appending forever: this is a cache, and an unbounded
+      // one on a phone is somebody else's storage quota.
+      const keys = [...PACT_MSG_CACHE.keys()].slice(-PACT_IDB_MAX);
+      os.clear();
+      for (const k of keys) {
+        const e = PACT_MSG_CACHE.get(k);
+        if (e && Array.isArray(e.msgs) && e.msgs.length)
+          os.put({ key: k, msgs: e.msgs, truncated: !!e.truncated, pnum: e.pnum || 0, rnum: e.rnum || 0, at: Date.now() });
+      }
+    } catch {}
+  }, 400);
+}
+/** Forget everything cached on this device. Exposed because a cache you cannot clear is a liability. */
+async function pactIdbClear() {
+  PACT_MSG_CACHE.clear();
+  const db = await pactIdbOpen();
+  if (!db) return;
+  try { db.transaction(PACT_IDB_STORE, "readwrite").objectStore(PACT_IDB_STORE).clear(); } catch {}
+}
 function pactCacheTabs() {
   try {
     for (const t of (PACT_CHAT && PACT_CHAT.tabs) || [])
@@ -8288,6 +8414,7 @@ function pactCacheTabs() {
        would otherwise accumulate every chat ever opened for the life of the page. Map keeps insertion
        order, so the oldest entry is the first key. */
     while (PACT_MSG_CACHE.size > 12) PACT_MSG_CACHE.delete(PACT_MSG_CACHE.keys().next().value);
+    pactIdbSave();   // …and onto the device, so reopening the app is not a cold start either
   } catch {}
 }
 let PACT_UNLOAD_HOOKED = false;
@@ -8307,7 +8434,12 @@ function pactChatInit(host) {
     // mobile back/forward or backgrounded reload. Absorbing is idempotent (it nulls _queue after moving), so
     // it's safe on a bfcache save that later restores. A visibilitychange→hidden pass adds a second safety net
     // for browsers that skip pagehide. This is the "orange bubble lost on refresh" fix.
-    const persist = () => { if (PACT_STATE_READY) { pactOutboxAbsorbQueues(); pactStateFlush(true); } };
+    const persist = () => {
+      // The transcript cache is written here too: a reload or a closed app is precisely the cold
+      // start it exists to remove, and it is the one moment we know is coming.
+      pactCacheTabs();
+      if (PACT_STATE_READY) { pactOutboxAbsorbQueues(); pactStateFlush(true); }
+    };
     window.addEventListener("pagehide", persist);
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") persist(); });
   }
@@ -8495,10 +8627,15 @@ function pactTabsDisplayOrder(tabs) {
  *  a null-host audit of 22 dereference sites). What this does NOT survive is the phone going to sleep:
  *  the browser freezes these timers, and only a server-driven loop fixes that. */
 function pactChatDetachUI() {
+  pactCacheTabs();                                          // keep the rows for the return trip
   clearInterval(PACT_TICK_TIMER); PACT_TICK_TIMER = null;   // an elapsed readout nobody can see
   document.getElementById("pact-sync-cue")?.remove();   // don't leave the sync banner orphaned
 }
 function pactChatStop() {
+  /* SNAPSHOT BEFORE THE TEARDOWN, not after. The first cut only captured on the way back IN, so
+     leaving the view — and reloading the page — stored nothing at all, and the device cache was
+     silently always empty. Measured: `[]` in IndexedDB after a full visit-and-leave. */
+  pactCacheTabs();
   // Persist the live draft/layout NOW before tearing down — otherwise the clearTimeout below cancels a
   // pending debounced save and a prompt typed in the last 800ms is silently lost on the way out.
   if (PACT_STATE_READY) pactStateFlush();

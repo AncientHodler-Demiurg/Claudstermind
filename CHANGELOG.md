@@ -4,6 +4,57 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.19.0] - 2026-09-10
+### Added — the conversation is cached on the device, so reopening the app is not a cold start
+
+*"I want IndexedDB on phone."*
+
+The in-memory cache (1.18.5) died with the page, so reopening the app still started empty. Transcripts
+now persist in **IndexedDB** on the device, and are read back before any tab is rebuilt.
+
+**Why the device and not the relay.** The relay is a pipe: it authenticates, serves files, forwards
+frames, and stores no conversation content at all. Caching there would make it a stateful participant
+in the workspace protocol — invalidation to get right across three hops — and would put transcripts
+(code, file contents, whatever was discussed) at rest on a rented box. On the device the data is
+already on screen, it costs zero hops instead of one, and the relay stays dumb.
+
+**The transcript cache alone did nothing, and measuring is what showed it.** A client cannot draw a
+conversation until it knows which conversations exist, and that answer came only from the network — so
+a cold start still waited a round trip through the tunnel before it could show a single row. Measured:
+a warm transcript cache still showed a loading bar 2 s into a fresh load. The layout (names, keys,
+drafts — no rows) is now mirrored to `localStorage` and drawn immediately, with the transcript cache
+seeding each tab, while the authoritative copy is still in flight.
+
+**It draws; it never decides.** Saving stays off until the server has answered — a stale local layout
+able to overwrite the real one would be data loss wearing a performance fix, and that guard is why
+this function retries rather than falling back to an empty workspace.
+
+**And it must not eat a prompt.** Drawing first opens a window that did not exist before: the box is
+usable while the correction is in flight, and that correction replaces every tab object. Anything
+typed in those seconds would have been thrown away — a new way to lose a prompt, introduced by a
+change meant to remove a loading bar. Drafts are carried across, and never overwrite a newer one.
+
+Everything fails soft — private browsing, a full disk, IndexedDB disabled, an unrecognised schema all
+end with an empty cache and the old behaviour, never an exception on the path that rebuilds your
+workspace. Bounded to twelve conversations, mirroring the in-memory bound.
+
+**Honest limit on the evidence:** on localhost the round trip this removes barely exists, and repeat
+runs disagreed with each other — so the mechanism is verified (IndexedDB holds the rows; the layout
+draws before the fetch; the suite and the smoke run clean) but the *size* of the win is not. Only the
+phone, over the tunnel, can show that.
+
+### Where the data lives (asked directly)
+There is no database anywhere — no Postgres, no Redis, no SQLite. Plain JSON/JSONL files:
+
+- **work machine** — `ClaudeWS/.claude/workspace/` (266 MB, 18 conversation stores) and
+  `ClaudeWS/.secrets/`. Both sit in the repo's **parent**, never inside it.
+- **repo** — code only. `dashboard/data/` holds the tracked `map.json` plus `relay.json` /
+  `routing.json` / `tokens.json`, all three already gitignored (verified with `git check-ignore`).
+- **relay** — nothing.
+- **device** — this release is the first client-side store this system has ever had.
+
+Nothing needs separating before publishing: conversations were never in the repo.
+
 ## [1.18.6] - 2026-09-10
 ### Fixed — returning to a workspace re-downloaded the whole conversation
 
