@@ -899,7 +899,13 @@ const wsWakeHeld = () => !!(WS_WAKE && WS_WAKE.released === false);
  */
 async function wsWakeApply() {
   if (!wsWakeSupported()) return;
-  const want = WS_WAKE_ON && (VIEW === "workspace" || VIEW === "pact") && document.visibilityState === "visible";
+  /* A PIN, not a policy. This used to hold the lock only on the chat views, to save battery — which
+     meant "keep the screen on" quietly stopped meaning that the moment you looked at anything else,
+     and gave the feature one more way to appear broken without saying so. Asked for directly: "add a
+     toggle so we can pin the screen to always on." While it is on and this page is visible, the
+     screen stays awake, wherever you are in the app. `visible` is not a policy — a lock cannot be
+     held by a hidden page at all; the browser releases it for us. */
+  const want = WS_WAKE_ON && document.visibilityState === "visible";
   if (want && !WS_WAKE) {
     /* ONE REQUEST AT A TIME. This is called from a tap, from visibilitychange and from every view
        change, and `await` leaves a window in which WS_WAKE is still null — so two callers could each
@@ -5510,6 +5516,7 @@ let PACT_MOBILE_SESSIONS_CB = null;   // ()=>… set by viewPactMobile while its
 /* Core's counterpart to PACT_MOBILE_PAINT_CB: `st` and wsMcSync live inside the workspace view's
  * closure, so module-scope code (the wake lock, which is global) cannot reach them without a hook. */
 let WS_MC_SYNC_ALL = null;
+let WS_SAVE_LAYOUT = null;   // Core's saveLayout, reachable from module scope (see wsAdoptAuto)
 let PACT_MOBILE_PAINT_CB = null;      // ()=>… set by viewPactMobile's chatStage; syncs the mobile control bar's send/stop + chat count to the active tab (called at the end of pactChatPaint)
 // Whether the mobile compose box is pinned to a single line (so a long draft stops eating into the
 // transcript). Persisted so the choice survives reloads. Toggled from the control bar (v1.3.8).
@@ -9441,8 +9448,21 @@ function wsAdoptAutoInto(o, auto) {
   o._autoText = auto.text || "";
   o._autoReason = auto.reason || "";
 }
-function pactAdoptAuto(t, auto) { wsAdoptAutoInto(t, auto); if (typeof pactChatUpdateSuggest === "function") pactChatUpdateSuggest(t); }
-function wsAdoptAuto(p, auto) { wsAdoptAutoInto(p, auto); }
+/* AND WRITE IT DOWN. The browser stopped counting rounds when the engine took the loop over, so its
+   PERSISTED count stayed at whatever it last wrote — zero. It adopted the engine's number for display
+   and never saved it, so the next view rebuild restored that zero and the ceiling appeared to reset.
+   Saved only when the number actually moves: these frames arrive on every event. */
+function pactAdoptAuto(t, auto) {
+  const before = t._autoCount;
+  wsAdoptAutoInto(t, auto);
+  if (t._autoCount !== before) pactStateSave();
+  if (typeof pactChatUpdateSuggest === "function") pactChatUpdateSuggest(t);
+}
+function wsAdoptAuto(p, auto) {
+  const before = p._autoCount;
+  wsAdoptAutoInto(p, auto);
+  if (p._autoCount !== before && typeof WS_SAVE_LAYOUT === "function") WS_SAVE_LAYOUT();
+}
 function pactSetAutoContinue(a, v) {
   if (!a) return;
   /* THE LOOP LIVES ON THE SERVER NOW (lib/autoContinue.mjs + workspace.mjs). This switch asks; the
@@ -12253,6 +12273,8 @@ function viewWorkspace() {
   // survived on disk but you had to go dig it out of History. We remember the arrangement
   // (grid, repo, mode, session key) and re-attach on boot.
   let bootRestorePending = true;
+  // Reachable from module scope — see wsAdoptAuto, which persists the engine's round count.
+  WS_SAVE_LAYOUT = () => { try { saveLayout(); } catch {} };
   function saveLayout() {
     try {
       localStorage.setItem(WS_STORE_KEY, JSON.stringify({

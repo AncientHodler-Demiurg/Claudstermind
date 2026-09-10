@@ -4,6 +4,34 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.18.4] - 2026-09-10
+### Fixed — the round count reset between workspace visits (both halves of it)
+
+*"So the number of automatic rounds is still not kept."* Two independent faults, which is why the
+last fix did not settle it — each one alone reproduces the symptom.
+
+**The engine hung the count on the session object.** A session is ephemeral: it ends, it is cleaned
+up, a new one is built for the next prompt. The round count is not — it is the ceiling's memory, and
+the whole point of a ceiling is that it cannot be forgotten by walking away. Every teardown therefore
+granted a fresh batch, silently. The record is now keyed by conversation and outlives any session; a
+rebuilt session points *at* it rather than carrying a copy that can diverge.
+
+**And the browser never wrote down what it was told.** It stopped counting rounds when the engine took
+the loop over (1.18.0), so its persisted count stayed at whatever it last wrote — zero. It adopted the
+engine's number for display and never saved it, so the next view rebuild restored that zero. It now
+persists the count whenever it actually changes.
+
+### Changed — keep-screen-awake is a pin, not a policy
+
+*"Perhaps you can add a toggle so we can pin the screen to always on manually."* It held the lock only
+on the chat views, to save battery — which meant "keep the screen on" quietly stopped meaning that the
+moment you looked at anything else, and handed the feature one more way to appear broken without
+saying so. While the switch is on and the page is visible, the screen now stays awake wherever you are
+in the app. (Visibility is not a policy: a hidden page cannot hold a screen lock at all.)
+
+Combined with 1.18.3's diagnostics, if it still sleeps the line under the switch will carry the
+browser's own reason — which is the thing neither of us could see.
+
 ## [1.18.3] - 2026-09-10
 ### Fixed — keep-screen-awake could fail silently, which looked exactly like it not existing
 
