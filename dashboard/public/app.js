@@ -3789,7 +3789,13 @@ function wsWhenChip(at) {
   // `numeric`, not `2-digit`: a 12-hour locale renders the latter as "03:49 PM". The migration line
   // (pactChatRenderItem) already uses this shape, so the two read alike.
   const hm = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  const label = sameDay ? hm : d.toLocaleDateString([], { day: "numeric", month: "short" }) + " " + hm;
+  /* DATE AND TIME ON EVERY BUBBLE, not time-only for today. "I need a medallion with the date and the
+     time it was spawned" — and a bare "4:37 PM" is only unambiguous while you are still in the same
+     day as the turn. You come back to these transcripts across days; the one reading that needs no
+     context is the one that carries its own date. `sameDay` is kept for the TITLE, which stays the
+     full locale string, and for nothing else now. */
+  const label = d.toLocaleDateString([], { day: "numeric", month: "short" }) + " " + hm;
+  void sameDay;
   return el("span", { class: "ws-when", title: d.toLocaleString() }, [label]);
 }
 function wsCopyMsgBtn(kind, number, text, convIdFn) {
@@ -8670,7 +8676,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
     }
     // A prompt echoed from ANOTHER device (own sends are guarded out) → a turn is starting here: (re)start
     // the response clock so the timer shows on this client too, not only where it was typed.
-    case "user": if (!(d.by && d.by === PACT_CHAT.conn.id)) { t._turnStartedAt = Date.now(); t.msgs.push({ role: "user", text: d.text || "", images: d.images || [], workspaceId: d.workspaceId || PACT_WORKSPACE_ID }); pactChatPaint(t); } return;
+    case "user": if (!(d.by && d.by === PACT_CHAT.conn.id)) { t._turnStartedAt = Date.now(); t.msgs.push({ role: "user", text: d.text || "", images: d.images || [], at: d.at || Date.now(), workspaceId: d.workspaceId || PACT_WORKSPACE_ID }); pactChatPaint(t); } return;
     case "assistant_delta": if (!t._turnStartedAt) t._turnStartedAt = Date.now(); t.live = (t.live || "") + (d.text || ""); pactChatPaintLive(t); return;
     case "assistant": t.live = ""; t._pendingText = null; t._pendingImages = null; t.msgs.push({ role: "assistant", text: d.text || "", at: (typeof d.at === "number" ? d.at : undefined) }); pactChatPaint(t); return;
     case "tool_use": if (!t._turnStartedAt) t._turnStartedAt = Date.now(); t.live = ""; t.msgs.push({ kind: "tool_use", tools: d.tools || [] }); pactChatPaint(t); return;
@@ -8772,7 +8778,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
         // the UI showed). Roll back the first-message flag so the preamble is re-added on the real send.
         if (t._optimisticUserMsg) { t.msgs = t.msgs.filter((m) => m !== t._optimisticUserMsg); if (t._optimisticFirst) t.started = false; t._optimisticUserMsg = null; t._optimisticFirst = false; }
         t._queue = t._queue || [];
-        t._queue.push({ text: t._pendingText, images: t._pendingImages || [] });
+        t._queue.push({ text: t._pendingText, images: t._pendingImages || [], at: Date.now() });
         t._pendingText = null; t._pendingImages = null;
         t._forceBottom = true;
         pactChatPaint(t);   // surface the re-queued message as a pending bubble
@@ -9271,7 +9277,7 @@ function pactChatSend(t) {
   // the Core cockpit's send()/drainQueue().
   if (pactChatBusy(t)) {
     t._queue = t._queue || [];
-    t._queue.push({ text, images: attachedImages });
+    t._queue.push({ text, images: attachedImages, at: Date.now() });
     pactChatRender();   // reflect the cleared compose/attachment preview (also repaints the conversation)
     t._forceBottom = true;
     pactChatPaint(t);    // show the queued bubble at the tail
@@ -10104,7 +10110,8 @@ function pactChatPaint(t) {
       const del = el("button", { class: "pc-queued-x", type: "button", title: "Remove this queued message" }, ["×"]);
       del.addEventListener("click", (e) => { e.stopPropagation(); pactChatUnqueue(t, q); });
       if (q.images && q.images.length) kids.push(el("div", { class: "pc-user-images msgimgs" }, q.images.map((img) => el("img", { class: "pc-user-image", src: img.dataUrl, alt: "attached image (queued)" }, []))));
-      kids.push(del, q.text, el("span", { class: "pc-queued-tag qtag" }, [tag]));
+      // A queued bubble is a bubble: it carries when YOU wrote it, not when it eventually goes out.
+      kids.push(del, q.text, el("span", { class: "pc-queued-tag qtag" }, [tag]), wsWhenChip(q.at));
       nodes.push(el("div", { class: cls }, kids));
     }
   }
@@ -14391,7 +14398,8 @@ function viewWorkspace() {
         // A queued message's images are still local blobs (not yet uploaded/saved) — render
         // straight from their own dataUrl, the same bytes the real send will carry.
         if (q.images && q.images.length) kids.push(el("div", { class: "ws-user-images msgimgs" }, q.images.map((img) => el("img", { class: "ws-user-image", src: img.dataUrl, alt: "attached image (queued)" }, []))));
-        kids.push(q.text, el("span", { class: "ws-queued-tag qtag" }, [queuedTag]));
+        // A queued bubble is a bubble: it carries when YOU wrote it, not when it eventually goes out.
+        kids.push(q.text, el("span", { class: "ws-queued-tag qtag" }, [queuedTag]), wsWhenChip(q.at));
         tailExtras.push(line(queuedCls, kids));
       }
       // Exocortex tail: the recalled turn (inline, with its provenance) and the honest "more below"
@@ -15220,7 +15228,7 @@ function viewWorkspace() {
       if (data.kind === "busy") {
         for (const p of targets) {
           if (p._pendingText) {
-            wsQueuePush(p, { text: p._pendingText, images: p._pendingImages || [] });
+            wsQueuePush(p, { text: p._pendingText, images: p._pendingImages || [], at: Date.now() });
             p._pendingText = null; p._pendingImages = null;
             schedulePaint(p);
             logActivity(p, "⏳ Queued — sending once the current turn finishes…");
@@ -15709,7 +15717,7 @@ function viewWorkspace() {
     // transcript, sent automatically the instant the current turn actually finishes. Mirrors
     // typing ahead in Claude's own desktop app while it's still replying.
     if (paneBusy(p)) {
-      wsQueuePush(p, { text, images: attachedImages });
+      wsQueuePush(p, { text, images: attachedImages, at: Date.now() });
       paintPane(p);
       return;
     }
