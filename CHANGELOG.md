@@ -4,6 +4,32 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.18.2] - 2026-09-10
+### Fixed — the auto-continue round count reset when you left a workspace and came back
+
+*"The auto count resets if I go away from pact space and then come back. Presumably is the same on
+core space."* It was, and for the same reason in both.
+
+The engine's count was **right the whole time — nobody sent it.** Reattaching to a conversation
+returned its transcript and nothing else, so a client that had just rebuilt its view fell back to
+whatever it had persisted locally, which is where the stale number came from. `_openTranscript` now
+sends the live session's own state alongside the transcript, and `auto` rides that frame — so the
+authoritative count arrives at exactly the moment a client reattaches.
+
+### Added — ▷ Continue, attached to the auto switch, once the batch has run out
+
+*"Once 10 steps are reached I need a sort of continue button that is exposed attached to the toggle."*
+
+The ceiling deliberately stops an unattended loop and waits for a person. Until now the only way to
+grant the next batch was to tick the switch **off and back on** — which reads as "turn off the thing I
+want to continue", and at a glance looks like a switch that has stopped working. ▷ Continue sits with
+the switch, because it is the same decision one step further on, and appears only at the ceiling
+(`n >= max`) — the same condition the engine refuses on.
+
+It grants exactly **one more batch**: the engine clears the count and *cannot* raise the cap, so no
+sequence of taps turns a bounded loop into an unbounded one. A cap smuggled in beside the grant is
+ignored, and there is a test for that.
+
 ## [1.18.1] - 2026-09-09
 ### Added — the chat refuses to send when the page and the engine are on different builds
 

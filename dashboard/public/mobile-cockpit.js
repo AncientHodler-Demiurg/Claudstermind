@@ -196,6 +196,13 @@
        is counting — which on a phone is the difference between "it is about to send" and "did my tap
        register at all". */
     var autoNum = el("span", { class: "mc-auto-n" }, []);
+    /* ▷ CONTINUE — shown only once the batch has run out. The ceiling deliberately stops an
+       unattended loop and waits for a person; before this the only way to grant the next batch was to
+       tick the switch OFF and back ON, which reads as "turn off the thing I want to continue" and, at
+       a glance, looks like the switch is simply broken. It sits WITH the switch because it is the
+       same decision, one step further on. */
+    var autoMore = el("button", { class: "mc-auto-more", type: "button",
+                                  title: "Grant the next batch of automatic rounds" }, ["▷ Continue"]);
     var autoBtn = el("div", { class: "mc-auto", title: "Auto-continue: send the next prompt automatically when idle" },
                      [el("div", { class: "mc-sw" }, [el("i", {}, [])]), el("span", { class: "mc-auto-lbl" }, ["auto"]), autoNum]);
     /* Stop ALWAYS occupies its slot and switches enabled/disabled, exactly as it does on the desktop:
@@ -209,7 +216,7 @@
        equivalent of, so dropping it from Core was never a reason to drop it there. A slot rather than
        a second row, because the row is the scarcest space on the screen. */
     var btnrow = el("div", { class: "mc-btnrow" }, (slots.buttons || []).concat(
-      [attachBtn, el("div", { class: "mc-mid" }, []), autoBtn, stopBtn, sendBtn]));
+      [attachBtn, el("div", { class: "mc-mid" }, []), autoMore, autoBtn, stopBtn, sendBtn]));
 
     /* THE LOW ZONE — compose + buttons, and the rails hang off its TOP edge. That edge is the seam
        between the transcript and the footer, so a rail centred on it (translateY(-50%), the same
@@ -406,6 +413,7 @@
     onTap(stopBtn, function () { if (state.busy) call("stop"); });
     onTap(attachBtn, function () { call("attach"); });
     onTap(autoBtn, function () { call("autoContinue", !state.running.autoContinue); });
+    onTap(autoMore, function () { call("autoGrant"); });
     /* THE BULB IS THE SCROLL STATE, not the turn state: "Live" means the transcript is pinned to the
        bottom and new turns push into view, "Held" means you scrolled up and it is staying put.
        Tapping it goes back to the bottom — and tells the host, which owns whether it stays there. */
@@ -934,6 +942,10 @@
       var secs = ac.in == null ? null : Math.max(0, Math.ceil(nn(ac.in, 0)));
       var rounds = nn(ac.n, 0) + "/" + nn(ac.max, 10);
       txt(autoNum, !acOn ? "" : secs != null ? rounds + " · " + secs + "s" : rounds);
+      /* At the ceiling and nowhere else. `n >= max` is the same condition the engine refuses on, so
+         the button appears exactly when the loop has stopped waiting for anything but you. */
+      var capped = acOn && nn(ac.n, 0) >= nn(ac.max, 10);
+      autoMore.hidden = !capped;
       autoNum.className = "mc-auto-n" + (acOn && secs != null ? " --arm" : "");
       var pres = state.sending || {};
       var mode = pres.state || (state.busy ? "busy" : "idle");

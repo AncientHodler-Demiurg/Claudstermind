@@ -11715,6 +11715,9 @@ function viewPactMobile() {
           ultracode: (v) => drive((a) => { a.ultracode = v; if (v) { a.effort = "xhigh"; if (a.key) wsPost("control", { action: "setEffort", args: { sessionKey: a.key, effort: "xhigh" } }); } pactStateSave(); }),
           autoWrap: (v) => drive((a) => { a.autoWrap = v; wsPost("control", { action: "setAutoWrap", args: { sessionKey: a.key, enabled: v } }); pactStateSave(); }),
           autoContinue: (v) => drive((a) => pactSetAutoContinue(a, v)),
+          // ▷ Continue — grants the NEXT batch. The engine clears the count; it cannot raise the cap,
+          // so every grant is the same size and stays a deliberate, human-sized act.
+          autoGrant: () => drive((a) => { if (a.key) wsPost("control", { action: "autoContinue", args: { sessionKey: a.key, grant: true } }); }),
           compact: () => pactCompact(),
           wrap: () => pactOpenWrapDialog(act()),
           openHistory: () => openChatHistory(),
@@ -13704,6 +13707,9 @@ function viewWorkspace() {
           wakeLock: (v) => wsWakeSet(v),
           ultracode: (v) => drive(ultracodeCb, v),
           autoWrap: (v) => { p.autoWrap = !!v; wsPost("control", { action: "autoWrap", args: { sessionKey: p.sessionKey, on: !!v } }); saveLayout(); },
+          // ▷ Continue — grants the NEXT batch of automatic rounds. The engine clears the count and
+          // cannot raise the cap, so a grant is always one batch and always a deliberate human act.
+          autoGrant: () => { if (p.sessionKey) wsPost("control", { action: "autoContinue", args: { sessionKey: p.sessionKey, grant: true } }); },
           // Auto-continue is the package's own control and Core already answers it at `on.autoContinue`
           // (a ceiling that re-grants on a deliberate re-tick, a fresh countdown). Drive the real
           // checkbox so that logic runs once, here, rather than a second time with a different rule.
