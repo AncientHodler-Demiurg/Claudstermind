@@ -5,6 +5,32 @@ All notable changes to Claudstermind. The newest version's number must match
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
 ## [1.18.4] - 2026-09-10
+### Fixed — the auto toggle itself switched off on returning to a workspace
+
+*"Auto was set on and we were on the first round … came back, the toggle was off and the round was
+lost."* Read on the live build, the stored Pact state said it plainly: `autoContinue=false,
+autoCount=0` for every tab. The browser's own saved copy had lost it, so this was never only about
+the count.
+
+**The engine's record does not survive its own restart — and every deploy restarts it.** Nothing ever
+told it again. The browser came back showing a lit switch with no loop behind it, and the record it
+was asserting was dropped outright anyway, because the control refused to act without a live session
+(`if (!s) return`). The record is now per *conversation*, so it can be set before the first prompt and
+after a session is gone, and the browser re-asserts what it restored.
+
+That re-assert carries `assert: true`, and the distinction matters: switching ON is what grants a
+fresh batch — it is the human decision the ceiling waits for — but "here is what I already had" must
+not be read as that decision, or every reconnect would quietly hand out another ten rounds and the
+ceiling would mean nothing.
+
+### Fixed — a regression in this same version, caught before it shipped
+Moving the record off the session made `_autoReschedule` **materialise** one, and it runs on every
+status and result. That would have published *"auto-continue: off"* for every conversation that had
+never touched the feature — and since a client adopts what the engine reports, it would have reached
+in and switched the toggle off, then (because the browser now writes down what it adopts) made it
+stick. Exactly the reported symptom, permanently. The scheduler uses an existing record and never
+creates one: **absence must stay absence**, because "off" is an instruction and silence is not.
+
 ### Fixed — the round count reset between workspace visits (both halves of it)
 
 *"So the number of automatic rounds is still not kept."* Two independent faults, which is why the

@@ -7729,6 +7729,9 @@ async function pactRestoreState() {
   if (PACT_ED && saved.ackBase && typeof saved.ackBase === "object" && !Array.isArray(saved.ackBase)) { PACT_ED._ackBase = saved.ackBase; pactEdRefreshDiffstats(); }   // restore acknowledged baselines → footer reflects changes since them
   try { if (saved.editor && Array.isArray(saved.editor.groups) && saved.editor.groups.length) pactRestoreEditor(saved.editor); } catch (e) { console.warn("pact editor restore failed", e); }
   try { if (saved.chat && Array.isArray(saved.chat.tabs) && saved.chat.tabs.length) pactRestoreChat(saved.chat); } catch (e) { console.warn("pact chat restore failed", e); }
+  // …and tell the engine which of them were left with auto-continue on, so a restarted engine
+  // re-arms the loop instead of leaving a lit switch with nothing behind it.
+  try { for (const t of (PACT_CHAT && PACT_CHAT.tabs) || []) wsAssertAuto(t.key, t._autoContinue); } catch {}
   try { if (saved.collapse) pactRestoreCollapse(saved.collapse); } catch {}
   PACT_RESTORE_STATE = "ok";
   PACT_STATE_READY = true;   // from here on, user changes persist — only AFTER a confirmed load, never after a failure
@@ -9452,6 +9455,15 @@ function wsAdoptAutoInto(o, auto) {
    PERSISTED count stayed at whatever it last wrote — zero. It adopted the engine's number for display
    and never saved it, so the next view rebuild restored that zero and the ceiling appeared to reset.
    Saved only when the number actually moves: these frames arrive on every event. */
+/* RE-ASSERT WHAT WE RESTORED. The engine's record does not survive its own restart — every deploy
+ * restarts it — so after a rebuild the browser could be showing a lit switch with no loop behind it:
+ * "auto was set on and we were on the first round … came back the toggle was off and the round was
+ * lost." `assert` marks this as "here is what I already had", NOT as a human flipping the switch, so
+ * it re-arms the loop without silently granting another batch. */
+function wsAssertAuto(sessionKey, on) {
+  if (!sessionKey || !on) return;
+  wsPost("control", { action: "autoContinue", args: { sessionKey, on: true, assert: true } });
+}
 function pactAdoptAuto(t, auto) {
   const before = t._autoCount;
   wsAdoptAutoInto(t, auto);
@@ -12321,6 +12333,9 @@ function viewWorkspace() {
     }));
     // If the saved grid can't hold all the panes (a mobile flat list), fall back to the flat 1×N shape that
     // addPaneMobile builds live, so no restored pane is orphaned. Otherwise pad an under-filled desktop grid.
+    // Tell the engine which panes were left with auto-continue on — see wsAssertAuto. A restarted
+    // engine has no record, and a lit switch with no loop behind it is what "the round was lost" is.
+    try { for (const p of st.panes) wsAssertAuto(p.sessionKey, p._autoContinue); } catch {}
     if (st.cols * st.rows < st.panes.length) { st.cols = 1; st.rows = st.panes.length; }
     while (st.panes.length < st.cols * st.rows) st.panes.push(newPane());
     st.activeId = st.panes.some((p) => p.id === s.activeId) ? s.activeId : st.panes[0].id;
