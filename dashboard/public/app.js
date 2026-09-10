@@ -14106,8 +14106,15 @@ function viewWorkspace() {
       chats: st.panes.map((x) => ({
         id: x.id,
         name: (shortRepo(x.repo || "") || "Pick a repository") + (x.worktree && x.worktree !== "main" ? " · " + x.worktree : " · Main"),
-        sub: x.id === st.activeId ? (x.status === "running" || x.status === "deepwork" ? "working" : "live") : "",
-        active: x.id === st.activeId, star: (x.convSlot || 0) === 0,
+        /* "THE ONE I AM IN", not "the one the app last focused". A cockpit is mounted PER PANE, so the
+           Chats sheet you pull up belongs to THIS pane — but this marked whichever pane was globally
+           active, so opening it from DemiourgosMotionPictures highlighted Claudstermind and called it
+           live. The sheet was describing a different box than the one wrapped around it. Reported
+           exactly that way: "while I am in other repository it shows the name of other repository."
+           Busy is still reported for EVERY box, because "another one is working" is worth knowing. */
+        sub: x.id === p.id ? (x.status === "running" || x.status === "deepwork" ? "working" : "live")
+                           : (x.status === "running" || x.status === "deepwork" ? "working" : ""),
+        active: x.id === p.id, star: (x.convSlot || 0) === 0,
       })),
       /* A MARK IS AN ADDRESS, not a handle. `p.bookmarks` stores the turn's `at` timestamp, which is
          what the host scrolls to — but showing it read "marked · 1787188479777". Resolved to `R#n`

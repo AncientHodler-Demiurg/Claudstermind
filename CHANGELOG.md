@@ -4,6 +4,36 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.19.1] - 2026-09-10
+### Fixed — the Chats sheet named a different repository than the one you were in
+
+*"While I am in other repository it shows the name of other repository."* The sheet listed
+**Claudstermind · Main** as live while the pane around it was DemiourgosMotionPictures.
+
+A cockpit is mounted **per pane**, so the Chats sheet you pull up belongs to *that* pane — but it
+marked the entry matching `st.activeId`, which is whichever pane the app last focused. Two different
+questions: "which box am I in" and "which box has focus". Opening the sheet from one box therefore
+highlighted another and labelled it live. It now marks the pane that owns the cockpit. A box that is
+working still says so wherever it is, because "another one is busy" is worth knowing from in here.
+
+### Fixed — the Chats/Marks tabs collapsed, and stayed collapsed
+
+*"First of all, it gets shrunken."* Same rule as the type box — **never write a measurement you could
+not take** — with a nastier tail.
+
+`fitRisers` pins both tabs to the wider of their two natural widths, measured a frame later. An
+element that is not laid out reports `offsetWidth: 0`, and the cockpit paints while **detached** now
+(1.17.5, so a sweep survives leaving the view) — so both tabs could be pinned to `width: 0px`, their
+labels spilling out of a tab with no tab left around them. And it **stuck**: the caller had already
+recorded those labels as fitted, so nothing re-measured until a label's text happened to change. The
+collapse outlived whatever caused it. An unmeasurable fit is now discarded *and* forgotten, so the
+next paint retries.
+
+Two further guards, because a row that overflows puts a control off the screen edge: neither tab may
+take more than 30% of the row, and the middle readout truncates instead of refusing to shrink. Losing
+the tail of "· Bypass permissions" to an ellipsis costs nothing; a tab pushed off-screen costs you the
+control.
+
 ## [1.19.0] - 2026-09-10
 ### Added — the conversation is cached on the device, so reopening the app is not a cold start
 

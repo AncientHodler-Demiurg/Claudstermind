@@ -993,7 +993,18 @@
       var tabs = [chatsTab, marksTab], w = 0;
       tabs.forEach(function (t) { t.style.width = "auto"; });
       tabs.forEach(function (t) { w = Math.max(w, t.offsetWidth); });
-      tabs.forEach(function (t) { t.style.width = w + "px"; });
+      /* NEVER WRITE A WIDTH WE COULD NOT MEASURE — and this one was worse than the type box's, because
+         it STUCK. An element that is not laid out reports offsetWidth 0 (the cockpit paints while
+         detached now, and this runs a frame later), so both risers were pinned to `width: 0px` and
+         their labels spilled out of a tab with no tab left around them: "it gets shrunken". And the
+         caller had already recorded these labels as fitted, so nothing re-measured until a label's
+         TEXT changed — the collapse outlived whatever caused it. Forget the record and let the next
+         paint try again. */
+      if (!w) { lastFit = null; return; }
+      /* …and neither may they crowd out the readout. Two fixed tabs plus a middle that cannot shrink
+         below its text is a row wider than the phone, which is how both ends end up off-screen. */
+      var room = host.clientWidth || root.innerWidth || 412;
+      tabs.forEach(function (t) { t.style.width = Math.min(w, Math.round(room * 0.30)) + "px"; });
     }
 
     /* ======================= setState — a PATCH, not a snapshot ============================== */
