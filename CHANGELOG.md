@@ -4,6 +4,38 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.18.5] - 2026-09-10
+### Fixed — the loading bar on every return to a workspace
+
+*"Why does it always take time to load conversation, when I come back to a workspace, from mobile on
+remote, I am always shown that loading bar. Can't you cache it or something?"* Yes — and nothing was
+being cached at all.
+
+Leaving a workspace tears `PACT_CHAT` down, and returning rebuilds it from an empty object. So every
+tab started with **no messages** and had to pull its transcript back through the tunnel before it
+could show anything. The rows were in memory a moment earlier; nothing but the rebuild threw them
+away. On localhost that is a blink — over the relay, on a phone, it is the wait you have been
+watching, every single time.
+
+The transcript is now kept across the rebuild, keyed by conversation, and a returning tab is seeded
+from it. The authoritative copy still arrives and replaces it exactly as before — the only change is
+that you can **read the conversation while that happens** instead of watching a bar. And a loader is
+for an empty box: a tab that already has its rows no longer covers them with one.
+
+Measured, returning to a workspace on localhost:
+
+| | before | after |
+|---|---|---|
+| back **+300 ms** | loader visible, **0 bubbles** | **50 bubbles**, no loader |
+| back +600 ms | 50 bubbles | 50 bubbles |
+
+The tunnel makes that gap much larger, which is the whole point.
+
+It is a **render cache, never a source of truth** — in memory for the life of the page only, and
+bounded to twelve conversations, because transcripts are the largest thing this app holds and a cache
+keyed by conversation would otherwise accumulate every chat ever opened. Persisting them to disk is a
+different decision with different privacy and size consequences, and is not what was asked for.
+
 ## [1.18.4] - 2026-09-10
 ### Fixed — the auto toggle itself switched off on returning to a workspace
 

@@ -7762,7 +7762,9 @@ function pactRestoreChat(ch) {
     const id = ++PACT_CHAT.seq;
     const key = (typeof ts.key === "string" && ts.key) ? ts.key : wsUuid();
     return { id, name: ts.name || PACT_CHAT_NAMES[key] || ("Chat " + id), key,
-      msgs: [], live: "", status: "idle",
+      // Seeded from the render cache when we have this conversation's rows already — the fresh copy
+      // still arrives and replaces them; this is what you read while it does.
+      msgs: (PACT_MSG_CACHE.get(key) || {}).msgs || [], live: "", status: "idle",
       // A restored tab's backend session already received the orienting preamble in its prior life —
       // don't re-inject it on the next message. (Full transcript rehydration + resume is P3.)
       started: true, perm: null, draft: typeof ts.draft === "string" ? ts.draft : "",
@@ -7808,7 +7810,10 @@ function pactRestoreChat(ch) {
   for (const t of PACT_CHAT.tabs) {
     if (!t.key) continue;
     PACT_CHAT._pendingOpen[t.key] = t.id;
-    pactChatSetLoading(t, true);   // show a loader in the chat box until this tab's transcript arrives
+    /* A LOADER IS FOR AN EMPTY BOX. With the render cache seeded, a returning tab already has its
+       conversation on screen and the refresh is invisible; covering it with a bar would be strictly
+       worse than showing the rows we hold. Only a tab with nothing to show gets one. */
+    if (!(t.msgs && t.msgs.length)) pactChatSetLoading(t, true);
     // Scoped `open` (by session key) finds the conversation regardless of which worktree it now runs in — a
     // Pact conversation persists under repo@main even after migration (see workspace.mjs) — and ships only the
     // capped tail. The old worktree-specific `sessionOpen` looked in repo@<worktree>, so a migrated tab missed
@@ -8254,13 +8259,35 @@ function pactChatAutosize(ta) {
   ta.style.height = Math.min(sh, cap) + "px";
   ta.style.overflowY = sh > cap ? "auto" : "hidden";
 }
+/* TRANSCRIPTS THAT OUTLIVE THE VIEW. Leaving a workspace tears PACT_CHAT down and returning rebuilds
+ * it from an empty object, so every tab started with no messages and had to pull its transcript back
+ * through the tunnel before it could show anything — which is the loading bar you get every single
+ * time you come back, and it is worst exactly where it hurts most: a phone on the relay.
+ *
+ * The rows are already in memory a moment earlier; nothing but the rebuild throws them away. Keyed by
+ * conversation, so a tab gets ITS history back and not another's. This is a render cache, never a
+ * source of truth: the authoritative copy still arrives and replaces it, exactly as before — the only
+ * change is that you read the conversation while that happens instead of watching a bar. */
+const PACT_MSG_CACHE = new Map();
+function pactCacheTabs() {
+  try {
+    for (const t of (PACT_CHAT && PACT_CHAT.tabs) || [])
+      if (t && t.key && Array.isArray(t.msgs) && t.msgs.length)
+        PACT_MSG_CACHE.set(t.key, { msgs: t.msgs, truncated: !!t._transcriptTruncated,
+                                    pnum: t._pnumBase || 0, rnum: t._rnumBase || 0 });
+    /* BOUNDED. Transcripts are the largest thing this app holds, and a cache keyed by conversation
+       would otherwise accumulate every chat ever opened for the life of the page. Map keeps insertion
+       order, so the oldest entry is the first key. */
+    while (PACT_MSG_CACHE.size > 12) PACT_MSG_CACHE.delete(PACT_MSG_CACHE.keys().next().value);
+  } catch {}
+}
 let PACT_UNLOAD_HOOKED = false;
 function pactChatInit(host) {
   /* A DETACHED ENGINE MAY STILL BE RUNNING. When auto-continue is on, leaving the view no longer tears
      the stream down (see pactChatDetachUI), so re-entering must close that survivor BEFORE the global
      is replaced — otherwise the old EventSource is orphaned by the very reference that could close it,
      and two streams deliver every event twice. */
-  if (PACT_CHAT) pactChatStop();
+  if (PACT_CHAT) { pactCacheTabs(); pactChatStop(); }
   PACT_CHAT = { host, tabs: [], activeId: null, seq: 0, es: null, mode: "bypassPermissions", conn: connIdentity() };
   // Flush the draft/layout on a page refresh or close too (keepalive lets the PUT outlive the page),
   // so a prompt typed right before reloading isn't lost. Registered once.
