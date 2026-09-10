@@ -7818,7 +7818,7 @@ function pactRestoreChat(ch) {
     // Pact conversation persists under repo@main even after migration (see workspace.mjs) — and ships only the
     // capped tail. The old worktree-specific `sessionOpen` looked in repo@<worktree>, so a migrated tab missed
     // its file entirely, AND it shipped the WHOLE transcript uncapped (a 2.2 MB Master tab = the mobile stall).
-    wsPost("control", { action: "open", args: { sessionKey: t.key, scoped: true } });
+    wsPost("control", { action: "open", args: { ...pactHaveArgs(t), sessionKey: t.key, scoped: true } });
   }
   // Close the persist-race window on a fresh reload: the sessionOpen rehydrate above can race the
   // daemon's turn-boundary persist for a turn that FINISHED during the downtime — the fresh-open
@@ -8269,6 +8269,15 @@ function pactChatAutosize(ta) {
  * source of truth: the authoritative copy still arrives and replaces it, exactly as before — the only
  * change is that you read the conversation while that happens instead of watching a bar. */
 const PACT_MSG_CACHE = new Map();
+/** What this tab already holds, as proof it is up to date — the same shape exoResyncArgs sends on the
+ *  watchdog path. A transcript is append-only, so `n` plus the last row's `at` is enough for the
+ *  engine to answer "unchanged" in a few hundred bytes instead of re-shipping the window. */
+function pactHaveArgs(t) {
+  const tx = t && Array.isArray(t.msgs) ? t.msgs : null;
+  if (!tx || !tx.length) return {};
+  const last = tx[tx.length - 1];
+  return { have: { n: tx.length, at: last && typeof last === "object" ? last.at : undefined } };
+}
 function pactCacheTabs() {
   try {
     for (const t of (PACT_CHAT && PACT_CHAT.tabs) || [])
@@ -8639,6 +8648,13 @@ function pactChatRoute({ kind, sessionKey, data }) {
   if (kind === "transcript") {
     const targetId = PACT_CHAT._pendingOpen ? PACT_CHAT._pendingOpen[sessionKey] : undefined;
     const tt = targetId != null ? PACT_CHAT.tabs.find((x) => x.id === targetId) : (sessionKey ? pactChatByKey(sessionKey) : null);
+    /* "You already have it." Carries no rows on purpose, so it must NOT reach the adopt path below —
+       that would read an empty transcript as the truth and wipe the conversation off the screen. */
+    if (tt && data && data.unchanged) {
+      if (PACT_CHAT._pendingOpen) delete PACT_CHAT._pendingOpen[sessionKey];
+      pactChatSetLoading(tt, false);
+      return;
+    }
     if (tt) {
       const incoming = pactTranscriptToMsgs(data && data.transcript);
       // Adopt the saved baseline as the tab's history — but NEVER wipe out a live/just-sent turn that

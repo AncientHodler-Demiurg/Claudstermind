@@ -4,6 +4,40 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.18.6] - 2026-09-10
+### Fixed — returning to a workspace re-downloaded the whole conversation
+
+*"Or maybe use a Redis cache or something… something to escape this loading."*
+
+1.18.5 stopped you **waiting** for the transcript. This stops the phone **downloading** it.
+
+`_resync` — the background watchdog path — has had an "I already hold these rows" short-circuit for a
+while, added when one resync of a 250-row window was measured at **158 KB**. But `open`, which is the
+path a *returning* client takes, never had it. So every visit to a workspace pulled the entire capped
+window back through the tunnel, even when not a single row had changed. That is the bandwidth behind
+the loading bar, and on mobile data it is the whole cost.
+
+A transcript is append-only, so the row count plus the last row's timestamp proves a client is current.
+Measured here on a 24-row window:
+
+| reattach | payload |
+|---|---|
+| client holds nothing | **9,029 bytes** |
+| client is up to date | **43 bytes** |
+
+Answered, never ignored: the client correlates opens by key, so silence would strand the pending entry
+and its loader forever — the "stuck on Loading conversation…" failure, made permanent. The cheap reply
+carries `unchanged: true` and *no* transcript field at all, because an empty one would be read as the
+truth and wipe the conversation off the screen.
+
+### On Redis
+Worth saying plainly, since it was the suggestion: a cache on the work machine would not have helped
+here. The engine already reads these rows from local disk in milliseconds — the cost was never the
+lookup. It was the **round trip and the payload** over the relay tunnel, and the fix for that is not
+to store the rows somewhere faster but to stop sending them at all when the client already has them.
+The two changes that actually removed the wait were keeping the rows on the client (1.18.5) and
+proving they are current (this one) — no new infrastructure, and nothing else to run or keep alive.
+
 ## [1.18.5] - 2026-09-10
 ### Fixed — the loading bar on every return to a workspace
 
