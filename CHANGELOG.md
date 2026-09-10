@@ -4,6 +4,32 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.18.3] - 2026-09-10
+### Fixed — keep-screen-awake could fail silently, which looked exactly like it not existing
+
+*"Keeping screen on doesn't work on mobile, still lights off."*
+
+The mechanism is fine — measured against the deployed origin, `navigator.wakeLock.request("screen")`
+resolves and reports `released: false`. What was broken is what happened when it **didn't**:
+`catch { WS_WAKE = null; }` swallowed the reason. A refusal — battery saver, a policy, a missing user
+gesture — left the switch reading **on** with nothing holding the screen and nothing said. That is
+indistinguishable from a feature that was never built, and it was reported as one. I wrote that catch,
+and even noted the consequence in 1.17.9's changelog instead of fixing it.
+
+Three changes, so the switch is a report rather than a claim:
+
+- **It says when it is not holding.** The state carries the wish, whether it is actually held, and
+  why not. Asked-for-but-not-held now shows a line with the browser's own reason. The switch itself
+  still reflects what you asked for — flipping it back would make the tap look like it failed.
+- **A refusal is retried on your next touch.** Some browsers grant a screen lock only from a user
+  activation, and the first attempt may come from a repaint or a visibility change rather than a tap.
+  One shot, removed as soon as it fires.
+- **One request at a time.** `await` leaves a window in which the sentinel is still null, so a tap, a
+  `visibilitychange` and a view change could each issue a request and the last would orphan the others.
+
+If it still goes dark after this, the line under the switch will say what the browser said — which is
+the thing neither of us could see before.
+
 ## [1.18.2] - 2026-09-10
 ### Fixed — the auto-continue round count reset when you left a workspace and came back
 

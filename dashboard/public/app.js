@@ -883,21 +883,68 @@ function buildLegend() {
  * server-driven loop covers that. */
 const WS_WAKE_KEY = "cm.wakeLock";
 let WS_WAKE = null;                     // the live sentinel, or null when we hold nothing
+let WS_WAKE_ERR = "";                   // why the last attempt failed, "" when it did not
+let WS_WAKE_BUSY = false;               // a request is in flight — see the race note below
 let WS_WAKE_ON = (() => { try { return localStorage.getItem(WS_WAKE_KEY) === "1"; } catch { return false; } })();
 const wsWakeSupported = () => typeof navigator !== "undefined" && !!navigator.wakeLock;
-/** Bring the real lock into line with the preference. Idempotent — safe on every view change. */
+/** Is the screen ACTUALLY being held awake right now? Not "did you ask for it". */
+const wsWakeHeld = () => !!(WS_WAKE && WS_WAKE.released === false);
+/**
+ * Bring the real lock into line with the preference. Idempotent — safe on every view change.
+ *
+ * THE ORIGINAL SWALLOWED ITS OWN FAILURE. `catch { WS_WAKE = null; }` meant a refusal — battery
+ * saver, a gesture requirement, a policy — left the switch reading ON with nothing held and nothing
+ * said, which is indistinguishable from a feature that does not work. Reported as exactly that. The
+ * reason is kept now, shown next to the switch, and retried on your next touch.
+ */
 async function wsWakeApply() {
   if (!wsWakeSupported()) return;
   const want = WS_WAKE_ON && (VIEW === "workspace" || VIEW === "pact") && document.visibilityState === "visible";
   if (want && !WS_WAKE) {
+    /* ONE REQUEST AT A TIME. This is called from a tap, from visibilitychange and from every view
+       change, and `await` leaves a window in which WS_WAKE is still null — so two callers could each
+       issue a request, and the second sentinel would overwrite (and orphan) the first. */
+    if (WS_WAKE_BUSY) return;
+    WS_WAKE_BUSY = true;
     try {
       WS_WAKE = await navigator.wakeLock.request("screen");
-      WS_WAKE.addEventListener("release", () => { WS_WAKE = null; });
-    } catch { WS_WAKE = null; }        // refused (battery saver, no gesture yet) — the preference stands
+      WS_WAKE_ERR = "";
+      // The system can drop it on its own; forgetting the stale sentinel is what lets the next apply
+      // ask again instead of believing it still holds one.
+      WS_WAKE.addEventListener("release", () => { WS_WAKE = null; wsWakeArmRetry(); wsWakeSync(); });
+    } catch (e) {
+      WS_WAKE = null;
+      WS_WAKE_ERR = (e && (e.name === "NotAllowedError"
+        ? "the browser refused it — battery saver, or it needs a tap first"
+        : (e.message || e.name))) || "refused";
+      wsWakeArmRetry();               // try again on your next touch, when a gesture is available
+    } finally { WS_WAKE_BUSY = false; wsWakeSync(); }
   } else if (!want && WS_WAKE) {
     try { await WS_WAKE.release(); } catch {}
     WS_WAKE = null;
+    wsWakeSync();
   }
+}
+/* RETRY ON A REAL GESTURE. Some browsers only grant a screen lock from a user activation, and the
+ * first attempt may come from a repaint or a visibility change rather than a tap. One shot, removed
+ * as soon as it fires, so this never becomes a listener that reasks forever. */
+let WS_WAKE_RETRY = false;
+function wsWakeArmRetry() {
+  if (WS_WAKE_RETRY || !WS_WAKE_ON) return;
+  WS_WAKE_RETRY = true;
+  const once = () => {
+    document.removeEventListener("pointerdown", once, true);
+    document.removeEventListener("touchend", once, true);
+    WS_WAKE_RETRY = false;
+    if (WS_WAKE_ON && !wsWakeHeld()) wsWakeApply();
+  };
+  document.addEventListener("pointerdown", once, true);
+  document.addEventListener("touchend", once, true);
+}
+/** Push the REAL state back to whichever cockpit is mounted, so the switch stops being a claim. */
+function wsWakeSync() {
+  try { if (typeof PACT_MOBILE_PAINT_CB === "function") PACT_MOBILE_PAINT_CB(); } catch {}
+  try { if (typeof WS_MC_SYNC_ALL === "function") WS_MC_SYNC_ALL(); } catch {}
 }
 function wsWakeSet(on) {
   WS_WAKE_ON = !!on;
@@ -906,7 +953,7 @@ function wsWakeSet(on) {
 }
 /** null when the browser cannot do it at all — the cockpit then renders no switch, rather than one
  *  that silently does nothing. */
-const wsWakeState = () => (wsWakeSupported() ? WS_WAKE_ON : null);
+const wsWakeState = () => (wsWakeSupported() ? { on: WS_WAKE_ON, held: wsWakeHeld(), err: WS_WAKE_ERR } : null);
 if (typeof document !== "undefined") document.addEventListener("visibilitychange", wsWakeApply);
 
 function render() {
@@ -5460,6 +5507,9 @@ let PACT_MC = null;   // the mobile cockpit mounted in Pact's chat stage (null o
 let PACT_MC_DRAFT_T = 0;   // debounce for persisting the draft — `input` fires on every keystroke
 let PACT_MOBILE_FILE_TAP = null;   // (path,row)=>… set by viewPactMobile; the tree's file tap → donut picker
 let PACT_MOBILE_SESSIONS_CB = null;   // ()=>… set by viewPactMobile while its history sheet is open; re-renders it when a `sessions` fetch lands
+/* Core's counterpart to PACT_MOBILE_PAINT_CB: `st` and wsMcSync live inside the workspace view's
+ * closure, so module-scope code (the wake lock, which is global) cannot reach them without a hook. */
+let WS_MC_SYNC_ALL = null;
 let PACT_MOBILE_PAINT_CB = null;      // ()=>… set by viewPactMobile's chatStage; syncs the mobile control bar's send/stop + chat count to the active tab (called at the end of pactChatPaint)
 // Whether the mobile compose box is pinned to a single line (so a long draft stops eating into the
 // transcript). Persisted so the choice survives reloads. Toggled from the control bar (v1.3.8).
@@ -13770,6 +13820,8 @@ function viewWorkspace() {
    *  (paintPane, wsPaintStatsRow, syncMobileBar), because a second painting schedule is a second
    *  thing to keep in step. Everything here is READ from the pane; nothing is computed twice.
    *  A no-op when the switch is off, which is what keeps this whole feature off the desktop path. */
+  // Expose a "sync every pane" for module-scope callers (see WS_MC_SYNC_ALL).
+  WS_MC_SYNC_ALL = () => { for (const p of st.panes) { try { wsMcSync(p); } catch {} } };
   function wsMcSync(p) {
     const ui = paneUI.get(p && p.id); const mc = ui && ui.mc;
     if (!mc) return;

@@ -610,7 +610,12 @@
              actually honour it — `null` is "no such capability", and rendering a switch that silently
              does nothing is worse than rendering none. */
           state.wakeLock === null ? null
-            : toggle("keep screen awake", state.wakeLock, function (v) { call("wakeLock", v); })]),
+            : toggle("keep screen awake", state.wakeLock.on, function (v) { call("wakeLock", v); }),
+          /* THE HONEST LINE. Shown only when it was asked for and is NOT being held — the one case the
+             old boolean could not express, and the only one worth a row of its own. */
+          state.wakeLock && state.wakeLock.on && !state.wakeLock.held
+            ? row("⚠ not holding the screen", state.wakeLock.err || "asking again on your next tap…", null)
+            : null]),
         section("Window", [
           meter(ctxPct()),
           roleOr("context", function () {
@@ -1013,7 +1018,16 @@
       }
       if ("wrap" in s) state.wrap = s.wrap || null;
       if ("autoNext" in s) state.autoNext = s.autoNext == null ? "" : String(s.autoNext);
-      if ("wakeLock" in s) state.wakeLock = s.wakeLock == null ? null : !!s.wakeLock;
+      /* `{ on, held, err }` — the WISH, whether it is actually HELD, and why not. A boolean could only
+         carry the wish, so a refusal (battery saver, a policy) left the switch reading on with nothing
+         holding the screen and nothing said: indistinguishable from a feature that does not work,
+         and reported as exactly that. `null` still means the browser has no such capability. */
+      if ("wakeLock" in s) {
+        const w = s.wakeLock;
+        state.wakeLock = w == null ? null
+          : (typeof w === "object" ? { on: !!w.on, held: !!w.held, err: String(w.err || "") }
+                                   : { on: !!w, held: !!w, err: "" });
+      }
       if ("context" in s) {
         var cx = s.context || {};
         state.context = { tokens: nn(cx.tokens, 0), ceiling: nn(cx.ceiling, 1000000), parts: cx.parts || [] };
