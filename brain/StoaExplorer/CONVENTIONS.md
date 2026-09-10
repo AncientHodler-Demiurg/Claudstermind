@@ -117,3 +117,19 @@ entry) — keep them in mind when picking what to grep for:
 - **Don't drop the `rolldown-vite` override.**
 - **Don't touch `START_HEIGHT` casually.** Changing it re-indexes the whole DB.
 - **Don't run the dev server from Claude's side** (ports 5173 / 3000 belong to the owner).
+
+## Long `ssh stoanodeprime` sessions drop — judge a deploy by the BOX, not the exit code
+
+Chaining several `deploy.sh` targets in one SSH command (or running a multi-minute psql aggregate over it)
+regularly ends with **exit 255**: the SSH client connection is dropped, while the work on the box carries on and
+completes. Three separate tasks hit this in the 2026-09-09 session, each reporting "failed" for deploys that had
+in fact succeeded.
+
+So never conclude a deploy failed from the task's exit status. Verify on the box, in this order:
+1. `ls -t /var/lib/explorer-deploy/log/*.log | head -N` and grep each for `Deploy … complete` — one log per target.
+2. `docker inspect -f '{{.State.StartedAt}} {{.State.Health.Status}}' <container>` — the container must have been
+   recreated (StartedAt moved) and reach `healthy`.
+3. Best of all, a FUNCTIONAL probe that can only pass with the new code (e.g. an endpoint that was 43s and is now
+   0.3s). That proves the new build is serving, not merely that something restarted.
+
+Corollary: prefer launching each `deploy.sh` target as its own short command over chaining four in one session.
