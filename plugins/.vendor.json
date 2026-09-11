@@ -1,0 +1,21 @@
+{
+  "note": "VENDORED. Do not hand-edit — run scripts/sync-plugins.mjs. See plugins/README.md.",
+  "upstream": "https://github.com/AncientHodler-Demiurg/wasp-dev.git",
+  "syncedFrom": "/home/ancientbox/ClaudeWS/Tools/wasp-dev",
+  "syncedAt": "2026-09-11T23:08:58.588Z",
+  "commit": "6e12838fe1369c1c5395c797b845dc8a712fa371",
+  "plugins": {
+    "bee": {
+      "version": "4.8.2",
+      "author": "Beecoded"
+    },
+    "wasp": {
+      "version": "1.5.0",
+      "author": "AncientHodler-Demiurg"
+    },
+    "nectar": {
+      "version": "1.0.0",
+      "author": "Beecoded"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "nectar",
+  "version": "1.0.0",
+  "description": "The essence of spec-driven development distilled into 9 skills and 3 enforcement agents — shape, plan, build, review, honey, debug, audit, capture, orient. No commands, no state machine: plain artifacts in docs/work/ are the only state, discipline is enforced by read-only agents and fresh contexts, and 'drop the honey' delivers a feature end-to-end from a single confirmation.",
+  "author": {
+    "name": "Beecoded",
+    "email": "george.popescu@beecoded.ro",
+    "url": "https://github.com/beecoded"
+  },
+  "repository": "https://github.com/beecoded/bee",
+  "license": "MIT",
+  "keywords": [
+    "spec-driven",
+    "tdd",
+    "skills",
+    "workflow",
+    "code-review",
+    "debugging",
+    "planning",
+    "lightweight"
+  ]
+}

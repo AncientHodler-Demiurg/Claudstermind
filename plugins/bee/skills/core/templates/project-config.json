@@ -1,0 +1,44 @@
+{
+  "stacks": [
+    { "name": "{STACK}", "path": ".", "linter": "{LINTER}", "testRunner": "{TEST_RUNNER}" }
+  ],
+  "implementation_mode": "quality",
+  "ci": "{CI}",
+  "context7": true,
+  "research_policy": "recommended",
+  "review": {
+    "against_spec": true,
+    "against_standards": true,
+    "dead_code": true,
+    "loop": false,
+    "max_loop_iterations": 3
+  },
+  "phases": {
+    "require_review_before_next": true
+  },
+  "ship": {
+    "max_review_iterations": 3,
+    "final_review": true
+  },
+  "quick": {
+    "review": false,
+    "fast": false
+  },
+  "metrics": {
+    "enabled": true
+  },
+  "autonomous": {
+    "discuss": true,
+    "auto_approve_confidence": "high"
+  },
+  "adaptive": {
+    "learning": true,
+    "escalation": true
+  },
+  "lifecycle": {
+    "seed_scan_on_new_spec": true,
+    "require_audit_before_complete": true,
+    "git_tag_on_complete": true,
+    "tag_format": "spec/{slug}/v1"
+  }
+}

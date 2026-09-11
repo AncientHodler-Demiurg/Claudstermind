@@ -1,0 +1,24 @@
+{
+  "name": "bee",
+  "version": "4.8.2",
+  "description": "Spec-driven development workflow for Claude Code: TDD enforcement, parallel agent execution, autonomous shipping with review gates, self-gating meta-tests, and the Bee Hive live dashboard.",
+  "author": {
+    "name": "Beecoded",
+    "url": "https://github.com/beecoded"
+  },
+  "repository": "https://github.com/beecoded/bee",
+  "license": "MIT",
+  "keywords": [
+    "tdd",
+    "spec-driven",
+    "code-review",
+    "workflow",
+    "phase-planning",
+    "interactive-flow",
+    "multi-agent",
+    "dashboard",
+    "live-ui",
+    "live-activity",
+    "hooks"
+  ]
+}

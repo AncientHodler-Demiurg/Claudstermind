@@ -4,6 +4,48 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.20.0] - 2026-09-12
+### Added — bee, wasp and nectar ship WITH Claudstermind
+
+*"Native claudstermind level means implemented at the level of the scaffold we are constructing, same
+as hermes. So claudstermind won't need to load it from the marketplace — it will just have it as part
+of itself."*
+
+The three plugins are vendored under `plugins/` and handed to **every** session via the SDK's
+`plugins: [{ type: "local", path }]` option. A clone of this repo has them on any machine, with
+nothing to install and nothing to enable.
+
+They were a per-**machine** setting before, and that was quietly costly: on the work machine only
+`nectar` was switched on — `bee` and `wasp` were present and off — so the same prompt got a different
+methodology depending on which box answered it, and a fresh clone got none of them with nothing on
+screen saying so.
+
+Verified against a live session rather than trusting the option: `plugins: 3 entries`,
+`slash_commands: 129` (including `bee:add-phase`, `bee:audit-spec`, …), `agents: 50`, `skills: 37`,
+result `success`.
+
+- **Absolute paths, deliberately.** A session's `cwd` is the repository it is *working on*, not this
+  one; a relative path would resolve against that repo and find nothing.
+- **bee before wasp**, because wasp's own README calls itself an additive layer on top of bee.
+- **A missing plugin directory is skipped, never thrown.** A broken vendor tree must not be the
+  reason you cannot talk to your agent.
+- **`node scripts/sync-plugins.mjs`** re-vendors from the upstream checkout; `--check` reports drift
+  and writes nothing. `plugins/.vendor.json` records the upstream remote, the source commit and each
+  plugin's version, so "which bee is this?" is answerable from the repo alone.
+
+A copy rather than a submodule or subtree: these are ~7.6 MB of markdown that change when a new bee
+ships, and a plain copy keeps `git diff` readable — which is what you want to see before accepting
+someone else's workflow changes into your agent.
+
+**Context cost, stated plainly:** every session now lists 129 slash commands, 50 agents and 37 skills.
+Skills load by progressive disclosure so their bodies are not in context, but the listings are. If
+that proves expensive, the fix is a per-conversation opt-out, not a smaller vendor set.
+
+**Licence, for Ch.4:** `bee` carries MIT and `wasp` is ours. `nectar` had no LICENSE file when
+vendored, and neither did the `wasp-dev` root; permission was given directly by its author. The issue
+at publish time is not consent — it is that redistributing unlicensed code leaves everyone who clones
+Claudstermind in the same ambiguity, with no author to ask. Get it in writing before Ch.4.
+
 ## [1.19.3] - 2026-09-11
 ### Fixed — coming back to a backgrounded tab could hang for over a minute
 

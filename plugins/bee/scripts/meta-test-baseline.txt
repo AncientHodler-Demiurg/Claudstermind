@@ -1,0 +1,3 @@
+# bee known-failing meta-test baseline — suites listed here WARN instead of BLOCK at the
+# pre-commit self-gate. Ratchets DOWN only (run-meta-tests.js --generate refuses additions
+# without --force). Empty file = every failure blocks.

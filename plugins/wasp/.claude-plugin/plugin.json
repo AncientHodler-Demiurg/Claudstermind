@@ -1,0 +1,23 @@
+{
+  "name": "wasp",
+  "version": "1.5.0",
+  "description": "Workspace-Aware Spec-based Publisher — an additive layer on top of the bee plugin. Ships /wasp:audit-prep + /wasp:bundle-audit-specs + /wasp:unify-audit-specs + /wasp:pollinate (multi-package monorepo aware, per-package change detection, registry/token/scope validation, ✅ live publish polling, SemVer-correct bumping) + /wasp:cross-pollinate (cross-repository cascade orchestration with dep-graph traversal, topo-sorted serial execution, and downstream dep-pin updates) + /wasp:master-pollinate (the tier-1 cross-CROSS-pollinate: cascades ACROSS a suite of workspaces and GitHub orgs, tracking the cross-workspace edges no single cross-pollinate.yml owns, with a Pantheonic role rule for deterministic Constructor fan-out, delegating each workspace's cascade back to cross-pollinate) + /wasp:health (16-check setup validation incl. dep-graph rendering drift) + /wasp:forensics (post-mortem analysis of failed runs with external-reality cross-check) + /wasp:debug (open-ended investigation entry point).",
+  "author": {
+    "name": "AncientHodler-Demiurg",
+    "url": "https://github.com/AncientHodler-Demiurg"
+  },
+  "repository": "https://github.com/AncientHodler-Demiurg/wasp-dev",
+  "license": "MIT",
+  "keywords": [
+    "wasp",
+    "bee",
+    "tdd",
+    "spec-driven",
+    "monorepo",
+    "multi-package",
+    "publish",
+    "audit",
+    "workspace",
+    "cascade"
+  ]
+}
