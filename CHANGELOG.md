@@ -15,6 +15,11 @@ you had just created and had every right to expect to be empty.
 Opening a new conversation is the most ordinary thing there is. An id that parses as a workspace id
 (`repo@worktree`, optionally `#slot`) now comes back as an empty conversation with `status: "idle"`.
 
+### Fixed — "a worktree named X already exists" did not say what to do
+True and useless: the worktree you asked for is right there in the list you just came from, and the
+next move is to pick it, not to invent a second name. Reported as *"I couldn't create a workspace"* by
+someone who already had one. It now says so.
+
 **Without swallowing real failures:** an id that names no conversation and is not workspace-shaped — a
 stale uuid from a dead link — still reports that it could not be opened. Turning every miss into a
 blank conversation would hide a broken reference behind an empty screen, and there is a test pinning
