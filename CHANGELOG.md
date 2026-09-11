@@ -4,6 +4,22 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.20.1] - 2026-09-12
+### Fixed — a new chat box said "That conversation could not be opened."
+
+Ticking **multi-chat** and adding a chat makes a slot id (`repo@main#2`). That conversation has no
+live session, no saved workspace row and no saved session — so `_liveOrSavedState` returned `null`
+and `_openTranscript` reported it as a **failure**, in red, over an empty transcript, on a chat box
+you had just created and had every right to expect to be empty.
+
+Opening a new conversation is the most ordinary thing there is. An id that parses as a workspace id
+(`repo@worktree`, optionally `#slot`) now comes back as an empty conversation with `status: "idle"`.
+
+**Without swallowing real failures:** an id that names no conversation and is not workspace-shaped — a
+stale uuid from a dead link — still reports that it could not be opened. Turning every miss into a
+blank conversation would hide a broken reference behind an empty screen, and there is a test pinning
+each side of that line.
+
 ## [1.20.0] - 2026-09-12
 ### Added — bee, wasp and nectar ship WITH Claudstermind
 
