@@ -881,6 +881,39 @@ function buildLegend() {
  * freeze its timers — which is exactly what strands an unattended auto-continue sweep (1.17.5). It
  * mitigates that; it does not fix it. It cannot survive the phone being locked by hand. Only a
  * server-driven loop covers that. */
+/* ===== COMING BACK IS AN EVENT, AND NOTHING WAS LISTENING FOR IT ====================== *
+ * "Sometimes when I come back it hangs and I need to refresh."
+ *
+ * A stream is only declared dead after WS_STALE_MS (65s) of silence, checked every 10s. That is the
+ * right instrument for a CONNECTED client noticing a socket that has quietly died — both ends of a
+ * proxied SSE connection can stop existing without either raising an error, which is why that
+ * watchdog exists at all. It is the WRONG instrument for a phone returning from the background:
+ * while the tab was hidden its timers were frozen and no messages arrived, so on return the client
+ * sits on a possibly-dead stream for up to ~75 seconds before anything tries to fix it. For that
+ * minute the page shows the state it had when you left and answers nothing — which is precisely
+ * "it hangs", and refreshing works because a reload rebuilds the stream immediately.
+ *
+ * Becoming visible is a fact the browser hands us for free, and it is the one moment we KNOW the
+ * stale clock is meaningless. So: reconnect when the connection looks dead, and otherwise just ask
+ * for a catch-up — which is cheap now that a client can prove what it already holds. */
+const WS_RESUME_QUIET_MS = 12_000;   // shorter than the zombie window: the page was frozen, not idle
+function wsResumeOnVisible() {
+  if (typeof document === "undefined" || document.visibilityState !== "visible") return;
+  const dead = (es, lastAt) => !es || es.readyState === 2 || (Date.now() - (lastAt || 0)) > WS_RESUME_QUIET_MS;
+  try {
+    if (typeof PACT_CHAT !== "undefined" && PACT_CHAT && VIEW === "pact") {
+      if (dead(PACT_CHAT.es, PACT_STREAM_LAST_MSG_AT)) pactChatOpenStream();
+      else pactChatResyncAll();
+    }
+  } catch {}
+  try {
+    if (VIEW === "workspace" && typeof WS_REOPEN_STREAM === "function") {
+      if (dead(WS_ES, WS_LAST_MSG_AT)) WS_REOPEN_STREAM();
+    }
+  } catch {}
+}
+if (typeof document !== "undefined") document.addEventListener("visibilitychange", wsResumeOnVisible);
+
 const WS_WAKE_KEY = "cm.wakeLock";
 let WS_WAKE = null;                     // the live sentinel, or null when we hold nothing
 let WS_WAKE_ERR = "";                   // why the last attempt failed, "" when it did not
@@ -5517,6 +5550,7 @@ let PACT_MOBILE_SESSIONS_CB = null;   // ()=>… set by viewPactMobile while its
  * closure, so module-scope code (the wake lock, which is global) cannot reach them without a hook. */
 let WS_MC_SYNC_ALL = null;
 let WS_SAVE_LAYOUT = null;   // Core's saveLayout, reachable from module scope (see wsAdoptAuto)
+let WS_REOPEN_STREAM = null; // Core's openStream, reachable from module scope (see wsResumeOnVisible)
 let PACT_MOBILE_PAINT_CB = null;      // ()=>… set by viewPactMobile's chatStage; syncs the mobile control bar's send/stop + chat count to the active tab (called at the end of pactChatPaint)
 // Whether the mobile compose box is pinned to a single line (so a long draft stops eating into the
 // transcript). Persisted so the choice survives reloads. Toggled from the control bar (v1.3.8).
@@ -15872,6 +15906,7 @@ function viewWorkspace() {
     // matching heartbeat comments). Rather than trust `onerror` alone, notice the silence directly
     // and force a reconnect — which re-fires `hello` and, via resyncOpenPanes() above, catches up
     // on whatever the dead connection swallowed.
+    WS_REOPEN_STREAM = openStream;   // so "the user came back" can act on it — see wsResumeOnVisible
     clearInterval(WS_STALE_TIMER);
     WS_STALE_TIMER = setInterval(() => {
       if (Date.now() - WS_LAST_MSG_AT > WS_STALE_MS) { logActivityAll("⚠ Connection gone quiet — reconnecting…", "ws-act-err"); openStream(); }

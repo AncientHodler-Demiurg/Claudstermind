@@ -4,6 +4,30 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.19.3] - 2026-09-11
+### Fixed — coming back to a backgrounded tab could hang for over a minute
+
+*"Sometimes when I come back it hangs and I need to refresh. Is this a bug?"* Yes, and it is a missing
+trigger rather than broken code.
+
+A stream is only declared dead after `WS_STALE_MS` — **65 seconds** of silence, checked every 10. That
+is the right instrument for a *connected* client noticing a socket that quietly died: both ends of a
+proxied SSE connection can stop existing without either side raising an error, which is why that
+watchdog exists at all.
+
+It is the **wrong** instrument for a phone returning from the background. While the tab was hidden its
+timers were frozen and no messages arrived, so on return the client sat on a possibly-dead stream for
+up to **~75 seconds**, showing the state it had when you left and answering nothing. That is the hang.
+Refreshing worked because a reload rebuilds the stream immediately.
+
+Becoming visible is a fact the browser hands us for free, and it is the one moment we *know* the stale
+clock is meaningless — and nothing was listening for it. Now: a stream that is closed, or quiet past a
+much shorter fuse (12 s, because the page was frozen rather than idle), is rebuilt at once; a healthy
+one gets a cheap catch-up instead, so a quick app-switch does not churn a working connection.
+
+Measured: with the stream aged 60 s, a visibility change reconnects it (`readyState: 1`); with a fresh
+stream, the same event reconnects nothing.
+
 ## [1.19.2] - 2026-09-11
 ### Added — ▷ on the desktop control too, and it is an arrow everywhere
 
