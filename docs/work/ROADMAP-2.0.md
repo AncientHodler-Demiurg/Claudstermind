@@ -215,13 +215,13 @@ because tests prove a module works, never that anything *calls* it. Wiring it is
       not tested on a phone. Needs a real pass.
 - [ ] **4.6** ⇉ **OmniRoute bench is local-only** — `/api/omni/*` returns 404 `local-only` in OIDC/relay
       mode. Wiring a long-running SSE sweep through the tunnel needs new `agent/agent.mjs` command handlers.
-- [ ] **4.11** ⇉ **Error rows are never persisted.** `workspace.mjs` pushes `kind:"assistant"` into the
+- [x] **4.11** ⇉ **Error rows are never persisted.** `workspace.mjs` pushes `kind:"assistant"` into the  ⟵ **DONE** — verified 2026-09-12: `workspace.mjs` pushes `kind:"turnError"` rows into the transcript (2 call sites)
       transcript and flushes to disk, but `kind:"error"` rows are live-only — a red error exists in the
       browser tab and nowhere else, so a reload destroys it forever. Found while trying to diagnose the
       1.5.97 `parts.filter` error and being unable to recover the text. The one class of message you most
       want to inspect afterwards is the only one we throw away. Decide: persist error rows (changes what
       appears in transcripts) or keep a separate error journal.
-- [ ] **4.12** ⇉ **Compaction boundaries are never persisted.** The SDK emits
+- [x] **4.12** ⇉ **Compaction boundaries are never persisted.** The SDK emits  ⟵ **DONE** — verified 2026-09-12: `workspace.mjs` pushes a `kind:"compacted"` row with pre/post tokens
       `SDKCompactBoundaryMessage { trigger, pre_tokens, post_tokens }` and `lib/claudeSession.mjs`
       already translates it to `{ kind:"compacted", … }` — but `lib/workspace.mjs` contains **zero**
       references to `"compacted"`, and only `assistant` rows are pushed into the transcript. So a

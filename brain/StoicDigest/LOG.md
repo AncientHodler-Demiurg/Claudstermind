@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-09-12 — Issue #005 → a multi-part SERIES (planning + Term tooltip + facts)
+
+**Owner directive (2026-09-12):** grow issue-005 into StoaChain's first complex multi-part piece — a **main article tied to the DALOS cryptography package** + **3 subarticles** + a **live crypto-exemplification page**. Also: a **hover tooltip** (like StoaExplorer's dashboard "MetricTooltip") explaining "The Portico"; a **chapter on the DALOS character set** (write seed words in your own language, no dictionary); frame the RSA feat as a **first for Arweave**; and the flagship's arc: deterministic RSA-4096 → native Arweave in Codex/OuronetUI → the **Caduceus bridge** → wrapped/bridged Arweave → DeFi + **SilverStoa↔bridged-AR liquidity pool** = monetise STOA via Arweave liquidity (Stoic "shape our own destiny" instead of chasing exchange listings; **why Arweave** over BTC/ETH, stated diplomatically).
+
+**Done this turn:**
+- **`Term.astro` built** — static, dependency-free port of StoaExplorer's Pantheon `MetricTooltip` (gold-headed card, `border-b` header, `shadow-xl`, 120ms `pantheon-tooltip-in` fade+scale keyframe, hover+focus, reduced-motion guard). CSS in `global.css`. Wired to **"The Portico"** heading via inline `<Term>` in the `##` — **verified the chapter-dots nav still lists it** (slug `the-portico` intact, cd-num 1). Reusable across the pantheon-dense series (Stoa/Agora/Caduceus/Pythia/Mnemosyne/Codex…).
+- **Corrected stale multi-address lines** in issue-005 (was "being finalised" → now **shipped in 4.4.0**) + version refs 4.2.0→4.4.0.
+- **ECOSYSTEM-FACTS.md**: big UPDATE block — 4.4.0 multi-address shipped; DALOS 256-glyph base-256 charset (homoglyph exclusion; public 512-word page is stale, live node wins); Apollo curve (1024-bit, ₱/Π, 162-char); Codex (two-Apollo-halves identity, 325-char public dual-link); Mnemosyne (hosting, admin-only reg, L1/L2-Arweave/L3 storage); Pythia (live, API-key handshake); **Caduceus (PHASE-0 DESIGN-ONLY, zero code)**.
+
+**⚠️ MATERIAL FRAMING CORRECTION surfaced to owner (from Caduceus brain):** there is **no "Wrapped Arweave" wrap token** — the bridge mints **`DPTF-AR.arweave` directly** (per-source DPTF true-fungible). Pool = **80/20 sSTOA/DPTF-AR** at Phase 4. sSTOA = liquid-staked STOA (RBT of an ATS whose RT is WSTOA = 1:1 wrapped STOA). Buy path: AR→bridge→DPTF-AR→swap→sSTOA→(ATS)→WSTOA→unwrap→STOA. **Caduceus is design-only** so the whole bridge/pool/DeFi arc must be firmly ROADMAP.
+
+**Proposed structure (awaiting owner confirm — NOT approved yet):** a `series` — 005 flagship (`announcement`), 006 "The Custom Curve" (DALOS+Apollo EC, Schnorr, seed words, charset), 007 "The Alphabet Is the Address" (Apollo→Pythia API keys + Codex identity), + the live PoC as its **own interactive route** (`/lab/seed`), not a reading issue (per RSA handoff §10). **Held companion-writing** pending: (1) structure confirm, (2) owner's call on the Wrapped-AR-vs-DPTF-AR framing + how boldly to present a design-only bridge, (3) how diplomatic on the BTC/ETH contrast. draft:true, localhost-only, nothing deployed.
+
+---
+
 ## 2026-09-11 (later) — Issue #005 edits: "first for Arweave" underlined + tab spec queued
 
 **Owner directives (2026-09-11):** (1) the article **must underline this is a first for Arweave** — Arweave had documented trouble with deterministic address creation; we not only solved it but did it *from seed* and can do so *multiple times*. (2) Owner is **adding multiple-Arweave-addresses-from-one-seed** to the crypto lib now (not yet shipped in 4.2.0). (3) AFTER that lands, add a **second in-article tab: a live seed-engine tester on the page** — DEFERRED by owner ("let me finish the multiple generation functionality first"), NOT built this turn.
