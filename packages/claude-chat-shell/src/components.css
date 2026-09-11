@@ -397,6 +397,13 @@
   padding: 3px 5px; background: var(--chip); }
 .cs-shell .sendgrp.--auto { border-color: #3ddc9755; background: #0c1a1c; }
 .cs-shell .sendgrp .rounds { font-size: 10.5px; color: var(--dim); white-space: nowrap; }
+/* ▷ the ceiling's release, inside the send group. An arrow and nothing else: this group already
+   carries auto, its counter, Stop and Send, and on a phone the width it takes comes straight out of
+   Send. Hidden unless the batch has actually run out. */
+.cs-shell .sendgrp .automore { flex: 0 0 auto; width: 24px; height: 24px; padding: 0; border-radius: 7px;
+  border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent); font-size: 12px; line-height: 1; cursor: pointer; }
+.cs-shell .sendgrp .automore[hidden] { display: none; }
 /* While the loop is actually counting down, the counter is the liveliest thing in the group — it is
  * the only part of the shell that says "something is about to happen without you". */
 .cs-shell .sendgrp .rounds.--arm { color: var(--ok); font-weight: 700; }

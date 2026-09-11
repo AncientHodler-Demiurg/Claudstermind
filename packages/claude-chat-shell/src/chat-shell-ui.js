@@ -153,6 +153,15 @@
     var autoCb = el("input", { type: "checkbox" }, []);
     var autoLbl = el("label", { class: "autolbl", title: "Auto-continue: send the next prompt automatically when idle" }, [autoCb, "auto"]);
     var roundsEl = el("span", { class: "rounds" }, ["—"]);
+    /* ▷ — THE CEILING'S RELEASE, on the control that owns it. The ceiling deliberately stops an
+       unattended loop and waits for a person, and the only way to grant the next batch was to tick
+       the switch OFF and back ON: "turn off the thing I want to continue", which at a glance reads as
+       a switch that has stopped working. An arrow, not a word, because this sits inside a group that
+       already holds Stop and Send and a phone has no width to spare. Shown only at the ceiling. */
+    var autoMore = el("button", { class: "automore", type: "button",
+                                  title: "Grant the next batch of automatic rounds" }, ["▷"]);
+    autoMore.hidden = true;
+    autoMore.addEventListener("click", function () { call("autoGrant"); });
     autoCb.addEventListener("change", function () { call("autoContinue", autoCb.checked); });
     var stopBtn = el("button", { class: "btn-stop", type: "button", title: "Stop the current response (keeps the conversation)" }, ["■ Stop"]);
     var sendBtn = el("button", { class: "btn-send", type: "button" }, ["Send"]);
@@ -160,7 +169,7 @@
     sendBtn.addEventListener("click", function () { submit(); });
     // Stop, Send and auto-continue are ONE bordered object: they are three halves of the same
     // decision about the turn in flight, not three unrelated buttons that happen to be adjacent.
-    var sendGrp = el("div", { class: "sendgrp" }, [autoLbl, roundsEl, stopBtn, sendBtn]);
+    var sendGrp = el("div", { class: "sendgrp" }, [autoLbl, roundsEl, autoMore, stopBtn, sendBtn]);
 
     /* ------- model row: collapse step 1, so nothing here may be load-bearing mid-turn ---------- */
     var modelSel = el("select", { class: "sel", title: "Model for this conversation" }, []);
@@ -653,6 +662,8 @@
         var rounds = nn(ac.n, 0) + "/" + nn(ac.max, 10);
         txt(roundsEl, !ac.on ? "—" : secs != null ? rounds + " · " + secs + "s" : rounds);
         roundsEl.classList.toggle("--arm", !!ac.on && secs != null);
+        // At the ceiling and nowhere else — the same condition the engine refuses on.
+        autoMore.hidden = !(ac.on && nn(ac.n, 0) >= nn(ac.max, 10));
         autoLbl.title = !ac.on
           ? "Auto-continue: send the next prompt automatically when idle"
           : (secs != null ? "Sending the next prompt in " + secs + "s. " : "")

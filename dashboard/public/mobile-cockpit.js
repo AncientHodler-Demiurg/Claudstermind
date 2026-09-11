@@ -201,10 +201,15 @@
        tick the switch OFF and back ON, which reads as "turn off the thing I want to continue" and, at
        a glance, looks like the switch is simply broken. It sits WITH the switch because it is the
        same decision, one step further on. */
+    /* AN ARROW, INSIDE THE PILL. It was a separate button reading "▷ Continue", and the words cost
+       width the send button needed — on a narrow phone Send stopped fitting. The release belongs with
+       the switch it releases anyway, so it lives in the auto control and says what it does with a
+       shape instead of a sentence. */
+    var autoLbl = el("span", { class: "mc-auto-lbl" }, ["auto"]);
     var autoMore = el("button", { class: "mc-auto-more", type: "button",
-                                  title: "Grant the next batch of automatic rounds" }, ["▷ Continue"]);
+                                  title: "Grant the next batch of automatic rounds" }, ["▷"]);
     var autoBtn = el("div", { class: "mc-auto", title: "Auto-continue: send the next prompt automatically when idle" },
-                     [el("div", { class: "mc-sw" }, [el("i", {}, [])]), el("span", { class: "mc-auto-lbl" }, ["auto"]), autoNum]);
+                     [el("div", { class: "mc-sw" }, [el("i", {}, [])]), autoLbl, autoNum, autoMore]);
     /* Stop ALWAYS occupies its slot and switches enabled/disabled, exactly as it does on the desktop:
        a button that appears and vanishes makes Send jump sideways under your thumb the moment a turn
        starts or ends, which is how you press the wrong one. */
@@ -216,7 +221,7 @@
        equivalent of, so dropping it from Core was never a reason to drop it there. A slot rather than
        a second row, because the row is the scarcest space on the screen. */
     var btnrow = el("div", { class: "mc-btnrow" }, (slots.buttons || []).concat(
-      [attachBtn, el("div", { class: "mc-mid" }, []), autoMore, autoBtn, stopBtn, sendBtn]));
+      [attachBtn, el("div", { class: "mc-mid" }, []), autoBtn, stopBtn, sendBtn]));
 
     /* THE LOW ZONE — compose + buttons, and the rails hang off its TOP edge. That edge is the seam
        between the transcript and the footer, so a rail centred on it (translateY(-50%), the same
@@ -413,7 +418,16 @@
     onTap(stopBtn, function () { if (state.busy) call("stop"); });
     onTap(attachBtn, function () { call("attach"); });
     onTap(autoBtn, function () { call("autoContinue", !state.running.autoContinue); });
-    onTap(autoMore, function () { call("autoGrant"); });
+    /* ANSWER THE TAP IMMEDIATELY. The grant is a round trip to the engine, and what follows it is an
+       EIGHT SECOND countdown before the next round goes out — so pressing it looked like nothing had
+       happened at all, for about ten seconds, and then work simply began. Reported exactly that way.
+       The host still owns the truth; this only says "heard you" until the truth arrives. */
+    onTap(autoMore, function (e) {
+      if (e && e.stopPropagation) e.stopPropagation();     // inside the pill: do not also toggle auto
+      autoMore.classList.add("--sent");
+      txt(autoNum, "granting…");
+      call("autoGrant");
+    });
     /* THE BULB IS THE SCROLL STATE, not the turn state: "Live" means the transcript is pinned to the
        bottom and new turns push into view, "Held" means you scrolled up and it is staying put.
        Tapping it goes back to the bottom — and tells the host, which owns whether it stays there. */
@@ -951,6 +965,12 @@
          the button appears exactly when the loop has stopped waiting for anything but you. */
       var capped = acOn && nn(ac.n, 0) >= nn(ac.max, 10);
       autoMore.hidden = !capped;
+      /* THE WORD YIELDS TO THE BUTTON. Measured at 412px: with the arrow shown the row is 415px wide —
+         it overflows, and what falls off the end is Send. "auto" is the most expendable thing in the
+         pill at that moment: the counter reads 10/10 and there is an arrow next to it, which says
+         what this is far better than the label does. */
+      show(autoLbl, !capped);
+      if (!capped) autoMore.classList.remove("--sent");   // the grant landed: stop saying "heard you"
       autoNum.className = "mc-auto-n" + (acOn && secs != null ? " --arm" : "");
       var pres = state.sending || {};
       var mode = pres.state || (state.busy ? "busy" : "idle");

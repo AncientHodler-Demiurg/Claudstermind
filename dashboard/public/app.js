@@ -11401,6 +11401,9 @@ function pactChatRender() {
           pactStateSave();
         },
         autoContinue: (v) => pactSetAutoContinue(pactChatActive(), v),
+        // ▷ on the desktop control too — the ceiling waits for a human on every surface, so the
+        // release has to exist on every surface. Same grant the phone sends.
+        autoGrant: () => { const a = pactChatActive(); if (a && a.key) wsPost("control", { action: "autoContinue", args: { sessionKey: a.key, grant: true } }); },
         compact: () => pactCompact(),
         wrap: () => pactOpenWrapDialog(pactChatActive()),
         // Onto the hidden REAL exocortex chip (Core's `on.context` does exactly this) — never onto
@@ -13590,6 +13593,7 @@ function viewWorkspace() {
         // The medallion at the top of the transcript. Same action the old header row's button had —
         // fetch the next block of turns above the rendered window.
         earlier: () => exoExtend(p, "up", wsExoCtx(p)),
+        autoGrant: () => { if (p.sessionKey) wsPost("control", { action: "autoContinue", args: { sessionKey: p.sessionKey, grant: true } }); },
         autoContinue: (on) => {
           /* Asks the SERVER, which owns the loop — that is what keeps a sweep running with this page
              closed. The local flag is set so the switch answers the press at once; the server's

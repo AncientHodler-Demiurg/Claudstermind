@@ -413,9 +413,13 @@ body.ws-mobile2 .pactm-cbar, body.ws-mobile2 .pactm-modebar{display:none}
 .ws-mobile2 .mc-btn.--off{opacity:.45}
 /* ▷ Continue — the ceiling's release, beside the switch it releases. Accented because at that moment
    it is the only thing standing between you and the next batch; hidden entirely otherwise. */
-.ws-mobile2 .mc-auto-more{flex:0 0 auto;height:40px;padding:0 12px;border-radius:12px;font:inherit;font-size:13px;
-  font-weight:600;background:var(--accent);color:#12061f;border:none;cursor:pointer;touch-action:manipulation;
+/* Inside the auto pill, an arrow and nothing else — the words it used to carry came straight out of
+   the send button's width, and on a narrow phone Send stopped fitting. */
+.ws-mobile2 .mc-auto-more{flex:0 0 auto;width:22px;height:22px;padding:0;margin-left:2px;border-radius:7px;
+  display:inline-flex;align-items:center;justify-content:center;font:inherit;font-size:11px;line-height:1;
+  background:var(--accent);color:#12061f;border:none;cursor:pointer;touch-action:manipulation;
   -webkit-tap-highlight-color:transparent}
+.ws-mobile2 .mc-auto-more.--sent{opacity:.55}
 .ws-mobile2 .mc-auto-more[hidden]{display:none}
 
 /* A RE-HOMED CONTROL STILL HAS TO FIT THE PHONE. Core substitutes the package's own compact/wrap

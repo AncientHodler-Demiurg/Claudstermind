@@ -4,6 +4,38 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.19.2] - 2026-09-11
+### Added — ▷ on the desktop control too, and it is an arrow everywhere
+
+*"The desktop doesn't have a continuation button for the auto."* It didn't — the release was built for
+the phone only, while the ceiling waits for a human on **every** surface. It now lives in the shared
+chat-shell send group, so both workspaces get it on the desktop as well, wired to the same `autoGrant`
+the phone sends.
+
+*"The auto rectangle needs to be simply expanded and have a continue arrow button (no text), otherwise
+the send button is not fitting on mobile phone width."* Measured at 412px: with the old "▷ Continue"
+shown the button row came to **415px and overflowed** — and what falls off the end is Send. The grant
+is now an arrow inside the auto pill, and at the ceiling the word "auto" steps aside for it: the
+counter reads 10/10 with an arrow beside it, which says what this is better than the label does.
+Measured after: pill 120px, row 412px, no overflow, Send keeps its full width.
+
+### Fixed — pressing ▷ looked like nothing happened, for ten seconds
+
+*"Clicking the continue button on mobile, for about 10 seconds was as if nothing happened, no feedback
+no nothing, then it started working."* Both halves of that were real: the grant is a round trip to the
+engine, and what follows it is an **eight second countdown** before the next round goes out. So the
+press was genuinely doing something and genuinely showing nothing. It now marks the press at once and
+says *granting…* in place of the stale `10/10`, and stops the moment real numbers arrive. The host
+still owns the truth; this only says "heard you" until the truth lands.
+
+### On "they are not wired to one and the same thing"
+They are — and the doubt was worth checking. In **both** workspaces a single decision object is built
+and handed to both surfaces, so within one browser the phone and the desktop cannot disagree; they are
+literally the same object, and there is now a test asserting it is built exactly once. What actually
+diverged was two **devices**: each held its own round count until the engine became the owner of it
+(1.18.4), which is also why it converged on its own once a state frame arrived — *"oh now I see 10/10
+as well."*
+
 ## [1.19.1] - 2026-09-10
 ### Fixed — the Chats sheet named a different repository than the one you were in
 
