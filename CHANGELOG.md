@@ -4,6 +4,13 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [Unreleased] — the exocortex work (branch `exocortex`, merges as 2.0.0)
+
+Accumulating here instead of a version per change. `package.json` stays at **1.20.0** for the whole
+of this branch; the version test reads the first `## [x.y.z]` heading and `[Unreleased]` does not
+match that pattern, so it falls through to `[1.20.0]` and stays green. One bump, to 2.0.0, at the
+merge. See `docs/work/exocortex/HANDOFF.md`.
+
 ## [1.20.0] - 2026-09-12
 ### Added — bee, wasp and nectar ship WITH Claudstermind
 
