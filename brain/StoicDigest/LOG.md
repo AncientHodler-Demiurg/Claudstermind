@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-09-11 (later) — Issue #005 edits: "first for Arweave" underlined + tab spec queued
+
+**Owner directives (2026-09-11):** (1) the article **must underline this is a first for Arweave** — Arweave had documented trouble with deterministic address creation; we not only solved it but did it *from seed* and can do so *multiple times*. (2) Owner is **adding multiple-Arweave-addresses-from-one-seed** to the crypto lib now (not yet shipped in 4.2.0). (3) AFTER that lands, add a **second in-article tab: a live seed-engine tester on the page** — DEFERRED by owner ("let me finish the multiple generation functionality first"), NOT built this turn.
+
+**Done this turn (framing edits, honest shipped-vs-imminent line held):** strengthened 4 passages — Portico ("a capability the Arweave ecosystem itself has never reliably had"), "seed becomes the key" (added many-addresses-from-one-seed as designed capability), the prior-art section (now a plain **"this is a first for Arweave"** — scoped to *this network*, still defensible: "as far as research established," the one public attempt `arweave-mnemonic-keys` is *known* non-deterministic), and rung 1 of "What it unlocks" (published **4.2.0 = one address/seed today**; multiple = "being finalised now, same derivation, indexed"). Deliberately did NOT claim multiple-address as shipped — the owner is still coding it. Kept §12 spirit while honoring owner's explicit sign-off for stronger language (handoff §12 said stronger framing needs owner sign-off — now given). draft:true, localhost-only.
+
+**QUEUED — the live seed-engine tester tab (build once multiple-gen ships):**
+- Second tab within issue-005 (tab UI within the article page). Tab 1 = the article; Tab 2 = live tester.
+- User types a **seed phrase**, gated by validation ("falls logic" = `validateSeedWords` / `InvalidSeedWordsError` from `@ouronet/dalos-crypto/gen1`).
+- **Curve selector:** DALOS ellipse (1600-bit) or **APOLLO** (1024-bit) — `DalosGenesis` / `Apollo` from `@ouronet/dalos-crypto/registry` (Apollo not in `createDefaultRegistry()`, import directly).
+- Show the derived **Ouronet/Apollo EC account** (the `Ѻ./Σ.` or `₱./Π.` address) — instant.
+- Input: **how many Arweave addresses** to generate, **up to 100 (UI limit, NOT an engine limit)**.
+- Generate → engine derives all N Arweave addresses from the seed.
+- ⚠️ **Build-time UX reality to plan for:** each RSA-4096 gen is ~seconds; 100 = minutes of CPU-bound BigInt work. MUST use `generateFromBitStringAsync` + the progress API (handoff §8) + a progress popup (handoff §10.2), almost certainly a **Web Worker** so the page doesn't freeze/heat. Private-key fields blurred w/ reveal, public addresses shown freely (handoff §10.4). Handoff §10 is the base spec; this tab = §10 + the multi-address (N up to 100) + curve/EC-account display.
+
+---
+
+## 2026-09-11 — Issue #005 written (draft): "The Key to Arweave"
+
+**What happened:** Wrote issue-005 from `docs/handoffs/2026-09-11-deterministic-rsa4096-arweave.md`, but under a **broader owner framing** than the handoff (owner, 2026-09-11): the handoff scopes itself to the crypto as a `record`; the owner wants an **announcement** of imminent native Arweave in Ouronet + the roadmap it unlocks. Resolved the tension by writing it in **two registers** — what's *shipped* (the crypto, verifiable) vs what's *roadmap* (integration/bridge/market), line held explicitly throughout. `level:5` Blockchain-dev · `kind:announcement` · Long (~18 min) · pillars `[agora, logos, aletheia]` · `featured:true` (will become homepage hero once published; 005>004). draft:true.
+
+**The spine:** DALOS already grows a deterministic **EC account** from a seed phrase; the new work grows a deterministic **RSA-4096 keypair** (Arweave's format) from the *same* 1600-bit seed bitstring — one seed, two algebraic worlds. Covered: the seven-fold-Blake3 seed mechanism + the **closed 256-glyph alphabet limitation** (NOT any-Unicode; `привет` rejected — kept honest per handoff §1.7); **why deterministic RSA is actively resisted** (Go 1.26 `GODEBUG=cryptocustomrand`, 2018 `MaybeReadByte` guard — both quoted); the engine's exact numbers (**100 rounds** MR not 64, **e=65537**, **2045 free bits**, 2000-prime sieve, **Carmichael λ(n)**, `Base64URL(SHA-256(n))`=43ch); the **witness-bias bug** (mod→rejection-sampling) + the "why the fix / the 64→100 change didn't/did change output" worked examples (§7); and an explicit **"what's shipped vs not"** section.
+
+**Guardrails honored:** npm `@ouronet/dalos-crypto@4.2.0` re-verified live (`npm view` = 4.2.0) → stated as fact. **Codex integration, the seed-maker demo, and any live Arweave transfer = NOT done** → all framed as roadmap, never as shipped (handoff §11/§15). **Novelty:** used §12 framing ("no mainstream audited library does this, as far as research established") — no unqualified "first ever." Owner's roadmap (native Arweave in Codex → bridge keyed on Codex signing AR txns → **Silver STOA** liquid-staking paired vs Arweave in a **liquidity pool** = STOA's first market/liquidity tie to an externally-priced asset → **wrapped Arweave** via **DPTF** → Pact DeFi) laid out as 4 rungs, all labeled roadmap. Silver STOA/DPTF/pool-arch described only at owner's one-line level (no invented mechanism). Kept a strengthened not-investment-advice disclaimer (touches buy/sell/liquidity). No out-of-scope entity (Arweave is external, fine).
+
+**Build:** green; temporarily flipped draft:false to verify — page generates, homepage hero=#005, badges `Announcement · L5/7 · Long · Assumes`, RSS carries it — then restored **draft:true**. Added a **DALOS_Crypto/Codex/Arweave section to `ECOSYSTEM-FACTS.md`** (handoff §14). **Not deployed** — awaiting owner review + "publish" (same write→review→publish flow as #004).
+
+**Open for owner:** confirm `level:5` vs 6 (graded 5 per the issue-003 precedent — teaches the crypto rather than assuming it — but handoff recommended 6); confirm `featured:true` (makes 005 the new hero over the #004 flagship); then flip draft:false + `./scripts/deploy.sh`. Re-verify npm version is still current at publish time.
+
+---
+
 ## 2026-09-08 — Issue #004 written (draft): "The Economic Premise of StoaChain"
 
 **What happened:** Wrote issue-004 from `docs/handoffs/2026-09-08-stoachain-economic-premise.md`. The Yin-Yang economy: Yang = on-chain emission function `coin.UC_YearEmission` (closed form; tail → 500,000 STOA/yr forever, supply uncapped yet inflation → 0); the 90/10 miner/UrStoa-Vault split done in `coinbase` contract code (chain 0, not "chain 10") under pure PoW; the Gregorian leap-rule detail; Yin = rising gas floor (10,000 → 1,000,000 ANU, +1/3h, 339 yrs to 2364); "formula not a file" vs Kadena's inert CSV; enforcement at **block 600,000 (~2026-09-25)**, applied by wallets now (call to action: update before 600,000); precision-scaling answer to the "STOA gets valuable" objection. `level:3` (Crypto-aware) · `explainer`. draft:true.

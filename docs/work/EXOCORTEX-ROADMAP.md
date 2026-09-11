@@ -27,7 +27,59 @@ BELOW."* Checked `docs/work/ROADMAP-2.0.md` directly:
 So a real top-to-bottom plan has to start with **finishing 2.0**, not with Ch. 1.
 
 ### The four open questions below — proposed resolutions, awaiting confirmation
-1. **Ch.3 — how much of Graphify/Hermes survives the port vs. gets rewritten?** THE one that
+### ✅ Q1 ANSWERED (2026-09-11) — research pass done, both upstream repos read on disk
+
+**Neither "ports". Both are Python. Verdict (b) for both — the shape is reusable, it is a
+reimplementation — but for opposite reasons, and at wildly different cost.**
+
+**Hermes — cheap, and the asset is SQL, which is portable by definition.** Its value is the
+content-external FTS5 pattern: `messages_fts(content='messages', content_rowid='id')` kept in sync by
+INSERT/DELETE/UPDATE triggers, `bm25()` ranking, `snippet()` projection. The Python around it is a
+17,370-line `SessionDB` bound to Hermes's own session/compaction/lineage model and is worth nothing to
+us. **Verified on this machine, Node v22.22.1: `node:sqlite` ships SQLite 3.46.1 with FTS5 —
+external-content tables, triggers, `snippet()`, `bm25()`, boolean MATCH all work with zero
+dependencies and zero native build step.** (Caveat: `node:sqlite` emits an ExperimentalWarning on
+Node 22; stable from Node 24. A version-policy call, not a blocker.) Estimated Node equivalent:
+~300–500 lines of `.mjs`. Days, not weeks.
+
+Worth copying exactly: the incremental-rebuild guard — two `state_meta` keys (`fts_rebuild_high_water`
+H, `fts_rebuild_progress` P), a row indexed iff `id <= P OR id > H`, and **every trigger carrying that
+same predicate** so a mid-rebuild write cannot corrupt the external-content index. Also the runtime
+FTS5 capability probe and the durable staleness breadcrumbs, so a degraded index never silently serves
+reads. Deliberately NOT needed: the trigram/CJK table (~2.6× the text size, for a case we do not have).
+
+**Graphify — the Python IS the product.** The pipeline shape is free and worth taking
+(`detect → extract → build → cluster → analyze → report → export`, the `{nodes, edges}` schema, the
+`EXTRACTED`/`INFERRED`/`AMBIGUOUS` confidence tag, validate-before-build). The graph layer is thin —
+the entire NetworkX surface is a container plus five algorithms (~14 distinct calls), and
+`graphology` + `graphology-communities-louvain` + `graphology-metrics` covers essentially all of it
+(Leiden has no Node equivalent; graphify already ships Louvain as its own documented fallback). The
+viz is free: `graph.html` loads `vis-network@9.1.6` from a CDN and reads a JSON file — it does not care
+what wrote it. **But `extract.py` is 7,377 lines plus 32 per-language extractor modules, and it is not
+translatable.** Those are accumulated scars: e.g. `extractors/go.py` carries a `_GO_PREDECLARED_FUNCS`
+blocklist that exists because one unexported method named `append` absorbed 330 phantom inbound
+`calls` edges and invented twelve false layering violations on a real 8.9k-node Go codebase. A Node
+version realistically starts at JS/TS only and will be worse than graphify for a long time.
+
+**Therefore Ch.3.1's task name is wrong.** "Port the graph engine from Graphify + Hermes" conflates
+two unrelated things — **Hermes has no graph at all**. Split it:
+- the Hermes work is **Ch.2** (conversation FTS / retrieval), not Ch.3;
+- **Ch.3** is a ground-up Node extractor that borrows Graphify's *shape*, scoped to JS/TS first.
+
+**Smallest useful first slice (do this before any full port):** `lib/conversationArchive.mjs`'s
+`recallByQuery` is currently a linear `text.toLowerCase().includes(...)` scan over every row of every
+segment — no ranking, no snippets, O(corpus) per query. Replace its body with an FTS5 index over the
+`_segments/*.jsonl` already on disk, rebuilt by replaying that JSONL (so the DB stays disposable and
+the raw JSONL remains the source of truth). Same function signature. Zero new dependencies, testable
+under `node --test` with an in-memory DB. It delivers the North Star's retrieval half without blocking
+on the Agentic Chat Engine's ingest hook.
+
+**Not determined:** whether the npm tree-sitter grammar packages ship prebuilt `.wasm` usable by
+`web-tree-sitter` without a compiler (needs an install to confirm — `@vscode/tree-sitter-wasm` is the
+usual prebuilt bundle); and `node:sqlite` FTS5 performance at corpus size (the roadmap's own figure is
+4.1 MB of conversation text, almost certainly a non-issue, but unbenchmarked).
+
+1. ~~**Ch.3 — how much of Graphify/Hermes survives the port vs. gets rewritten?**~~ *(answered above)* THE one that
    actually blocks planning Ch. 3 in task-level detail. `docs/EXOCORTEX-LEARNINGS.md` names the
    patterns worth copying (Hermes's SQLite FTS5 memory; Graphify's tree-sitter→NetworkX→viz
    pipeline) but neither has been checked against Claudstermind's actual stack (Node/ESM, no
