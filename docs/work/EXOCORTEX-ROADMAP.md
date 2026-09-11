@@ -138,6 +138,40 @@ no collapse, and **merging becomes a database union rather than a training run**
 
 ## DECISION LOG
 
+### D4 — SELF-HOST ONLY, hosted left open for later. *(decided 2026-09-12, by the user)*
+One install, one user. Their conversations, secrets and code never leave their disk; we ship software
+and run nothing. **Consequence for Ch.1:** design the storage abstraction so a tenant boundary *could*
+be added later — do not build multi-tenancy now, but do not make it impossible either (no globals that
+assume a single brain, no paths hard-coded above the store interface).
+
+### D5 — The commons (Ch.6) is DEFERRED. *(decided 2026-09-12, by the user)*
+Stays vision. No tasks, no incentive model, no anti-poisoning design until there is usage data.
+
+### D6 — Skill crystallisation: PROPOSE-ONLY, thresholds tuned from real proposals. *(2026-09-12)*
+The user's instinct was right that this is a "look at how it is already done" question, not a design
+call, so it was answered from the two upstreams rather than guessed:
+- **Hermes** (per EXOCORTEX-LEARNINGS): nudge → background review subagent → skill create/patch,
+  with an **age curator** and an **audit ledger**. Proposal + review, never auto-adoption.
+- **ECC** (`skills/continuous-learning-v2/`): observe → `observations.jsonl` → cheap background model
+  mints "instincts" → `pending/` → human promote → 30-day TTL prune. Concrete thresholds worth
+  starting from: **cluster ≥2 observations** for a skill candidate; **≥3 instincts and ≥0.75 average
+  confidence** for an agent candidate.
+So: both propose, neither auto-adopts, and the numbers are tunable constants rather than architecture.
+Start at ECC's numbers, tune from what it actually proposes.
+**And build the verb ECC omitted:** its `pending/` directory has *no* `approve` command — promotion is
+a manual file move, and its `trust` field is a one-valued enum (`unreviewed`) its own docs admit is
+never set. Approval is our quality gate, so it gets a real verb and a real state transition.
+
+### D7 — tree-sitter ships prebuilt WASM: Ch.3 stays zero-build-step. *(verified 2026-09-12)*
+Measured, not assumed. `npm i web-tree-sitter tree-sitter-javascript tree-sitter-typescript` yields
+`tree-sitter-javascript.wasm` (404 KB), `tree-sitter-typescript.wasm` / `-tsx.wasm` (1.4 MB each) and
+`web-tree-sitter.wasm` — **no compiler, no node-gyp**. A real parse was run: `Parser.init()` →
+`Language.load(...wasm)` → a `(function_declaration name: (identifier) @fn)` query correctly returned
+both function names from a two-function source. (`binding.gyp` files exist for the *native* path; we
+do not use it.) `@vscode/tree-sitter-wasm` is the fallback bundle if a grammar ever lacks its own.
+**So Ch.3 keeps Claudstermind's no-build-step install.** ~6 MB of wasm for JS/TS.
+
+
 ### D1 — Claudstermind is MODEL-AGNOSTIC. Pluggable AI from any source. *(decided)*
 Not local-first, not Anthropic-only. The brain is separate from the engine, so Claudstermind
 inherits better models — hosted or local — the moment they exist, without a rewrite.
