@@ -130,7 +130,7 @@
       stats: [], agents: [], repos: [], history: [], marks: [],
       conversations: [],   // the threads of ONE repository
       chats: [],           // the chat BOXES, one per repository — see chatsSheet
-      busy: false, sending: null, stick: true, multiChat: false, worktree: "",
+      busy: false, sending: null, stick: true, multiChat: false, readonly: false, worktree: "",
       panel: null, sheet: null, overlay: null, histScope: "repo", openTurn: null,
     };
     var ctxPct = function () { return Math.round(nn(state.context.tokens, 0) / Math.max(1, nn(state.context.ceiling, 1000000)) * 100); };
@@ -175,6 +175,10 @@
     /* 3. THE TYPE BOX, FULL WIDTH. An attach button beside it is precisely what made the field
        narrow enough to be worth reporting. */
     var BOX_PLACEHOLDER = "Message Claude…";
+    /* A pane opened through the history column's 👁 is a looking glass: the host refuses the send.
+       The box has to SAY that, because on a phone this is the only box on screen and one that
+       quietly accepted text and dropped it is worse than one that is plainly shut. */
+    var BOX_PLACEHOLDER_RO = "Read-only — Resume this conversation to continue it";
     var box = el("textarea", { class: "mc-box rg-typebox", rows: "1", placeholder: BOX_PLACEHOLDER }, []);
     /* THE SEAM BULB. On the desktop this sits ON the boundary between the transcript and the footer
        (components.css .seambulb, top:-11px, zero flow height) — it belongs to the core's lower edge,
@@ -1085,6 +1089,7 @@
       if ("sending" in s) state.sending = s.sending || null;
       if ("stick" in s) state.stick = !!s.stick;
       if ("multiChat" in s) state.multiChat = !!s.multiChat;
+      if ("readonly" in s) state.readonly = !!s.readonly;
       if ("worktree" in s) state.worktree = s.worktree == null ? "" : String(s.worktree);
       /* SIZE WHATEVER IS IN THE BOX NOW. The draft write above grows it, but only on the paint where
          the text arrives AND the box is unfocused; a box that was hidden, or not yet laid out, when
@@ -1093,7 +1098,8 @@
       /* THE GHOST. While the loop is armed the field shows the exact text it is about to release, so
          a send that happens on its own is never a surprise; the moment it is not armed the box goes
          back to inviting you to write. */
-      box.placeholder = state.autoNext || BOX_PLACEHOLDER;
+      box.disabled = !!state.readonly;
+      box.placeholder = state.readonly ? BOX_PLACEHOLDER_RO : (state.autoNext || BOX_PLACEHOLDER);
       box.classList.toggle("--ghost", !!state.autoNext);
       growIfNeeded();
       paintHead();

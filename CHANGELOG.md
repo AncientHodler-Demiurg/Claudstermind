@@ -4,6 +4,46 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.20.4] - 2026-09-12
+### Fixed — coming back from a second chat left the type box dead
+
+*"I created a new chat, I come back to main chat, the typing box, I still can't type in it. In order
+to make it work I need to force full page refresh."*
+
+Reproduced on the real page before anything was changed: pick a repo → tick multi-chat → ＋ → click
+★ Master, and the pane came back `disabled: true`, placeholder "Read-only — …".
+
+When an `open` reply lands, the pane decides whether it may be typed in. That decision was written as
+a **whitelist of live modes** — `resume` and `restore` — with read-only as the *default*. Two modes
+were added later and neither was added to the list:
+
+- `conv-switch` — the conversation tab strip (this bug),
+- `recover` — a dead key re-derived to the canonical one.
+
+Both fell into the default, so the pane came back read-only: `promptEl.disabled`, a `send()` that
+returns at its first line, and no resync at all — resync skips read-only panes, which is the *other*
+half of the same report, "the main conversation doesn't load, I need to hit refresh". One defect, both
+symptoms; a reload was the only way out because a fresh boot uses `restore`, which was on the list.
+
+Read-only has exactly one legitimate origin: the history column's 👁, which means *show me this,
+don't touch it*. So the default is inverted and the exception is the thing that gets named
+(`wsOpenIsReadOnly`). A mode nobody thought about now attaches live — at worst opening a conversation
+in two boxes, a supported state the server's single-writer turn lock already serialises — instead of
+silently taking the keyboard away.
+
+Verified on the live page: two create-and-return round trips, master's 137 rows arriving each time,
+characters going into the box each time — and 👁 still locks, at 1400×900 and at 412×915.
+
+### Fixed — a phone box that took text it could never send
+
+Found while measuring the above. On a phone the visible box is the cockpit's own, and it was never
+told about `p.readonly` — measured `mcDisabled: false` on a pane whose own textarea read
+`disabled: true`. So a 👁-opened conversation accepted every keystroke and then dropped it. The
+cockpit is told now, and says why instead of going quietly inert.
+
+**Deploy note:** web-only. No daemon path changed, so this one does not restart `sessiond` and does
+not interrupt a running turn.
+
 ## [1.20.3] - 2026-09-12
 ### Fixed — a phantom workspace called `main#1`, and the main conversation lost behind it
 

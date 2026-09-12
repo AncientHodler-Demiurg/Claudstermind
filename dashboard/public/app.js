@@ -3626,6 +3626,28 @@ function wsRemoveConvSlotEntry(slots, slot) {
 /** The name a conversation takes from its first prompt — the same rule Pact has always used, so the
  *  two workspaces read alike. "Chat 2" tells you nothing a month later; the first line you typed is
  *  what you will actually recognise. */
+/** WHICH OPENS HAND YOU A LIVE CONVERSATION, AND WHICH HAND YOU A LOOKING GLASS.
+ *
+ *  Read-only has exactly ONE origin: the history column's 👁 (`reopen(key, "open")`), which means
+ *  "show me this, don't touch it". Every other mode is a pane ATTACHING to a conversation it owns
+ *  and is expected to continue — `resume` (▶), `restore` (boot reattach), `conv-switch` (the tab
+ *  strip), `recover` (a dead key re-derived to the canonical one).
+ *
+ *  This lived at the open-reply as the opposite shape: a whitelist of LIVE modes (`resume`,
+ *  `restore`) with read-only as the default. `conv-switch` and `recover` were both added later and
+ *  both fell silently into that default — so creating a second chat and clicking back to ★ Master
+ *  returned a pane with `readonly = true`: `promptEl.disabled`, a `send()` that returns at its first
+ *  line, and no resync (resync skips read-only panes). "I come back to main chat, the typing box, I
+ *  can't type in it… I need to force a full page refresh." Reproduced on the real page before it was
+ *  believed — repo → multi-chat → ＋ → ★ Master measured `disabled:true`.
+ *
+ *  So the default is inverted and the exception is the thing that gets named. A mode nobody thought
+ *  about now ATTACHES, which at worst opens a conversation in two boxes — a supported state the
+ *  server's single-writer turn lock already serialises — instead of silently taking the keyboard
+ *  away with no way back but a reload. */
+function wsOpenIsReadOnly(mode) {
+  return mode === "open";
+}
 function wsDeriveConvName(text) {
   const first = (String(text || "").split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0)) || "";
   const name = first.replace(/\s+/g, " ").trim();
@@ -14167,6 +14189,7 @@ function viewWorkspace() {
       sending: ui._pres || null,
       stick: !ui.stick || ui.stick.pinned !== false,
       multiChat: !!p.multiChat,
+      readonly: !!p.readonly,
       worktree: p.worktree || "main",
       running: {
         model: pick(ui.modelSel, p._activeModel),
@@ -15512,7 +15535,7 @@ function viewWorkspace() {
         // working would show "idle" (normal Send button, still spinner) despite a turn genuinely
         // in progress underneath it.
         if (data.status) p.status = data.status;
-        if (req.mode === "resume" || req.mode === "restore") {
+        if (!wsOpenIsReadOnly(req.mode)) {
           // Adopt the saved conversation's key. The pane's own key would make the work machine
           // persist the continuation to a SECOND file holding only the new turns — Claude would
           // remember everything while the stored history silently forked in two.
