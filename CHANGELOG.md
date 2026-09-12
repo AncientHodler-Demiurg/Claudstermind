@@ -4,6 +4,34 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.21.1] - 2026-09-12
+### Fixed — the "Working…" timer flashed 0:00 before jumping to the real elapsed time
+
+*"Went back to exocortex chat, the timer for working got back down to zero, and after a few moments
+it picked up its real timer, of 11 minutes, and still no output. Is it really not stuck?"*
+
+It wasn't — the turn had 54 assistant messages and 33 tool results in its session log, and was still
+writing when checked. But the timer briefly lying about its own age is exactly what makes a genuinely
+working turn indistinguishable from a stuck one, so the doubt was reasonable.
+
+The pane's status arrives from two different frames: the fast, shared `sessions` list broadcast (goes
+to every connected client) and the slower, per-pane `resync` reply. Only `resync` ever adopted the
+authoritative `turnStartedAt`/`lastActivityAt` clock. So on a return, the broadcast could flip the
+pane to "busy" first — and `paintPane`'s local fallback (`if (busy && !p._busyAt) p._busyAt =
+Date.now()`) stamped the current instant into the gap. The elapsed label prefers the real value but
+had none yet, so it showed ~0:00 for exactly as long as the broadcast beat the resync — then the
+resync landed with the true `turnStartedAt` and corrected it. Nothing was lost or reset; the display
+briefly lied about it.
+
+Both frames now go through one function, `wsApplySessionFields`, so the authoritative clock can't be
+adopted on one path and forgotten on the other. New regression test: `lib/wsApplySessionFields.test.mjs`.
+
+**Separately, worth knowing:** there is already a stuck-turn detector — the Stop button turns amber
+past 5 minutes of real silence and red past 12 ("⚠ Stop — likely stuck") — driven by the same
+`lastActivityAt`, which only advances on genuine output. It didn't fire here because the turn wasn't
+silent; it was correctly quiet. That detector is easy to miss (small text on one button); a more
+visible "last activity" readout next to the elapsed timer is the natural next step and is not yet built.
+
 ## [1.21.0] - 2026-09-12
 ### Added — every conversation keeps its own half-written message
 

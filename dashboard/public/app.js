@@ -8226,6 +8226,27 @@ function pactPreserveElapsed(prevMsgs, incoming) {
   return incoming;
 }
 // ===== end PACT PRESERVE-ELAPSED pure helper =====
+// ===== WS SESSION FIELDS — pure helper (sliced out for unit tests; see lib/wsApplySessionFields.test.mjs)
+// A pane's live status/mode/usage arrive from TWO separate frames: the periodic `sessions` list
+// broadcast (fast — everyone connected gets it) and a single `session` upsert. Only the SLOWER,
+// per-pane `resync` reply ever adopted the authoritative `turnStartedAt`/`lastActivityAt` clock. So
+// the broadcast could flip a pane to "busy" well before its own resync landed — and paintPane's local
+// fallback (`if (busy && !p._busyAt) p._busyAt = Date.now()`) stamped "now" in the gap. Symptom: the
+// "Working… M:SS" elapsed visibly starts at 0 and jumps to the real value a moment later, on every
+// return to a pane whose turn had already been running for a while (e.g. an unattended exocortex
+// turn) — indistinguishable from "reset" even though nothing was actually lost. One function, called
+// from both sites, so a future third field (or a fourth call site) can't silently repeat the omission.
+function wsApplySessionFields(p, s) {
+  p.status = s.status || p.status;
+  if (s.mode) p.mode = s.mode;
+  if (s.usage) p.usage = s.usage;
+  if (s.background) p._background = s.background;
+  // Same adoption resync already does: turnStartedAt is the true value outright; lastActivityAt only
+  // moves forward, so a stale/duplicate broadcast can never rewind a fresher stamp already on the pane.
+  if (typeof s.turnStartedAt === "number") p._turnStartedAt = s.turnStartedAt;
+  if (typeof s.lastActivityAt === "number") p._lastEventAt = Math.max(p._lastEventAt || 0, s.lastActivityAt);
+}
+// ===== end WS SESSION FIELDS pure helper =====
 // ===== PACT RESYNC DECISION — pure helper (sliced out for unit tests; see lib/pactResync.test.mjs)
 // A resync reply is the server's AUTHORITATIVE current state for a session — its persisted transcript
 // plus the live status. Reconciling it with what a chat tab already shows has two pure parts (no DOM,
@@ -15637,8 +15658,8 @@ function viewWorkspace() {
       // background event, keyed per sessionKey — its staleness heuristic measures "when did THIS
       // client last see THIS agent change", and skipped frames make a healthy fleet read as stalled.
       if (data && "engineVersion" in data) wsNoteEngineVersion(data.engineVersion);
-      if (Array.isArray(data.sessions)) { setLiveSessions(data.sessions); for (const s of data.sessions) for (const p of panesOf(s.sessionKey)) { p.status = s.status || p.status; if (s.mode) p.mode = s.mode; if (s.usage) p.usage = s.usage; if (s.background) p._background = s.background; exoNoteAgents(p, s, Date.now()); schedulePaint(p); } }
-      if (data.session) { upsertLiveSession(data.session); for (const p of panesOf(data.session.sessionKey)) { if (data.session.auto) wsAdoptAuto(p, data.session.auto); Object.assign(p, { status: data.session.status ?? p.status, mode: data.session.mode ?? p.mode, usage: data.session.usage ?? p.usage }); if (data.session.background) p._background = data.session.background; exoNoteAgents(p, data.session, Date.now()); schedulePaint(p); } }
+      if (Array.isArray(data.sessions)) { setLiveSessions(data.sessions); for (const s of data.sessions) for (const p of panesOf(s.sessionKey)) { wsApplySessionFields(p, s); exoNoteAgents(p, s, Date.now()); schedulePaint(p); } }
+      if (data.session) { upsertLiveSession(data.session); for (const p of panesOf(data.session.sessionKey)) { if (data.session.auto) wsAdoptAuto(p, data.session.auto); wsApplySessionFields(p, data.session); exoNoteAgents(p, data.session, Date.now()); schedulePaint(p); } }
       // NOTE: the server's own defaultMode is deliberately NOT mirrored here. Every pane sends
       // its mode with each prompt, so the toolbar picker is a local "mode for new panes"
       // preference — echoing the server's would clobber it on every list refresh.
