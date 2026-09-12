@@ -2807,3 +2807,10 @@ body.pact-wgrip-dragging .pact-wgrip { pointer-events: auto; }
 .ws-version-bar b { color: #f87171; }
 /* The type box stays visible and readable — you can still SEE the conversation; only sending refuses. */
 body.ws-version-blocked .ws-send, body.ws-version-blocked .pc-send { opacity: .5; }
+
+/* The × on a conversation tab — see wsCloseConvSlot. Dim until you are on the tab or hovering it, so
+   a row of tabs does not read as a row of delete buttons. The ★ master has none: closing it would
+   strand every bookmark, image path and saved session that predates multi-chat. */
+.ws-conv-tab-x { margin-left: 6px; opacity: .35; font-size: 13px; line-height: 1; padding: 0 2px; border-radius: 4px; }
+.ws-conv-tab:hover .ws-conv-tab-x, .ws-conv-tab.--act .ws-conv-tab-x { opacity: .75; }
+.ws-conv-tab-x:hover { opacity: 1; background: color-mix(in srgb, #f87171 30%, transparent); color: #fff; }

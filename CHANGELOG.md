@@ -4,6 +4,33 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.20.2] - 2026-09-12
+### Fixed — switching back to the main conversation left it blank
+
+*"Coming back from chat 2 to main chat … the main conversation doesn't load, I need to hit refresh."*
+
+`wsSwitchConvSlot` cleared the transcript and then waited for an `open` round-trip to refill it. So
+the pane was empty for as long as that took — and **permanently** empty whenever the reply never
+landed. There are two ways for that to happen and both are silent: the resolution discards a reply
+whose `gen` has moved on (it `continue`s without applying it), and the 8-second timeout only clears
+the loading flag. Either way you were left looking at nothing, with a reload as the only way back.
+
+A conversation you leave is now kept, and the one you return to is on screen immediately. The
+authoritative copy still arrives and replaces it, exactly as before — the difference is that a slot
+you have already visited is instant and **cannot come back blank**.
+
+### Added — × to close a conversation
+*"The chat 2 new conversation needs an X button to close it."* Every tab but the ★ master now has
+one. The master does not: it is the conversation every bookmark, image path and saved session keyed
+on before multi-chat existed, and closing it would strand all of them. Closing removes the slot from
+the pane's view; **the conversation itself is untouched on disk**, which is why it asks nothing.
+
+### Added — the first line of the first prompt names the conversation
+*"The first line in the first prompt must define the chat's name, same as in pact."* It now does, by
+the same rule Pact has always used (first non-empty line, collapsed whitespace, 40 chars + ellipsis).
+Only on a slot still called "Chat N" with no history yet — renaming a conversation you have already
+named, or one already underway, would be the app deciding it knows better.
+
 ## [1.20.1] - 2026-09-12
 ### Fixed — a new chat box said "That conversation could not be opened."
 

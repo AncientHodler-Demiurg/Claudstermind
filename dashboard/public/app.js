@@ -3612,6 +3612,26 @@ function wsNextConvSlot(slots) {
   const list = Array.isArray(slots) && slots.length ? slots : wsDefaultConvSlots();
   return list.reduce((m, s) => Math.max(m, s.slot), 0) + 1;
 }
+/** Drop a conversation slot. Slot 0 is the ★ master and is never removable — it is the conversation
+ *  every bookmark, image path and saved session keyed on before multi-chat existed. Returns the
+ *  remaining slots plus the slot to land on (the master, since the one you were looking at is gone).
+ *  Pure, so the rule "you cannot close the master" is testable without a DOM. */
+function wsRemoveConvSlotEntry(slots, slot) {
+  const list = (Array.isArray(slots) && slots.length ? slots : wsDefaultConvSlots()).slice();
+  if (!slot) return { slots: list, slot: 0, removed: false };          // slot 0 — refuse
+  const next = list.filter((s) => s && s.slot !== slot);
+  if (next.length === list.length) return { slots: list, slot: 0, removed: false };
+  return { slots: next, slot: 0, removed: true };
+}
+/** The name a conversation takes from its first prompt — the same rule Pact has always used, so the
+ *  two workspaces read alike. "Chat 2" tells you nothing a month later; the first line you typed is
+ *  what you will actually recognise. */
+function wsDeriveConvName(text) {
+  const first = (String(text || "").split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0)) || "";
+  const name = first.replace(/\s+/g, " ").trim();
+  if (!name) return "";
+  return name.length > 40 ? name.slice(0, 40).trim() + "…" : name;
+}
 function wsAddConvSlotEntry(slots, name) {
   const list = (Array.isArray(slots) && slots.length ? slots : wsDefaultConvSlots()).slice();
   const slot = wsNextConvSlot(list);
@@ -12451,11 +12471,35 @@ function viewWorkspace() {
     if (!p || !p.repo || p.convSlot === slot) return;
     const newKey = wsWorkspaceId(p.repo, p.worktree, slot);
     if (!fresh) beginPendingOpen(newKey, p, "conv-switch");   // reads p.sessionKey (still the OLD key) for priorKey
+    /* KEEP THE CONVERSATION YOU ARE LEAVING, AND SHOW THE ONE YOU ARE RETURNING TO AT ONCE.
+       This used to clear the transcript and wait for an `open` round-trip to refill it — so the pane
+       was EMPTY for as long as that took, and permanently empty whenever the reply never landed:
+       the resolution discards a reply whose `gen` has moved on (`continue`, without applying it) and
+       the 8s timeout only clears the flag. Either way you were left looking at nothing, with a
+       reload as the only way back — "the main conversation doesn't load, I need to hit refresh."
+       A slot you have already visited is now instant and cannot come back blank; the authoritative
+       copy still arrives and replaces it, exactly as before. */
+    p._slotTx = p._slotTx || {};
+    if (Array.isArray(p.transcript) && p.transcript.length) p._slotTx[wsPaneSlot(p)] = p.transcript;
     p.convSlot = slot; p.sessionKey = newKey;
-    p.transcript = []; p._turnCache = null; p._domLead = []; p.status = "idle"; p.readonly = false;
+    p.transcript = Array.isArray(p._slotTx[slot]) ? p._slotTx[slot] : [];
+    p._turnCache = null; p._domLead = []; p.status = "idle"; p.readonly = false;
     const ui = paneUI.get(p.id); if (ui) { ui._txRef = null; }
     paintPane(p); saveLayout();
     if (!fresh) wsPost("control", { action: "open", args: { sessionKey: newKey } });
+  }
+  /** Close a conversation slot — the tab strip's ×. The slot is removed from the pane's view; the
+   *  conversation ITSELF is untouched on disk, which is why this asks nothing and is reversible by
+   *  adding a slot back. Lands you on the master, because the tab you were reading is gone. */
+  function wsCloseConvSlot(p, slot) {
+    if (!p || !slot) return;
+    const r = wsRemoveConvSlotEntry(p.convSlots, slot);
+    if (!r.removed) return;
+    if (p._slotTx) delete p._slotTx[slot];
+    p.convSlots = r.slots;
+    if ((p.convSlot || 0) === slot) wsSwitchConvSlot(p, r.slot);   // leave the tab we just closed
+    else { paintPane(p); saveLayout(); }
+    wsPaintConvTabs(p);
   }
   /** Create a new conversation slot for a pane and switch to it immediately — the tab strip's "＋". */
   function wsAddConvSlot(p) {
@@ -12486,8 +12530,16 @@ function viewWorkspace() {
     const slots = Array.isArray(p.convSlots) && p.convSlots.length ? p.convSlots : wsDefaultConvSlots();
     const activeSlot = p.convSlot || 0;
     const tabs = slots.map((s) => {
-      const tab = el("button", { class: "ws-conv-tab" + (s.slot === activeSlot ? " --act" : ""), type: "button" },
-        [s.slot === 0 ? el("span", { class: "ws-conv-tab-star", title: "Master conversation" }, ["\u2605 "]) : "", s.name]);
+      /* A conversation you can open and never close is a conversation you are stuck with. The ★
+         master has no ×: it is the conversation every bookmark, image path and saved session keyed
+         on before multi-chat existed, and closing it would strand all of them. */
+      const kids = [s.slot === 0 ? el("span", { class: "ws-conv-tab-star", title: "Master conversation" }, ["\u2605 "]) : "", s.name];
+      if (s.slot !== 0) {
+        const x = el("span", { class: "ws-conv-tab-x", title: "Close this conversation (its history is kept)" }, ["\u00d7"]);
+        x.addEventListener("click", (e) => { e.stopPropagation(); wsCloseConvSlot(p, s.slot); });
+        kids.push(x);
+      }
+      const tab = el("button", { class: "ws-conv-tab" + (s.slot === activeSlot ? " --act" : ""), type: "button" }, kids);
       tab.addEventListener("click", () => wsSwitchConvSlot(p, s.slot));
       return tab;
     });
@@ -16019,6 +16071,19 @@ function viewWorkspace() {
     const pendingRefs = Array.isArray(p._replyRefs) ? p._replyRefs : [];
     if (!typed && !pendingRefs.length) return;
     if (!p.repo) { note("Pick a repository for this pane first."); return; }
+    /* THE FIRST LINE NAMES THE CONVERSATION — the same rule Pact has always used, so the two
+       workspaces read alike. "Chat 2" tells you nothing a month later; the first line you typed is
+       what you will actually recognise. Only on a slot that has never been named by you and has no
+       history yet: renaming a conversation you have already named, or one already underway, would be
+       this deciding it knows better. */
+    if (p.multiChat && (p.convSlot || 0) !== 0 && !(p.transcript || []).length) {
+      const slots = Array.isArray(p.convSlots) ? p.convSlots : [];
+      const here = slots.find((s) => s && s.slot === p.convSlot);
+      if (here && /^Chat \d+$/.test(String(here.name || ""))) {
+        const derived = wsDeriveConvName(typed);
+        if (derived) { here.name = derived; wsPaintConvTabs(p); saveLayout(); }
+      }
+    }
     // Reply/quote is prepended VISIBLY (like a WhatsApp quote), not hidden the way the
     // discarded-message note rides the payload only — this is content the user chose to attach, not
     // an instruction to the agent about prior turns. window.ChatShell is loaded before app.js (see
