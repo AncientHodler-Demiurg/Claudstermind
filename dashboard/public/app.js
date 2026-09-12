@@ -12849,7 +12849,31 @@ function viewWorkspace() {
   }
 
   // ---- worktree <select> for a pane -------------------------------------------------
+  /** ASK WHAT CHECKOUTS THIS REPO HAS, if nobody has yet.
+   *
+   *  `st.worktrees[repo]` used to be requested from exactly two places, and both of them are a
+   *  person CHANGING the repo — the dropdown's change handler and the sidebar/drawer pick. A pane
+   *  restored from the saved layout already HAS its repo, so neither fires and the picker falls back
+   *  to `[{ name: "main" }]`. Measured on the real page, one pane, four states: after picking the
+   *  repo by hand the list read `main, exocortex, + new…`; after a reload, `main, + new…`. The
+   *  worktree was on disk the whole time — the client had simply never asked.
+   *
+   *  Every restored pane has been showing a truncated list for as long as worktrees have existed.
+   *  Opening a second conversation is just where it finally got noticed, because the only way out —
+   *  "+ new worktree…" — then refuses a name that already exists.
+   *
+   *  Called from the picker, which is the ONE place every pane with a repo passes through on every
+   *  paint, whichever path set that repo. So it must be cheap and it must be once: having the list
+   *  stops it, and `_wtAsked` stops an unanswered request being re-sent on the next paint. */
+  const _wtAsked = new Set();
+  function wsWantWorktrees(repo) {
+    if (!repo || st.worktrees[repo]) return;
+    if (_wtAsked.has(repo)) return;
+    _wtAsked.add(repo);
+    wsPost("control", { action: "worktrees", args: { repo } });
+  }
   function fillWorktreeSelect(sel, p) {
+    wsWantWorktrees(p.repo);
     const list = st.worktrees[p.repo] || [{ name: "main", isMain: true }];
     const names = list.map((w) => w.name);
     if (!names.includes(p.worktree)) names.unshift(p.worktree || "main");   // keep the pane's own value shown

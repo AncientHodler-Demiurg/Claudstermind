@@ -4,6 +4,41 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.20.6] - 2026-09-12
+### Fixed — a worktree that exists, missing from the list, and the one route to it refusing
+
+*"Tried to create a new workspace in the new chat 2 tab, and it didn't work. If exocortex workspace
+does exist, it didn't appear in the list."*
+
+It does exist — `git worktree list` shows it. Measured on the real page, one pane, four states:
+
+| | worktree dropdown |
+|---|---|
+| after picking the repo by hand | `main, exocortex, + new…` |
+| **after a reload** | `main, + new…` |
+| **in chat 2** | `main, + new…` |
+| after re-firing the change | `main, exocortex, + new…` |
+
+Two independent defects, and it takes both to produce the dead end:
+
+1. **The client only ever asked when a person CHANGED the repo** — the dropdown's change handler and
+   the sidebar pick, the only two call sites there have ever been. A pane restored from the saved
+   layout already *has* its repo, so neither fires and the picker falls back to `[{name:"main"}]`.
+   Every restored pane has been showing a truncated list for as long as worktrees have existed;
+   opening a second conversation is merely where it got noticed. The picker asks for itself now —
+   once per repo, from the one place every pane with a repo passes through.
+
+2. **A refused create returned before publishing the list.** With the list empty, "+ new worktree…"
+   is the only route left, and a name already on disk is refused with *"already exists — pick it from
+   the list instead of creating it"* — pointing at a dropdown that did not contain it. The refusal
+   now says why **and then publishes what exists**, so the instruction can be followed.
+
+Verified: all four states above now read `main, exocortex, + new…`, and a refused create emits both
+the error and a worktree list containing the thing that already exists. 1,927 tests pass.
+
+**Deploy note:** touches `lib/workspace.mjs`, so this one DOES restart the agent engine and will
+interrupt a running turn. It joins 1.20.1–1.20.3 in that queue.
+
 ## [1.20.5] - 2026-09-12
 ### Fixed — a short answer had no room for its medallion and buttons, so they were drawn on top of it
 
