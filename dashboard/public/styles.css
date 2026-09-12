@@ -800,6 +800,36 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
 .ws-intr-resume { left: 8px; background: #22c55e; color: #052e13; }
 .ws-intr-discard { right: 8px; background: #ef4444; color: #2a0606; }
 .ws-intr-btn:hover { filter: brightness(1.1); }
+/* THE ANSWER BUBBLE'S CORNER ROW (see wsMsgHead in app.js). The medallion and the ⧉ ↩ ⤴ ★ buttons
+   used to be five separately-pinned absolute boxes, so none of them added anything to the bubble's
+   width — and on a short answer the buttons were drawn straight over the medallion (measured:
+   R#7,767 in a 153px bubble, gap -21px). Here they are one IN-FLOW flex row, so the bubble's own
+   intrinsic width includes them and a short answer is widened to fit. No min-width to guess at.
+
+   The margins do two things at once: they cancel the row's height entirely (-17 top and -3 bottom
+   against the 20px the row measures) so no bubble grew a millimetre taller, and the -4px sides put
+   the medallion at the same x it had at `left: 6px` against this bubble's 10px padding. Both
+   numbers were measured, not chosen: the medallion lands at x=7, y=-9 and the buttons 7px from the
+   right edge — pixel-for-pixel where the old pins put them. */
+.ws-msghead { display: flex; align-items: center; gap: 8px; margin: -17px -4px -3px; flex-wrap: wrap; }
+/* `wrap` is a SAFETY NET, not a layout: measured across 117 real answers at 1400/700/460/320px the
+   row never wrapped (every row 20px tall, no bubble overflowed its column). It matters only where
+   the column is narrower than the row itself — an 8-column grid on a small screen — and there it
+   turns an overflow into an extra line. Wrapping also caps the bubble's MIN-content at its widest
+   single item, while fit-content still uses the row's full width, so the row stays on one line
+   everywhere it fits. */
+/* A pinned child contributes no width — which is the entire bug. Nothing in this row may be pinned,
+   whatever the per-element rules below say for the contexts where the pins are still right.
+   Written with THREE classes on purpose: the rules it has to beat (`.ws-assistant .ws-copy-btn`
+   and friends) carry two, and a tie would be settled by source order — i.e. by where in this file
+   somebody happens to paste the next rule. Measured the tie first: the buttons stayed absolute and
+   the -21px overlap was still there. */
+.ws-line.ws-assistant .ws-msghead > *, .pc-msg.pc-asst .ws-msghead > * {
+  position: static; top: auto; left: auto; right: auto; }
+/* Takes the slack so a WIDE bubble still reads medallion-hard-left, buttons-hard-right. Its
+   flex-basis is the minimum breathing space the two are allowed to close to on a narrow one. */
+.ws-msghead .ws-msghead-sp { flex: 1 1 8px; min-width: 8px; }
+
 /* ★ Bookmark a response + the jump-list popup. */
 .ws-bm-star { position: absolute; top: -9px; right: 6px; z-index: 2; width: 22px; height: 20px; border: none; background: transparent;
   color: var(--ink-mute); font-size: 14px; line-height: 1; cursor: pointer; padding: 0; }

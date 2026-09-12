@@ -10039,6 +10039,28 @@ function wsMarkNode(m) {
   });
 }
 // A corner badge: P#12 on a prompt, R#1,349 on a response. Non-interactive — just a positional label.
+/** THE ANSWER BUBBLE'S CORNER ROW: its R# medallion, then the buttons that stand beside it.
+ *
+ *  All five used to be pinned absolutely — the medallion at `left: 6px`, the buttons at
+ *  `right: 6/30/54/78px` — so NONE of them contributed a pixel to the bubble's own width. A bubble
+ *  sized to a short answer had nowhere to put them, and since the buttons carry `z-index: 2` against
+ *  the medallion's `1`, they were simply drawn on top of it. Measured on a real transcript:
+ *  R#7,767 in a 153px bubble, medallion 65px, four buttons — a gap of **-21px**. That is the
+ *  screenshot: "R#7," and then the buttons over the rest of the number.
+ *
+ *  A bigger `min-width` would only move the guess: how many digits will an R# reach, how many
+ *  buttons will ever stand there. So the row goes IN FLOW instead, pulled onto the bubble's top edge
+ *  by a negative margin that costs it no height. Being in flow it is part of the bubble's intrinsic
+ *  width, so the browser widens a short bubble to exactly what the row needs — and keeps doing it
+ *  when a digit or a button is added. "Enlarged to the minimum size that allows for all the buttons
+ *  to show properly", decided by the thing that knows: layout.
+ *
+ *  The spacer is what keeps a WIDE bubble reading exactly as it did — medallion hard left, buttons
+ *  hard right — instead of the row bunching up on the left. */
+function wsMsgHead(badge, buttons) {
+  return el("div", { class: "ws-msghead" },
+    [badge, el("span", { class: "ws-msghead-sp" }, []), ...buttons.filter(Boolean)]);
+}
 function pactNumBadge(kind, n) { return (typeof n === "number") ? el("span", { class: "pc-num num num-" + kind.toLowerCase() + " pc-num-" + kind.toLowerCase(), title: (kind === "P" ? "Prompt" : "Response") + " #" + wsNumFmt(n) + " in this conversation" }, [kind + "#" + wsNumFmt(n)]) : ""; }
 // ===== INTERRUPTED PROMPTS =====================================================================
 // A prompt whose turn never produced a reply (an engine restart / dropped connection cut it off) is an
@@ -10185,7 +10207,7 @@ function pactChatMsgNode(m) {
     star.addEventListener("click", (e) => { e.stopPropagation(); pactChatToggleBookmark(m); });
     const replyBtnR = wsReplyBtn("R", m._rnum, m.text, () => { const at = pactChatActive(); wsAddReplyRef(at, "R", m._rnum, m.text); pactPaintReplyRow(at); });
     const copyBtnR = wsCopyMsgBtn("R", m._rnum, m.text, () => (pactChatActive() || {}).key);
-    return el("div", { class: "pc-msg pc-asst msg --a" }, [pactNumBadge("R", m._rnum), copyBtnR, wsShareBtn(m.text), replyBtnR, star, ...kids, wsWhenChip(m.at)]);
+    return el("div", { class: "pc-msg pc-asst msg --a" }, [wsMsgHead(pactNumBadge("R", m._rnum), [copyBtnR, replyBtnR, wsShareBtn(m.text), star]), ...kids, wsWhenChip(m.at)]);
   }
   if (m.kind === "tool_use") {
     // Expandable, like the Core cockpit: the tool names show at a glance; tap to reveal each call's
@@ -13246,7 +13268,10 @@ function viewWorkspace() {
       star.addEventListener("click", (e) => { e.stopPropagation(); wsToggleBookmark(m); });
       const replyBtn = wsReplyBtn("R", m._rnum, m.text, () => { const rp = st.panes.find((x) => x.id === m._paneId); wsAddReplyRef(rp, "R", m._rnum, m.text); wsPaintReplyRow(rp); });
       const copyBtn = wsCopyMsgBtn("R", m._rnum, m.text, () => (st.panes.find((x) => x.id === m._paneId) || {}).sessionKey);
-      return line("ws-assistant", [wsNumBadge("R", m._rnum), copyBtn, wsShareBtn(m.text), replyBtn, star,
+      /* Visual order left-to-right, which is the order the old `right:` offsets produced:
+         ⧉ 78 · ↩ 54 · ⤴ 30 · ★ 6. Keeping it identical is the point — this changes what SIZES the
+         bubble, not what the corner looks like. */
+      return line("ws-assistant", [wsMsgHead(wsNumBadge("R", m._rnum), [copyBtn, replyBtn, wsShareBtn(m.text), star]),
         ...renderAssistantText(m.text), wsWhenChip(m.at)]);
     }
     if (m.kind === "tool_use") return line("ws-tool", [el("i", { class: "ti ti-tool" }, []), " ", (m.tools || []).map((t) => t.name).join(", ")]);

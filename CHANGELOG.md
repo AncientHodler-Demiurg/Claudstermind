@@ -4,6 +4,41 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.20.5] - 2026-09-12
+### Fixed — a short answer had no room for its medallion and buttons, so they were drawn on top of it
+
+*"If a chat is too short to properly show the medallion and all the other buttons, it needs to be
+enlarged to the minimum size that allows for all the buttons to show properly."*
+
+The R# medallion and the ⧉ ↩ ⤴ ★ beside it were five separately **pinned** boxes — the medallion at
+`left: 6px`, the buttons at `right: 6/30/54/78px`. A pinned box contributes nothing to its parent's
+width, so a bubble sized to a short answer had nowhere to put them, and since the buttons carry
+`z-index: 2` against the medallion's `1`, they were drawn straight over it. Measured on a real
+transcript: **R#7,767 in a 153px bubble, medallion 65px, four buttons — a gap of −21px.**
+
+A bigger `min-width` would only move the guess (how many digits will an R# reach, how many buttons
+will stand there). The five now sit in one **in-flow** flex row pulled onto the bubble's top edge, so
+the bubble's own intrinsic width includes them and the browser widens a short answer to exactly what
+they need — and keeps doing it when a digit or a button is added.
+
+Measured after, Core and Pact, 1400×900 and 412×915:
+
+- 117 Core answers + 45 Pact answers, **0 overlapping** (worst gap was −21px, now +24px minimum)
+- medallion at x=7, y=−9 and buttons 7px from the right edge — *pixel-for-pixel where the pins put them*
+- button order unchanged (⧉ ↩ ⤴ ★), all visible, all inside the bubble
+- **total bubble height identical**: 32,531px across 117 bubbles before and after, same scrollHeight
+
+Two notes. The specificity was measured, not assumed — the first attempt used two classes, tied with
+`.ws-assistant .ws-copy-btn`, lost on source order, and left the −21px overlap exactly as it was.
+And the row may wrap, which never happens in practice (every row 20px at 1400/700/460px) but turns an
+overflow into an extra line in a column narrower than the row itself.
+
+**Still open:** the prototyping lab has the same pinned-corner pattern, and never showed it because its
+synthetic numbers are P#1–P#40 — three characters wide, which clears the buttons. Real four- and
+five-digit numbers are what exposed it.
+
+**Deploy note:** web-only. No daemon path changed — no `sessiond` restart, no interrupted turn.
+
 ## [1.20.4] - 2026-09-12
 ### Fixed — coming back from a second chat left the type box dead
 
