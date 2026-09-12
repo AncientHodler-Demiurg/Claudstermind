@@ -4,6 +4,35 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.21.5] - 2026-09-12
+### Fixed — one code block rendered as several, whenever a reply nested a real fence inside a longer one
+
+*"When the agent gives me text in a copy-paste box, sometimes the UI thinks they are multiple[s] of
+them when in fact it's one and the same."*
+
+Confirmed against the actual message that triggered the report, pulled straight from disk. The reply
+had written, verbatim: *"using the four-backtick wrapper (learned from last time, since there's a
+nested TS code block inside)"* — a `````-fenced handoff document with two real ```ts code blocks
+inside it, deliberately wrapped so the WHOLE document (backticks included) could be handed over as
+one paste-able unit. That's correct, standard CommonMark: a fence opened with N backticks is closed
+only by a line with AT LEAST N of its own.
+
+Both of Claudstermind's markdown renderers ignored fence length entirely — Pact's `md-mini.js`
+(`/^```/.test(line)`, used for chat bubbles and the Ouronet `.md` viewer) and Core's `app.js`
+(`` /```([\w+-]*)\n?([\s\S]*?)```/g ``) — so the FIRST ``` of ANY length closed the block, including
+the wrapper's own real inner fences. Run against the actual message before the fix: **3 mismatched
+matches**, the first one ending mid-sentence at "with one extra line:" — the prose intro, the first
+code snippet, and the trailing prose all torn into separate, wrongly-bounded pieces, one of them
+rendering as the empty, mislabeled "CODE" box in the report. After: **1 block**, both inner snippets
+intact verbatim inside it, prose before and after in its rightful place.
+
+Fixed in both renderers by tracking the actual backtick-run length: a shorter run inside the block is
+content, never mistaken for the close. `md-mini.js`'s existing test file gained the real reproduction
+as a case; Core's fence logic was pulled into a testable `wsFindFences()` (previously untested — this
+is its first coverage). 27 new tests across `lib/mdMini.test.mjs` and the new `lib/wsFindFences.test.mjs`,
+run directly against the real failing message as ground truth, not just synthetic cases. Full suite:
+1991 tests, all green. Web-only (`app.js`/`md-mini.js`) — deploying restarts nothing but the page.
+
 ## [1.21.4] - 2026-09-12
 ### Added — a Bash call that can never resolve is now refused before it starts
 

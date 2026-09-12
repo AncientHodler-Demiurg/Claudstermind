@@ -13259,21 +13259,43 @@ function viewWorkspace() {
   // Claude's own rendering, not a copy button glued onto every reply) — and the prose AROUND
   // those blocks gets the lightweight markdown treatment above, instead of showing up as literal
   // **/`/#/- characters.
-  const WS_FENCE_RE = /```([\w+-]*)\n?([\s\S]*?)```/g;
+  // ===== WS FIND FENCES — pure helper (sliced for unit tests; see lib/wsFindFences.test.mjs)
+  // Fence length matters (CommonMark): a fence opened with N backticks is closed ONLY by a line
+  // whose own run of backticks is AT LEAST N — that's what lets a reply nest a real ``` code block
+  // inside a longer wrapper (e.g. `````) to hand off one whole document (backticks included) as a
+  // single paste-able unit. Matching any ``` as a close regardless of length mistook that wrapper's
+  // own real inner fences for its close, shredding ONE logical block into several mismatched ones —
+  // "the UI thinks they are multiple when it's one and the same." wsFindFences finds each TOP-LEVEL
+  // fence's true boundaries; nested fences (fewer backticks than the opener) stay raw content inside
+  // it, never separately parsed — matching real CommonMark, and matching a reply's own stated intent
+  // when it reaches for a longer fence ("since there's a nested code block inside").
+  function wsFindFences(text) {
+    const fences = []; const openRe = /(`{3,})([\w+-]*)[ \t]*\n?/g;
+    let m;
+    while ((m = openRe.exec(text))) {
+      const tickLen = m[1].length, lang = m[2] || "", contentStart = m.index + m[0].length;
+      const closeRe = new RegExp("`{" + tickLen + ",}", "g");
+      closeRe.lastIndex = contentStart;
+      const close = closeRe.exec(text);
+      const contentEnd = close ? close.index : text.length;
+      const end = close ? close.index + close[0].length : text.length;
+      fences.push({ start: m.index, end, lang, code: text.slice(contentStart, contentEnd).replace(/\n$/, "") });
+      openRe.lastIndex = end;
+    }
+    return fences;
+  }
+  // ===== end WS FIND FENCES pure helper =====
   function renderAssistantText(text) {
     if (typeof text !== "string") return [text];
     if (!text.includes("```")) return renderProseBlock(text);
-    const parts = []; let last = 0, mtch;
-    WS_FENCE_RE.lastIndex = 0;
-    while ((mtch = WS_FENCE_RE.exec(text))) {
-      if (mtch.index > last) parts.push(...renderProseBlock(text.slice(last, mtch.index)));
-      const lang = mtch[1] || "";
-      const code = mtch[2].replace(/\n$/, "");
+    const parts = []; let last = 0;
+    for (const f of wsFindFences(text)) {
+      if (f.start > last) parts.push(...renderProseBlock(text.slice(last, f.start)));
       parts.push(el("div", { class: "ws-codeblock" }, [
-        el("div", { class: "ws-codeblock-hd" }, [el("span", {}, [lang || "code"]), copyBtn(() => code)]),
-        el("pre", { class: "ws-codeblock-body" }, [code]),
+        el("div", { class: "ws-codeblock-hd" }, [el("span", {}, [f.lang || "code"]), copyBtn(() => f.code)]),
+        el("pre", { class: "ws-codeblock-body" }, [f.code]),
       ]));
-      last = WS_FENCE_RE.lastIndex;
+      last = f.end;
     }
     if (last < text.length) parts.push(...renderProseBlock(text.slice(last)));
     return parts;

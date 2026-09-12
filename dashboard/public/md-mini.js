@@ -39,9 +39,20 @@
     var i = 0, n = lines.length;
     while (i < n) {
       var line = lines[i];
-      if (/^```/.test(line)) {                                     // fenced code
+      var fenceOpen = line.match(/^(`{3,})/);
+      if (fenceOpen) {                                             // fenced code
+        // CommonMark: a fence of N backticks is closed ONLY by a line whose OWN run of backticks is
+        // AT LEAST N — that's what lets a reply nest a real ``` code block inside a longer wrapper
+        // (`````) to hand off one document as a single paste-able unit. Matching ANY ``` line as a
+        // close, regardless of length, meant that wrapper's own real inner fences got mistaken for
+        // its close — one logical block was shredded into several mismatched ones the instant a
+        // reply correctly used the longer-fence-for-nesting technique. ("The UI thinks they're
+        // multiple when it's one and the same.") A `\s*$` after the run also requires the closing
+        // line to be JUST the fence, matching the spec more precisely than "starts with backticks".
+        var tickLen = fenceOpen[1].length;
+        var closeRe = new RegExp("^`{" + tickLen + ",}\\s*$");
         var buf = []; i++;
-        while (i < n && !/^```/.test(lines[i])) { buf.push(esc(lines[i])); i++; }
+        while (i < n && !closeRe.test(lines[i])) { buf.push(esc(lines[i])); i++; }
         i++;                                                       // consume closing fence
         out.push('<pre class="md-pre"><code>' + buf.join("\n") + "</code></pre>");
         continue;
