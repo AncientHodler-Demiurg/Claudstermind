@@ -4,6 +4,46 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.20.9] - 2026-09-12
+### Fixed — a stalled prompt disguised as a passing remark
+
+*"What is that engine note error? It seems processing that blue prompt stalled, so I had to stop and
+reload."*
+
+The note itself is the Agent SDK's own words, passed through verbatim —
+`[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null`. Claudstermind's part is
+deciding **how loudly to say it**, and it was getting that wrong.
+
+A `result` frame carrying `is_error` is either a turn that genuinely died or a remark about a turn
+that worked, and the SDK sends both with the same `subtype: "error_during_execution"` — so the
+subtype cannot separate them. What the turn *did* can. The rule was `_turnOutput`, set by `assistant`,
+`assistant_delta`, **`tool_use` and `tool_result`** — even though its own docstring asked "did the
+current turn produce anything *the user can see*?"
+
+Tool calls are the engine talking to itself. So a turn that ran four tools, never answered, and then
+errored was classified as a working turn with a remark: a quiet beige ENGINE NOTE under a prompt with
+no reply. That is exactly the "the prompts are stuck" report this classification exists for, wearing
+the disguise built for successful turns. A bare `output_tokens` count was accepted as proof too — the
+same loophole by another name, since tool calls burn tokens.
+
+An answer is now **text the reader actually got**. Everything else — tools, token counts, an
+`assistant` frame carrying only tool-use blocks and therefore empty text — gets the red row and the
+▶ resume / ✕ discard buttons, which is what a stalled prompt deserves. A turn that really did answer
+still gets the quiet note, which is the behaviour this was built to protect.
+
+One existing test asserted the old rule directly and has been rewritten rather than worked around;
+its two wrong cases are now the two that must fail.
+
+### On reloading the engine mid-turn
+
+The instinct in the report is right, with one distinction. A **web-only** Reload does not interrupt
+anything — the session engine and every running agent keep going, which is why the deploy panel says
+so. A Reload that restarts the **engine** kills every in-flight turn. `lib/deployPlan.mjs` decides
+which kind a change is, and the panel shows the agent count before you press it.
+
+1,942 tests pass; smoke clean. **Deploy note:** touches `lib/workspace.mjs` — this one DOES restart
+the agent engine and will interrupt a running turn. It joins 1.20.1–1.20.3 in that queue.
+
 ## [1.20.8] - 2026-09-12
 ### Fixed — one worktree for the whole box, and a repointed pane that never loaded
 
