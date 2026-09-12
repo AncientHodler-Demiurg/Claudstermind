@@ -4,6 +4,51 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.21.4] - 2026-09-12
+### Added — a Bash call that can never resolve is now refused before it starts
+
+*"Do you still have REPL tests running? I still see 11 agent pills on."* — asked directly, the Pact
+agent checked and answered *"nothing of mine is running… zero leftover background shells."* Both were
+partly right and partly wrong, and the gap between them was the actual bug.
+
+11 real OS processes were alive, verified directly: each was a background Bash call shaped like
+`nohup timeout 2400 pact some.repl > out 2>err & ...; until grep -qE "<done marker>" out; do sleep N;
+done`. The `pact` run inside every one of them had already exited or crashed, hours earlier (the
+oldest's output file hadn't changed in over 12 hours) — without ever printing the exact string its
+own watcher loop was told to wait for. So each loop kept polling a file that would never change
+again, forever. Nothing was wrong with the turn, nothing was stuck in the sense of "frozen" — these
+were just unkillable-by-their-own-logic zombies, permanently counted by the engine's background-task
+tracker and shown as "still working" with no way to ever resolve on their own.
+
+**Why the agent's own check missed them:** it grepped process names for the literal string `pact`.
+None of the 11 leaked watchers contain that word in their own command — the `pact` invocation was a
+separate, earlier, already-finished statement. A check for the wrong signal, not a lie.
+
+**Why the command looked bounded and wasn't:** it already contained the text `timeout 2400` — but
+that timeout wraps the `pact` run being waited FOR, not the loop doing the waiting. A `timeout` on the
+awaited command has never bounded the watcher; there is no way to fix that from the outside once the
+command is already running, because nothing else in this system holds a handle on that specific OS
+process to intervene later.
+
+**The fix acts before the command starts.** `lib/bashPollGuard.mjs` is a PreToolUse hook — the SDK
+calls it for every Bash tool call before the shell ever runs. It detects the "poll a condition, sleep,
+repeat" shape (`until`/`while ... do ... sleep ... done`) and checks whether THAT SPECIFIC loop — not
+some other, earlier statement in the same command — carries its own wall-clock ceiling. If not, the
+call is denied with a reason the model can act on immediately: wrap the wait loop itself in `timeout
+<seconds> bash -c '...'`, or give it an elapsed-time/iteration exit, and resend. Deliberately biased
+in one direction only — a loop that's actually fine costs one extra round trip to confirm; a loop
+that's actually unbounded costs an unresolvable process for as long as the engine runs.
+
+Wired into every session via `_buildOptions()` in `lib/claudeSession.mjs`, so it applies everywhere,
+not just Pact. New tests: `lib/bashPollGuard.test.mjs` (13 cases covering the real failure shape, the
+`2>&1`-ampersand trap, nested wrapping, and the safe cases that must still pass through untouched)
+plus a `claudeSession.test.mjs` case proving the hook is actually wired into what a live session sends
+the SDK, not just correct in isolation.
+
+The 11 processes already leaked before this shipped were killed by hand (verified: the live
+conversation's own process was untouched, 0 children remain). This is a `lib/` change — deploying
+restarts the engine and will interrupt any turn in flight. Full suite: 1980 tests, all green.
+
 ## [1.21.3] - 2026-09-12
 ### Fixed — an orange (queued) bubble disappeared just from switching browser tabs
 
