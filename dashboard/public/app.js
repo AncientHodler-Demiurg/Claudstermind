@@ -3601,13 +3601,39 @@ function pactOutboxFlush() {
     pactChatDispatch(t, e.text, e.images || []);   // re-adds itself to the outbox if it fails again
   }
 }
-// On unload (deploy/reload), fold every tab's still-QUEUED (orange, not-yet-sent) message into the
-// durable outbox — otherwise it lived only in memory and vanished on the reload. On the way back the
-// outbox auto-sends them (flush on hello / turn-end), exactly like a failed send.
+/** WHICH QUEUED ITEMS STILL NEED A DURABLE BACKUP, AND WHICH BACKUPS A DRAINED QUEUE MUST RETIRE.
+ *
+ *  Pure so the "back up once, purge on drain" rule is testable without PACT_CHAT/localStorage/a DOM.
+ *  pactQueueNeedingBackup skips anything already tagged `_outboxId` — repeated backgrounding (alt-tab
+ *  back and forth) must not pile up duplicate copies of the same still-pending message. pactQueueOutboxIds
+ *  is the other half: once the LIVE queue actually handles an item (sends it, or you delete it with the
+ *  ×), its backup is dead weight that must be purged, or it would fire AGAIN later from the outbox —
+ *  the exact "why was this sent multiple times" shape already fixed once in Core (wsQueueSet's comment). */
+function pactQueueNeedingBackup(queue) { return (Array.isArray(queue) ? queue : []).filter((q) => q && !q._outboxId); }
+function pactQueueOutboxIds(queue) { return (Array.isArray(queue) ? queue : []).map((q) => q && q._outboxId).filter(Boolean); }
+/** MIRROR THE QUEUE TO DURABLE STORAGE — NEVER CLEAR IT.
+ *
+ *  "I sent a prompt, it showed as an orange bubble, I switched to another browser tab (didn't close
+ *  it), came back minutes later and the bubble was gone." It hadn't sent — it hadn't gone anywhere.
+ *  This used to NULL `t._queue` the moment it backed the message up, on the reasoning that unload was
+ *  imminent. But `visibilitychange → hidden` fires on an ordinary tab switch, which is not an unload at
+ *  all — the tab, and its in-memory queue, were never going anywhere. Nulling it anyway meant the ONLY
+ *  thing the orange bubble ever rendered from (see the `t._queue` render block) went blank the instant
+ *  you looked away, and stayed blank until the turn happened to finish. Worse: `pactAutoPending` also
+ *  reads `t._queue` to decide whether auto-continue may fire another round — with it wiped, a hidden
+ *  tab could look like nothing was queued and stack a second prompt on top of one still genuinely
+ *  waiting.
+ *
+ *  So this now COPIES into the outbox (for the real hazard this exists for — a mobile OS killing a
+ *  backgrounded tab with no unload event at all) and leaves `t._queue` exactly as it was. The tab
+ *  keeps rendering, keeps counting as pending, and keeps draining itself normally when the turn ends;
+ *  `pactChatDrainQueue`/`pactChatUnqueue` purge the now-redundant backup the moment the live queue
+ *  actually handles that item, so the outbox's independent flush (on `hello`/turn-end) can never
+ *  ALSO resend it. */
 function pactOutboxAbsorbQueues() {
   if (!PACT_CHAT) return;
   for (const t of PACT_CHAT.tabs) {
-    if (t.key && t._queue && t._queue.length) { for (const q of t._queue) pactOutboxAdd(t.key, q.text, q.images); t._queue = null; }
+    if (t.key && t._queue && t._queue.length) { for (const q of pactQueueNeedingBackup(t._queue)) q._outboxId = pactOutboxAdd(t.key, q.text, q.images); }
   }
 }
 // ===== end PACT CHAT OUTBOX =====
@@ -9996,6 +10022,7 @@ function pactChatUpdateSuggest(t) {
 // Remove one message still sitting in the queue (mis-sent / no longer wanted) before it's dispatched.
 function pactChatUnqueue(t, q) {
   if (!t || !t._queue) return;
+  if (q && q._outboxId) pactOutboxRemove(q._outboxId);   // it may have been backed up (see pactOutboxAbsorbQueues) — a removed queue item must not resurface from there later
   t._queue = t._queue.filter((x) => x !== q);
   if (!t._queue.length) t._queue = null;
   pactChatPaint(t);
@@ -10006,6 +10033,7 @@ function pactChatDrainQueue(t) {
   try {
     const items = t._queue;
     t._queue = null;
+    for (const id of pactQueueOutboxIds(items)) pactOutboxRemove(id);   // the live queue is handling these now — an outbox backup left behind would fire again on the next flush
     const merged = pactMergeQueued(items, WS_IMG_MAX_COUNT);
     if (merged.overflow) t.msgs.push({ kind: "note", text: `⚠ Only the first ${WS_IMG_MAX_COUNT} images across your queued messages were sent — Claude's own per-message limit.` });
     pactChatDispatch(t, merged.text, merged.images);

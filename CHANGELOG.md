@@ -4,6 +4,36 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.21.3] - 2026-09-12
+### Fixed — an orange (queued) bubble disappeared just from switching browser tabs
+
+*"I sent an orange bubble prompt, it appeared, I moved away from the page — didn't close it, just
+selected another open browser tab — came back minutes later and it's gone."*
+
+It hadn't sent, and it wasn't lost — it just stopped being drawn. `visibilitychange → hidden` (which
+fires on an ordinary tab switch, nothing close to an unload) folded the queued message into the
+durable outbox and then **nulled `t._queue`** — the ONLY place the orange bubble is ever rendered
+from. So the moment you looked away, the one thing keeping it on screen was deliberately erased,
+and it stayed gone until the turn you were waiting on finally finished and the outbox happened to
+flush. The message was safe in `localStorage` the entire time; the chat just stopped saying so. (A
+second, quieter cost of the same wipe: `pactAutoPending` also reads `t._queue` to know whether
+auto-continue may fire another round — with it blanked, a backgrounded tab could look like nothing
+was waiting and risk stacking a second prompt on one still genuinely pending.)
+
+Core's equivalent (`wsQueueSave`) never had this problem — it has always mirrored the queue to
+storage and left memory alone, only restoring from storage after a REAL reload. Pact now does the
+same: the outbox exists purely for the one hazard it can't otherwise survive (a mobile OS killing a
+backgrounded tab with no unload event at all), and `t._queue` is left exactly as it was otherwise —
+still rendered, still counted as pending, still drained normally when the turn ends.
+
+That reintroduces a real risk this session has hit before ("why was this sent multiple times") —
+the live queue drains normally AND a stale backup could also fire from the outbox later. Closed by
+tagging each backed-up item with the outbox id it was stored under, and purging that id the moment
+the live queue actually handles it (sends it, or you delete it with the ×) — so a backup can never
+outlive the thing it was standing in for. New pure helpers `pactQueueNeedingBackup`/
+`pactQueueOutboxIds` plus wiring checks: `lib/pactOutboxBackup.test.mjs`. Full suite: 1965 tests,
+all green. Web-only (`app.js`) — deploying restarts nothing but the page.
+
 ## [1.21.2] - 2026-09-12
 ### Fixed — a conversation slot created on one device was invisible on every other device
 
