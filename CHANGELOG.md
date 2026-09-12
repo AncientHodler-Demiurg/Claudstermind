@@ -4,6 +4,61 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.20.8] - 2026-09-12
+### Fixed — one worktree for the whole box, and a repointed pane that never loaded
+
+*"Went to the Chat 2 page, wrote Exocortex on the first line, then wanted to move to the Master chat.
+Exocortex was still selected in the workspace … I selected it, but the text bubbles of the main
+workspace didn't appear, I had to force a reload of the page."*
+
+Two defects in one flow.
+
+**The worktree belonged to the box, not to the conversation.** Core kept `worktree` on the pane;
+conversation slots were added afterwards and share that pane. So putting Chat 2 on `exocortex` moved
+every other conversation in the box onto `exocortex` too — ★ Master included. Pact has never had this
+problem: its worktree has always been per-tab (`t.worktree`). Core now uses Pact's model.
+
+- The worktree is recorded against the **conversation**, and travels with it when you switch.
+- **★ Master is tied to `main`, always** — a write to it is a no-op, not a silent store, and its
+  picker is *disabled and says why* rather than quietly refusing. A single-chat pane is untouched and
+  still picks freely, exactly as it always has.
+- A layout saved before this keeps the worktree it had: the pane's value is adopted into its slot
+  once, rather than every upgraded layout silently snapping to `main`.
+
+**Changing the worktree never fetched the conversation.** It re-keyed the pane and repainted it, and
+stopped there — so the box showed whatever it was holding. The only code path that opened a
+conversation for a repointed pane was a page reload, which is exactly what had to be done. Both
+pickers go through one place now, which asks — and says *loading*, not *empty*, while it waits. The
+**repo** picker had the identical hole: picking a repo left the box blank until a reload too.
+
+Measured, the reported flow end to end: repo picked → **105 rows arrive at once** (0 before);
+multi-chat on → Master's picker disabled; Chat 2 → `exocortex`; **back to Master → `main`, 105 rows,
+no reload**; back to Chat 2 → `exocortex` remembered.
+
+### Fixed — "chat disabled" because a file was edited
+
+*"It says the page is 1.20.7, but from the deploy I see neither localhost nor remote is updated to
+1.20.7. Isn't this a bug?"*
+
+Yes — and `lib/version.mjs` already documents the distinction the gate then ignored. `/api/version`
+returns two numbers: `version` is re-read from package.json on **every call**, so it is whatever is on
+disk right now — the Admin panel's *Pending* — while `runningVersion` is frozen at first read: the
+code actually loaded and executing. The panel deliberately shows them as two different numbers.
+
+The chat gate took `version`. So the moment a version was bumped on the work machine's disk — before
+any reload, deploy or restart — every open browser began claiming to be the new build, and chat was
+disabled against an engine that had not changed and did not need to. Nobody had done anything; a file
+had been edited. It now compares **running to running**. The header chip still shows *Pending*, which
+is the right number there: it is what a deploy would produce.
+
+**Known and NOT fixed:** a *web-only* Reload still trips the gate. It advances the web process's
+version while the session engine — which by definition did not change — keeps its own, so the numbers
+differ and chat is blocked for no real reason. The honest fix is to gate on the version at which a
+**daemon path** last changed rather than the app version, since `lib/deployPlan.mjs` already knows
+exactly which paths those are. Written down rather than half-done.
+
+1,937 tests pass; smoke clean on five routes. **Deploy note:** web-only, no daemon path changed.
+
 ## [1.20.7] - 2026-09-12
 ### Fixed — the worktree list vanishing again, this time caused by 1.20.6
 

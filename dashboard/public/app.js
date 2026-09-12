@@ -444,7 +444,16 @@ function renderIdentity() {
  * The engine stamps `engineVersion` on its session frames (lib/workspace.mjs); the page knows its own
  * from /api/version. Different ⇒ sending is blocked and the banner says both numbers. Unknown (an
  * engine too old to stamp anything, or no frame yet) is NOT treated as a mismatch: refusing on
- * silence would lock the chat on every cold start. */
+ * silence would lock the chat on every cold start.
+ *
+ * BOTH TERMS MUST BE THINGS THAT ARE RUNNING. `/api/version` returns two numbers and lib/version.mjs
+ * spells out the difference in its own comment: `version` is re-read from package.json on every call
+ * — whatever is ON DISK right now, the Admin panel's "Pending" — while `runningVersion` is frozen at
+ * first read, the code actually loaded and executing. This gate took `version`, so the moment a
+ * version was bumped on the work machine's disk, before any reload or deploy, every open browser
+ * began claiming to be the new build and chat was disabled against an engine that had not changed and
+ * did not need to. Nobody had done anything; a file had been edited. Reported as exactly that: "it
+ * says the page is 1.20.7, but neither localhost nor remote is updated to 1.20.7." */
 let WS_WEB_VERSION = "";      // this page's build
 let WS_ENGINE_VERSION = "";   // what the work machine's engine reports
 function wsVersionMismatch() {
@@ -452,7 +461,7 @@ function wsVersionMismatch() {
 }
 /** The one sentence every refusal shows, so the reason is identical wherever it surfaces. */
 function wsVersionWhy() {
-  return "Chat disabled — this page is v" + WS_WEB_VERSION + " but the work machine's engine is v" +
+  return "Chat disabled — this page is running v" + WS_WEB_VERSION + " but the work machine's engine is running v" +
          WS_ENGINE_VERSION + ". They must match; restart the engine (or reload once it has been updated).";
 }
 function wsNoteEngineVersion(v) {
@@ -638,7 +647,7 @@ async function boot() {
   if (ME.mode === "live" && !ME.canRead) return renderDenied();
 
   // Version chip in the medallion (§10) — public, so it shows on every surface.
-  try { const v = await (await fetch("/api/version", { cache: "no-store" })).json(); WS_WEB_VERSION = v.version || ""; wsVersionGateApply(); const vc = $("#phVer"); if (vc) { vc.textContent = "v" + v.version; vc.title = `v${v.version}${v.gitSha ? " · " + v.gitSha : ""}${v.builtAt ? " · " + v.builtAt : ""}${v.engine ? " · engine: " + v.engine : ""}`; } showEngineBadge(v.engine); } catch {}
+  try { const v = await (await fetch("/api/version", { cache: "no-store" })).json(); WS_WEB_VERSION = v.runningVersion || v.version || ""; wsVersionGateApply(); const vc = $("#phVer"); if (vc) { vc.textContent = "v" + v.version; vc.title = `v${v.version}${v.gitSha ? " · " + v.gitSha : ""}${v.builtAt ? " · " + v.builtAt : ""}${v.engine ? " · engine: " + v.engine : ""}`; } showEngineBadge(v.engine); } catch {}
   // Routing preference is a GLOBAL server setting (dashboard/data/routing.json). Read it from the server —
   // works on both surfaces now (local direct; relay forwards over the tunnel). No per-browser divergence.
   for (let a = 1; a <= 3 && !ROUTING_LOADED; a++) {   // retry so a flaky link doesn't strand us on defaults (which saveRouting is then blocked from persisting)
@@ -3607,7 +3616,7 @@ function pactOutboxAbsorbQueues() {
 // are clutter). Slot 0 is always "Master" and always exists — mirrors Pact's own "first tab is prime,
 // can't be closed" rule, so the two workspaces' multi-conversation concepts read the same way once
 // Core has one at all.
-function wsDefaultConvSlots() { return [{ slot: 0, name: "Master" }]; }
+function wsDefaultConvSlots() { return [{ slot: 0, name: "Master", worktree: "main" }]; }
 function wsNextConvSlot(slots) {
   const list = Array.isArray(slots) && slots.length ? slots : wsDefaultConvSlots();
   return list.reduce((m, s) => Math.max(m, s.slot), 0) + 1;
@@ -3654,10 +3663,33 @@ function wsDeriveConvName(text) {
   if (!name) return "";
   return name.length > 40 ? name.slice(0, 40).trim() + "…" : name;
 }
+/** THE WORKTREE BELONGS TO THE CONVERSATION, NOT TO THE BOX.
+ *
+ *  Core kept `worktree` on the pane. Conversation slots were added afterwards and share that pane,
+ *  so putting Chat 2 on `exocortex` moved every other conversation in the box onto `exocortex` too —
+ *  ★ Master included: "Exocortex was still selected in the workspace." Pact has never had this
+ *  problem; its worktree has always been per-tab (`t.worktree`). This is Core adopting Pact's model.
+ *
+ *  Slot 0 — the ★ Master — is `main`, always. It is the conversation every bookmark, image path and
+ *  saved session keyed on before multi-chat existed, and "Master chat must be tied always and
+ *  directly to the main workspace" is the rule asked for. So a write to it is a NO-OP, not a silent
+ *  store: refusing quietly and recording anyway is how the two disagree later. */
+function wsSlotWorktree(slots, slot) {
+  if (!slot) return "main";
+  const s = (Array.isArray(slots) ? slots : []).find((x) => x && x.slot === slot);
+  return (s && s.worktree) || "main";
+}
+function wsSetSlotWorktree(slots, slot, worktree) {
+  const list = (Array.isArray(slots) && slots.length ? slots : wsDefaultConvSlots()).map((s) => ({ ...s }));
+  if (!slot) return list;   // the Master is tied to main — nothing to record
+  const s = list.find((x) => x && x.slot === slot);
+  if (s) s.worktree = worktree || "main";
+  return list;
+}
 function wsAddConvSlotEntry(slots, name) {
   const list = (Array.isArray(slots) && slots.length ? slots : wsDefaultConvSlots()).slice();
   const slot = wsNextConvSlot(list);
-  list.push({ slot, name: name || ("Chat " + (list.length + 1)) });
+  list.push({ slot, name: name || ("Chat " + (list.length + 1)), worktree: "main" });   // a new chat starts where you are
   return { slots: list, slot };
 }
 // The workspace id a pane attaches to: repo + worktree (+ an optional conversation SLOT). TWO
@@ -12511,9 +12543,30 @@ function viewWorkspace() {
    *  new repo already starts a pane empty. An existing slot reuses the SAME restore mechanism
    *  restorePanes() already relies on (beginPendingOpen + control "open"), just triggered live
    *  instead of on boot. */
+  /** REPOINT, THEN ACTUALLY ASK. Changing the repo or the worktree re-keys the pane and repaints it,
+   *  and used to stop there — so the box showed whatever it happened to be holding and the
+   *  conversation that key names was never fetched. "I selected it, but the text bubbles of the main
+   *  workspace didn't appear, I had to force a reload of the page": a reload was the only code path
+   *  that opened a conversation for a repointed pane (restorePanes → beginPendingOpen + "open").
+   *
+   *  `_loadedOnce = false` matters as much as the request. An empty transcript means two different
+   *  things — "this conversation IS empty" and "its rows have not arrived yet" — and saying the wrong
+   *  one is worse than saying nothing. Without this the box asserts "Send a message…" over a
+   *  conversation with a thousand turns still in flight. */
+  function wsOpenPaneConversation(p, mode) {
+    if (!p || !p.repo || !p.sessionKey) return;
+    p.transcript = []; p._turnCache = null; p._domLead = []; p._loadedOnce = false;
+    const ui = paneUI.get(p.id); if (ui) ui._txRef = null;
+    beginPendingOpen(p.sessionKey, p, mode);
+    wsPost("control", { action: "open", args: { sessionKey: p.sessionKey } });
+  }
   function wsSwitchConvSlot(p, slot, fresh) {
     if (!p || !p.repo || p.convSlot === slot) return;
-    const newKey = wsWorkspaceId(p.repo, p.worktree, slot);
+    /* The worktree travels WITH the conversation (wsSlotWorktree) — read it before the key, because
+       the key is derived from it. Reading `p.worktree` here built the new conversation's id from the
+       worktree of the one being LEFT, which is how Chat 2's `exocortex` followed you back to Master. */
+    const wt = wsSlotWorktree(p.convSlots, slot);
+    const newKey = wsWorkspaceId(p.repo, wt, slot);
     if (!fresh) beginPendingOpen(newKey, p, "conv-switch");   // reads p.sessionKey (still the OLD key) for priorKey
     /* KEEP THE CONVERSATION YOU ARE LEAVING, AND SHOW THE ONE YOU ARE RETURNING TO AT ONCE.
        This used to clear the transcript and wait for an `open` round-trip to refill it — so the pane
@@ -12525,7 +12578,7 @@ function viewWorkspace() {
        copy still arrives and replaces it, exactly as before. */
     p._slotTx = p._slotTx || {};
     if (Array.isArray(p.transcript) && p.transcript.length) p._slotTx[wsPaneSlot(p)] = p.transcript;
-    p.convSlot = slot; p.sessionKey = newKey;
+    p.convSlot = slot; p.worktree = wt; p.sessionKey = newKey;
     p.transcript = Array.isArray(p._slotTx[slot]) ? p._slotTx[slot] : [];
     p._turnCache = null; p._domLead = []; p.status = "idle"; p.readonly = false;
     const ui = paneUI.get(p.id); if (ui) { ui._txRef = null; }
@@ -12644,6 +12697,15 @@ function viewWorkspace() {
       expanded: !!p.expanded,
       autoWrap: p.autoWrap !== false,
     }));
+    /* MIGRATION: a layout saved before the worktree became per-conversation has it on the PANE only.
+       Adopt it into the slot the pane was last on, so the one worktree you had chosen survives the
+       upgrade instead of silently snapping to main — and then let the slot be the source of truth. */
+    for (const p of st.panes) {
+      if (p.multiChat && wsPaneSlot(p) && wsSlotWorktree(p.convSlots, wsPaneSlot(p)) === "main" && p.worktree && p.worktree !== "main")
+        p.convSlots = wsSetSlotWorktree(p.convSlots, wsPaneSlot(p), p.worktree);
+      p.worktree = p.multiChat ? wsSlotWorktree(p.convSlots, wsPaneSlot(p)) : (p.worktree || "main");
+      assignKey(p);
+    }
     // If the saved grid can't hold all the panes (a mobile flat list), fall back to the flat 1×N shape that
     // addPaneMobile builds live, so no restored pane is orphaned. Otherwise pad an under-filled desktop grid.
     // Tell the engine which panes were left with auto-continue on — see wsAssertAuto. A restarted
@@ -12908,6 +12970,13 @@ function viewWorkspace() {
       return opts;
     });
     sel.value = p.worktree || "main";
+    /* Say it rather than just enforce it. The ★ Master is tied to main (wsSlotWorktree), so offering
+       a live dropdown that silently refuses is a control that lies; a disabled one that explains why
+       is the same rule, told. Single-chat panes are untouched — a box with no slots picks freely,
+       exactly as it always has. */
+    const pinned = !!p.multiChat && !wsPaneSlot(p);
+    sel.disabled = pinned;
+    sel.title = pinned ? "★ Master always runs on main — open another chat to work in a worktree" : "";
     sel.hidden = !p.repo;   // only meaningful once a repo is picked
   }
 
@@ -13976,7 +14045,7 @@ function viewWorkspace() {
     // never started a turn, so a stale "thinking" carried over from the old identity would spin
     // the busy indicator forever (no event for the OLD session can ever arrive to correct it once
     // sessionKey has moved on).
-    repoSel.addEventListener("change", () => { p.repo = repoSel.value; p.worktree = "main"; p.readonly = false; p.resume = null; p.status = "idle"; wsQueueSet(p, null); p._gen = (p._gen || 0) + 1; assignKey(p); paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p); if (p.repo) wsPost("control", { action: "worktrees", args: { repo: p.repo } }); });
+    repoSel.addEventListener("change", () => { p.repo = repoSel.value; p.worktree = "main"; p.readonly = false; p.resume = null; p.status = "idle"; wsQueueSet(p, null); p._gen = (p._gen || 0) + 1; assignKey(p); wsOpenPaneConversation(p, "conv-switch"); paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p); if (p.repo) wsPost("control", { action: "worktrees", args: { repo: p.repo } }); });
     wtSel.addEventListener("change", () => {
       const v = wtSel.value;
       if (v === "__new__") {   // "+ new worktree…" — create one, then switch this pane to it
@@ -13989,7 +14058,12 @@ function viewWorkspace() {
       }
       // A different worktree is a different session — anything queued for the OLD one must
       // never fire into it (see clearPane's same _queue reset).
-      p.worktree = v || "main"; p.readonly = false; p.resume = null; p.status = "idle"; wsQueueSet(p, null); p._gen = (p._gen || 0) + 1; assignKey(p);
+      // Recorded against THIS conversation, not the box — so the chat you are in keeps its worktree
+      // and no other chat in the box moves with it. A write to ★ Master is a no-op (wsSetSlotWorktree).
+      p.convSlots = wsSetSlotWorktree(p.convSlots, wsPaneSlot(p), v || "main");
+      p.worktree = wsSlotWorktree(p.convSlots, wsPaneSlot(p));
+      p.readonly = false; p.resume = null; p.status = "idle"; wsQueueSet(p, null); p._gen = (p._gen || 0) + 1; assignKey(p);
+      wsOpenPaneConversation(p, "conv-switch");
       paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p);
     });
     // Applies live: the server calls the SDK's setPermissionMode on a running session, so
