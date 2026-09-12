@@ -4,6 +4,35 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.20.3] - 2026-09-12
+### Fixed — a phantom workspace called `main#1`, and the main conversation lost behind it
+
+*"Creating a new chat, I am shown as a workspace main#1 although that is no existing workspace;
+coming back to main, this fake non-existing workspace is selected … I then have to refresh."*
+
+Multi-chat gives a side conversation its own identity by appending `#<n>` to the workspace id
+(`Claudstermind@main#1`). `parseWorkspaceId` split on the last `@` **only**, so the slot suffix landed
+in `worktree` — and the whole chain followed from there:
+
+1. the open reply reported `worktree: "main#1"`,
+2. the pane adopted it verbatim (`p.worktree = data.worktree || p.worktree`),
+3. the picker kept it as "the pane's own value" and showed it as a **selectable worktree**,
+4. every key derived from repo + worktree was then wrong, which is why the main conversation was
+   unreachable until a reload.
+
+A real worktree name can never contain `#` (`createWorktree`'s `SAFE_NAME` is letters, digits and
+`._-`), so a trailing `#<digits>` is unambiguously the slot. It is now parsed as its own field and
+kept out of the worktree name. The client also refuses a worktree containing `#`, because a pane
+should not be poisoned by one bad frame even if a server sends one again.
+
+**This was introduced by 1.20.1.** Making a brand-new conversation open empty meant returning the
+parsed repo/worktree for an id that had never been parsed on that path before — which is what
+surfaced a latent flaw in the parser. Five other call sites in the store were affected too: history
+rows and summaries for a slot conversation reported the same phantom worktree.
+
+`parseWorkspaceId` now returns `{ repo, worktree, slot }`. The added field is additive — existing
+destructuring keeps working and now gets the **correct** worktree.
+
 ## [1.20.2] - 2026-09-12
 ### Fixed — switching back to the main conversation left it blank
 

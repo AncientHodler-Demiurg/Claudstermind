@@ -15497,7 +15497,15 @@ function viewWorkspace() {
         // on a DIFFERENT worktree than whatever it happened to be showing kept the OLD worktree's
         // label/dropdown forever, even though the content, sessionKey, and repo all correctly
         // switched. This is exactly what "resumed Romania but the header still says main" was.
-        p.worktree = data.worktree || p.worktree;
+        /* …but only a worktree that could actually exist. A conversation SLOT rides on the id as
+           `#<n>` (`Claudstermind@main#1`), and a server that split that id on the last `@` reported
+           the worktree as "main#1" — which this adopted, the picker then dutifully kept as "the
+           pane's own value", and the derived key went wrong: a phantom workspace, selected, and the
+           main conversation unreachable until a reload. Fixed at the source (parseWorkspaceId is
+           slot-aware now), and refused here too, because a pane must not be poisoned by one bad
+           frame. `#` cannot appear in a real worktree name — createWorktree's SAFE_NAME is letters,
+           digits and `._-`. */
+        if (data.worktree && !String(data.worktree).includes("#")) p.worktree = data.worktree;
         p.usage = data.usage || {};
         // A session can still be live (mid-turn) when its pane is reattached — see
         // `_liveOrSavedState` server-side. Without this, a pane reopened while Claude is still
