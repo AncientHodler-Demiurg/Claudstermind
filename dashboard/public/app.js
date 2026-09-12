@@ -3692,6 +3692,46 @@ function wsAddConvSlotEntry(slots, name) {
   list.push({ slot, name: name || ("Chat " + (list.length + 1)), worktree: "main" });   // a new chat starts where you are
   return { slots: list, slot };
 }
+/** THE SLOT LIST WAS NEVER SHARED — EACH DEVICE INVENTED ITS OWN.
+ *
+ *  "Multichat is on and there are 2 chats — main and exocortex — in Claudstermind on desktop. Why
+ *  don't I see the same thing on mobile? It has to be tied to the same thing, not independent."
+ *
+ *  `p.convSlots` is `localStorage` on ONE device's pane. Add a chat on the laptop and it exists only
+ *  in that browser's layout — a phone loading the same repo starts from `wsDefaultConvSlots()` and
+ *  has no way to learn a second conversation was ever created, let alone which slot number or
+ *  worktree it uses. Every earlier fix this session (draft, worktree, the elapsed timer) was the
+ *  same shape: state that belongs to the CONVERSATION, stored on the box. This is that bug one
+ *  level up — the very LIST of conversations was on the box.
+ *
+ *  The fix doesn't invent new storage: every slot conversation that has ever been prompted is
+ *  already a real, separate, server-known workspace — it is exactly one row of `history`, the same
+ *  list every device already fetches for "All conversations", with the slot number encoded right in
+ *  `workspaceId` (`repo@worktree#slot`). So any device that has fetched history already has
+ *  everything needed to discover every slot ANY device created — it just never looked. This merges
+ *  slots found there into the local list, so the picker converges to the same set everywhere history
+ *  is exchanged, without ever inventing an id or guessing a name for a still-unprompted new chat.
+ *
+ *  Pure and additive only: an already-known slot (including one mid-edit locally, not yet in
+ *  history) is left exactly as it is — a name typed for it, or its worktree, can only be overwritten
+ *  by the SAME device's own explicit action, never by a merge. */
+function wsMergeConvSlotsFromHistory(slots, history, repo) {
+  const base = Array.isArray(slots) && slots.length ? slots : wsDefaultConvSlots();
+  if (!repo || !Array.isArray(history)) return base;
+  const known = new Set(base.map((s) => s.slot));
+  const discovered = [];
+  for (const h of history) {
+    if (!h || h.repo !== repo) continue;
+    const m = /#(\d+)$/.exec(String(h.workspaceId || ""));
+    if (!m) continue;   // no `#<n>` suffix — that's the ★ Master, slot 0, always already in `base`
+    const slot = Number(m[1]);
+    if (known.has(slot)) continue;   // already known — a local edit (even unsaved) always wins
+    known.add(slot);
+    discovered.push({ slot, name: wsDeriveConvName(h.firstPrompt) || ("Chat " + (base.length + discovered.length + 1)), worktree: h.worktree || "main" });
+  }
+  if (!discovered.length) return base;   // the exact array the caller already had — nothing to re-render
+  return [...base, ...discovered].sort((a, b) => a.slot - b.slot);
+}
 // The workspace id a pane attaches to: repo + worktree (+ an optional conversation SLOT). TWO
 // terminals selecting the same repo/worktree/slot derive the SAME key, so they drive — and watch —
 // the one shared conversation. Slot 0/falsy is BYTE-IDENTICAL to the id this always produced before
@@ -15644,6 +15684,17 @@ function viewWorkspace() {
         // Segregate the Ouronet Pact repo out of Core: its conversations are worked only from the Pact
         // workspace, so they never appear in the Core history (matches the repo-picker filter above).
         st.history = data.history.filter((h) => !wsIsPactRow(h, PACT_REPO)); renderHistory();
+        // Every device fetches this same history — so it's also how a device DISCOVERS a conversation
+        // slot some OTHER device created (see wsMergeConvSlotsFromHistory: "why don't I see the same
+        // 2 chats on mobile that I have on desktop?"). Multi-chat's slot list was never shared; this
+        // is the one place both already receive the same data and can converge on it.
+        let _slotsDiscovered = false;
+        for (const p of st.panes) {
+          if (!p.repo) continue;
+          const merged = wsMergeConvSlotsFromHistory(p.convSlots, st.history, p.repo);
+          if (merged !== p.convSlots) { p.convSlots = merged; paintPane(p); _slotsDiscovered = true; }
+        }
+        if (_slotsDiscovered) saveLayout();   // so THIS device also shows the discovery next reload
         // First history payload after boot — now we know which saved keys exist, so restored
         // panes can re-attach without guessing.
         if (bootRestorePending) { bootRestorePending = false; restorePanes(); }

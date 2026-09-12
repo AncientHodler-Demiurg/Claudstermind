@@ -4,6 +4,39 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.21.2] - 2026-09-12
+### Fixed — a conversation slot created on one device was invisible on every other device
+
+*"Multichat is ticked on desktop, 2 chats — main and exocortex. Why don't I see the same thing on
+mobile? It has to be tied to the same thing, not independent."*
+
+It was independent — and worse than it looked. `p.convSlots`, the list multi-chat picks from, is
+`localStorage` on ONE pane in ONE browser. Adding "Exocortex" as a second chat on the laptop wrote
+that slot into the laptop's own layout only; a phone loading the same repo starts every pane from
+`wsDefaultConvSlots()` — just Master — with no way to learn a second conversation exists, let alone
+which slot number or worktree it lives on. Exactly the same shape as the draft, worktree and elapsed-
+timer bugs already fixed this session: state that belongs to the CONVERSATION, kept on the box —
+just one level up, this time the very *list* of conversations was on the box.
+
+The fix adds no new storage or API. Every slot conversation that has ever been prompted is already a
+real, separate, server-known workspace, and it's already exactly one row of `history` — the same list
+every device fetches automatically on connect for "All conversations" — with the slot number encoded
+right in `workspaceId` (`repo@worktree#slot`). So any device that has fetched history already has
+everything it needs to discover a slot another device created; it just never looked. `history` now
+gets merged into every pane's own `convSlots` the moment it arrives, for every device, so multi-chat's
+picker converges to the same set everywhere. A slot mid-edit locally — typed into, not yet saved to
+history — is never overwritten; only slots this device didn't already know about get added.
+
+One thing this does **not** change: whether multi-chat is toggled *on* is still a genuine per-device
+display preference — a phone reasonably wants one box at a time where a laptop wants a grid. What's
+fixed is that once you flip it on, the phone now offers the exact same conversations the laptop does,
+instead of just the one it happened to create for itself.
+
+New tests in `lib/coreMultiChat.test.mjs`: discovery, no-overwrite-of-local-edits, other-repos-ignored,
+and a same-reference return when there's nothing to discover (no needless re-render). Full suite:
+1957 tests, all green. Web-only (`app.js`) — deploying restarts nothing but the page; reload to pick
+it up.
+
 ## [1.21.1] - 2026-09-12
 ### Fixed — the "Working…" timer flashed 0:00 before jumping to the real elapsed time
 
