@@ -12578,10 +12578,23 @@ function viewWorkspace() {
        copy still arrives and replaces it, exactly as before. */
     p._slotTx = p._slotTx || {};
     if (Array.isArray(p.transcript) && p.transcript.length) p._slotTx[wsPaneSlot(p)] = p.transcript;
+    /* THE HALF-WRITTEN MESSAGE BELONGS TO THE CONVERSATION TOO. Core kept one `p.draft` on the pane,
+       so a message you were part-way through followed you from Master into Chat 2 and back, and
+       whichever conversation you happened to send from consumed it. Pact has had per-tab drafts since
+       it had tabs. Read from the ELEMENT, not from `p.draft`: that mirror is written by an `input`
+       listener and a debounced save, so it lags whatever was typed in the last moment. */
+    p._slotDraft = p._slotDraft || {};
+    const _ui = paneUI.get(p.id);
+    p._slotDraft[wsPaneSlot(p)] = _ui && _ui.promptEl ? _ui.promptEl.value : (p.draft || "");
     p.convSlot = slot; p.worktree = wt; p.sessionKey = newKey;
     p.transcript = Array.isArray(p._slotTx[slot]) ? p._slotTx[slot] : [];
+    p.draft = typeof p._slotDraft[slot] === "string" ? p._slotDraft[slot] : "";
     p._turnCache = null; p._domLead = []; p.status = "idle"; p.readonly = false;
-    const ui = paneUI.get(p.id); if (ui) { ui._txRef = null; }
+    /* paintPane deliberately never writes the box's value — doing so on every event would clobber
+       your typing mid-sentence — so the handover has to put it there itself, and size the box to what
+       it now holds rather than to what it held. */
+    const ui = paneUI.get(p.id);
+    if (ui) { ui._txRef = null; if (ui.promptEl) { ui.promptEl.value = p.draft; wsAutoResizePrompt(ui.promptEl); } }
     paintPane(p); saveLayout();
     if (!fresh) wsPost("control", { action: "open", args: { sessionKey: newKey } });
   }
@@ -12658,6 +12671,7 @@ function viewWorkspace() {
       localStorage.setItem(WS_STORE_KEY, JSON.stringify({
         v: 1, cols: st.cols, rows: st.rows, sidebarMode: st.sidebarMode, defaultMode: st.defaultMode, activeId: st.activeId,
         panes: st.panes.map((p) => ({ id: p.id, sessionKey: p.sessionKey, repo: p.repo, worktree: p.worktree || "main", mode: p.mode, draft: p.draft || "", promptStates: p.promptStates || {}, bookmarks: Array.isArray(p.bookmarks) ? p.bookmarks : [], multiChat: !!p.multiChat, convSlot: p.convSlot || 0, convSlots: Array.isArray(p.convSlots) ? p.convSlots : wsDefaultConvSlots(),
+          slotDrafts: p._slotDraft || {},   // one half-written message per conversation, not one per box
           // Auto-continue survives a reload, like Pact's: the flag AND the round count, so a reload
           // cannot silently kill a running loop or quietly reset a ceiling you had already spent.
           autoContinue: !!p._autoContinue, autoCount: p._autoCount || 0, autoCap: p._autoCap || PACT_AUTO_CAP,
@@ -12686,6 +12700,7 @@ function viewWorkspace() {
       bookmarks: Array.isArray(p.bookmarks) ? p.bookmarks.filter((x) => typeof x === "number") : [],
       multiChat: !!p.multiChat,
       convSlot: typeof p.convSlot === "number" ? p.convSlot : 0,
+      _slotDraft: (p.slotDrafts && typeof p.slotDrafts === "object" && !Array.isArray(p.slotDrafts)) ? p.slotDrafts : {},
       convSlots: Array.isArray(p.convSlots) && p.convSlots.length
         ? p.convSlots.filter((s) => s && typeof s.slot === "number" && typeof s.name === "string")
         : wsDefaultConvSlots(),
@@ -16273,7 +16288,8 @@ function viewWorkspace() {
     // (if any) are a one-shot per send, never left over for the next message.
     const attachedImages = p.attachedImages || [];
     ui.promptEl.value = ""; wsAutoResizePrompt(ui.promptEl); p.attachedImages = []; wsPaintAttachment(p);
-    p.draft = ""; saveDraftsSoon();   // the draft was just sent — don't resurrect it on the next view switch
+    p.draft = ""; p._slotDraft = p._slotDraft || {}; p._slotDraft[wsPaneSlot(p)] = "";
+    saveDraftsSoon();   // the draft was just sent — don't resurrect it on the next view switch OR the next visit to this conversation
     // While a turn is already running, don't even attempt the round-trip (the server would refuse
     // it with `busy` anyway) — queue it locally instead: shown as its own orange box in the
     // transcript, sent automatically the instant the current turn actually finishes. Mirrors

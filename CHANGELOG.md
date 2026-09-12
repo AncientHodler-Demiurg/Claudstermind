@@ -4,6 +4,46 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.21.0] - 2026-09-12
+### Added — every conversation keeps its own half-written message
+
+*"Moving between chats of the same repository preserves the text I typed in the master chat, when in
+fact the exocortex chat should have its own chat typing text save capabilities."*
+
+Pact has had this since it had tabs: each tab carries its own `t.draft`, saved on every keystroke and
+restored when you return. Core kept **one** `p.draft` on the pane, and conversation slots were added
+afterwards and share that pane — so a half-written message followed you from Master into Chat 2 and
+back, and whichever conversation you happened to send from consumed it.
+
+Same defect as the worktree one fixed in 1.20.8, in a second place: **state that belongs to the
+conversation, stored on the box.** The transcript was already kept per slot; the draft never was.
+
+Two details that matter:
+
+- The draft is parked by reading the **textarea**, not `p.draft` — that mirror is written by an
+  `input` listener and a debounced save, so it lags whatever was typed in the last moment.
+- `paintPane` deliberately never writes the box's value (it would clobber your typing mid-sentence),
+  so the handover puts it there itself and re-sizes the box to what it now holds.
+
+Measured end to end: type in Master → ＋ → **box empty** → type in Chat 2 → back to Master → *"MASTER
+half-written message"* → back to Chat 2 → *"CHAT2 different message"* → **full page reload** → still
+there. Drafts persist with the layout, one per conversation.
+
+### Fixed — every vendored hook failed with "Permission denied"
+
+The first line of a real session was `PreCompact […/save-session-context.sh] failed: Permission
+denied`. Measured: **0 of 18** vendored `.sh` files carried the executable bit — and neither do they
+upstream, because git only records the bit for files committed as `100755`. So every hook bee and
+wasp register (`SessionStart`, `UserPromptSubmit`, `PreToolUse` on Bash, `PostToolUse`, `Stop`,
+`SessionEnd`) failed the instant it fired, silently apart from that one line.
+
+Upstream's packaging is upstream's business right up until we vendor it and ship it as part of
+ourselves — then it is ours. `scripts/sync-plugins.mjs` restores the bit after copying (`cpSync`
+faithfully copies a mode that is wrong), and `--check` now fails on it, so a future re-vendor cannot
+quietly undo it.
+
+1,947 tests pass; smoke clean. **Deploy note:** web-only.
+
 ## [1.20.9] - 2026-09-12
 ### Fixed — a stalled prompt disguised as a passing remark
 

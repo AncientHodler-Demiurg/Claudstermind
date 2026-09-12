@@ -11,7 +11,7 @@
 //
 // `--check` reports drift without writing, so CI (or you, before a release) can answer "is our
 // vendored bee still the upstream one?" without touching the tree.
-import { cpSync, existsSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, writeFileSync, rmSync, chmodSync, statSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +43,22 @@ const versionOf = (base, name) => {
   catch { return null; }
 };
 
+/* A HOOK THE SHELL CANNOT EXECUTE IS NOT A HOOK. `cpSync` faithfully copies the source's mode, and
+   the source's mode is wrong: git only records the executable bit for files committed as 100755, and
+   upstream's are 100644 — measured, 0 of 18. So every hook these plugins register failed the instant
+   it fired, with one line of "Permission denied" and nothing else. Upstream's packaging is upstream's
+   business right up until we vendor it and ship it as part of ourselves; then it is ours. */
+const shellScripts = (dir, out = []) => {
+  if (!existsSync(dir)) return out;
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) shellScripts(p, out);
+    else if (e.isFile() && p.endsWith(".sh")) out.push(p);
+  }
+  return out;
+};
+const notExecutable = (dir) => shellScripts(dir).filter((f) => !(statSync(f).mode & 0o111));
+
 if (check) {
   let drift = 0;
   for (const n of NAMES) {
@@ -51,6 +67,8 @@ if (check) {
     else console.log(`ok     ${n}: ${here}`);
   }
   if (prev?.commit && commit && prev.commit !== commit) { console.log(`DRIFT  upstream commit ${commit.slice(0,8)} vs vendored ${prev.commit.slice(0,8)}`); drift++; }
+  const dead = notExecutable(DEST);
+  if (dead.length) { console.log(`DRIFT  ${dead.length} hook script(s) not executable — they fail with "Permission denied" the first time they fire:`); for (const f of dead.slice(0, 5)) console.log(`         ${f}`); drift++; }
   process.exit(drift ? 1 : 0);
 }
 
@@ -59,7 +77,9 @@ for (const n of NAMES) {
   if (!existsSync(src)) { console.error(`skip ${n}: not in ${src}`); continue; }
   rmSync(join(DEST, n), { recursive: true, force: true });
   cpSync(src, join(DEST, n), { recursive: true });
-  console.log(`vendored ${n}@${versionOf(join(FROM, "plugins"), n)}`);
+  const fixed = notExecutable(join(DEST, n));
+  for (const f of fixed) chmodSync(f, statSync(f).mode | 0o111);
+  console.log(`vendored ${n}@${versionOf(join(FROM, "plugins"), n)}${fixed.length ? ` (+x on ${fixed.length} hook script${fixed.length === 1 ? "" : "s"})` : ""}`);
 }
 
 const out = {
