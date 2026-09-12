@@ -12866,11 +12866,32 @@ function viewWorkspace() {
    *  paint, whichever path set that repo. So it must be cheap and it must be once: having the list
    *  stops it, and `_wtAsked` stops an unanswered request being re-sent on the next paint. */
   const _wtAsked = new Set();
+  /* A LATCH WITH NO RELEASE turns one lost message into a permanent wrong answer — `_wtAsked` is
+     only ever consulted, and `st.worktrees[repo]` is only ever written when a reply ARRIVES. The
+     first version of this had no release at all, and the very next deploy proved why: "I saw it just
+     before, but right now it has disappeared." A deploy restarts the web process AND sessiond, so
+     the round trip can break at either end. This releases the NEAR end — the POST itself failing,
+     which is exactly what happens while the server is down. */
+  function _wtAsk(repo) {
+    _wtAsked.add(repo);
+    wsPost("control", { action: "worktrees", args: { repo } })
+      .then((r) => { if (!r || r.ok === false) _wtAsked.delete(repo); })
+      .catch(() => _wtAsked.delete(repo));
+  }
   function wsWantWorktrees(repo) {
     if (!repo || st.worktrees[repo]) return;
     if (_wtAsked.has(repo)) return;
-    _wtAsked.add(repo);
-    wsPost("control", { action: "worktrees", args: { repo } });
+    _wtAsk(repo);
+  }
+  /** …and the FAR end: the POST can succeed while the stream that carries the answer dies, because
+   *  the worktree list comes back over SSE, not as the POST's response. Nothing local can observe
+   *  that; only a reconnect proves it happened. So every reconnect forgets what it thinks it asked
+   *  and asks again — unconditionally, not just where the list is missing, because a list that is
+   *  merely STALE (a worktree created from another terminal, or by the deploy itself) looks exactly
+   *  like a list that is right. */
+  function wsPrimeWorktrees() {
+    _wtAsked.clear();
+    for (const repo of new Set(st.panes.map((p) => p.repo).filter(Boolean))) _wtAsk(repo);
   }
   function fillWorktreeSelect(sel, p) {
     wsWantWorktrees(p.repo);
@@ -16023,6 +16044,7 @@ function viewWorkspace() {
       // reply can't race an unsubscribed stream (it would be dropped silently).
       try { const d = JSON.parse(e.data); if (d.localConnected) { bridgeNote.hidden = true; bridgeNote.textContent = ""; } else note("The work machine isn't connected — start the local dashboard + relay."); } catch {}
       primeControls();
+      wsPrimeWorktrees();   // the per-repo lists primeControls can't ask for — see wsWantWorktrees
       if (WS_EVER_CONNECTED) logActivityAll("↻ Reconnected", "ws-act-ok");   // only a RE-connect is activity-log-worthy, not the first ever connect
       WS_EVER_CONNECTED = true;
       resyncOpenPanes();   // catch up on anything the PREVIOUS connection silently missed

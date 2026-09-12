@@ -4,6 +4,36 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.20.7] - 2026-09-12
+### Fixed — the worktree list vanishing again, this time caused by 1.20.6
+
+*"I saw it just before, but right now it has disappeared (I deployed 1.20.6)."*
+
+My own regression, one version old. 1.20.6 made the picker ask for the repo's worktrees, and marked
+the repo as asked so the request wouldn't be re-sent on every paint. It **never unmarked it** — while
+`st.worktrees[repo]` is only ever written when a reply *arrives*. So a single missed reply left the
+list empty for the entire life of the page.
+
+And a deploy is precisely when a reply goes missing: it restarts the web process **and** sessiond, and
+the worktree list comes back over the SSE stream rather than as the POST's response — so the round
+trip can break at either end. Deploying the fix is what triggered the bug in the fix.
+
+Released at both ends, because there are two ways to lose it:
+
+- **near end** — the POST itself fails (the server is down mid-deploy): the latch is released on the
+  spot, so the next paint asks again.
+- **far end** — the POST succeeds but the stream carrying the answer dies. Nothing local can observe
+  that; only a reconnect proves it happened. Every reconnect now forgets what it thinks it asked and
+  re-asks for every repo on screen — **unconditionally**, not just where the list is missing, because
+  a list that is merely stale (a worktree made from another terminal, or by the deploy) looks exactly
+  like a list that is right. Driven from the same `hello` handler as every other reconnect catch-up.
+
+This is the same shape as `fitRisers` pinning `width: 0` and recording the failed attempt as done —
+a latch with no release turns one lost message into a permanent wrong answer. I had written that rule
+down and then wrote the same bug again.
+
+1,928 tests pass; the picker reads `main, exocortex, + new…` in all four states. Web-only deploy.
+
 ## [1.20.6] - 2026-09-12
 ### Fixed — a worktree that exists, missing from the list, and the one route to it refusing
 
