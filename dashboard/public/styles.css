@@ -943,6 +943,18 @@ body.ws-full .stick-wrap-ws { max-height: none; flex: 1; }
    rather than prose, matching Claude's own inline-code rendering. */
 .ws-inline-code { background: var(--chip); border-radius: 4px; padding: 1px 5px; font: 12px/1.4 ui-monospace, monospace; }
 .ws-line.ws-assistant .ws-inline-code { color: var(--ink); }
+/* A genuine outlier reply (a full technical document pasted into the chat, 10-30k+ characters)
+   collapses to a fixed height with a fade at the bottom, rather than taking over the screen. The
+   full text is never removed — only ::after's fade masks it — so a reload / a resync / print still
+   has the complete reply; only the LIVE, collapsed view is shorter until you click through. Shared
+   by Core's .ws-reply-body wrapper and Pact's .pc-asst-body directly (see wsReplyCollapseToggle /
+   wsRenderReplyBody in app.js) — one rule serves both, so they can't visually drift apart. */
+.ws-reply-collapsed { max-height: 340px; overflow: hidden; position: relative; }
+.ws-reply-collapsed::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 64px;
+  background: linear-gradient(to bottom, transparent, var(--bub-a, var(--chip))); pointer-events: none; }
+.ws-reply-expand { display: block; margin: 4px 0 2px; padding: 5px 10px; font-size: 11.5px; color: var(--ink-mute);
+  background: var(--chip); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+.ws-reply-expand:hover { color: var(--ink); border-color: var(--ink-mute); }
 /* A `#`..`######` line in a reply — bold and one size step up, not a full heading hierarchy
    (this is a chat transcript, not a document — six visually distinct heading sizes would be
    excessive here; one consistent step reads clearly enough at any nesting depth). */

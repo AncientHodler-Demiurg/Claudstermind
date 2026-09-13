@@ -4,6 +4,55 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.21.6] - 2026-09-13
+### Added — a genuine outlier reply now collapses instead of taking over the screen
+
+*"His answers started at R#906, now at R#924, and they are so huge in text amount I can't even
+follow. Is there anything we can do to shorten the delivered answer, not the work?"*
+
+Measured the actual conversation rather than guessing: an 11-reply stretch ran 35 to 3,409
+characters — normal, readable — except four genuine outliers in the SAME stretch: **14,045 / 13,326
+/ 32,259 / 27,349 characters.** One single reply ran to nearly 4,000 words in one chat bubble.
+
+This can't and shouldn't rewrite what the model chose to say — the work is exactly as valuable
+however long it took. What it can do is stop an outlier from dominating the screen: past 6,000
+characters (comfortably above the largest normal reply measured, comfortably below the smallest real
+outlier), a reply now collapses to a fixed height with a fade and a "▾ Show full reply (32,259
+characters)" button. Nothing is removed or summarized — the full text is one click away — it's just
+not forced on you by default. Shared by Core and Pact through one function each, so the two workspaces
+can't quietly disagree about what counts as "too long." New tests: `lib/wsReplyCollapse.test.mjs`
+(10 cases, pinned against the real measured sizes above, plus wiring checks for both call sites and
+the CSS rule).
+
+### Fixed — a wrap could hand the model its own unanswered question and let it self-approve
+
+Investigating the same reply asked a second question: *"before my prompt the engine already did a
+compact... it's still not done, because the wrapping interrupted it."* Traced the actual sequence on
+disk. The wrap did NOT interrupt anything — the reply just before it was complete and well-formed,
+ending in a legitimate question: *"Does this design look right? Approve it and we move to
+planning."* What happened next is more serious than an interruption: a roll seeds the fresh segment
+by submitting the ENTIRE carried-forward recap **as if it were a new message from the user**
+(`ClaudeSession.roll()` — the seed is literally `this._inbox.unshift(...)`, the first input of the
+new session). So the model's very next input read like a continuation of a dialogue it had never
+gotten an answer to. With nothing telling it otherwise, it answered its own question — *"Confirmed —
+the design looks right. Please proceed to planning."* — and was one step from acting on an approval
+that was never actually given. The user's real next message, arriving 84 seconds later ("so go ahead
+with the planning, or have you lost context?"), caught it before any planning work happened — this
+time.
+
+`buildSeedText` (`lib/conversationRoll.mjs`) now checks whether the carried-forward tail ends on the
+agent's own unanswered question — a "?" anywhere in roughly its closing stretch, not only the exact
+last character (the real message ended "...move to planning.", the question sat a sentence earlier) —
+and if so, appends an explicit note directly after it: *this is an automatic recap, not a real
+message from your user; the question above is still unanswered; do not assume it was approved.*
+New tests in `lib/conversationRoll.test.mjs` (5 cases) reconstruct the real sequence and confirm the
+note fires exactly when it should and stays silent otherwise (a user's own trailing question, a
+non-question tail, a tool row after the question).
+
+Full suite: 2005 tests, all green. `conversationRoll.mjs` is `lib/` — deploying restarts the engine
+and will interrupt any turn in flight. The reply-collapse UI is `app.js`/`styles.css` only — web-only,
+safe anytime.
+
 ## [1.21.5] - 2026-09-12
 ### Fixed — one code block rendered as several, whenever a reply nested a real fence inside a longer one
 

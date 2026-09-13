@@ -10059,6 +10059,48 @@ function wsCopyFallback(text, done) {
     const ok = document.execCommand("copy"); document.body.removeChild(ta); if (done) done(ok);
   } catch { if (done) done(false); }
 }
+// ===== WS REPLY COLLAPSE — pure helper (sliced for unit tests; see lib/wsReplyCollapse.test.mjs)
+// "I asked Codex to do something, his answers started huge — R#920 alone was 32,259 characters —
+// and I can't even follow, spewing stuff I don't care about. Shorten the DELIVERED answer, not the
+// WORK." The work (the audit, the design, the code) is exactly as valuable however long it took to
+// produce; forcing you to scroll through all of it to find the one sentence that matters is a
+// delivery problem, not a work problem. This can't (and shouldn't) rewrite what the model chose to
+// say — but it CAN stop a genuine outlier from taking over the screen: collapse a reply past a
+// generous length to a fixed height with a fade and a one-click "show the rest", so the full text is
+// never lost, only out of the way until you ask for it. Shared by Core and Pact — the SAME threshold
+// and label everywhere, not two copies that could quietly disagree about what counts as "too long".
+//
+// The threshold is deliberately generous: measured against a real 11-turn stretch of Codex replies
+// (546 to 3,409 characters — a meaty paragraph or several, still comfortably readable) against the
+// four genuine outliers in the SAME stretch (14,045 / 13,326 / 32,259 / 27,349) — 6,000 sits cleanly
+// between "a real, detailed answer" and "a full technical document pasted into the chat".
+const WS_LONG_REPLY_CHARS = 6000;
+function wsReplyCollapseInfo(text, limit) {
+  const chars = typeof text === "string" ? text.length : 0;
+  const lim = Number.isFinite(limit) && limit > 0 ? limit : WS_LONG_REPLY_CHARS;
+  return { collapse: chars > lim, chars };
+}
+function wsReplyExpandLabel(chars) { return "▾ Show full reply (" + Number(chars || 0).toLocaleString() + " characters)"; }
+const WS_REPLY_COLLAPSE_LABEL = "▴ Collapse reply";
+// ===== end WS REPLY COLLAPSE pure helper =====
+/** Wire a collapse/expand toggle onto an already-rendered reply body when it's long enough to need
+ *  one — shared DOM wiring for both workspaces, built on the pure decision above. `apply(collapsed)`
+ *  is the one thing that differs between them (Core toggles a wrapper div; Pact toggles the body
+ *  element itself), everything else — the threshold, the label, the click handling — is identical. */
+function wsReplyCollapseToggle(text, apply) {
+  const info = wsReplyCollapseInfo(text);
+  if (!info.collapse) return null;
+  apply(true);
+  const btn = el("button", { class: "ws-reply-expand", type: "button" }, [wsReplyExpandLabel(info.chars)]);
+  let expanded = false;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    expanded = !expanded;
+    apply(!expanded);
+    btn.textContent = expanded ? WS_REPLY_COLLAPSE_LABEL : wsReplyExpandLabel(info.chars);
+  });
+  return btn;
+}
 function wsAttachCopyButtons(container) {
   if (!container || !container.querySelectorAll) return;
   container.querySelectorAll("pre").forEach((pre) => {
@@ -10324,6 +10366,10 @@ function pactChatMsgNode(m) {
     if (typeof window.mdRender === "function") body.innerHTML = window.mdRender(m.text); else body.textContent = m.text;
     wsAttachCopyButtons(body);   // ⧉ copy on every code block (handoff windows etc.)
     kids.push(body);
+    // A genuine outlier (a full technical document pasted into the chat) collapses to a fixed height
+    // with one click to see the rest — the full text is never lost, only out of the way by default.
+    const expandBtn = wsReplyCollapseToggle(m.text, (collapsed) => body.classList.toggle("ws-reply-collapsed", collapsed));
+    if (expandBtn) kids.push(expandBtn);
     const star = el("button", { class: "ws-bm-star" + (m._bookmarked ? " on" : ""), title: m._bookmarked ? "Bookmarked — click to remove" : "Bookmark this response" }, [m._bookmarked ? "★" : "☆"]);
     star.addEventListener("click", (e) => { e.stopPropagation(); pactChatToggleBookmark(m); });
     const replyBtnR = wsReplyBtn("R", m._rnum, m.text, () => { const at = pactChatActive(); wsAddReplyRef(at, "R", m._rnum, m.text); pactPaintReplyRow(at); });
@@ -13300,6 +13346,19 @@ function viewWorkspace() {
     if (last < text.length) parts.push(...renderProseBlock(text.slice(last)));
     return parts;
   }
+  /** renderAssistantText, plus a collapse for the rare genuine outlier (see WS REPLY COLLAPSE above).
+   *  The common case (below the threshold) returns the exact same flat array renderAssistantText
+   *  always has — no wrapper div, no risk to any CSS that assumes a message's parts sit as plain
+   *  siblings — so ordinary replies are byte-for-byte unaffected. Only past the threshold does this
+   *  wrap the parts in one collapsible container and add the toggle. */
+  function wsRenderReplyBody(text) {
+    const parts = renderAssistantText(text);
+    const info = wsReplyCollapseInfo(text);
+    if (!info.collapse) return parts;
+    const wrap = el("div", { class: "ws-reply-body ws-reply-collapsed" }, parts);
+    const btn = wsReplyCollapseToggle(text, (collapsed) => wrap.classList.toggle("ws-reply-collapsed", collapsed));
+    return [wrap, btn];
+  }
   // Absolute prompt/response numbering (P#n / R#n), stamped on the transcript so a cached turn node keeps its
   // number, counting from the server-sent offsets so it includes prompts/responses not currently loaded.
   function wsStampNumbers(p) {
@@ -13512,7 +13571,7 @@ function viewWorkspace() {
          ⧉ 78 · ↩ 54 · ⤴ 30 · ★ 6. Keeping it identical is the point — this changes what SIZES the
          bubble, not what the corner looks like. */
       return line("ws-assistant", [wsMsgHead(wsNumBadge("R", m._rnum), [copyBtn, replyBtn, wsShareBtn(m.text), star]),
-        ...renderAssistantText(m.text), wsWhenChip(m.at)]);
+        ...wsRenderReplyBody(m.text), wsWhenChip(m.at)]);
     }
     if (m.kind === "tool_use") return line("ws-tool", [el("i", { class: "ti ti-tool" }, []), " ", (m.tools || []).map((t) => t.name).join(", ")]);
     if (m.kind === "tool_result") {
