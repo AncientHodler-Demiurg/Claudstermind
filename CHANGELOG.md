@@ -4,6 +4,43 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.21.8] - 2026-09-16
+### Fixed — a mirrored Vite app's *nested* modules 404'd remotely, so it still white-paged on a phone
+
+Follow-on to 1.21.7. That fix got the entry `<script src="/src/main.tsx">` to load, but the white page
+persisted from the phone. Diagnosed to the root this time, with the app confirmed mounting *perfectly*
+through the mirror locally (headless Chromium: `#root` full of real content, no app errors) — proving
+it was neither a JS bug nor an app problem, but purely a remote/relay transport issue.
+
+The entry module, once loaded, imports six **root-absolute** nested modules inside its own JS body —
+`/node_modules/.vite/deps/react.js`, `/src/App.tsx`, `/@fs/…/ui.css`, etc. These are issued by the
+browser's native ES-module loader, which the mirror's fetch/XHR runtime patch cannot intercept, and
+they are not HTML so the 1.21.7 `<script src>` rewrite doesn't see them. They resolved to the origin
+root and reached the dev server ONLY via Referer/cookie provenance. Reproduced exactly: a nested
+module fetched with **no Referer and no cookie → 404**; the same module at the explicit
+`/mirror/<port>/…` path → **200 unconditionally**. Over the HTTPS relay to a phone the provenance
+doesn't survive (an intervening proxy or the browser's framed-context rules drop it), so every nested
+module 404s and the app never mounts.
+
+Fix (`lib/mirror.mjs`, new `rewriteJsImports`, applied to JS responses in `buildMirrorResponse`
+alongside the HTML rewrite): root-absolute ES-module specifiers in served JS — `… from "/…"`, dynamic
+`import("/…")`, and bare `import "/…"` — are rewritten to the explicit `/mirror/<port>/` prefix, so
+each nested module is requested at a path-routed URL that needs no Referer and no cookie. Because
+every JS response is rewritten, the whole module graph is covered transitively. `//host`,
+`http(s)://…`, already-`/mirror/…`, relative, and bare-package specifiers are left byte-identical;
+query strings (`?v=…`) ride along; a specifier can't contain whitespace, so the rewrite stays off
+prose that merely contains the word "from".
+
+**Verified end to end against the live dev server, not just unit-tested:** the real
+codex-playground entry module was rewritten and all 6 of its nested URLs — then App.tsx's 16 deeper
+ones — were fetched with zero Referer/cookie and all returned 200, i.e. the exact remote failure
+condition, resolved. New tests in `lib/mirror.test.mjs`.
+
+**Same deploy caveat as 1.21.7:** the remote-path rewrite runs on the **relay** (StoaNodePrime), so
+this needs a **relay redeploy** to reach a phone. Also note the dev server being mirrored must
+actually be running — a stopped dev server surfaces as the honest "mirror fetch failed: fetch failed"
+(not a bug: start that port's dev server).
+
 ## [1.21.7] - 2026-09-16
 ### Fixed — a mirrored Vite dev app (e.g. Codex) showed a white page from a remote phone
 
