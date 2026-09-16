@@ -4,6 +4,49 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.21.7] - 2026-09-16
+### Fixed — a mirrored Vite dev app (e.g. Codex) showed a white page from a remote phone
+
+*"I'm on mobile, remote, trying to access the Codex local build through the mirror. The page is white."*
+
+Traced end to end, with the failure reproduced at each step rather than guessed. A Vite dev server
+emits its entry as **root-absolute** module scripts — `<script type="module" src="/@vite/client">`
+and `<script src="/src/main.tsx">`. The mirror injects a `<base href="/mirror/<port>/">`, but `<base>`
+only bends *relative* URLs; a root-absolute `/src/main.tsx` ignores it and resolves against the
+origin, so through the mirror it became `https://<relay>/src/main.tsx`, not
+`.../mirror/<port>/src/main.tsx`. The runtime fetch/XHR patch couldn't save it either — the browser's
+HTML parser fetches a literal `<script src>` directly, before any injected JS runs.
+
+That left the entry module reachable **only** via server-side provenance routing (Referer/cookie).
+Reproduced: `GET /src/main.tsx` → **404** with no Referer, **200** only with a mirror Referer; the
+explicit `GET /mirror/<port>/src/main.tsx` → **200** unconditionally. On a plain local http load the
+Referer/cookie holds, so it worked on the work machine — but through the HTTPS relay in a phone
+browser it does not reliably hold, so the entry module 404'd and the app never mounted: a white page.
+
+Fix (`lib/mirror.mjs`, new `rewriteRootAbsoluteAssets`, applied inside `injectBase`): root-absolute
+`src`/`href` on `<script>`/`<link>` tags are rewritten to the explicit `/mirror/<port>/` prefix.
+This loads the entry deterministically with no provenance guessing, **and** bootstraps the whole
+downstream module graph — each module is now loaded from a `/mirror/<port>/…` URL, so the Referer on
+its own nested `import`s carries the prefix too. Only a single leading `/` is touched; `//host`,
+`http(s)://…`, already-`/mirror/…`, and relative URLs are left byte-identical. Verified against the
+real running codex-playground HTML (`:3007`): both entry scripts now rewrite to the `/mirror/3007/…`
+paths that return 200. New tests in `lib/mirror.test.mjs`; full suite 2007 passing.
+
+**To use it from your phone:** the HTML rewrite for the *remote* path runs on the **relay**
+(StoaNodePrime), not the work machine — the work-machine bridge sends the dev server's raw HTML and
+the relay shapes it. So this needs a **relay redeploy** to take effect for mobile, not just a local
+web restart. (Direct local `http://<workmachine>:<dashboard>/mirror/<port>/` access picks it up on a
+plain web restart.)
+
+**Two known limits left, deliberately not bundled in** (each is defense-in-depth whose necessity
+couldn't be confirmed without testing on the device, and this touches shared security-sensitive proxy
+code): (1) if the production relay's external nginx strips the Referer path, nested module requests
+would fall back to the `cm_mirror` cookie, which is `SameSite=Lax`/no-`Secure` and may not ride a
+framed HTTPS request on mobile — if nested modules still 404 after the relay deploy, hardening that
+cookie to `SameSite=None; Secure` on HTTPS is the next step. (2) Vite's HMR WebSocket (`:<devport>`)
+still isn't rewritten by `rwWs` (it compares full host incl. port); this only costs live-reload, not
+the ability to load and test the build, so it's out of scope for the white-page fix.
+
 ## [1.21.6] - 2026-09-13
 ### Added — a genuine outlier reply now collapses instead of taking over the screen
 
