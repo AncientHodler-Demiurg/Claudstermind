@@ -2,6 +2,49 @@
 
 > Append-only. Non-obvious facts, corrections, tricks that came out of real sessions. Newest at the top. Each entry gets a date + one-line headline + the detail underneath.
 
+## 2026-09-17 — ★ MOVEMENT RECOGNITION HAS ONE HOME NOW: `common/transfers/recognize-movements.ts`
+
+Owner reported a `coin.C_BulkTransmit` paying 4 recipients showing only the gas leg. **The indexer was already
+CORRECT** — all 4 rows were in `transfers`. The bug was display-only, caused by DUPLICATION: "what value moved in
+this event" had two implementations that drifted —
+`TransferExtractorService.recognizeMovements` (the real registry, expands bulk arrays) and
+`TransactionsService.getMovements` (its own hardcoded `TRANSFER|TRANSMIT|TRANSFER_XCHAIN` filter feeding the
+detail page). The ledger and the page disagreed about what a transaction did.
+
+Registry now lives in **`backend/src/common/transfers/recognize-movements.ts`** (pure, no Nest DI — which also
+dodges the TransactionsModule↔SyncModule cycle) and BOTH call sites import it. Adding a recognizer now fixes the
+indexer and the detail page together. Side-effect: the page had also been silently dropping ALL Ouronet DPTF
+token movements; those now show too.
+
+**Two things deliberately NOT unified — do not "simplify" these away:**
+1. `TRANSFER_XCHAIN` is intentionally absent from the registry. A cross-chain tx ALSO emits a plain `TRANSFER`
+   for the same value, so recognising both double-counts the ledger. `getMovements` keeps it as a display-only
+   case so the crossing is still visible.
+2. The registry names the vault side of `URV|STAKE`/`UNSTAKE` with the synthetic `urstoa-vault`; the UI maps that
+   to the real account `c:GjYbBFM0vxMs5FcmnFUW-LFoycd3Ef8wuP28vR6FG3k` for display.
+
+## 2026-09-17 — StoaChain coin BULK capability surface (polled from the deployed module)
+
+| capability | signature | `@event`? |
+|---|---|---|
+| `BULK_TRANSFER_DETAIL` | `sender, receivers:[string], amounts:[decimal]` | ✅ |
+| `BULK_TRANSFER_DETAIL_HYBRID` | `sender, receivers:[[string]], guards, amounts:[[decimal]]` | ✅ (NESTED arrays — amounts at params[3], not [2]) |
+| `BULK_TRANSFER_DETAIL_ANEW` | `sender, receivers, receiver-guards, amounts` | ❌ **NO @event** |
+| `TRANSMIT_BULK` | `sender, total` | ✅ |
+| `TRANSFER_BULK` | `sender, total` | @managed |
+
+**⚠️ OPEN CONTRACT GAP (owner's call):** because `BULK_TRANSFER_DETAIL_ANEW` is not `@event`, `C_BulkTransferAnew`
+and `C_BulkTransmitAnew` emit NO per-recipient detail — only the total. `X_BulkSpend` and both credit helpers
+(`X_BulkCreditExisting`/`X_BulkCreditAnew`) emit nothing either (they call the internal `credit`, not `transfer`).
+No explorer change can recover those recipients; the contract needs `@event` on that defcap. Not yet biting: as of
+2026-09-17 on-chain usage is ONLY `coin.C_BulkTransmit` (61 txs, all success, all carrying the detail event).
+
+**NEVER recognise the `*_BULK` total events** (`TRANSFER_BULK`/`TRANSMIT_BULK`) as movements — they restate the
+sum of the detail legs, so counting them doubles the value moved. Covered by a test.
+
+**Query gotcha:** `substring(code from 'C_Bulk[A-Za-z]+')` also matches Ouronet DPTF bulk functions and gave me a
+false "C_BulkTransfer emits nothing" alarm. Scope coin queries with `code LIKE '%coin.C_Bulk%'`.
+
 ## 2026-09-10 — ★ RETRY-LOOP PACTS: a failing continuation is resubmitted forever against ONE pact id (10k-63k rows)
 
 Owner reported `/pacts/WiLlYjyopMUHJEtwM7dclistgFhxTa4el8aievcwggc` not loading on Kadena. Not an error — the
