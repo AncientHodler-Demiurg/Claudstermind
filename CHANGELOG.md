@@ -4,6 +4,36 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.21.9] - 2026-09-20
+### Added — "Solo chat" on the Pact workspace: hide the editors so the chat fills the screen (per-device)
+
+*"I need a way on the Pact workspace to extend the agent chat box to the whole screen area, effectively
+hiding the other file viewers… but not globally toggable — separate per device. I want a smaller laptop
+to be able to see only the chat box."*
+
+A new toggle button (⛶) in the Pact chat header expands the chat/REPL column to the full workspace,
+hiding the file tree, the editor grid, and the drag-grip. Click it again to restore the split.
+
+**Per-device, deliberately not synced.** Pact has two persistence channels: the layout snapshot
+(`pactStateSnapshot()` → `_ide-state.json`) is shared across every device viewing the workspace, while
+localStorage keys like the chat-column width (`cm.pact.chatw.v1`) are per-device. Solo chat hangs off a
+new per-device key, `cm.pact.chatfull.v1`, and is explicitly kept OUT of the synced snapshot — so
+turning it on for a small laptop leaves a big monitor's split untouched, and vice versa. There's a
+regression test asserting the key never appears in the synced snapshot, because that invariant *is* the
+feature.
+
+Details worth noting:
+- The toggle button lives in the **chat header**, not the editor toolbar — so it stays reachable to turn
+  back off after solo mode has hidden the editor region.
+- The full-width CSS uses `!important` on `.pact-right` to override any inline flex left behind by a
+  custom chat-width drag (`pactApplyChatW`), so the column actually spans the whole area regardless of a
+  previously dragged width.
+- **Mobile Pact already does this** — it's a one-screen-at-a-time app shell that defaults to full-screen
+  chat with a ☰ menu to swap to the tree/editors — so this change is desktop-only; mobile needed nothing.
+
+`app.js` + `styles.css` only (web-only — a reload picks it up, no engine restart). New tests in
+`lib/pactSoloChat.test.mjs`; full suite 2015 passing.
+
 ## [1.21.8] - 2026-09-16
 ### Fixed — a mirrored Vite app's *nested* modules 404'd remotely, so it still white-paged on a phone
 

@@ -8170,6 +8170,31 @@ function pactApplyChatW(rightEl, px) {
   if (px > 0) { rightEl.style.flex = "0 0 " + px + "px"; rightEl.style.minWidth = "0"; }
   else { rightEl.style.flex = ""; rightEl.style.minWidth = ""; }
 }
+// SOLO CHAT — hide the editors so the chat fills the whole Pact workspace. DELIBERATELY PER-DEVICE:
+// stored in localStorage, never in pactStateSnapshot()/_ide-state.json (which is synced across every
+// device viewing this workspace). A smaller laptop can run chat-only while a big monitor keeps the
+// split — "toggling it here doesn't toggle it there". Modelled exactly on PACT_CHAT_W_KEY above, the
+// existing per-device Pact layout preference. The class does the work (see .pact-chat-full in
+// styles.css: it display:none's the tree + editor + drag-grip and lets .pact-right take the width,
+// overriding any inline flex a custom chat-width drag left behind). The toggle button lives in the
+// CHAT header (not the editor toolbar) precisely so it stays reachable when the editors are hidden.
+const PACT_CHAT_FULL_KEY = "cm.pact.chatfull.v1";
+function pactReadChatFull() { try { return localStorage.getItem(PACT_CHAT_FULL_KEY) === "1"; } catch { return false; } }
+function pactApplyChatFull(on) {
+  const ide = document.querySelector(".pact-ide");
+  if (ide) ide.classList.toggle("pact-chat-full", !!on);
+  document.querySelectorAll(".pcx-solo").forEach((b) => {
+    b.classList.toggle("--on", !!on);
+    b.title = on ? "Solo chat is ON — click to show the editors again (this device only)"
+                 : "Solo chat — hide the editors so the chat fills the workspace (this device only)";
+  });
+}
+function pactToggleChatFull() {
+  const on = !pactReadChatFull();
+  try { localStorage.setItem(PACT_CHAT_FULL_KEY, on ? "1" : "0"); } catch {}
+  pactApplyChatFull(on);
+  try { pactChatRelayout(); } catch {}   // let the chat shell re-measure into its new width
+}
 function pactWireChatGrip(grip, rightEl) {
   pactApplyChatW(rightEl, pactReadChatW());
   let dragging = false;
@@ -11417,6 +11442,13 @@ function pactChatRender() {
   modeSel.addEventListener("change", () => { PACT_CHAT.mode = modeSel.value; pactPaintPermission(); });
   const chatCollapse = el("button", { class: "pact-ed-ico pact-collapse pcx-chat" }, ["▾"]);
   chatCollapse.addEventListener("click", () => pactToggleCollapse("chat"));
+  // Per-device "solo chat" toggle (see PACT_CHAT_FULL_KEY). In the chat header so it survives its own
+  // effect — when solo mode hides the editor region, this button (living in the chat) stays clickable
+  // to turn it back off. Desktop only; mobile Pact is already one-screen-at-a-time (defaults to chat).
+  const soloBtn = el("button", { class: "pact-ed-ico pact-solo pcx-solo" + (pactReadChatFull() ? " --on" : ""),
+    title: pactReadChatFull() ? "Solo chat is ON — click to show the editors again (this device only)"
+                              : "Solo chat — hide the editors so the chat fills the workspace (this device only)" }, ["⛶"]);
+  soloBtn.addEventListener("click", () => pactToggleChatFull());
   // A subtle "N tok · P% ctx" readout for the active tab — same formatter/format as the Core pane
   // badge (wsUsageLabel). Hidden until this tab actually has usage data; filled by pactChatPaint.
   // `let`, not const: on DESKTOP this is replaced below by the chat shell package's own context chip
@@ -11468,8 +11500,8 @@ function pactChatRender() {
   const mob = pactIsMobile();   // declared up-front: both the header split (headKids) and the model bar below read it
   const headActions = el("div", { class: "pc-head-actions" }, [add, hist, sync]);
   const headKids = mob
-    ? [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, compactBtn, bmWrap, el("span", { class: "ws-spacer" }, []), headBulb, modelNow, pactModelSel, usageEl, modeSel, chatCollapse]
-    : [el("div", { class: "pc-tabs" }, tabs), el("span", { class: "ws-spacer" }, []), headActions, chatCollapse];
+    ? [el("div", { class: "pc-tabs" }, tabs), add, hist, sync, compactBtn, bmWrap, el("span", { class: "ws-spacer" }, []), headBulb, modelNow, pactModelSel, usageEl, modeSel, soloBtn, chatCollapse]
+    : [el("div", { class: "pc-tabs" }, tabs), el("span", { class: "ws-spacer" }, []), headActions, soloBtn, chatCollapse];
   // ── The model bar (desktop): every model/session control in one place, below the composer.
   // Left → right: model selector · what's ACTUALLY running · context · agent swarm ··· Compact · Bypass.
   // Readouts left, actions right. `modelNow` and `usageEl` are the SAME nodes the existing update paths
@@ -11608,7 +11640,7 @@ function pactChatRender() {
       kind: "pact",
       core: scroll,
       slots: {
-        headExtra: [headActions, chatCollapse],
+        headExtra: [headActions, soloBtn, chatCollapse],
         composeExtra: [imgFileInput, composeExtras],
         // ROLE SUBSTITUTION, not a trailing slot. Each of these IS the package's control for that
         // role, so it is mounted where that role belongs — repo/worktree before 🕐/☆/⇕Full, the model
@@ -11850,7 +11882,7 @@ function viewPact() {
   // a "Changed (N)" tab (see treeEl above), so the editor grid keeps its full vertical space.
   const editorWrap = el("div", { class: "pact-editor-wrap" }, [toolbar, editorEl]);
   const workEl = el("div", { class: "pact-work" }, [editorWrap, rightGrip, rightEl]);
-  const root = el("div", { class: "pact-ide" }, [treeEl, workEl]);
+  const root = el("div", { class: "pact-ide" + (pactReadChatFull() ? " pact-chat-full" : "") }, [treeEl, workEl]);
   PACT_STATE_READY = false;   // suppress persistence until the saved layout has been read + rebuilt
   pactEdInstallFindShortcut();   // global Ctrl/⌘-F/H → in-app find (bound once; self-guards to VIEW==="pact")
   pactEdInit(editorEl);

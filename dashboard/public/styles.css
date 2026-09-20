@@ -2105,6 +2105,16 @@ body.pact-wgrip-dragging .pact-wgrip { pointer-events: auto; }
 .pact-right.pr-term-collapsed .pact-term { flex: 0 0 auto; }
 .pact-right.pr-term-collapsed .pact-terminal { display: none; }
 .pact-right.pr-term-collapsed .pact-term .pact-zone-hd { border-bottom: 0; }
+/* SOLO CHAT (per-device, localStorage cm.pact.chatfull.v1): hide the tree + editor + drag-grip so the
+   chat/REPL column fills the whole workspace — for a screen too small to show both. The `!important`
+   on .pact-right overrides any inline `flex:0 0 <px>px` a custom chat-width drag left on it
+   (pactApplyChatW); min/max-width likewise, so it can actually span the full area. The toggle button
+   (.pcx-solo) lives in the chat header, which stays visible here, so it can be switched back off. */
+.pact-ide.pact-chat-full .pact-tree,
+.pact-ide.pact-chat-full .pact-editor-wrap,
+.pact-ide.pact-chat-full .pact-wgrip { display: none; }
+.pact-ide.pact-chat-full .pact-right { flex: 1 1 100% !important; min-width: 0 !important; max-width: none !important; }
+.pact-ed-ico.pcx-solo.--on { color: var(--acc); background: color-mix(in srgb, var(--acc) 18%, transparent); }
 
 /* Editor Run button (.repl files) + the live REPL terminal. */
 .pact-run-btn { flex: 0 0 auto; padding: 3px 12px; border-radius: 7px; font-size: 12px; font-weight: 700; cursor: pointer;
