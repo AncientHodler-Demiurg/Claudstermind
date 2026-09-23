@@ -4,6 +4,44 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.21.10] - 2026-09-23
+### Fixed — a trivial capability with a multi-line @doc rendered SILVER instead of BRONZE
+
+*"Why is this trivial capability coloured silver when it should be bronze?"*
+
+Pact capability name-medallions are tiered by how much authority the cap carries: a **trivial** cap
+(body is literally `true`) is BRONZE, up through gold for authority/GOV caps. The tier is decided by
+`capCore()`, which strips a cap's `@doc`/`@model` annotations and strings and checks whether what
+remains is exactly `"true"`.
+
+Its string-strip regex was `/"(?:[^"\\]|\\.)*"/g`. The escape branch `\\.` uses `.`, which does **not**
+match a newline — so a `@doc` string written across lines with Pact's `\`-at-end-of-line CONTINUATION
+never matched, and its text was left behind in `core`. `core` was then not `"true"`, the cap missed
+the trivial→bronze branch, and (not being `{C4}`/GOV either) fell through to SILVER. Verified against
+the real `DSP|S2-GOV` in Ouronet's `03_DSP+.pact`: it was the **only** cap in its `{C1} Trivial
+[bronze]` section rendered silver — its single-line-`@doc` and bare-`true` siblings (`DSP|GOV`,
+`SECURE`) already computed to bronze — which is exactly the odd-one-out the user spotted.
+
+Fix: `\\.` → `\\[\s\S]` (match any char incl. newline), so a continuation string is fully consumed.
+Surgical — single-line strings are unaffected.
+
+**Where this logic lives (answer to "is it a package I'd update for the explorer?"): no — it's NOT in
+the shared `stoicsyntax-pact` package** (that only generates the tierless `pact-highlight.js`). The
+tiered medallion engine is **four independent hand-maintained copies**. Both dashboard copies are fixed
+here:
+- `dashboard/public/pact-medallion.js` (the read-only file viewer — what the screenshot showed — and
+  the `stoicmedallion` editor mode)
+- `dashboard/public/pact-medallion-embed.js` (the `stoicpreview` editor mode)
+
+The other two are in the **StoaExplorer repo** (`frontend-stoa` and `frontend-kadena`
+`src/lib/pact-medallion.ts:110`), which carries its own copies — so it has the identical bug and needs
+the same one-line fix applied and built/deployed there. (Longer term these four copies are begging to
+be consolidated into the shared package, but that's a bigger migration, noted not done.)
+
+New test `lib/pactCapCore.test.mjs` extracts the real `capCore` from both dashboard copies and proves a
+multi-line-`@doc` trivial cap now classifies bronze. `app.js`-adjacent static assets only (web-only —
+reload picks it up). Full suite 2021 passing.
+
 ## [1.21.9] - 2026-09-20
 ### Added — "Solo chat" on the Pact workspace: hide the editors so the chat fills the screen (per-device)
 

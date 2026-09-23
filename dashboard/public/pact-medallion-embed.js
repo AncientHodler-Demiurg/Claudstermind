@@ -65,7 +65,9 @@
     var markers = [], mm, re = /;;\s*(\{[A-Za-z]*\d+\})/g;
     while ((mm = re.exec(code))) markers.push({ i: mm.index, m: mm[1] });
     function markerBefore(pos) { var r = null; for (var k = 0; k < markers.length; k++) { if (markers[k].i < pos) r = markers[k].m; else break; } return r; }
-    var capCore = function (body) { return body.replace(/^\(defcap\b/, "(").replace(/"(?:[^"\\]|\\.)*"/g, "").replace(/@\w+\s*(?:\[[^\]]*\])?/g, "").replace(/^\(\s*\S+\s*/, "").replace(/^\([^()]*\)\s*/, "").replace(/\)\s*$/, "").trim(); };
+    // `\\[\s\S]` (not `\\.`): `.` doesn't match `\n`, so a Pact line-continuation `@doc` string (`\` at end-of-line)
+    // failed to strip, leaving doc text in `core` so a trivial cap read non-"true" → SILVER instead of BRONZE.
+    var capCore = function (body) { return body.replace(/^\(defcap\b/, "(").replace(/"(?:[^"\\]|\\[\s\S])*"/g, "").replace(/@\w+\s*(?:\[[^\]]*\])?/g, "").replace(/^\(\s*\S+\s*/, "").replace(/^\([^()]*\)\s*/, "").replace(/\)\s*$/, "").trim(); };
     var recs = [], dc, re2 = /\(defcap\s+([A-Za-z0-9_|:>\-]+)/g;
     while ((dc = re2.exec(code))) {
       var nm = dc[1].split(":")[0];

@@ -61,7 +61,11 @@
   function capCore(body) {
     return body
       .replace(/^\(defcap\b/, "(")
-      .replace(/"(?:[^"\\]|\\.)*"/g, "")            // blank out strings (e.g. @doc text)
+      .replace(/"(?:[^"\\]|\\[\s\S])*"/g, "")       // blank out strings (e.g. @doc text). `\\[\s\S]` not `\\.`:
+                                                    // Pact line-continuation strings put `\` at end-of-line, and
+                                                    // `.` doesn't match `\n`, so `\\.` failed to consume a multi-line
+                                                    // @doc — leaving its text in `core`, so `core !== "true"` and a
+                                                    // trivial cap fell through to SILVER instead of BRONZE.
       .replace(/@\w+\s*(?:\[[^\]]*\])?/g, "")       // drop @doc / @event / @managed / @model [...]
       .replace(/^\(\s*\S+\s*/, "")                  // drop "(" + cap NAME
       .replace(/^\([^()]*\)\s*/, "")                // drop the arg list "(...)"
