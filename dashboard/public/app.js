@@ -6319,7 +6319,19 @@ function pactEdRenderGroup(g) {
       ? "Export this doc as a paginated PDF — RENDERED (colours + tables). Pick “Save as PDF”. (Use this, not Ctrl+P.)"
       : "Export this file's read-only view as a paginated PDF (pick “Save as PDF” in the dialog)" }, ["🖨"]);
     pdf.addEventListener("click", (e) => { e.stopPropagation(); pactExportPdf(g); });
+    // Copy the ENTIRE file text in one click — no scrolling a thousand-row deploy pipeline. Uses the same
+    // `active.content` the PDF export reads, so it's the whole file regardless of scroll position. (In edit
+    // mode content is whatever was last synced to the model; the target case is the read-only deploy file.)
+    const copyAll = el("button", { class: "pact-ed-ico", title: "Copy the WHOLE file to the clipboard — every line, no scrolling" }, ["⧉"]);
+    copyAll.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const text = String(active.content || "");
+      const done = (ok) => { copyAll.textContent = ok ? "✓" : "✗"; copyAll.classList.toggle("--on", ok); setTimeout(() => { copyAll.textContent = "⧉"; copyAll.classList.remove("--on"); }, 1200); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => done(true), () => wsCopyFallback(text, done));
+      else wsCopyFallback(text, done);
+    });
     right.unshift(pdf);
+    right.unshift(copyAll);
   }
   if (PACT_ED.groups.length > 1) {
     const closeG = el("button", { class: "pact-ed-ico", title: "Close this editor box" }, ["×"]);

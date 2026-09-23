@@ -4,6 +4,23 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.21.11] - 2026-09-23
+### Added — a "copy the whole file" button in the Pact viewer
+
+*"The Pact agent generates deploy pipelines — whole .pact files with many modules/interfaces/tables I
+have to copy and deploy. There's no button to copy ALL the text; I don't want to scroll thousands of
+rows."*
+
+The read-only viewer already let you click a line number to copy one module/interface; it had no
+copy-everything. Added a ⧉ button to each box's control row (right next to the 🖨 PDF export, same
+`.pact`/`.repl`/`.md` gate) that copies the entire file to the clipboard in one click. It reads the same
+`active.content` the PDF export uses, so it grabs the whole file regardless of scroll position — no
+selecting, no scrolling. Flashes ✓ on success, with the execCommand fallback for browsers without the
+async clipboard API. (One caveat: in edit mode it copies the last content synced to the model; the
+target case — a read-only generated deploy file — is exact.)
+
+`app.js` only (web-only — reload picks it up). New test `lib/pactCopyAll.test.mjs`.
+
 ## [1.21.10] - 2026-09-23
 ### Fixed — a trivial capability with a multi-line @doc rendered SILVER instead of BRONZE
 
