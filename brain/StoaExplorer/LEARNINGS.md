@@ -2,6 +2,43 @@
 
 > Append-only. Non-obvious facts, corrections, tricks that came out of real sessions. Newest at the top. Each entry gets a date + one-line headline + the detail underneath.
 
+## 2026-09-28 — ★ The explorer now IS a public Chainweb Pact gateway (reads + writes)
+
+`/chainweb/:apiVersion/:networkId/chain/:chainId/pact/{api/v1/local|send|poll|listen, spv}` on BOTH backends
+(`gateway.controller.ts` + `KadenaService.pactPassthrough`/`spvPassthrough`). Mounted at the node's OWN path
+shape, NOT under `/api/v1`, so a `@kadena/client` consumer sets `createClient()` to the explorer origin and
+changes nothing else. Live: `https://denascan.ancientholdings.eu` (Kadena) — verified a real balance read
+(4.74439752 KDA, gas 15) and CORS preflight 204 with `access-control-allow-origin: *`.
+
+**WHY IT EXISTS — three problems, one fix.** Our Kadena node (a) has a dynamic IP behind DuckDNS, (b) speaks
+plain HTTP so an HTTPS page refuses it as mixed content, and (c) **cannot be reached from inside its own LAN**
+because the router will not hairpin traffic back to its own public IP (`bytales.duckdns.org:31849` TIMES OUT from
+the node host itself, while `localhost:31849` and an off-LAN host both return 200). The explorer already had a
+stable public HTTPS origin with permissive CORS and already talked to the node.
+
+**★ THERE IS NO PUBLIC KADENA PACT GATEWAY — STOP LOOKING.** `api.chainweb.com` is an **authoritative NXDOMAIN**
+(asked `chainweb.com`'s own AWS nameserver directly, `aa` flag set — the domain exists, that host does not).
+Every reachable public Kadena node serves the **P2P API only**: the four live `*.chainweb-community.org:443`
+peers our node is connected to answer `/chainweb/0.0/mainnet01/cut` with 200 but `.../pact/api/v1/local` with
+404. `api.chainweb.io` resolves but TLS-SNI-mismatches; tatum/nownodes/ecko are key-gated 404s.
+
+**Guards (it is a PUBLIC relay — these matter more than the happy path):**
+- Endpoint **allow-list**, never a wildcard proxy. A blanket passthrough would expose the node's backup API (it
+  runs `--enable-backup-api`) and peer/config surface. Verified live: `make-backup` and `config` → 404.
+- `:networkId`/`:apiVersion` are **validated, not honoured**. Both backends run this code, each proxying its own
+  node, so a `mainnet01` request hitting the Stoa deployment is refused rather than quietly answered from the
+  wrong chain. Verified live: `/chainweb/0.0/stoa/...` on the Kadena backend → 404.
+- Chain id must be `^\d+$`. `Number('')` is 0 and `Number('1e3')` is 1000, so the obvious
+  `Number()`+`isInteger` check let both through — caught by the spec that now pins it.
+- Bodies relayed **verbatim**; a signed command's bytes must reach the node exactly as signed or the signature
+  stops verifying. `validateStatus: () => true` so the node's own error bodies reach the caller (proved: an
+  empty `/send` returns the node's real `Error in $.cmds: parsing NonEmpty failed`).
+
+**GOTCHA — the backend alone is not enough.** The frontend nginx only proxied `/api`, `/socket.io/`, `/health`;
+`/chainweb/*` fell through to `location /` and returned the SPA's **index.html**, which a Pact client reports as
+a parse error rather than a routing problem. Added `location /chainweb/` in `docker/production/nginx.kadena.conf`
+with a 300s read timeout (`/listen` blocks until a tx is mined). Deploy BOTH kadena-backend and kadena-frontend.
+
 ## 2026-09-17 — ★ MOVEMENT RECOGNITION HAS ONE HOME NOW: `common/transfers/recognize-movements.ts`
 
 Owner reported a `coin.C_BulkTransmit` paying 4 recipients showing only the gas leg. **The indexer was already
