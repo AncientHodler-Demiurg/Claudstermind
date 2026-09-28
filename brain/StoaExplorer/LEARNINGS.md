@@ -2,6 +2,33 @@
 
 > Append-only. Non-obvious facts, corrections, tricks that came out of real sessions. Newest at the top. Each entry gets a date + one-line headline + the detail underneath.
 
+## 2026-09-28 — A PASSTHROUGH THAT DROPS THE QUERY STRING IS NOT A PASSTHROUGH
+
+Shipped the Chainweb gateway rebuilding the upstream URL from its path params — and silently dropping the query
+string. `/local`'s `?signatureVerification=false&preflight=false` therefore never reached the node, signature
+checking stayed on, and **every dry-run simulation failed** with `Metadata validation failed: The signature at
+position 0 is invalid`. That blocks 100% of sends, because a pre-sign simulation by definition has no signature
+yet. Proved with a byte-identical body straight at the node: **HTTP 200 + JSON Pact envelope WITH the flag,
+HTTP 400 + text/plain WITHOUT it.**
+
+Two more transparency defects the same report exposed:
+- **Status was swallowed.** The controller `return`ed the body, so Nest stamped its default **201 on every
+  reply** — an upstream 400 reached the caller looking like success. `@kadena/client` reads the status.
+- **Content type was not mirrored.** Chainweb answers validation failures as `text/plain`, not JSON.
+
+Fix: `relay()` now forwards `params: query` and returns `{status, contentType, data}`, and the controller writes
+all three through `@Res()`. Tests pin both regressions.
+
+**DECLINED, deliberately:** the report asked for errors to always be JSON. Re-wrapping Chainweb's `text/plain`
+validation errors would make the gateway behave DIFFERENTLY from the node it fronts, and `@kadena/client` is
+written against the real node — "helpful" normalisation could break error handling that works direct. With the
+status now correct a caller distinguishes failure without parsing the body at all. If a future consumer really
+needs JSON errors, make it an explicit opt-in, not the default.
+
+**The general lesson:** for any proxy claiming transparency, the contract is method + path + **query** + headers
++ body **and** the reply's status + content type. Dropping any one of them produces a failure that looks like
+the upstream's fault. Test it by hitting upstream directly with the identical request and diffing.
+
 ## 2026-09-28 — ★ The explorer now IS a public Chainweb Pact gateway (reads + writes)
 
 `/chainweb/:apiVersion/:networkId/chain/:chainId/pact/{api/v1/local|send|poll|listen, spv}` on BOTH backends
