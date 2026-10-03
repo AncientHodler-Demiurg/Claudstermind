@@ -7624,6 +7624,22 @@ async function pactTreeRefresh() {
     pactEdLoadWorktrees();   // pick up any newly-created/removed worktree so box selectors stay current
   } finally { PACT_TREE_REFRESHING = false; }
 }
+// Live tree updates for AGENT edits: when the agent creates/moves/deletes files mid-turn, the tree
+// should reflect it without a manual reload. Debounced so a turn that writes a dozen files re-scans
+// ONCE (~1.2s after the last file-mutating tool), not a dozen times; the turn `result` handler still
+// does one authoritative refresh at the end. pactTreeRefresh preserves which folders are open.
+let PACT_TREE_REFRESH_T = null;
+function pactTreeRefreshSoon(delayMs = 1200) {
+  if (PACT_TREE_REFRESH_T) clearTimeout(PACT_TREE_REFRESH_T);
+  PACT_TREE_REFRESH_T = setTimeout(() => { PACT_TREE_REFRESH_T = null; pactTreeRefresh(); }, delayMs);
+}
+// Tools that change the FILE SET (not just content): Write creates files, Bash can rm/mv/mkdir/touch.
+// Edit/MultiEdit only alter an existing file's content — the change-colouring already handles those, and
+// re-scanning the whole tree for a content edit would be wasted work. Read/Grep/Glob never mutate.
+const PACT_FS_TOOLS = new Set(["Write", "Bash"]);
+function pactToolsTouchFs(tools) {
+  return Array.isArray(tools) && tools.some((t) => PACT_FS_TOOLS.has((t && (t.name || t)) || ""));
+}
 // Re-point the file tree + Changed panel at the ACTIVE box's worktree — but only when it actually changed,
 // so ordinary box/tab focus within one worktree doesn't re-scan the tree. pactTreeRefresh preserves the
 // expanded folders. A small "⌥<name>" chip in the tree header shows when you're browsing a non-main checkout.
@@ -9151,7 +9167,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
     case "user": if (!(d.by && d.by === PACT_CHAT.conn.id)) { t._turnStartedAt = Date.now(); t.msgs.push({ role: "user", text: d.text || "", images: d.images || [], at: d.at || Date.now(), workspaceId: d.workspaceId || PACT_WORKSPACE_ID }); pactChatPaint(t); } return;
     case "assistant_delta": if (!t._turnStartedAt) t._turnStartedAt = Date.now(); t.live = (t.live || "") + (d.text || ""); pactChatPaintLive(t); return;
     case "assistant": t.live = ""; t._pendingText = null; t._pendingImages = null; t.msgs.push({ role: "assistant", text: d.text || "", at: (typeof d.at === "number" ? d.at : undefined) }); pactChatPaint(t); return;
-    case "tool_use": if (!t._turnStartedAt) t._turnStartedAt = Date.now(); t.live = ""; t.msgs.push({ kind: "tool_use", tools: d.tools || [] }); pactChatPaint(t); return;
+    case "tool_use": if (!t._turnStartedAt) t._turnStartedAt = Date.now(); t.live = ""; t.msgs.push({ kind: "tool_use", tools: d.tools || [] }); if (pactToolsTouchFs(d.tools)) pactTreeRefreshSoon(); pactChatPaint(t); return;
     // A tool's OUTPUT (e.g. a `.repl` test's stdout the agent ran via Bash) — show it as its own collapsed row
     // so REPL/test results are finally visible in the reply view. Only when there's actual output (skip the
     // empty confirmations from Edit/Write so they don't clutter). Live-only, like tool_use (never persisted).
@@ -9173,7 +9189,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       wsPost("control", { action: "contextUsage", args: { sessionKey: t.key } });
       wsPost("control", { action: "usageLimits" });   // account-wide plan usage moves each turn — refresh the badge
       t._lastResultAt = Date.now();   // a deepwork/background phase can follow a "result" — see the heartbeat
-      pactChatPaint(t); pactEdCheckAgentEdits(); pactEdCheckChangedFiles(); pactEdLoadWorktrees(); pactEdRefreshDiffstats();   // a turn may have created/merged/removed a worktree — refresh + reconcile bindings + the Acknowledge diffstat
+      pactChatPaint(t); pactEdCheckAgentEdits(); pactEdCheckChangedFiles(); pactEdLoadWorktrees(); pactEdRefreshDiffstats(); pactTreeRefresh();   // a turn may have created/merged/removed files or a worktree — re-scan the tree (new files appear, deleted vanish), reconcile bindings + the Acknowledge diffstat
       pactChatDrainQueue(t);   // turn done → release anything typed mid-turn, merged into one prompt
       pactOutboxFlush();       // …and any queue recovered from a deploy/reload that was waiting on this turn
       return;

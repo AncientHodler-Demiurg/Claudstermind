@@ -4,6 +4,30 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.21.12] - 2026-10-03
+### Fixed — the Pact tree now shows agent-created files live (and drops deleted ones) without a reload
+
+*"Whenever a new file is created by the agent in the Pact workspace, I have to hit reload for it to
+appear in the tree. Can't I see it the moment it appears and un-see it the moment it's deleted?"*
+
+`pactTreeRefresh()` already existed and was built for exactly this — it re-scans the tree while
+preserving which folders you have open — but it was only wired to box/worktree switches, never to agent
+file activity. The turn-end handler refreshed the change *colours* (`pactEdCheckChangedFiles`) but never
+re-listed the tree, so a newly-created file stayed invisible and a deleted one lingered until a manual
+reload.
+
+Two hooks added:
+- **Mid-turn, debounced:** when the agent runs a file-mutating tool (`Write` / `Bash` — the ones that
+  create/move/delete, not content-only `Edit` or read-only `Read`/`Grep`), a tree re-scan is scheduled
+  ~1.2s later. Debounced so a turn that writes a dozen files re-scans **once**, not a dozen times — a new
+  file appears (and a deleted one disappears) within a second or two of the write, no reload.
+- **At turn end, authoritative:** `pactTreeRefresh()` now runs on `result` alongside the existing
+  change-list/diffstat/worktree refreshes, so the tree is definitively correct once the turn completes.
+
+Both preserve your expanded folders (re-list root, re-expand what was open). New tests in
+`lib/pactTreeLive.test.mjs` (the pure tool classifier + wiring presence). `app.js` only — web-only,
+reload picks it up. Full suite 2028 passing.
+
 ## [1.21.11] - 2026-09-23
 ### Added — a "copy the whole file" button in the Pact viewer
 
