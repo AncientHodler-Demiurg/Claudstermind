@@ -1895,3 +1895,71 @@ Currently `6357351` per the README. It is not configurable via env. Changing it 
 ## 2026-04-22 — Commits land in the frontend's `version.ts` even for backend-only changes
 
 Despite the backend having no separate version file, the cluster-wide "commit = version bump + changelog entry" convention means a backend-only change (new endpoint, sync fix) still bumps `frontend/src/constants/version.ts` and appends a changelog entry describing the effect. User visibility is through the UI footer + `/update-logs` page, which is why the frontend is the version source of truth. Docs-only commits (README, CLAUDE.md, Claudstermind) are exempt.
+
+## 2026-10-15 — Defpact state must come from the node's `continuation` block, and a FAILED step has none
+
+The MultiStep views were built on values the indexer *inferred*, and every
+inference was wrong in a way that hid exactly the pacts worth looking at:
+
+- `step` was `payload.cont ? 1 : 0`, so a 3-step pact's steps 1 and 2 both
+  landed on 1 and `COUNT(DISTINCT step)` reported "1 step" for a finished pact.
+- a pact's own step-0 `exec` was linked to its pact id ONLY if it emitted
+  `X_YIELD` — which only cross-chain transfers do — so a same-chain defpact
+  that stopped after step 0 had a NULL `pact_id` and was invisible in the list
+  and 404'd on the detail page.
+
+Authoritative sources, in order of preference:
+
+1. `result.continuation` from `/poll` or the block outputs — carries `pactId`,
+   the real `step`, `stepCount`, `stepHasRollback`, `continuation.def`,
+   `continuation.args` and `yield`. **Only present for a step that RAN.**
+2. For a FAILED step the node returns `continuation: null`, so everything must
+   come from the COMMAND: `cmd.payload.cont.step` is the step being executed
+   (verified: block 658288 chain 0, `QdcLfLkI…`, where `cmd.cont.step == 1` and
+   the successful attempt's `continuation.step == 1`), and `cont.rollback` says
+   whether the rollback branch was asked for.
+
+Consequences worth remembering:
+
+- A /poll-based backfill CANNOT see failed attempts. They need the block
+  payload (`/header/<hash>` with `Accept: application/json;blockheader-encoding=object`
+  → `payloadHash` → `/payload/<ph>/outputs`, base64**url** unpadded).
+- Progress must count DISTINCT *successful* steps. Once failures are linked,
+  counting attempted steps reports a pact whose last step only ever failed as
+  Complete.
+- Completion ranks above "failed" in the UI: a step can fail, be re-submitted
+  and succeed, and the pact still finishes.
+- Retries of one step share a block height, so ordering attempts by height
+  alone is non-deterministic — tiebreak on `creation_time`, then request key.
+
+## 2026-10-15 — The indexer stored `result.data` only, so EVERY failed transaction had no reason
+
+`sync.service.ts` wrote `result: result?.result?.data || null`. A failed Pact
+transaction has no `data` — its detail is `result.error.{message,type,...}` —
+so all 21 failures in the Stoa DB had `result = NULL` and the Transaction page
+rendered the literal string "null". Now persisted in `transactions.error`
+(jsonb) and rendered as the leading line of the Result tab. Pact errors are
+`{message, type, callStack, info}`; `message` is the human part.
+
+## 2026-10-15 — `continuation.yield.data` is what an unfinished pact is HOLDING
+
+Keep the whole continuation block (`transactions.pact_continuation` jsonb), not
+just scalars: `yield.data` is the value a step handed forward, and in an
+unfinished pact that IS the stranded amount (e.g. `LhLzZjhv…` step 0 yields the
+frozen-LP state). `yield.provenance.targetChainId` says which chain the next
+step must run on. Pact wraps numbers for precision — `{decimal: "41677.0417…"}`,
+`{int: 7}` — so render through a shape-aware formatter and never through a JS
+number; the LP decimals are 28 digits.
+
+## 2026-10-15 — Do NOT `git fetch` in /opt/stoa-explorer before calling deploy.sh
+
+`deploy.sh` does its own `git pull --ff-only`. Running a bare `git fetch origin`
+first leaves FETCH_HEAD with several branches marked for-merge, and the
+script's pull then dies with "fatal: Cannot fast-forward to multiple branches"
+— it aborts BEFORE touching anything, so nothing breaks, but the deploy is a
+no-op that looks like a failure. Just call `deploy.sh <target>`; it pulls.
+
+## 2026-10-15 — `backend/src/modules/sync/sync.service.ts` is treated as BINARY by grep
+
+It contains Unicode that makes plain `grep` report "binary file matches" and
+print nothing, which silently breaks searches. Always use `/bin/grep -a` on it.

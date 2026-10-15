@@ -2,6 +2,33 @@
 
 > One paragraph per meaningful session. Newest at the top. Not a commit log (that's `frontend/src/constants/version.ts`'s `CHANGELOG`) — this is the higher-level "what happened in this session and what did we learn".
 
+## 2026-10-15 — MultiStep view rebuilt on node-sourced defpact state; failures finally have a reason
+
+Owner reported the MultiStep tab could not do its job: the pact-id link 404'd on an unfinished pact that
+plainly exists on chain, the detail page "is basically only step 0", and a "5 attempts" badge carried no
+detail — "the explorer must show everything related to a multistep, how each step was executed, how each
+step was failed, how many times". All three had one root cause in `sync.service.ts`: defpact state was
+INFERRED rather than read from the node's `continuation` block. `step` was `payload.cont ? 1 : 0` (so a
+3-step pact collapsed onto one step) and a pact's own step-0 `exec` was linked only if it emitted `X_YIELD`
+— cross-chain only — so the unfinished same-chain pacts, the only ones worth hunting, had a NULL `pact_id`.
+
+Fixed at ingest: `pact_step/_step_count/_has_rollback/_def` now come from `result.continuation`, with
+`cmd.payload.cont.step` as the authoritative source for a FAILED step (the node returns
+`continuation: null` when a step fails, which is also why the earlier /poll backfill had silently skipped
+every failure). Two further gaps found while in there and closed: the indexer stored only `result.data`, so
+all 21 failed transactions in the DB had NO error — the Transaction page rendered the literal "null" — now
+kept in `transactions.error`; and the whole continuation block is kept in `pact_continuation`, because
+`yield.data` is what an unfinished pact is still HOLDING (and `continuation.args` is how it was started),
+neither of which existed anywhere in the explorer.
+
+Shipped to production in four commits (`ace54b3`, `8ce63b1`, `c767c0d`, `93cf808`) with 2,456 continuations
+and 21 failure errors backfilled from the node. `getPact` now renders a card per DECLARED step (pending ones
+included), every attempt in full (status, rollback branch, block, gas, payer, events, transfers, error text),
+a per-step progress strip, and attempt/failure/gas totals; the list counts only SUCCESSFUL steps as progress
+and ranks completion above `failed`. Verified live: `QdcLfLkI…` = 3 steps / 6 attempts / 3 failed /
+Complete, `LhLzZjhv…` = 200 with `pendingSteps [1,2]` where it used to 404. Backend tests 116/116 in the
+touched modules. Kadena explorer has the same code but was NOT deployed — its backfill is a 217M-row job.
+
 ## 2026-09-05 — KB write-back for a ~4-week undocumented streak (2026-08-11 → 2026-09-05): whale pagination, feed pagination, Contract Code API, StoicSyntax medallion viewer
 
 Load-cluster session found STATE.md and LOG.md both stalled at 2026-08-11 while HEAD had moved to `60856a9`
