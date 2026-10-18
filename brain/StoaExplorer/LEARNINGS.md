@@ -1963,3 +1963,47 @@ no-op that looks like a failure. Just call `deploy.sh <target>`; it pulls.
 
 It contains Unicode that makes plain `grep` report "binary file matches" and
 print nothing, which silently breaks searches. Always use `/bin/grep -a` on it.
+
+## 2026-10-18 — A literal hostname in `proxy_pass` strands a frontend after any backend redeploy
+
+ouroscan served its SPA fine but returned **502 on every API call** while the
+backend was healthy and reachable. nginx resolves a LITERAL hostname in
+`proxy_pass http://backend:3000;` exactly **once**, at config-load time, and
+caches that address for the life of the worker. A blue-green backend deploy
+gives the new container a new IP, and any frontend container that was NOT
+restarted alongside it keeps dialling the dead address forever.
+
+Signature, from `docker logs <frontend>`:
+
+```
+connect() failed (111: Connection refused) while connecting to upstream,
+upstream: "http://172.25.0.9:3000/api/v1/ouronet"
+```
+
+…while `docker exec <frontend> getent hosts backend` answers `172.25.0.7`.
+The shell does a fresh lookup; nginx does not. If those two disagree, this is
+the bug — do not go hunting in the backend.
+
+Why Ouronet specifically: `deploy.sh frontend-ouronet` is a **separate target**
+from `deploy.sh frontend`, so a `deploy.sh backend` run swaps the backend and
+leaves that container (and its stale address) untouched. Stoa and Kadena were
+safe only by accident — they happen to get redeployed alongside the backend.
+
+- **Instant recovery:** `docker exec <frontend> nginx -s reload` (re-resolves).
+- **Permanent fix (shipped `f844317`):** resolver + variable form, which
+  re-resolves per request:
+  ```nginx
+  resolver 127.0.0.11 valid=10s;   # docker embedded DNS
+  set $explorer_backend backend;
+  proxy_pass http://$explorer_backend:3000$request_uri;
+  ```
+  `$request_uri` must be explicit: with a variable upstream nginx no longer
+  applies the location-prefix rewrite, so without it the path is lost.
+  All six literal upstreams across `nginx.conf`, `nginx.kadena.conf` and
+  `nginx.ouronet.conf` now use this. `/kadena-admin` already did, for the
+  different reason that a literal stops the frontend booting when the Kadena
+  stack is absent.
+
+Corollary worth remembering: a frontend's `/health` probe hitting only `/`
+stays green through a total API outage. "Container healthy" says nothing about
+whether its proxied upstream is reachable.
