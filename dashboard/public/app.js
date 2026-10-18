@@ -9390,7 +9390,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
       if (Array.isArray(t.msgs)) t.msgs.push({ kind: "keySwitch", from: d.from || null, to: d.to || null, at: d.at });
       t.keyName = d.to || null;
       pactChatPaint(t);
-      pactChatFlashNote("♻ Switched to key “" + (d.to || "?") + "” — “" + (d.from || "previous") + "” hit its usage limit");
+      pactChatFlashNote("♻ Switched to key “" + (d.to || "?") + "” — “" + (d.from || "previous") + "” hit its usage limit, resending your last message…");
       return;
     // Manual wrap, part 1: the read-only preview the confirm dialog is waiting on.
     case "wrapPreview": pactFillWrapPreview(t, d.preview); return;
@@ -16351,7 +16351,7 @@ function viewWorkspace() {
         for (const p of targets) {
           if (Array.isArray(p.transcript)) p.transcript.push({ kind: "keySwitch", from: data.from || null, to: data.to || null, at: data.at });
           p.keyName = data.to || null;
-          logActivity(p, "♻ Switched to key “" + (data.to || "?") + "” — “" + (data.from || "previous") + "” hit its usage limit");
+          logActivity(p, "♻ Switched to key “" + (data.to || "?") + "” — “" + (data.from || "previous") + "” hit its usage limit, resending your last message…");
           schedulePaint(p);
         }
         return;

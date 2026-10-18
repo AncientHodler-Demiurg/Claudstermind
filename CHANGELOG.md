@@ -4,6 +4,46 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.22.2] - 2026-10-18
+### Added — true seamless failover: the engine now resends your last message automatically, on the new key
+
+*"my hope was that the system automatically detects a usage limit message, automatically switches to
+the failover token and automatically captures the last prompt so that it would be seamless for me.
+Isnt this something that you can build?"*
+
+Yes — 1.22.1 only built two of the three pieces (detect + switch); the user still had to notice the
+limit message and retype. This release adds the third: `ClaudeSession.retryLastPrompt()`
+(`lib/claudeSession.mjs`) remembers the exact text/images of the most recent `prompt()` call
+(`this._lastPrompt`), and `WorkspaceManager._scheduleKeyRetry()` (`lib/workspace.mjs`) calls it
+automatically once the turn that hit the limit has fully settled — so the whole sequence (your message
+→ limit notice → automatic key switch → automatic resend → the real answer) now happens with **zero
+action from the user** beyond sending the original message once.
+
+Nothing is hidden: the limit-notice reply, the green key-switch marker, and the real answer that
+follows are all visible in the conversation, in order — transparent, matching how this codebase has
+always treated compaction/wrap/turn-failure (a durable mark, never a silent swap). The retry resends
+through the SDK's own input stream, not through a second persisted user turn, so there's no duplicate
+prompt bubble.
+
+Two deliberate safety bounds, because an automatic resend loop is exactly the kind of thing that must
+never run away:
+- **Excluded for a genuine thrown/stream exception** (`ev.kind === "error"`, as opposed to the limit
+  notice arriving as an ordinary `assistant` reply or an `isError: true` `result`): that leaves the
+  SESSION itself ended, not just the turn, and `retryLastPrompt()` is a deliberate no-op on an ended
+  session — reviving it needs the engine's full `_prompt()` machinery (repo/worktree/model), which
+  `_onEvent` doesn't have on hand. That case still gets the key marked exhausted and reconciled; it just
+  needs your next typed message to actually spawn the fresh session, same as before this feature existed.
+- **Capped at the number of configured keys** (`_scheduleKeyRetry`, with a per-session `_keyRetryCount`
+  that resets to 0 on the first genuinely successful reply): a day where every key is exhausted retries
+  at most once per key, not forever.
+
+New tests: `lib/claudeSession.test.mjs` (+2 — `retryLastPrompt()`'s own contract), `lib/workspace.test.mjs`
+(+4 — end-to-end seamless retry for both the assistant-text and result-isError shapes, the exception
+exclusion, and the retry cap under a permanently-exhausted account). Full suite: 2068 passing.
+
+**Deploy note: `lib/`-touching (claudeSession.mjs, workspace.mjs) — needs an engine restart.**
+`chat-shell.js`/`app.js` copy tweaks are web-only.
+
 ## [1.22.1] - 2026-10-18
 ### Fixed — the mid-turn failover detector was silently dead for the one scenario it exists for; plus a live "which key is this on" badge
 

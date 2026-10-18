@@ -1158,7 +1158,7 @@
     if (o.kind === "keySwitch") {
       var ksLabel = "♻ KEY SWITCHED — " + (o.from ? (o.from + " → ") : "") + (o.to || "?") + " (usage limit reached)";
       if (o.at) { var kd = new Date(o.at); if (!isNaN(kd.getTime())) ksLabel += "  ·  " + kd.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
-      return el("div", { class: "mark --keyswitch", title: "This conversation automatically moved from the " + (o.from || "previous") + " key to " + (o.to || "the next") + " key because the previous one hit its usage limit. No restart, no lost context." },
+      return el("div", { class: "mark --keyswitch", title: "This conversation automatically moved from the " + (o.from || "previous") + " key to " + (o.to || "the next") + " key because the previous one hit its usage limit, and your last message was automatically resent on the new key — no restart, no lost context, nothing to retype." },
         [el("span", { class: "mlbl" }, [ksLabel])]);
     }
     var isWrap = o.kind === "wrap";
