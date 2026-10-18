@@ -4,6 +4,57 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.22.4] - 2026-10-18
+### Fixed — CRITICAL: a live incident where key failover ping-ponged between two exhausted keys indefinitely, burning real turns
+
+*"i think if both usages are reached it goes into on infinite loop, can you check? also as you see the
+engine is switching like crazy, when clearly bytales has usage now. can you check what the hell is going
+on?"* — with a screenshot showing dozens of "KEY SWITCHED — awp → Bytales" / "Bytales → awp" markers,
+seconds apart, each paired with a fresh "You've hit your session limit" reply.
+
+**Root cause, confirmed in the code:** `_recordKeyUsage` fires automatically after EVERY turn (an
+"auto-record this key's plan usage" call already in `_onEvent`), racing against `_markKeyExhausted` —
+which the mid-turn usage-limit detector (shipped in 1.22.1/1.22.2) calls SYNCHRONOUSLY, moments earlier
+in the very same turn, from the actual observed "you've hit your limit" reply. The old `_recordKeyUsage`
+unconditionally wrote `exhaustedUntil: ex.exhausted ? ex.until : null` — and for a `claude setup-token`-
+minted key (confirmed: every key on this machine), the SDK's `rate_limits_available` is always `false`
+and `rate_limits` is always `null`, so `usageExhaustion(null)` is always `{exhausted:false}` — meaning
+this call **always cleared the mark `_markKeyExhausted` had just set, within the same turn.** The next
+automatic retry (1.22.2's seamless-retry feature) then saw an apparently-healthy key, tried it again, hit
+the same real limit, got marked exhausted again, got cleared again — forever, alternating between
+whichever key was tried most recently (its OWN fresh mark always looked "later" than the other key's
+older one, so the fallback picker's "pick whichever frees soonest" logic kept flipping its choice).
+
+**The auto-retry feature (1.22.2) is what turned this pre-existing data race into an active, automatic,
+unattended loop** — without it, a human would see one limit-notice reply and stop; with it, the engine
+kept re-triggering the race itself, dozens of times a minute, each one a real billed API call.
+
+Three fixes, in `lib/workspace.mjs`:
+1. **`_recordKeyUsage`** no longer lets an "unavailable" usage report (no real data — true for every key
+   on this box) touch `exhaustedUntil` at all; it only trusts REAL, available data to move the verdict,
+   preserving whatever `_markKeyExhausted` already determined from the actual conversation.
+2. **A new circuit breaker in `_prompt()`** (`_allKeysExhausted()`): when every configured key is
+   CONFIRMED exhausted, a prompt is refused immediately — before any subprocess spawns, before any real
+   API call happens — with a clear "every configured Claude key is currently rate-limited, resets HH:MM"
+   error. This sits at the single entry point every prompt source goes through (a human, the seamless
+   retry, the auto-continue loop, or any multi-agent workflow sending prompts), so it stops the runaway
+   loop regardless of which of those was actually driving the repeated sends.
+3. **`_reconcileKeyFailover`** no longer performs a final, purely cosmetic switch once both keys are
+   confirmed exhausted (previously: still picked "whichever looks marginally sooner" between two equally
+   dead options, producing one extra pointless A→B→A marker even though the circuit breaker above already
+   stops any further real attempt).
+
+New tests pinning the EXACT failure shape (a mocked `getUsageLimits()` that behaves like a real
+`setup-token` key — `rate_limits_available: false`, always): the clobber no longer happens, the ping-pong
+is bounded (exactly one real attempt per configured key, exactly one switch marker — not dozens), the
+circuit breaker refuses with zero subprocesses spawned once confirmed, and does NOT block the ordinary
+case (keys configured but not yet known-exhausted) or a legacy single-token setup. Full suite: 2078
+passing.
+
+**Deploy note: `lib/`-touching (workspace.mjs) — needs an engine restart, urgently.** Until restarted,
+the old 1.22.2/1.22.3 code remains live and this exact loop can recur if both configured keys run dry at
+the same time.
+
 ## [1.22.3] - 2026-10-18
 ### Added — a per-reply "which key answered this" badge; fixed a real key-attribution bug it caught
 
