@@ -8455,7 +8455,7 @@ function pactTranscriptToMsgs(transcript) {
   for (const m of Array.isArray(transcript) ? transcript : []) {
     if (!m) continue;
     if (m.role === "user") out.push({ role: "user", text: m.text || "", images: m.images || (m.image ? [m.image] : []), workspaceId: m.workspaceId || PACT_WORKSPACE_ID, at: at(m), worktree: (typeof m.worktree === "string" && m.worktree) ? m.worktree : undefined });
-    else if (m.role === "assistant") out.push({ role: "assistant", text: m.text || "", elapsedMs: (typeof m.durationMs === "number" ? m.durationMs : (typeof m.elapsedMs === "number" ? m.elapsedMs : undefined)), at: at(m) });
+    else if (m.role === "assistant") out.push({ role: "assistant", text: m.text || "", elapsedMs: (typeof m.durationMs === "number" ? m.durationMs : (typeof m.elapsedMs === "number" ? m.elapsedMs : undefined)), at: at(m), keyName: m.keyName || null });
     else if (m.kind === "tool_use") out.push({ kind: "tool_use", tools: m.tools || [], at: at(m) });
     else if (m.kind === "tool_result" && Array.isArray(m.results)) out.push({ kind: "tool_result", results: m.results, at: at(m) });
     // The compaction bar is PERSISTED conversation, not a transient notice — it has to survive the
@@ -9313,7 +9313,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
     // the response clock so the timer shows on this client too, not only where it was typed.
     case "user": if (!(d.by && d.by === PACT_CHAT.conn.id)) { t._turnStartedAt = Date.now(); t.msgs.push({ role: "user", text: d.text || "", images: d.images || [], at: d.at || Date.now(), workspaceId: d.workspaceId || PACT_WORKSPACE_ID }); pactChatPaint(t); } return;
     case "assistant_delta": if (!t._turnStartedAt) t._turnStartedAt = Date.now(); t.live = (t.live || "") + (d.text || ""); pactChatPaintLive(t); return;
-    case "assistant": t.live = ""; t._pendingText = null; t._pendingImages = null; t.msgs.push({ role: "assistant", text: d.text || "", at: (typeof d.at === "number" ? d.at : undefined) }); pactChatPaint(t); return;
+    case "assistant": t.live = ""; t._pendingText = null; t._pendingImages = null; t.msgs.push({ role: "assistant", text: d.text || "", at: (typeof d.at === "number" ? d.at : undefined), keyName: d.keyName || null }); pactChatPaint(t); return;
     case "tool_use": if (!t._turnStartedAt) t._turnStartedAt = Date.now(); t.live = ""; t.msgs.push({ kind: "tool_use", tools: d.tools || [] }); if (pactToolsTouchFs(d.tools)) pactTreeRefreshSoon(); pactChatPaint(t); return;
     // A tool's OUTPUT (e.g. a `.repl` test's stdout the agent ran via Bash) — show it as its own collapsed row
     // so REPL/test results are finally visible in the reply view. Only when there's actual output (skip the
@@ -10431,10 +10431,26 @@ function wsMarkNode(m) {
  *  to show properly", decided by the thing that knows: layout.
  *
  *  The spacer is what keeps a WIDE bubble reading exactly as it did — medallion hard left, buttons
- *  hard right — instead of the row bunching up on the left. */
+ *  hard right — instead of the row bunching up on the left.
+ *
+ *  `badge` accepts a single node (every existing caller) OR an array (the multi-key "which key
+ *  answered this" badge rides right alongside the R#/P# one — see wsKeyBadge) — normalized here so
+ *  both land as DIRECT children of .ws-msghead, which is what the `> *` static-position override
+ *  (styles.css) actually targets; nesting them in a wrapper span would quietly put the R# badge back
+ *  under its old `position: absolute` rule, one DOM level too deep for that selector to reach. */
 function wsMsgHead(badge, buttons) {
+  const badges = Array.isArray(badge) ? badge : [badge];
   return el("div", { class: "ws-msghead" },
-    [badge, el("span", { class: "ws-msghead-sp" }, []), ...buttons.filter(Boolean)]);
+    [...badges.filter(Boolean), el("span", { class: "ws-msghead-sp" }, []), ...buttons.filter(Boolean)]);
+}
+/** The "which configured key actually answered this" chip — the per-reply counterpart to the
+ *  (deliberately rare, exhaustion-only) keySwitch marker: that one explains WHY a conversation moved
+ *  accounts; this one just says, on every single reply, which account it currently is. Empty string
+ *  (not shown) when the server didn't stamp a keyName — a legacy single-token setup, where there is
+ *  nothing to distinguish. Never the raw token, never a position/index — the NAME, same as the Admin
+ *  "Claude Tokens Rollup" page, so the two surfaces always agree on how to refer to an account. */
+function wsKeyBadge(keyName) {
+  return keyName ? el("span", { class: "ws-key-badge", title: "This reply was generated using the “" + keyName + "” key" }, ["#" + keyName]) : "";
 }
 function pactNumBadge(kind, n) { return (typeof n === "number") ? el("span", { class: "pc-num num num-" + kind.toLowerCase() + " pc-num-" + kind.toLowerCase(), title: (kind === "P" ? "Prompt" : "Response") + " #" + wsNumFmt(n) + " in this conversation" }, [kind + "#" + wsNumFmt(n)]) : ""; }
 // ===== INTERRUPTED PROMPTS =====================================================================
@@ -10586,7 +10602,7 @@ function pactChatMsgNode(m) {
     star.addEventListener("click", (e) => { e.stopPropagation(); pactChatToggleBookmark(m); });
     const replyBtnR = wsReplyBtn("R", m._rnum, m.text, () => { const at = pactChatActive(); wsAddReplyRef(at, "R", m._rnum, m.text); pactPaintReplyRow(at); });
     const copyBtnR = wsCopyMsgBtn("R", m._rnum, m.text, () => (pactChatActive() || {}).key);
-    return el("div", { class: "pc-msg pc-asst msg --a" }, [wsMsgHead(pactNumBadge("R", m._rnum), [copyBtnR, replyBtnR, wsShareBtn(m.text), star]), ...kids, wsWhenChip(m.at)]);
+    return el("div", { class: "pc-msg pc-asst msg --a" }, [wsMsgHead([pactNumBadge("R", m._rnum), wsKeyBadge(m.keyName)], [copyBtnR, replyBtnR, wsShareBtn(m.text), star]), ...kids, wsWhenChip(m.at)]);
   }
   if (m.kind === "tool_use") {
     // Expandable, like the Core cockpit: the tool names show at a glance; tap to reveal each call's
@@ -13789,7 +13805,7 @@ function viewWorkspace() {
       /* Visual order left-to-right, which is the order the old `right:` offsets produced:
          ⧉ 78 · ↩ 54 · ⤴ 30 · ★ 6. Keeping it identical is the point — this changes what SIZES the
          bubble, not what the corner looks like. */
-      return line("ws-assistant", [wsMsgHead(wsNumBadge("R", m._rnum), [copyBtn, replyBtn, wsShareBtn(m.text), star]),
+      return line("ws-assistant", [wsMsgHead([wsNumBadge("R", m._rnum), wsKeyBadge(m.keyName)], [copyBtn, replyBtn, wsShareBtn(m.text), star]),
         ...wsRenderReplyBody(m.text), wsWhenChip(m.at)]);
     }
     if (m.kind === "tool_use") return line("ws-tool", [el("i", { class: "ti ti-tool" }, []), " ", (m.tools || []).map((t) => t.name).join(", ")]);

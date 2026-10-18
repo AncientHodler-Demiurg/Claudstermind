@@ -4,6 +4,49 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.22.3] - 2026-10-18
+### Added — a per-reply "which key answered this" badge; fixed a real key-attribution bug it caught
+
+*"right now the keys are like this, awp first, bytales second. so why does the UI here, shows key
+switched? ... I would have liked the medallion, another medallion, near the R#8,924 medallion, a green
+one for example, showing #awp or #Bytales, showing me the key that was used to spawn the answer ...
+simply showing which key was used for the promt, i would argue is the best way to give feedback."*
+
+**The keySwitch marker you saw was correct, not stale.** It's a per-CONVERSATION historical record of
+an event that actually happened to that live session (Bytales really did hit its real weekly limit
+during testing — the Admin page even still showed it "exhausted · frees 14:06:49"), not a live reading
+of the Admin page's current priority order. A conversation that was already running on Bytales when it
+ran dry correctly shows the switch, even though the CSV now lists awp first. Nothing to fix there.
+
+**On "wouldn't round-robin switch every turn and bloat the chat?"** — checked the actual code: no. Equal
+mode only decides which key a BRAND-NEW conversation starts on (`_pickKeyForSpawn`, at spawn time); an
+already-running conversation only ever moves accounts via `_reconcileKeyFailover`, which — in EITHER
+mode — only fires when its current key is actually exhausted. The keySwitch marker is exhaustion-only
+and equally rare in both modes; no mode-based suppression was needed.
+
+**What WAS worth building: the medallion.** `WorkspaceManager._onEvent` now stamps every assistant
+reply with `keyName` (the key that generated THAT reply), and the client renders it as a small green
+"#awp" chip riding right next to the R# badge (`wsKeyBadge`, next to `wsNumBadge`/`pactNumBadge` via a
+widened `wsMsgHead([...badges], buttons)` — previously a single node). Never the raw token, never a
+position — the name, so it reads the same as the Admin "Claude Tokens Rollup" page. Absent (no badge at
+all) for a legacy single-token setup, where there's nothing to distinguish.
+
+**Caught a real bug while wiring this up**, via a test that initially failed: the mid-turn usage-limit
+detector calls `_markKeyExhausted` → `_reconcileKeyFailover` → `s.setKey()` SYNCHRONOUSLY, inside the
+very same `_onEvent` call that's about to stamp the limit-notice reply's `keyName` — so a naive read of
+`s.keyName` AFTER that chain ran would attribute the "you've hit your limit" reply to the key it had
+just switched TO, not the one that actually said it. Fixed by capturing `keyNameAtEvent` at the top of
+`_onEvent`, before anything in the same call can mutate it — every event is now attributed to the key
+that was genuinely running when its content was produced.
+
+New tests: `lib/workspace.test.mjs` (+2 — keyName stamping, and the exact switch-timing regression above),
+`lib/msgCornerRow.test.mjs` (+3 — the widened `wsMsgHead` signature, the badge's suppression when absent,
+its CSS), `lib/chatShellProdWiring.test.mjs` (updated 2 needles for the new call-site shape). Full suite:
+2073 passing.
+
+**Deploy note: `lib/`-touching (workspace.mjs) — needs an engine restart.** `app.js`/`styles.css` are
+web-only.
+
 ## [1.22.2] - 2026-10-18
 ### Added — true seamless failover: the engine now resends your last message automatically, on the new key
 
