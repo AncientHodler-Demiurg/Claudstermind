@@ -4,6 +4,65 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.22.1] - 2026-10-18
+### Fixed — the mid-turn failover detector was silently dead for the one scenario it exists for; plus a live "which key is this on" badge
+
+*"sending a prompt will answer back with the 'You've hit your weekly limit - resets 5pm (Europe/Berlin)'
+message. After the chat gets this message, the engine detects somehow that this means the current token
+is exhausted, and moves automatically to the second token? ... I need a way to see on UI, in the
+conversation, with a medallion, starting now, to see on what token the conversation is running #Bytales
+#awp (not position — but rather the name)."*
+
+**Root cause:** 1.22.0's mid-turn detector (`lib/workspace.mjs` `_onEvent`) checked ONLY
+`ev.kind === "error"` — a genuine thrown/stream exception. That is not how a Claude subscription's
+weekly/5-hour usage cap actually arrives on the stream. Observed live, exactly as reported: the model's
+own reply IS the limit notice ("You've hit your weekly limit — resets 5pm"), delivered as an **ordinary,
+non-error `assistant` message**, followed by a perfectly normal, successful `result`. A turn the SDK
+itself flags as failed is a *third* shape again — an ordinary-looking `result` frame with `isError: true`
+and no exception anywhere. Checking only `kind === "error"` meant the detector — and therefore the whole
+seamless-failover feature shipped in 1.22.0 — never actually fired for a real usage-cap hit. The
+per-session-poll fallback (`_usageLimits`) would eventually have caught it on a manual refresh, but the
+"catch it the instant it happens" path was dead code.
+
+Fixed: the detector (`KEY_LIMIT_RE`, a new module-level constant) now checks `ev.kind === "error"` (an
+exception), `ev.kind === "result"` with `isError: true` (`resultText`/`errors`), AND `ev.kind ===
+"assistant"` (the model's own reply) — whichever shape the SDK actually used, the phrase gets caught.
+Guarded against the obvious false-positive risk (an ordinary reply that merely mentions the word
+"limit") with a new regression test.
+
+**Also answered precisely, since it matters for how this actually behaves:** no, nothing auto-resends
+your last prompt on the new key. You see the limit-notice reply as the answer to that one message (a
+real reply, not swallowed); the live session is moved onto the next key at that exact moment
+(`_reconcileKeyFailover`), and your very next typed message — same chat, no restart, no new conversation
+— goes through on the new key. There is currently no "auto-retry this exact prompt on the next key"
+behavior; flagged as a possible future addition if wanted.
+
+### Added — a live "which key is this conversation on" indicator, in the conversation itself
+
+Three pieces, reusing the existing "compacted"/"wrapped" marker pattern end to end:
+- `WorkspaceManager.sessionSummary()` now reports `keyName` (the configured key's NAME, never a
+  position or the token) for every live session.
+- `_reconcileKeyFailover()` now pushes a durable `keySwitch` transcript row (`{from, to, at}`) and
+  broadcasts it live the moment it moves a session — survives reload/resync, shows exactly where in the
+  history the handover happened, same durability guarantee compaction/wrap marks already have.
+- `window.ChatShell.buildMark()` (`packages/claude-chat-shell/src/chat-shell.js`) gained a `keySwitch`
+  variant — a green "♻ KEY SWITCHED — Bytales → awp (usage limit reached)" bar, rendered through the
+  SAME one builder both Core and Pact already use for every other mark, so it can't end up looking like
+  two different things in two workspaces. Wired through both workspaces' rehydrate paths
+  (`pactTranscriptToMsgs`), trailing-unanswered scans, and render dispatch (`wsMarkNode`).
+- Core's pane header (`ui.identityLabel`) now appends "· 🔑 <name>" live, sourced from the same
+  `sessionSummary.keyName` via `wsApplySessionFields`. Pact gets the live marker + a flash notification
+  and tracks `t.keyName` on every state/event frame, but does not yet have an always-visible header
+  badge the way Core does — noted as a small follow-up, not done in this release.
+
+New/updated tests: `lib/workspace.test.mjs` (+5 — the three real-world event shapes, the false-positive
+guard, the persisted+broadcast marker, `sessionSummary.keyName`), `lib/wsApplySessionFields.test.mjs`
+(+2), `lib/chatShellPackage.test.mjs` (+1), `lib/compactionMarker.test.mjs` (updated to the 4-kind
+dispatch line, +1 assertion for Pact rehydrate). Full suite: 2062 passing.
+
+**Deploy note: `lib/`-touching (workspace.mjs) — needs an engine restart, same as 1.22.0.** The
+`chat-shell.js`/`components.css`/`app.js` changes are web-only.
+
 ## [1.22.0] - 2026-10-18
 ### Added — seamless multi-key OAuth failover, an "equal usage" round-robin mode, and a new Admin page to manage it all
 

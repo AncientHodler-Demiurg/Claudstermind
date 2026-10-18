@@ -1151,6 +1151,16 @@
       return el("div", { class: "mark " + (note ? "--note" : "--err"), title: emsg },
         [el("span", { class: "mlbl" }, [elabel])]);
     }
+    // Multi-key OAuth failover, surfaced AT the exact point a live conversation moved accounts — the
+    // "I need to see in the conversation what token is being used" ask. Usage percentage per key still
+    // can't be shown (the token format doesn't expose it); this is the durable, reload-proof substitute:
+    // a marker row, same family as COMPACTED/WRAPPED, that stays in the history at the moment it happened.
+    if (o.kind === "keySwitch") {
+      var ksLabel = "♻ KEY SWITCHED — " + (o.from ? (o.from + " → ") : "") + (o.to || "?") + " (usage limit reached)";
+      if (o.at) { var kd = new Date(o.at); if (!isNaN(kd.getTime())) ksLabel += "  ·  " + kd.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+      return el("div", { class: "mark --keyswitch", title: "This conversation automatically moved from the " + (o.from || "previous") + " key to " + (o.to || "the next") + " key because the previous one hit its usage limit. No restart, no lost context." },
+        [el("span", { class: "mlbl" }, [ksLabel])]);
+    }
     var isWrap = o.kind === "wrap";
     var fmt = o.fmtNum || function (n) { return String(n); };
     var pre = Number(o.preTokens) || 0, post = Number(o.postTokens) || 0;

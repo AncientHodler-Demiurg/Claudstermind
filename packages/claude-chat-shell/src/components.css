@@ -307,6 +307,11 @@
 .cs-shell .mark.--note::before { border-top: 1px dashed #ffb454aa; }
 .cs-shell .mark.--note .mlbl { background: #2a1f0e; border: 1px solid #ffb454; color: #ffd9a0;
   font-size: 10.5px; padding: 2px 12px; max-width: 92%; white-space: normal; text-align: left; }
+/* Multi-key OAuth failover: the conversation moved accounts, automatically, right here. Positive/green —
+ * this IS the feature working as designed, not a problem (unlike --err/--note above). */
+.cs-shell .mark.--keyswitch::before { border-top: 1px dashed #34d399aa; }
+.cs-shell .mark.--keyswitch .mlbl { background: #0e2a1e; border: 1px solid #34d399; color: #9df5cd;
+  font-size: 10.5px; padding: 2px 12px; max-width: 92%; white-space: normal; text-align: left; }
 .cs-shell .roll { display: flex; align-items: center; gap: 8px; margin: 0 9px 6px; padding: 5px 9px; border-radius: 7px;
   background: var(--chip); border: 1px solid var(--line); font-size: 11px; flex-wrap: wrap; row-gap: 5px; }
 .cs-shell .roll.--warn { border-color: #ffb45455; background: #1e1a10; }

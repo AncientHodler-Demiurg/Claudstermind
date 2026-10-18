@@ -8464,6 +8464,10 @@ function pactTranscriptToMsgs(transcript) {
     else if (m.kind === "compacted") out.push({ kind: "compacted", trigger: m.trigger || "manual", preTokens: m.preTokens ?? null, postTokens: m.postTokens ?? null, at: at(m) });
     else if (m.kind === "wrapped") out.push({ kind: "wrapped", segment: m.segment, sourceRef: m.sourceRef, at: at(m) });
     else if (m.kind === "turnError") out.push({ kind: "turnError", message: m.message || "", subtype: m.subtype || null, at: at(m) });
+    // Multi-key OAuth failover marker — same "persisted conversation, not a transient notice" reasoning
+    // as the compaction bar just above: without carrying it through rehydrate, the marker would vanish
+    // on the first resync/reload, defeating the entire point of making it durable.
+    else if (m.kind === "keySwitch") out.push({ kind: "keySwitch", from: m.from || null, to: m.to || null, at: at(m) });
   }
   return out;
 }
@@ -8502,6 +8506,11 @@ function wsApplySessionFields(p, s) {
   // moves forward, so a stale/duplicate broadcast can never rewind a fresher stamp already on the pane.
   if (typeof s.turnStartedAt === "number") p._turnStartedAt = s.turnStartedAt;
   if (typeof s.lastActivityAt === "number") p._lastEventAt = Math.max(p._lastEventAt || 0, s.lastActivityAt);
+  // Multi-key OAuth: which configured key (by name) this conversation is running on RIGHT NOW — the
+  // live header-badge feedback for "what's being used for a given prompt" (see paintPane's
+  // ui.identityLabel). `"keyName" in s` (not a truthiness check): a real session frame always carries
+  // this field, `null` included (no multi-key store configured) — that IS the answer, not an absence.
+  if ("keyName" in s) p.keyName = s.keyName;
 }
 // ===== end WS SESSION FIELDS pure helper =====
 // ===== PACT RESYNC DECISION — pure helper (sliced out for unit tests; see lib/pactResync.test.mjs)
@@ -9213,7 +9222,7 @@ function pactChatRoute({ kind, sessionKey, data }) {
   }
   const t = sessionKey ? pactChatByKey(sessionKey) : null;
   if (!t) return;
-  if (kind === "state") { if (data && data.session) { if (data.session.auto) pactAdoptAuto(t, data.session.auto); if (data.session.status) t.status = data.session.status; if (data.session.usage) t.usage = data.session.usage; exoNoteAgents(t, data.session, Date.now()); pactAdoptServerClock(t, data.session); pactChatMarkTurnBusy(t); pactChatPaint(t);
+  if (kind === "state") { if (data && data.session) { if (data.session.auto) pactAdoptAuto(t, data.session.auto); if (data.session.status) t.status = data.session.status; if (data.session.usage) t.usage = data.session.usage; if ("keyName" in data.session) t.keyName = data.session.keyName; exoNoteAgents(t, data.session, Date.now()); pactAdoptServerClock(t, data.session); pactChatMarkTurnBusy(t); pactChatPaint(t);
     /* AND RELEASE ANYTHING THAT WAS WAITING ON THAT STATUS. This frame is what the 4s self-heal
        fetches to recover a tab stuck on "Working…" — it is the moment the client learns the turn
        actually ended. Adopting the status without draining left the queued prompt sitting there,
@@ -9373,6 +9382,15 @@ function pactChatRoute({ kind, sessionKey, data }) {
       if (Array.isArray(t.msgs)) t.msgs.push({ kind: "turnError", message: d.message || "", subtype: d.subtype || null, at: d.at });
       pactChatPaint(t);
       pactChatFlashNote((d.subtype === "resume-missing" ? "↻ " : "⚠ Turn failed — ") + (d.message || "the engine ended the turn with an error"));
+      return;
+    // Multi-key OAuth failover — this conversation just moved from one configured key to another,
+    // automatically, mid-session, no restart. Same "mark in the conversation itself, resync-stable via
+    // `at`" pattern as compacted/turnError just above; `t.keyName` repaints the header badge immediately.
+    case "keySwitch":
+      if (Array.isArray(t.msgs)) t.msgs.push({ kind: "keySwitch", from: d.from || null, to: d.to || null, at: d.at });
+      t.keyName = d.to || null;
+      pactChatPaint(t);
+      pactChatFlashNote("♻ Switched to key “" + (d.to || "?") + "” — “" + (d.from || "previous") + "” hit its usage limit");
       return;
     // Manual wrap, part 1: the read-only preview the confirm dialog is waiting on.
     case "wrapPreview": pactFillWrapPreview(t, d.preview); return;
@@ -10386,6 +10404,9 @@ function wsMarkNode(m) {
       : "error";
     return window.ChatShell.buildMark({ kind: "error", message: m.message, at: m.at, tone });
   }
+  // Multi-key OAuth failover: the conversation moved from one configured key to another, right here —
+  // automatic, no restart, no lost context. See lib/workspace.mjs's _reconcileKeyFailover.
+  if (m && m.kind === "keySwitch") return window.ChatShell.buildMark({ kind: "keySwitch", from: m.from, to: m.to, at: m.at });
   return window.ChatShell.buildMark({
     kind: (m && m.kind === "wrapped") ? "wrap" : "compact",
     preTokens: m && m.preTokens, postTokens: m && m.postTokens,
@@ -10429,7 +10450,7 @@ function pactInterruptedIdx(t) {   // index of the trailing unanswered user prom
   if (!t || pactChatBusy(t) || !Array.isArray(t.msgs)) return -1;
   // A `compacted` row counts as an answer — `/compact` produces no assistant reply, and without this
   // a SUCCESSFUL compaction left its own prompt painted as interrupted (dark blue, ▶/✕ buttons).
-  for (let i = t.msgs.length - 1; i >= 0; i--) { const m = t.msgs[i]; if (!m) continue; if (m.role === "assistant" || m.kind === "compacted" || m.kind === "wrapped") return -1; if (m.role === "user") return i; }
+  for (let i = t.msgs.length - 1; i >= 0; i--) { const m = t.msgs[i]; if (!m) continue; if (m.role === "assistant" || m.kind === "compacted" || m.kind === "wrapped" || m.kind === "keySwitch") return -1; if (m.role === "user") return i; }
   return -1;
 }
 function pactMarkInterrupt(t) {
@@ -10601,7 +10622,7 @@ function pactChatMsgNode(m) {
   }
   if (m.kind === "note") return el("div", { class: "pc-note" }, [m.text]);
   // THE COMPACTION BAR — same shared wording and the same package class Core uses (cs-compacted).
-  if (m.kind === "compacted" || m.kind === "wrapped" || m.kind === "turnError") return wsMarkNode(m);
+  if (m.kind === "compacted" || m.kind === "wrapped" || m.kind === "turnError" || m.kind === "keySwitch") return wsMarkNode(m);
   // A worktree-migration separator: a full-width labeled line marking where this conversation moved
   // between checkouts (main ⇄ a worktree). Context is unbroken across it — only the agent's cwd changed.
   if (m.kind === "migration") {
@@ -13577,7 +13598,7 @@ function viewWorkspace() {
     if (!p || paneBusy(p) || !Array.isArray(p.transcript)) return -1;
     // A `compacted` row counts as an answer: `/compact` never produces an assistant reply, so without
     // this a SUCCESSFUL compaction left its own prompt looking interrupted (dark blue, ▶/✕).
-    for (let i = p.transcript.length - 1; i >= 0; i--) { const m = p.transcript[i]; if (!m) continue; if (m.role === "assistant" || m.kind === "assistant" || m.kind === "compacted" || m.kind === "wrapped") return -1; if (m.role === "user" || m.kind === "user") return i; }
+    for (let i = p.transcript.length - 1; i >= 0; i--) { const m = p.transcript[i]; if (!m) continue; if (m.role === "assistant" || m.kind === "assistant" || m.kind === "compacted" || m.kind === "wrapped" || m.kind === "keySwitch") return -1; if (m.role === "user" || m.kind === "user") return i; }
     return -1;
   }
   function wsMarkInterrupt(p) {
@@ -13792,7 +13813,7 @@ function viewWorkspace() {
     // THE COMPACTION BAR — a full-width rule marking where the context window was summarised.
     // Rendered from a PERSISTED row (see workspace.mjs _onEvent), so it survives a reload and shows
     // on every device; the activity-rail line this replaces did neither.
-    if (m.kind === "compacted" || m.kind === "wrapped" || m.kind === "turnError") return wsMarkNode(m);
+    if (m.kind === "compacted" || m.kind === "wrapped" || m.kind === "turnError" || m.kind === "keySwitch") return wsMarkNode(m);
     return null;
   }
   // Cache each item's rendered node on the message. Transcript items are immutable once added
@@ -15152,9 +15173,13 @@ function viewWorkspace() {
     // actually showing," kept in lockstep with the SAME p.repo/p.worktree the controls below
     // read from, so the two can never disagree the way the header label used to.
     if (ui.identityLabel) {
-      ui.identityLabel.textContent = p.repo
+      // Multi-key OAuth: "which configured key is THIS conversation on, right now" — the live feedback
+      // asked for in place of the usage-percentage the token format can't expose. Appended onto the
+      // existing identity readout rather than a new element: one glance, same place you already check
+      // for "what repo/worktree am I in", no extra chip to learn.
+      ui.identityLabel.textContent = (p.repo
         ? shortRepo(p.repo) + (p.worktree && p.worktree !== "main" ? " @ " + p.worktree : "")
-        : "Pick a repository";
+        : "Pick a repository") + (p.keyName ? "  ·  🔑 " + p.keyName : "");
     }
     // Through the package, not by hand: the colour-coding of the permission mode belongs to the
     // shell (it is the same control, in the same place, in both workspaces and in the Lab). Core used
@@ -16314,6 +16339,19 @@ function viewWorkspace() {
         for (const p of targets) {
           if (Array.isArray(p.transcript)) p.transcript.push({ kind: "turnError", message: data.message || "", subtype: data.subtype || null, at: data.at });
           logActivity(p, (data.subtype === "resume-missing" ? "↻ " : "⚠ Turn failed — ") + (data.message || "the engine ended the turn with an error"), data.subtype === "resume-missing" ? "" : "ws-act-err");
+          schedulePaint(p);
+        }
+        return;
+      }
+      // Multi-key OAuth failover: this conversation just moved from one configured key to another —
+      // automatically, no restart, mid-session. Logged as a mark in the transcript (same "optimistic
+      // copy the resync later replaces by matching `at`" pattern as compacted/turnError above) AND the
+      // identity badge is repainted immediately so "which key is this on" never lags behind reality.
+      if (data.kind === "keySwitch") {
+        for (const p of targets) {
+          if (Array.isArray(p.transcript)) p.transcript.push({ kind: "keySwitch", from: data.from || null, to: data.to || null, at: data.at });
+          p.keyName = data.to || null;
+          logActivity(p, "♻ Switched to key “" + (data.to || "?") + "” — “" + (data.from || "previous") + "” hit its usage limit");
           schedulePaint(p);
         }
         return;
