@@ -104,6 +104,9 @@ body.ph-collapsed.ws-full .ph { display: none; }
 .ghost { background: var(--panel-2); color: var(--ink); border: 1px solid var(--line);
   border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 14px; }
 .ghost:hover { border-color: var(--accent); }
+/* Selected state for a ghost button used as a mode toggle (e.g. Admin → Claude Tokens Rollup's
+   fallback/equal switch) — same visual language as .admin-item.on. */
+.ghost.on { background: var(--panel); border-color: var(--accent); color: var(--ink); font-weight: 600; }
 
 main { padding: 18px 24px 60px; }
 

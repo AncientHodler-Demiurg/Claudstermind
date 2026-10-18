@@ -330,6 +330,7 @@ const ADMIN_SECTIONS = [
   { id: "relay", icon: "🔌", label: "Relay", enabled: true },
   { id: "routing", icon: "🛣", label: "Model routing", enabled: true },
   { id: "tokens", icon: "🔑", label: "Tokens", enabled: true },
+  { id: "keys", icon: "♻", label: "Claude Tokens Rollup", enabled: true },
 ];
 const sectionById = (id) => SECTIONS.find((s) => s.id === id);
 const subViewOf = (sec, subId) => { const sub = (sec.subs || []).find((x) => x.id === subId) || (sec.subs || [])[0]; return sub ? sub.view : sec.view; };
@@ -1015,6 +1016,7 @@ function render() {
   if (VIEW !== "workspace" && WS_ES) { try { WS_ES.close(); } catch {} WS_ES = null; if (WS_HEAL_TIMER) { clearInterval(WS_HEAL_TIMER); WS_HEAL_TIMER = null; } if (WS_TICK_TIMER) { clearInterval(WS_TICK_TIMER); WS_TICK_TIMER = null; } }
   if (!(VIEW === "admin" && ADMIN_SECTION === "deploy") && DEPLOY_ES) { try { DEPLOY_ES.close(); } catch {} DEPLOY_ES = null; }
   if (!(VIEW === "admin" && ADMIN_SECTION === "deploy") && RESTART_ES) { try { RESTART_ES.close(); } catch {} RESTART_ES = null; }
+  if (!(VIEW === "admin" && ADMIN_SECTION === "keys") && KEYS_ES) keysStop();
   if (VIEW !== "git" && GIT_TIMER) { clearInterval(GIT_TIMER); GIT_TIMER = null; }
   if (VIEW !== "localhost" && LH_TIMER) { clearInterval(LH_TIMER); LH_TIMER = null; }
   if (VIEW !== "pact" && typeof PACT_RUN_ES !== "undefined" && PACT_RUN_ES) { try { PACT_RUN_ES.close(); } catch {} PACT_RUN_ES = null; }
@@ -1104,6 +1106,8 @@ function renderViewError(view, e) {
 /* ---------- Usage & Keys (Workspace → Usage): multi-key OAuth + plan rate-limit viewer + failover ----- */
 let USAGE_ES = null;
 function usageStop() { try { USAGE_ES && USAGE_ES.close(); } catch {} USAGE_ES = null; }
+let KEYS_ES = null;   // the Admin "Claude Tokens Rollup" page's own SSE stream — see viewKeysRollup
+function keysStop() { try { KEYS_ES && KEYS_ES.close(); } catch {} KEYS_ES = null; }
 function viewUsage() {
   const list = el("div", { class: "usage-keys" }, [el("div", { class: "hint", style: "padding:12px" }, ["Loading keys…"])]);
   const refreshBtn = el("button", { class: "loginbtn secondary" }, ["↻ Refresh"]);
@@ -1167,6 +1171,139 @@ function viewUsage() {
     el("div", { class: "usage-actions" }, [refreshBtn]),
     list,
     el("div", { class: "usage-note hint" }, ["Keys live in ", el("code", {}, [".secrets/claude-oauth-keys.csv"]), " — one per line, ", el("code", {}, ["<token> ; <name>"]), ". Add a line to add a key; edit after the ", el("code", {}, [";"]), " to rename. Utilization is the SDK's experimental plan-limit surface and may be unavailable until a key has run a turn."]),
+  ]);
+}
+
+/* ---------- Admin → Claude Tokens Rollup (multi-key OAuth management + fallback/equal mode) ----------
+   The management counterpart to the read-only Usage tab above: add/remove/rename/reorder/replace a
+   key's token, and switch the engine-wide selection mode. Every write goes through the SAME "control"
+   channel (lib/workspace.mjs's _control) the rest of this page already uses for live session actions —
+   it inherits the exact same sameOrigin+canExecute POST gate (dashboard/server.mjs), so no new HTTP
+   endpoint or auth path was needed for any of this. Per-key USAGE PERCENTAGE still isn't shown here for
+   the same reason the Usage tab can't show it for every key: a setup-token (user:inference scope only)
+   never exposes plan rate-limits, so "exists / order / active / exhausted" is the ceiling of what any
+   UI can honestly report — this page's whole point is management + that ceiling of visibility, not
+   fixing something the token format itself doesn't allow. */
+function viewKeysRollup() {
+  const list = el("div", { class: "usage-keys" }, [el("div", { class: "hint", style: "padding:12px" }, ["Loading keys…"])]);
+  let currentMode = "fallback";
+
+  const modeBtns = { fallback: null, equal: null };
+  function setMode(mode) {
+    if (mode === currentMode) return;
+    for (const b of Object.values(modeBtns)) if (b) b.disabled = true;
+    wsPost("control", { action: "setKeyMode", args: { mode } });
+  }
+  const fallbackBtn = el("button", { class: "ghost" }, ["Fallback (priority order)"]);
+  const equalBtn = el("button", { class: "ghost" }, ["Equal usage (round-robin)"]);
+  modeBtns.fallback = fallbackBtn; modeBtns.equal = equalBtn;
+  fallbackBtn.addEventListener("click", () => setMode("fallback"));
+  equalBtn.addEventListener("click", () => setMode("equal"));
+  const modeRow = el("div", { class: "usage-actions", style: "gap:8px" }, [fallbackBtn, equalBtn]);
+  const modeHint = el("div", { class: "hint" }, []);
+  function renderMode(mode) {
+    currentMode = mode;
+    fallbackBtn.disabled = false; equalBtn.disabled = false;
+    fallbackBtn.classList.toggle("on", mode === "fallback");
+    equalBtn.classList.toggle("on", mode === "equal");
+    modeHint.textContent = mode === "equal"
+      ? "Equal usage: every brand-new conversation round-robins onto the next configured key, spreading load evenly instead of draining one before the next. A key that's hit its limit is skipped automatically."
+      : "Fallback: every brand-new conversation runs on the first (highest-priority) key that isn't currently exhausted. A key is only touched once every key above it has hit its usage limit.";
+  }
+  renderMode(currentMode);
+
+  // Add-key form — the password input mirrors the OAuth-renewal field used elsewhere on this dashboard
+  // (accountTokenCard): a raw token is sensitive and must never render as visible/selectable text.
+  const nameInput = el("input", { type: "text", placeholder: "name (e.g. \"Bytales\")",
+    style: "width:150px;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:5px 9px;font-size:12px" });
+  const tokenInput = el("input", { type: "password", placeholder: "paste the OAuth token…",
+    style: "flex:1;min-width:200px;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:5px 9px;font-family:ui-monospace,monospace;font-size:12px" });
+  const addBtn = el("button", { class: "gitbtn" }, ["+ Add key"]);
+  const addMsg = el("span", { class: "was", style: "font-size:11px" });
+  addBtn.addEventListener("click", () => {
+    if (!tokenInput.value.trim()) { addMsg.textContent = "paste a token first"; addMsg.style.color = "#f87171"; return; }
+    addBtn.disabled = true; addMsg.textContent = "adding…"; addMsg.style.color = "";
+    wsPost("control", { action: "addKey", args: { token: tokenInput.value, name: nameInput.value } }).then(() => {
+      addBtn.disabled = false; nameInput.value = ""; tokenInput.value = ""; addMsg.textContent = "✓ added"; addMsg.style.color = "#34d399";
+    });
+  });
+  const addForm = canAct() ? el("div", { style: "display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:10px" }, [nameInput, tokenInput, addBtn, addMsg]) : "";
+
+  function keyRow(r, i, total) {
+    const nameInp = el("input", { type: "text", value: r.name,
+      style: "background:transparent;border:1px solid transparent;color:var(--ink);font-weight:600;font-size:13px;border-radius:6px;padding:2px 4px;min-width:60px" });
+    nameInp.addEventListener("focus", () => { nameInp.style.border = "1px solid var(--line)"; });
+    nameInp.addEventListener("blur", () => {
+      nameInp.style.border = "1px solid transparent";
+      if (nameInp.value.trim() && nameInp.value !== r.name) wsPost("control", { action: "renameKey", args: { index: i, name: nameInp.value } });
+      else nameInp.value = r.name;
+    });
+    nameInp.addEventListener("keydown", (e) => { if (e.key === "Enter") nameInp.blur(); });
+    if (!canAct()) nameInp.disabled = true;
+
+    const upBtn = el("button", { class: "ghost", title: "Move up (higher priority)" }, ["↑"]);
+    const downBtn = el("button", { class: "ghost", title: "Move down (lower priority)" }, ["↓"]);
+    upBtn.disabled = i === 0; downBtn.disabled = i === total - 1;
+    upBtn.addEventListener("click", () => wsPost("control", { action: "reorderKey", args: { from: i, to: i - 1 } }));
+    downBtn.addEventListener("click", () => wsPost("control", { action: "reorderKey", args: { from: i, to: i + 1 } }));
+
+    const removeBtn = el("button", { class: "ghost", title: "Remove this key" }, ["🗑"]);
+    removeBtn.addEventListener("click", () => {
+      if (!confirm(`Remove the key "${r.name}" (${r.fingerprint})? This only removes it from the rotation — it does not revoke the token.`)) return;
+      wsPost("control", { action: "removeKey", args: { index: i } });
+    });
+
+    const replaceInput = el("input", { type: "password", placeholder: "re-minted token…",
+      style: "width:140px;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:3px 7px;font-family:ui-monospace,monospace;font-size:11px" });
+    const replaceBtn = el("button", { class: "ghost", title: "Replace this key's token (same slot, same name)" }, ["↻ replace token"]);
+    replaceBtn.addEventListener("click", () => {
+      if (!replaceInput.value.trim()) return;
+      wsPost("control", { action: "replaceKeyToken", args: { index: i, token: replaceInput.value } });
+      replaceInput.value = "";
+    });
+
+    const head = el("div", { class: "usage-key-hd" }, [
+      el("span", { class: "hint", style: "width:20px" }, ["#" + (i + 1)]),
+      nameInp,
+      el("code", { class: "usage-key-fp" }, [r.fingerprint]),
+      el("span", { class: "ws-spacer" }, []),
+      r.active ? el("span", { class: "usage-key-badge --active" }, ["● active"]) : "",
+      r.exhausted ? el("span", { class: "usage-key-badge --exhausted" }, ["⚠ exhausted" + (r.exhaustedUntil ? " · frees " + new Date(r.exhaustedUntil).toLocaleTimeString() : "")]) : "",
+    ]);
+    const controls = canAct() ? el("div", { style: "display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px" }, [
+      upBtn, downBtn, replaceInput, replaceBtn, el("span", { class: "ws-spacer" }, []), removeBtn,
+    ]) : "";
+    return el("div", { class: "usage-key-card" + (r.active ? " --active" : "") + (r.exhausted ? " --exhausted" : "") }, [head, controls]);
+  }
+
+  function render(rows) {
+    if (!rows || !rows.length) {
+      list.replaceChildren(el("div", { class: "hint", style: "padding:12px" }, ["No OAuth keys configured yet — add one below."]));
+      return;
+    }
+    list.replaceChildren(...rows.map((r, i) => keyRow(r, i, rows.length)));
+  }
+
+  keysStop();
+  const q = "?conn=" + encodeURIComponent(wsUuid() + ":keys") + "&label=" + encodeURIComponent("keys");
+  let es; try { es = new EventSource("/api/workspace/stream" + q); KEYS_ES = es; } catch {}
+  if (es) {
+    es.addEventListener("hello", () => wsPost("control", { action: "keysUsage" }));
+    es.onmessage = (e) => {
+      let m; try { m = JSON.parse(e.data); } catch { return; }
+      if (!(m && m.kind === "state" && m.data)) return;
+      if (typeof m.data.keyMode === "string") renderMode(m.data.keyMode);
+      if (Array.isArray(m.data.keysUsage)) render(m.data.keysUsage);
+    };
+  }
+
+  return el("div", { class: "usage-view" }, [
+    el("h2", { class: "deploy-h" }, ["♻ Claude Tokens Rollup"]),
+    el("div", { class: "hint" }, ["Every OAuth key the engine is allowed to run on, in priority order. New sessions spawn onto a key chosen by the mode below; a running conversation automatically — and seamlessly, no restart — moves onto the next usable key the moment its usage limit is hit."]),
+    modeRow, modeHint,
+    list,
+    addForm,
+    el("div", { class: "usage-note hint" }, ["Per-key usage PERCENTAGE isn't shown for a key minted via ", el("code", {}, ["claude setup-token"]), " — that token format doesn't carry the scope plan-limits need. This page can still tell you what's configured, its order, and which key is active or exhausted right now (see ", el("code", {}, ["Usage"]), " for the fuller breakdown when it's available)."]),
   ]);
 }
 
@@ -1365,6 +1502,7 @@ function viewAdmin(sectionId) {
   else if (sectionId === "relay") pane.replaceChildren(viewRelay());
   else if (sectionId === "routing") pane.replaceChildren(viewRouting(), viewModelTest());
   else if (sectionId === "tokens") pane.replaceChildren(viewTokens());
+  else if (sectionId === "keys") pane.replaceChildren(viewKeysRollup());
   else if (sectionId === "deploy") pane.replaceChildren(viewDeploy());
   else pane.replaceChildren(el("div", { class: "admin-empty" }, ["Unknown section."]));
   return el("div", { class: "admin-layout" }, [side, pane]);

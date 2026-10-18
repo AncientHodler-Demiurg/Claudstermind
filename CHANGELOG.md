@@ -4,6 +4,81 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.22.0] - 2026-10-18
+### Added — seamless multi-key OAuth failover, an "equal usage" round-robin mode, and a new Admin page to manage it all
+
+*"I've added a secondary oauth token... How can we use both of them from a single file with line
+priority, when the first one expires its usage, the second one is automatically used?... note that i
+had to use sudo systemctl restart claudstermind-ssesiond to make you pick up the other token"* — then:
+*"yes build that subprocess, so that when usage limit is detected it automatically switches to the next
+in line. also is the system working with only 2, or i could also add a third if needed? I also want...
+equal usage... one turn token A one turn token B one turn token C... I need these 2 fallback modes, and
+I need them to run seamlessly... I want to be shown in the admin menu, how many tokens are there set up.
+via a new admin menu Claude Tokens Rollup."*
+
+**Root cause of the manual-restart requirement:** a Claude OAuth token is baked into the `claude`
+subprocess's environment (`CLAUDE_CODE_OAUTH_TOKEN`) at **spawn** time (`claudeSession.mjs`'s
+`_buildOptions()`). A live subprocess can never be retargeted onto a different account — the engine
+already supported multiple keys and automatic fallback for brand-new sessions (`lib/claudeKeys.mjs`'s
+`pickActiveKeyIndex`), but a conversation already running when its key hit its usage limit had no way to
+move — the only fix was killing the whole engine (`systemctl restart`) so the NEXT spawn picked the
+other key.
+
+**The fix mirrors a mechanism already proven for model-lane switching** (`_laneStale`, used when a live
+session crosses from Direct-Claude to OmniRoute mid-conversation): a live session can't be edited in
+place, but it CAN be seamlessly torn down and **respawned `--resume`ing the same conversation** — full
+context preserved, any turn already in flight left to finish undisturbed. `ClaudeSession.setKey(token,
+keyName)` (`lib/claudeSession.mjs`) arms a new `_keyStale` flag exactly like `setModel()` arms
+`_laneStale`; `prompt()` checks both and requests the respawn. `WorkspaceManager._reconcileKeyFailover()`
+(`lib/workspace.mjs`) is the trigger: it runs after every usage-limit poll and every explicit
+rate-limit-error mark, and calls `setKey()` on any live session whose current key just became exhausted
+— the conversation moves to the next key **automatically, with no restart, ever**.
+
+**Two selectable modes**, persisted in a new `.secrets/claude-key-mode.json` (`lib/claudeKeyMode.mjs` —
+deliberately NOT `routing.json`, which is client-side-only and never reaches the engine):
+- **Fallback** (existing behavior, now the explicit default): drain the first key before touching the
+  next.
+- **Equal usage** (new): every brand-new conversation round-robins onto the next configured key
+  (`pickRoundRobinKeyIndex` in `lib/claudeKeys.mjs`), spreading load evenly — "one turn A, one turn B,
+  one turn C" at the conversation-spawn granularity (rotating per-turn would mean reloading a live
+  session's context on every single message of a long chat; per-session rotation gets the same even
+  spread at zero extra cost). A key that's exhausted is skipped without breaking the rotation order.
+
+**3+ keys already worked with no code change** — `readClaudeKeys`/`pickActiveKeyIndex` were never
+hardcoded to two; this release doesn't change that, it adds the auto-failover and the equal-mode picker
+on top of the existing arbitrary-length key list.
+
+**New Admin page — "♻ Claude Tokens Rollup"** (`dashboard/public/app.js`'s `viewKeysRollup`): how many
+keys are configured, their priority order, add/remove/rename/reorder/replace-token controls, and the
+fallback⇄equal toggle — the entry point that didn't exist before (previously the only way to manage keys
+was hand-editing `.secrets/claude-oauth-keys.csv`). Every write (`addKey`/`removeKey`/`renameKey`/
+`replaceKeyToken`/`reorderKey`/`setKeyMode`) is a new `WorkspaceManager._control()` action
+(`lib/workspace.mjs`, whitelisted in `lib/protocol.mjs`'s `WS_CONTROL_ACTIONS`) — reusing the control
+channel means every one of these inherits the exact same `sameOrigin` + `canExecute` POST gate
+(`dashboard/server.mjs`) the rest of the admin surface already has, with no new HTTP endpoint needed. As
+before, raw tokens are never logged or rendered — only `keyFingerprint()`'s `first10…last4` form. Per-key
+usage **percentage** still can't be shown for a `claude setup-token`-minted key (no `user:profile`
+scope) — that's a token-format ceiling, not something this page could fix; it shows what IS knowable:
+configured / order / active / exhausted.
+
+New tests: `lib/claudeKeys.test.mjs` (+11 — the list-editing helpers, round-robin picking,
+`pickKeyIndex`'s mode dispatch), `lib/claudeKeyMode.test.mjs` (new file, 7 — persistence, validation,
+0o600, self-healing), `lib/claudeSession.test.mjs` (+2 — the seamless re-spawn-and-resume onto a new key,
+and a same-key no-op), `lib/workspace.test.mjs` (+7 — every new control action, fallback-vs-equal spawn
+behavior, and the end-to-end seamless-failover scenario: mark a live session's key exhausted and watch
+it move onto the next key with zero restart). Full suite: 2054 passing.
+
+**Deploy note: this release touches `lib/` (`claudeSession.mjs`, `claudeKeys.mjs`, `workspace.mjs`,
+`protocol.mjs`, plus the new `claudeKeyMode.mjs`) — the engine (`claudstermind-sessiond`) needs a restart
+to pick it up. The web half (`app.js`, `styles.css`) is applied on the next page load either way.** This
+is, fittingly, the LAST manual restart this specific problem should ever require — every failover after
+this one is automatic.
+
+Also fixed as a prerequisite to this work: the existing `.secrets/claude-oauth-keys.csv` had its two
+keys in the wrong priority order (the just-added secondary key was listed first, which is what forced
+the `systemctl restart` onto the wrong account in the first place) — corrected via a backed-up,
+fingerprint-only-verified rewrite so the original/primary token is first again.
+
 ## [1.21.12] - 2026-10-03
 ### Fixed — the Pact tree now shows agent-created files live (and drops deleted ones) without a reload
 
