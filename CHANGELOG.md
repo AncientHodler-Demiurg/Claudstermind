@@ -4,6 +4,46 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.22.5] - 2026-10-25
+### Fixed — a conversation that failed over never failed BACK once the key it left recovered
+
+*"Bytales was used up, the system changed to awp. it was also used up. Now i wait. Bytales has usage
+again. i continue conversation, it still attempted to use awp, even though bytales is first again, and
+has usage. so i had to stop it and use systemctl restart claudstermind. But i shouldn't have. when usage
+comes back, claudstermind should have started with bytales again. so why isnt it so? can you fix it?"*
+
+**Root cause, confirmed in the code:** `_reconcileKeyFailover`'s per-session loop only ever asked "is
+THIS session's own current key now blocked?" — never "is there now a higher-priority key available
+again that it should move BACK to?" So once a conversation failed over from Bytales (#1) to awp (#2),
+it stayed on awp forever — even hours later, once Bytales' usage window had long since reset — because
+nothing ever re-examined a session sitting on a key that still technically worked. Only a full engine
+restart (which rebuilds `_keyUsage` from a clean slate) ever "fixed" it, which is exactly the manual
+`systemctl restart` this report is about.
+
+Two fixes, in `lib/workspace.mjs`:
+1. **`_reconcileKeyFailover`, in FALLBACK mode**, now re-evaluates every live session against the
+   current best pick UNCONDITIONALLY, not just when its own key is blocked — fallback mode's entire
+   contract is "always the most-preferred available key", so that now includes snapping back to one
+   that just recovered, not only moving away from one that just failed. **Equal mode is deliberately
+   left alone** (still gated on "my own key is blocked"): its whole point is per-conversation
+   stickiness (see `_pickKeyForSpawn`'s doc comment) — pulling a healthy round-robin session back onto
+   "key #1" just because it's available again would defeat the even spread equal mode exists for. New
+   test confirms equal mode is unaffected by this change.
+2. **`_prompt()` now calls `_reconcileKeyFailover()` before every dispatch**, not only reactively after
+   a turn's own usage poll. Reconciliation used to only run when something ELSE happened to trigger it
+   — a conversation idle for hours (exactly the reported scenario: both keys exhausted, user waits for
+   a reset) never got re-evaluated until it happened to run again, by which point `_prompt` had already
+   decided to dispatch it onto the stale key. Now every prompt — to a conversation idle five seconds or
+   five hours — is checked against today's actual state first.
+
+New regression test pins the EXACT reported sequence: key A exhausts, the automatic retry (1.22.2) moves
+to key B, B also exhausts, time passes (A's `exhaustedUntil` lapses), the user's next message — same
+conversation, nothing else — snaps back to A, and the spawn genuinely ran on A's token (not just
+bookkeeping claiming so). A second test confirms equal mode's stickiness survives the fix. Full suite:
+2080 passing.
+
+**Deploy note: `lib/`-touching (workspace.mjs) — needs an engine restart.**
+
 ## [1.22.4] - 2026-10-18
 ### Fixed — CRITICAL: a live incident where key failover ping-ponged between two exhausted keys indefinitely, burning real turns
 
