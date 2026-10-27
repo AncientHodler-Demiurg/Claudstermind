@@ -4,6 +4,46 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.22.6] - 2026-10-27
+### Fixed — CRITICAL: ordinary technical conversation ("gas limit", "rate limit", "quota") was false-triggering key failover
+
+*"even here it shows me message that bytales switched to awp key, when you can clearly see there is
+still a ton of usage on bytales. now to bring bytales again as main, i have to hit restart of the
+service. so can you investigate what the hell is happening that it switched like this?"* — with a
+screenshot showing the real Claude.ai usage panel reading 29% session / 51% weekly on Bytales (plenty
+of headroom), right next to a "KEY SWITCHED — Bytales → awp (usage limit reached)" marker, in a
+conversation about Pact/Stoa-chain smart-contract work full of "GAS (limit)", "STOA FEE", and rate
+limiting in ordinary API handler code.
+
+**Root cause, confirmed:** `KEY_LIMIT_RE` — the regex matching a model's own reply text for a usage-
+limit notice — was far too loose: `rate.?limit|usage limit|...|hit (your|the)\b.*\blimit\b` with an
+unbounded `.*`. This engine routinely runs coding agents discussing blockchain **gas limits**, HTTP
+**rate limits**, and **quota** accounting as completely ordinary subject matter — and the model's own,
+entirely normal reply about that work kept matching this pattern, marking a perfectly healthy key
+"exhausted" for a full hour (the minimum cooldown), repeatedly — which is why it kept "switching like
+crazy" and why only a manual restart (which wipes the false mark instantly) ever cleared it.
+
+**The fix replaces one loose keyword regex with two precise, separately-scoped ones:**
+- `SDK_LIMIT_RE` — unchanged, loose matching — but now ONLY applied to `error`/`result` events, which
+  are SDK/transport-level diagnostic text, not model conversation, so generic terms are safe there.
+- `ASSISTANT_LIMIT_RE` — applied to the model's OWN reply text — now requires the EXACT structural
+  template every real notice has used across every screenshot collected so far: `"you've hit your
+  {session|weekly|5-hour} limit" + (within ~60 chars) + "reset"`. Loose single words are gone entirely
+  from this path.
+- **A length guard** (`looksLikeUsageLimitNotice`, ≤160 chars): every genuine notice observed is one
+  short line — the ENTIRE reply, never a sentence inside a longer one. This also protects against this
+  very codebase's own CHANGELOG/test files, which now contain that exact phrase as a worked example —
+  a long reply that quotes or discusses it is excluded by length alone.
+
+New regression tests pin: a long Pact/blockchain reply discussing gas limits and API rate limiting does
+NOT trigger (the exact reported shape); a reply that quotes the real notice verbatim inside a longer
+explanation does NOT trigger; the short, real notice — including the middle-dot separator variant — DOES
+still trigger reliably. Full suite: 2083 passing.
+
+**Deploy note: `lib/`-touching (workspace.mjs) — needs an engine restart, urgently — until restarted,
+the old loose regex remains live and this exact false-positive storm can recur on any technical
+conversation that happens to discuss limits/rate/quota.**
+
 ## [1.22.5] - 2026-10-25
 ### Fixed — a conversation that failed over never failed BACK once the key it left recovered
 
