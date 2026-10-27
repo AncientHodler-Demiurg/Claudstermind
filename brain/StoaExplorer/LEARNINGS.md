@@ -2007,3 +2007,70 @@ safe only by accident — they happen to get redeployed alongside the backend.
 Corollary worth remembering: a frontend's `/health` probe hitting only `/`
 stays green through a total API outage. "Container healthy" says nothing about
 whether its proxied upstream is reachable.
+
+## 2026-10-27 — Never await a `CREATE INDEX` in `onModuleInit`: it took denascan down
+
+`TransactionsService.onModuleInit` ran a plain, awaited `CREATE INDEX` on
+`transactions`. Instant on Stoa (6k rows); on Kadena's **229M rows** it is a
+~6-minute I/O-bound build that holds **ACCESS EXCLUSIVE** on the table AND —
+because it was awaited — stops Nest ever finishing bootstrap. The process
+never listens, the healthcheck fails, and the explorer serves 502 for the
+whole build. It only fired on the first `kadena-backend` deploy after the
+MultiStep work, 12 days after the code shipped.
+
+Diagnosis that works, when a backend is `(unhealthy)` with routes mapped but
+no "Nest application successfully started":
+
+```sql
+SELECT pid, now()-query_start, wait_event_type, left(query,90)
+  FROM pg_stat_activity
+ WHERE state='active' AND backend_type='client backend' ORDER BY query_start;
+```
+
+Note the Kadena DB is `explorer_kadena`, NOT `explorer_prod` (that is Stoa's).
+
+Rules now encoded in `pact-index-provisioning.spec.ts`:
+- `ADD COLUMN IF NOT EXISTS` on a nullable column is metadata-only — safe to
+  await even on 229M rows.
+- Any `CREATE INDEX` must be `CONCURRENTLY` **and** detached (`void this.…()`),
+  never awaited. An index is an optimisation; the view is correct without it.
+- An interrupted `CONCURRENTLY` build leaves an **INVALID** index: the name
+  survives, planners ignore it, and `IF NOT EXISTS` then refuses to rebuild.
+  Detect via `pg_index.indisvalid = false` and drop before retrying, or it
+  stays broken forever.
+
+Separately: Kadena's bootstrap also runs a `SELECT COUNT(1) FROM transactions`
+that takes ~4 minutes. Total cold start there is ~10 minutes; `(unhealthy)` for
+the first several is expected, not a fault.
+
+## 2026-10-27 — `Infinity` never survives an API boundary
+
+`JSON.stringify(Infinity)` is `null`, silently. A DTO field typed `number` that
+can hold `Infinity` therefore lies about its own wire format — the client gets
+`null` against a non-nullable type. Type it `number | null` and return an
+explicit null. Surfaced on `/api/v1/comparison` the moment the Kadena backend
+was unreachable and a ratio had a zero denominator.
+
+## 2026-10-27 — Comparison page: where the numbers come from
+
+`/api/v1/comparison` (Stoa backend) reads Kadena from the Kadena explorer's own
+API over the internal docker network — same codebase both sides, so no second
+implementation to drift. Two things the arithmetic turns on:
+
+- `/stats/gas` reports `gas` **including** `wastedGas` (gas burned by failed
+  transactions, charged in full on Chainweb). Successful gas is the difference.
+  Taking `gas` at face value credits Kadena with 31.7B units that bought nothing.
+- Chain age = **tallest** chain height × 30s, not the mean: Kadena's chains
+  10–19 joined years after 0–9.
+
+Verified live 2026-10-27: successful-gas **230.67× (Kadena)** — the owner's
+"230x" is exactly this metric — age **10.60×**, mean gas/tx **157.6× (Stoa
+leads)**, DB size **87×** (706 GB vs 8.1 GB). Kadena's index is at **94.21%**
+(chains 10–19 missing ~8.5M blocks each), so its totals are an undercount and
+the page states coverage per side.
+
+The crossover rate is **sampled**, not queried: summing gas over a window means
+scanning the transactions table (minutes on Kadena), while cumulative totals are
+O(1) aggregates on both sides. A 15-minute sampler writes `comparison_samples`;
+below 2 samples or an hour of span the page says "measuring" rather than
+forecasting from nothing.
