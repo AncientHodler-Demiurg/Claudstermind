@@ -462,18 +462,34 @@ forgotten — pulling any of it in here is exactly the scope creep HANDOFF warns
   - [x] 19 new tests (`lib/retrieval.test.mjs`) + 1 more in `lib/knowledgeStore.test.mjs` for the
         new columns. Full suite 2013/2013 green.
 
-- [ ] **2.3b — Wire retrieval into a real trigger.** *(deferred follow-up, not forgotten — same
-  split as 2.2a/2.2b)*
-  `retrieveForContext` exists and is tested end-to-end against a real store, but nothing calls it
-  yet from a live session. Wiring it means deciding things this slice deliberately didn't:
-  - [ ] Fire automatically at task start (the "you already solved this" prior-art check named in
-        EXOCORTEX-LEARNINGS.md), reusing 2.0's `recall(query)` for the conversational half and
-        `retrieveForContext` for the durable-knowledge half.
-  - [ ] Where does `stackKeywords` actually come from live — a real project-stack detector
-        (ECC's `detectStackKeywords`/`project-detect` has no equivalent here yet; 2.3a takes it
-        as a caller-supplied `Set`, deliberately not building a detector as part of ranking).
-  - [ ] Where does the knowledge store's `baseDir` live for a real install — likely blocked on
-        Wave 1's storage abstraction (1.1) settling this, rather than guessed at here.
+- [x] **2.3b — Wire retrieval into a real trigger.** *(this session)*
+  New `lib/priorArt.mjs`, composing Ch.2.0's `recallByQuery` + Ch.2.3a's `retrieveForContext` into
+  one `buildPriorArtContext({ transcriptDir, workspaceId, query })`, wired into
+  `lib/workspace.mjs`'s `_prompt` (the `!s` new-session branch, guarded by `!resumeId` — a resumed
+  session already carries its own context, so checking again would be noise).
+  - [x] Fires automatically at task start: a brand-new session's first prompt. Deliberately
+        SURFACES (emits a `priorArt` event) rather than silently rewriting the text the model
+        receives — same "propose, don't auto-adopt" spirit as D6/Ch.2.2/Ch.2.5; a human decides
+        whether to act on it. Rendering it in the UI is a `dashboard/public/app.js` concern, not
+        built here (same boundary 2.5b draws for the handoff UI) — the event is emitted either way
+        so a future UI pass has something to render.
+  - [x] `stackKeywords` — still nowhere live; no project-stack detector exists. Deliberately
+        omitted (not passed to `retrieveForContext`) rather than guessed at — the project-scope
+        boost still applies, only the stack-match boost never fires. Same scope line 2.3a already
+        drew; a real detector remains a separate, still-unscheduled task.
+  - [x] The knowledge store's `baseDir` for a real install: resolved via Wave 1's
+        `workspaceDir(transcriptDir, workspaceId)` — exactly the dependency this task said it was
+        blocked on, now settled.
+  - [x] Fail-open, wrapped in `try/catch` at the call site in `_prompt`: a failure here can never
+        skip or alter the real prompt. `buildPriorArtContext` itself also never throws and returns
+        `null` (not an empty string) when there's nothing to show, so a brand-new workspace never
+        emits a vacuous event.
+  - [x] Test: 6 unit tests (`lib/priorArt.test.mjs` — missing input, nothing archived, a matching
+        archived turn from a SIBLING conversation in the same workspace, durable knowledge
+        surfaced, cross-workspace isolation, a corrupt knowledge.sqlite3 degrading to recall-only
+        rather than throwing) + 2 integration tests in `lib/workspace.test.mjs` proving the real
+        wiring: a seeded fact produces exactly one `priorArt` event on the first prompt, and a
+        workspace with nothing known produces none. Full suite 2121/2121 green.
 
 - [x] **2.4 — Decay + conflict handling.** *(this session)*
   `skill_runs(..., outcome, failure_reason, tokens_used, duration_ms, user_feedback)` as the

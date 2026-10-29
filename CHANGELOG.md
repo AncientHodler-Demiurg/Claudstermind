@@ -179,6 +179,32 @@ deciding where the knowledge store's `baseDir` lives on a real install (likely b
 20 new tests (19 `lib/retrieval.test.mjs` + 1 more in `lib/knowledgeStore.test.mjs` for the new
 columns). Full suite 2013/2013 green.
 
+### Added — Ch.2.3b: the prior-art check is live — "you already solved this"
+New `lib/priorArt.mjs`: `buildPriorArtContext({ transcriptDir, workspaceId, query })` composes
+Ch.2.0's `recallByQuery` (conversational recall, across the WHOLE workspace's archive — any
+sibling conversation in the same repo counts as prior art) with Ch.2.3a's `retrieveForContext`
+(durable knowledge), and is now actually wired into `lib/workspace.mjs`'s `_prompt` — fired at
+task start, meaning a genuinely brand-new session's first prompt (gated on `!resumeId`; a resumed
+conversation already carries its own context, so checking again would just be noise).
+
+Resolves 2.3a's deferred questions: `stackKeywords` stays deliberately unpassed (no live
+project-stack detector exists; the project-scope boost still fires, the stack-match boost just
+never does — the same scope line 2.3a drew, not re-litigated here), and the knowledge store's
+`baseDir` for a real install resolves via Ch.1.1's `workspaceDir(transcriptDir, workspaceId)` —
+exactly the Wave-1 dependency this task was blocked on.
+
+Deliberately SURFACES rather than injects: a `priorArt` event is emitted for a human to see, the
+actual prompt text sent to the model is never rewritten — same "propose, don't auto-adopt" spirit
+running through D6/Ch.2.2/Ch.2.5. Rendering the event in the UI stays a `dashboard/public/app.js`
+concern for a later pass (same boundary 2.5b draws for the handoff UI). The call site in `_prompt`
+is wrapped in `try/catch`: a failure here can never skip or alter the real prompt, and
+`buildPriorArtContext` itself never throws, returning `null` — not an empty string — when there
+is nothing to show, so a brand-new workspace never emits a vacuous event.
+
+8 new tests (6 `lib/priorArt.test.mjs` + 2 integration tests in `lib/workspace.test.mjs` proving
+the real wiring end-to-end: a seeded fact produces exactly one `priorArt` event on a workspace's
+first prompt, an empty workspace produces none). Full suite 2121/2121 green.
+
 ### Added — Ch.2.4: decay + conflict handling
 `decisions.supersedes` now actually DOES something: `addDecision` wraps the insert and the
 superseded row's demotion (`status → 'superseded'`, `supersededAt` stamped) in one transaction —
