@@ -11,6 +11,418 @@ of this branch; the version test reads the first `## [x.y.z]` heading and `[Unre
 match that pattern, so it falls through to `[1.20.0]` and stays green. One bump, to 2.0.0, at the
 merge. See `docs/work/exocortex/HANDOFF.md`.
 
+### Added — Ch.2.0: conversation recall is now SQLite FTS5, not a linear scan
+`lib/conversationArchive.mjs`'s `recallByQuery` no longer does a `text.toLowerCase().includes(...)`
+scan over every row of every archived segment. It now replays `_segments/*.jsonl` into a disposable
+SQLite FTS5 index (new `lib/conversationFts.mjs`, `node:sqlite` — zero new dependencies) and ranks
+hits by BM25 instead of newest-segment-first. Same function signature; the raw JSONL stays the
+source of truth, the `.sqlite3` file is rebuildable and never the thing being protected.
+
+Copied from Hermes exactly (verified against its own source, not just its README): the
+incremental-rebuild guard — two `state_meta` keys (`fts_rebuild_high_water` / `fts_rebuild_progress`),
+a row indexed iff `id <= P OR id > H`, every INSERT/DELETE trigger on the content table gated by
+that same predicate. Confirmed empirically why this isn't decorative: an external-content FTS5
+table does not reject a duplicate-rowid write the way a self-contained one does, and firing a
+`'delete'` for a rowid that was never indexed corrupts the index outright (observed: "database disk
+image is malformed" on the very next read, on this machine's SQLite 3.46.1). Falls back to the
+original linear scan if the FTS5 capability probe fails, so a degraded SQLite build degrades
+ranking, not correctness.
+
+`lib/conversationFts.mjs` is deliberately generic (no knowledge of segments/JSONL) — Ch.2.1's
+durable knowledge store is expected to reuse the same engine rather than grow a second SQLite setup.
+
+### Added — Ch.2.1: durable knowledge store, provenance mandatory on every entry
+New `lib/knowledgeStore.mjs`: `facts` (facts + conventions, discriminated by `kind`) and
+`decisions` (ECC's shape — `title, rationale, alternatives CHECK(json_valid), supersedes FK →
+decisions(id), status`, per `docs/work/exocortex/HANDOFF.md`) with a REAL foreign key on
+`supersedes` (`PRAGMA foreign_keys = ON` per connection) — a decision naming a `supersedes` id
+that doesn't exist is rejected, not silently stored. Deliberately stops at "the FK is valid and
+recorded": flipping the superseded row's own status, and excluding it from "current" queries, is
+Ch.2.4's job.
+
+Reuses `lib/conversationFts.mjs` as the engine — a new `openDatabaseFile(dbPath, schemaSql)` export
+extracted from its `openDb`, generic over any schema and deliberately NOT gated on FTS5 support
+(this store's schema is plain relational; only a caller whose schema declares a virtual table
+should probe first). `conversationFts.mjs`'s own `openDb` is now a thin wrapper over the same call.
+
+**Provenance is mandatory, not advisory**: every write requires `conversationId` + `turnKind` +
+`turnNumber`, validated in JS before touching SQL and enforced `NOT NULL` in the schema as defense
+in depth — a bypass of this module's own functions still can't create an orphaned entry. `at`
+(the source turn's epoch-ms timestamp) is carried forward when available but stays nullable.
+
+`resolveText(archiveBaseDir, factOrDecisionRow)` recovers the ORIGINAL turn text a fact/decision
+was recorded from, via `conversationArchive.recallByNumber` — deliberately decoupled from
+workspace resolution (`archiveBaseDir` is the caller's job to resolve, same as `workspace.mjs`'s
+own `_archiveBaseFor` pattern), so this module has zero coupling to how a conversationId maps to
+an archive directory.
+
+Small additive change riding along: `recallByQuery`'s return shape now carries `at` (already on
+every row; only `recallByNumber` exposed it before, indirectly, via its raw `row` passthrough) —
+needed so a fact's provenance can show "when was this said" without a second lookup. Verified
+against the real install before trusting the premise: every row across 13 archived segments + 25
+live transcript files already carries `at` (has since `c06dbad`, one of the earliest commits) —
+so the nullable column is defensive design, not a migration for a gap that actually exists.
+
+16 new tests (13 `lib/knowledgeStore.test.mjs` + 3 `openDatabaseFile` + 2 `at` round-trip in
+`lib/conversationArchive.test.mjs`). Full suite 1974/1974 green.
+
+### Added — Ch.2.2a: skill crystallisation storage, with the `approve` verb ECC never built
+New `lib/skillStore.mjs`: `skills` (the candidate + its state machine) and `skill_versions`
+(ECC's audit-ledger shape — `skill_id, version, content_hash, amendment_reason, promoted_at,
+rolled_back_at`, per HANDOFF) with a real FK from versions to skills. PROPOSE-ONLY per D6:
+`proposeSkill` gates on the D6 skill-candidate threshold (cluster ≥2 observations, exported as
+`SKILL_CLUSTER_THRESHOLD` — a tunable constant, not architecture) and always lands in `pending`,
+never auto-approved.
+
+The verb ECC's own docs admit it never built: `approveSkill`/`rejectSkill` are a genuine state
+transition (`pending → approved | rejected`), one-way FROM `pending` only — an already-decided
+skill can't be silently re-decided. `rejectSkill` REQUIRES a non-blank reason (`approveSkill`'s is
+optional); both write to the audit ledger (`decidedAt`/`decisionReason` on the skill,
+`promotedAt` on the version, on approve only). `rollbackSkill` restores an earlier
+`content_hash` by APPENDING a new version that copies the target's content — it never rewrites or
+deletes a prior version, so the full history stays inspectable.
+
+Extracted `lib/provenance.mjs` out of Ch.2.1's `knowledgeStore.mjs` in the process — the
+provenance validation contract is now defined once and shared by both stores (and available to
+whatever else stamps provenance next), rather than risking two copies drifting apart.
+
+**Deliberately scoped down from the full 2.2** (see `docs/work/exocortex/plan.md` 2.2a/2.2b/2.2c):
+this is the storage + approve-verb layer only. `proposeSkill` takes an already-computed
+`observationCount` — it does not itself watch conversations for repeated work or spawn Hermes's
+background review subagent; that detector is tracked as a separate follow-up (2.2b) rather than
+built now, matching the "smallest useful slice" pattern already used for 2.0/2.1. D6's other
+threshold (the **agent**-candidate one: ≥3 instincts, ≥0.75 avg confidence) is a different
+candidate type and is out of scope for a task named "skill crystallisation" — tracked as 2.2c.
+
+19 new tests (14 `lib/skillStore.test.mjs` + 5 `lib/provenance.test.mjs`). Full suite 1993/1993
+green.
+
+### Added — Ch.2.3a: retrieval into the agent's context — ECC's relevance ranking + SessionStart budgeting
+New `lib/retrieval.mjs`, reimplemented (not translated 1:1) from ECC's actual source, read
+directly rather than worked from the HANDOFF summary alone: `scripts/lib/instinct-relevance.js`
+(the additive relevance-boost math — **+0.25** project-scope, **+0.20** stack-match, both copied
+exactly) and `scripts/hooks/session-start.js`'s `summarizeActiveInstincts` +
+`limitSessionStartContext` (the actual filter → score → sort → cap(6) → format → truncate(8000
+chars) pipeline). Reading the real source mattered: "8000-char budget" turned out to mean one
+hard slice-truncation of the whole assembled block, not a per-item bin-packing algorithm — the
+wrong mental model would have under-filled the budget on every single call.
+
+Also reimplemented ECC's documented observation→confidence table from `observer.md` as a
+standalone pure function, `confidenceFromObservationCount` (1-2 obs → 0.3, 3-5 → 0.5, 6-10 → 0.7,
+11+ → 0.85) — something has to produce a `confidence` for facts to rank by. To give it something
+to score, `lib/knowledgeStore.mjs`'s `facts` table gained `confidence` (nullable REAL — an
+out-of-range value degrades to null rather than being silently clamped) and `scope`
+(`project`|`global`, defaulting to `project` per ECC's own "safer to be project-specific and
+promote later" guidance). `addFact` does not compute confidence itself — that stays in
+`lib/retrieval.mjs`, called by whoever has an observation count, keeping storage and scoring
+layered without an import cycle between the two modules.
+
+A fact with **null** confidence (2.1's honest "nothing has scored this yet" default) never clears
+the floor — tested as its own path, distinct from "confidence too low." When no stack keywords
+match anything, ranking degrades to confidence(+project-boost)-only rather than returning
+nothing — a real, tested code path via `retrieveForContext` end-to-end over an actual store, not
+a unit-level hypothetical.
+
+**Deliberately split off, same pattern as 2.2a/2.2b:** this ships the ranking/budgeting module
+only. Nothing calls `retrieveForContext` from a live session yet — wiring it to fire at task
+start, sourcing real `stackKeywords` (ECC's own stack detector has no equivalent here), and
+deciding where the knowledge store's `baseDir` lives on a real install (likely blocked on Wave
+1's storage abstraction) are tracked as 2.3b rather than guessed at here.
+
+20 new tests (19 `lib/retrieval.test.mjs` + 1 more in `lib/knowledgeStore.test.mjs` for the new
+columns). Full suite 2013/2013 green.
+
+### Added — Ch.2.4: decay + conflict handling
+`decisions.supersedes` now actually DOES something: `addDecision` wraps the insert and the
+superseded row's demotion (`status → 'superseded'`, `supersededAt` stamped) in one transaction —
+`BEGIN`/`COMMIT`, `ROLLBACK` on any failure — so there is never a window where both the old and
+new decision read as active. This is exactly the cascade 2.1 deliberately left stubbed
+("stores the FK only; 2.4 owns the demotion behavior"). `listDecisions` excludes `'superseded'`
+by default; `includeSuperseded: true` still finds it, and `getDecision` never filters — nothing
+is deleted.
+
+Decay gets two mechanisms, matched to what each thing actually is:
+- **Skills** (things that run) get ECC's measured signal: new `skill_runs` table
+  (`outcome, failureReason, tokensUsed, durationMs, userFeedback` — the shape HANDOFF names) and
+  `recordSkillRun`. A NEW `decayStatus` column on `skills` (`fresh`|`stale`) is kept deliberately
+  separate from the editorial `status` (pending/approved/rejected) — an approved skill can go
+  stale from bad performance without its approval history changing, and vice versa. Constants,
+  all tunable ("start simple" per the plan): last **5** runs considered, need at least **3**
+  before judging anything (one bad run on first use must not flag a skill stale), stale below a
+  **50%** success rate. `recordSkillRun` recomputes `decayStatus` on every call — not a one-way
+  ratchet; a skill that recovers comes back to `fresh` on its own, tested explicitly.
+- **Facts** (things that are consulted, not executed) have no "run" to measure, so they get an
+  explicit, reversible verb pair instead: `demoteFact`/`refreshFact`, mirroring skills' own
+  approve/reject shape rather than inventing a parallel measured signal for something that isn't
+  executed.
+
+Both `listFacts` and `listSkills` exclude their respective stale state by default
+(`includeStale` opts in) — same "not silently kept authoritative" pattern as the decisions
+change above. This also keeps a stale fact out of `lib/retrieval.mjs`'s `retrieveForContext` for
+free, since it lists through the same `listFacts`.
+
+13 new tests (3 `lib/knowledgeStore.test.mjs` + 10 `lib/skillStore.test.mjs`). Full suite
+2026/2026 green.
+
+### Added — Ch.2.5a: wrap handoff quality — generation/caching/freshness logic
+New `lib/wrapHandoff.mjs`, addressing the gap named in HANDOFF: `buildSeedText`'s mechanical
+summary (first line of each archived prompt) was a deliberate no-stall choice for when a human
+watched every wrap. Auto-continue now runs unattended, so a wrap mid-sweep hands a fresh window a
+list of prompt *titles* — what was asked, never what was decided — with nobody there to notice.
+
+The fix keeps the no-stall property structurally rather than by convention: `generateHandoff`
+(which produces the real handoff — decisions, current state, open threads, where to recall from)
+takes an INJECTED async `generate(prompt)` callback and is meant to run early, off the roll's
+critical path; `resolveHandoff` is the only thing the roll path itself calls, and it never
+touches `generate` — it just picks between a cached handoff (if `isHandoffFresh`, i.e. the
+conversation hasn't advanced more than `HANDOFF_STALE_AFTER_TURNS` — 50, tunable — turns past
+generation) and the mechanical fallback. Three explicit outcomes, not an inferred "else": fresh
+cache, stale cache, no cache yet — all tested as their own case.
+
+`buildHandoffPrompt` feeds the model the actual transcript excerpt (via a newly-exported
+`conversationRoll.renderRows`, extracted so `buildSeedText` and this share one rendering instead
+of two copies drifting apart — same move as `provenance.mjs` in 2.1/2.2a) plus already-recorded
+`knowledgeStore` decisions/facts as structured context, so the model doesn't have to re-derive
+what's already on record from prose.
+
+Caught and fixed a real bug via `node --check` + the test run, not assumed away:
+`buildHandoffPrompt(null)` threw — a `{ ... } = {}` parameter default only guards `undefined`,
+not an explicit `null`. Widened to this codebase's own `opts && typeof opts === "object" ? opts :
+{}` guard (already used everywhere else this session) and added a regression test for the
+null-vs-undefined distinction specifically, since it's an easy class of bug to reintroduce.
+
+**Deliberately not built here** (tracked as 2.5b, same split as 2.2a/2.2b and 2.3a/2.3b): the
+live trigger (today entirely client-side, `ChatShell.wrapReadiness`'s 60%-of-context mark), a
+real model call site, `lib/workspace.mjs`'s `_performRoll` actually consulting the cache, and the
+show-and-edit UI — a human seeing and correcting the generated handoff before it seeds the next
+window, matching the "no auto-adoption" spirit running through D6/2.2.
+
+19 new tests (18 `lib/wrapHandoff.test.mjs` + 1 `renderRows` in `lib/conversationRoll.test.mjs`).
+Full suite 2045/2045 green.
+
+### Added — Wave 0.1: image garbage collection (ROADMAP-2.0.md 4.13)
+`workspaceStore.saveImage` has written content-addressed blobs to `<workspace>/images/` since it
+existed, and nothing ever deleted them: `deleteSession` removed only a conversation's JSONL, so
+deleting a chat orphaned its images, and the store grew monotonically forever. New
+`lib/imageGc.mjs` fixes it with a reference-counted sweep: an image is dead when no LIVE
+transcript row and no ARCHIVED segment row references its hash.
+
+`computeImageGc` is pure (no disk access) and unit-tested without a filesystem; the real reading
+and deleting lives in `sweepImages(wsDir)`, which operates on one workspace's own directory,
+re-reading every live session `.jsonl` file it currently contains plus its full archive (via a
+new `conversationArchive.readAllArchivedRows` export) before deciding what's actually
+unreferenced. This is what makes "an image referenced by two sessions sharing a workspace dir
+survives deleting one of them" true by construction: the sweep is re-derived from whatever
+sessions remain AFTER a delete, never a snapshot taken before it.
+
+**Wired in whole, not split into a build-then-defer-wiring pass** like 2.2/2.3/2.5's modules:
+`sweepImages` is called directly from `workspaceStore.deleteSession` (best-effort — a sweep
+failure never turns an already-successful delete into a reported one). `workspaceStore.mjs` isn't
+one of this branch's contended files, so there was no reason to hold the wiring back.
+
+Caught two real bugs by running the tests rather than trusting the code as written: `computeImageGc(null)`
+threw — the same `{ } = {}`-doesn't-guard-an-explicit-`null` class of bug 2.5a's
+`buildHandoffPrompt` had, fixed the same way — and a test used a 23-character hash literal that
+silently never matched the 24-hex-char filename regex, which made an early version of the
+"mixed dead/live/archived" test pass for the wrong reason (there was nothing on disk to get wrong).
+
+15 new tests (13 `lib/imageGc.test.mjs` + 1 `readAllArchivedRows` in
+`lib/conversationArchive.test.mjs` + 1 end-to-end case in `lib/workspaceStore.test.mjs` proving
+`deleteSession` itself triggers the sweep). Full suite 2060/2060 green.
+
+### Fixed — Wave 0.2: review pass over everything above
+Ran `code-review` across the full diff (confirmed via `git log` that every uncommitted file is
+the entirety of what's accumulated — the branch's only prior commit was the HANDOFF doc). Its
+own multi-agent pass plus deep per-file follow-ups found four real correctness bugs beyond its
+top-level summary, each validated against the code before fixing:
+
+- **`conversationFts.mjs`'s `openDatabaseFile` leaked a `DatabaseSync` handle on corrupt-file
+  recovery.** Verified empirically: `new Database(path)` succeeds even against a garbage file —
+  only the schema `exec()` throws — so the half-open handle from that failed attempt was never
+  closed before the file was deleted and reopened. Fixed, and while in there: added a
+  `recreateOnCorruption` option and a new shared `openNonDisposableDb` helper. `knowledgeStore.mjs`
+  and `skillStore.mjs` had been reusing the FTS index's "corrupt file → wipe it and start fresh"
+  recovery policy — correct for a disposable, rebuildable index, **silent permanent data loss**
+  for stores that ARE the source of truth. A corrupt `knowledge.sqlite3`/`skills.sqlite3` now
+  returns `null` (a surfaced failure, file left on disk for manual recovery) instead of quietly
+  becoming an empty store. The same helper also verifies `PRAGMA foreign_keys` actually took
+  effect — the two-line `try{}catch{/* best effort */}` version could silently leave
+  `decisions.supersedes`/`skill_versions`' FK unenforced with nothing to notice it.
+- **`retrieval.mjs`, three bugs:** `rankFacts({ maxItems: 0 })` — a legitimate "give me nothing"
+  — silently fell back to the default cap of 6; `matchesStack` never lowercased caller-supplied
+  `stackKeywords`, so a real stack detector's `"Go"`/`"TypeScript"` output would never match;
+  `computeRelevanceBoost`'s strict `scope === "project"` disagreed with
+  `formatFactsForContext`'s "anything that isn't 'global' displays as project" — a fact with a
+  malformed/missing `scope` would render `[project NN%]` while silently scoring zero project
+  boost. New shared `scopeLabel()` fixes the last one by construction.
+- **`conversationFts.mjs`'s `upsertRow`** silently defaulted a missing/non-finite `number` to
+  `0`, which — combined with `UNIQUE(conversationId, kind, number)` + `INSERT OR REPLACE` — could
+  make two malformed rows for the same `(conversationId, kind)` silently collide and overwrite
+  each other. Not reachable via the current sole caller, but the module is explicitly built for
+  reuse (Ch.2.1/2.2's stores already reuse its engine); now rejects rather than corrupts.
+
+**Recorded, deliberately not fixed this pass** (cleanup/efficiency, not correctness — the review's
+own verdict on the rest of the diff was "unusually careful... no correctness bugs, surviving
+findings are cleanup-only"): three independent JSONL-parsing loops that could drift on edge-case
+handling, three copies of the same WHERE-clause-building idiom across `listFacts`/
+`listDecisions`/`listSkills`, six near-identical transaction-wrapping blocks with no shared
+`withTransaction` helper, a duplicated image-filename regex, and no connection pooling
+(`recallByQuery`/`knowledgeStore`/`skillStore` each open+exec the full schema DDL per call, and
+`deleteSession`'s image sweep re-reads the whole archive per delete) — all explicitly acceptable
+at today's scale per the code's own comments, worth revisiting if usage grows. Filed in
+`docs/work/exocortex/plan.md` 0.2 rather than dropped.
+
+8 new regression tests pinning the four fixes. Full suite **2068/2068 green**.
+
+**User-acceptance evidence for the image GC (never self-certified):** a READ-ONLY dry run of
+`computeImageGc` (the pure half only — the deleting half was never invoked) against the real
+install's 13 workspaces with any images: **781 images, 21 (2.7%) would be swept, 760 would
+survive.** No workspace showed an implausible "everything would be deleted" result. This is
+evidence for the user's own acceptance call, not a substitute for it.
+
+### Found — Wave 1.2a: a clean clone does NOT start empty (audit, not a fix)
+`docs/work/exocortex/secrets-audit.md`. HANDOFF's "the only in-repo `.claude/` is a 192-byte
+`launch.json`" was correct as far as it checked — the miss was scope: it looked at `.claude/` and
+not the repo root. A real `git clone` into a scratch dir (not `.gitignore`-reading — an actual
+clone, per house rules) checks out `brain/` (99 files, 792KB — real distilled per-project
+knowledge: architecture decisions, commit hashes, treasury/bridge policy for a live cryptocurrency
+project) and `meta/` (10 files, 116KB — real org/infra docs), **neither covered by any
+`.gitignore` entry**. Same finding, different locations: `dashboard/data/map.json` (tracked, same
+business content, missing from the list that already covers its sibling `.json` files) and
+`MANIFEST.md` (repo root, real infra paths/hostnames). A related but distinct finding: the
+organization's real name is hardcoded into shipped UI copy — `dashboard/public/app.js`'s login
+gate literally reads "Access is limited to Ancient Holdings admins" — a Ch.4 (Publish)
+generalization problem, not a `.gitignore` fix.
+
+**Confirmed via `git merge-base`/`git log`: this predates the exocortex branch entirely and is a
+long-standing condition of `main`**, not something introduced by this session's work. No
+credential-shaped secret (API key/token/password) was found tracked anywhere — everything above
+is business/strategic content, a different (redaction, not rotation) remediation path.
+
+`launch.json` itself: reviewed line-by-line, confirmed clean (192 bytes, a generic VS Code
+debug-launch stanza).
+
+**Nothing was remediated this pass — the audit's job was to find and evidence the gap, not close
+it.** Three escalating remediation tiers are named in the audit doc (`.gitignore` going forward /
+`git rm --cached` / a full history rewrite), the last of which is destructive and explicitly
+flagged as needing the owner's own sign-off, not something to run as a drive-by fix. Tracked as
+1.2b in `docs/work/exocortex/plan.md`, not started.
+
+### Added — Wave 1.3a: the three-zone model (design note)
+`docs/work/exocortex/three-zone-model.md`. Public shell (Zone 1, ships) · private user data
+(Zone 2, never leaves the disk) · shared brain (Zone 3, this user's knowledge across their
+workspaces — still private by default, Ch.6's opt-in commons stays deferred per D5). Every
+existing runtime path mapped to a zone, cross-checked against 1.2a's audit rather than designed
+from scratch.
+
+Building the table surfaced a real structural point, not just documentation busywork: every Ch.2
+store already follows the correct pattern — `openDb(baseDir)` takes a caller-supplied,
+outside-the-repo root, nothing hard-coded — except `dashboard/server.mjs`'s `brainDir`, the one
+place that resolves to a path *inside* the repo. That's 1.2a's `brain/` finding again, but
+reframed as "the wrong zone" instead of "a missing `.gitignore` line" — which changes what 1.2b's
+eventual fix needs to actually do: move `brainDir` to live beside `transcriptDir`, not just stop
+tracking its current location.
+
+Also reconciled HANDOFF's cited ECC vocabulary (`scope ∈ {project, team, user}`) against what
+this schema actually implements: `facts.scope` only accepts `'project'|'global'` — `'global'`
+stands in for ECC's `'user'`, and `'team'` stays reserved/unimplemented on purpose (D4: don't
+build multi-tenancy now, don't make it impossible later).
+
+**Split, same pattern as every other slice this branch has used:** the storage abstraction (1.1)
+actually exposing zone as part of its interface, and the test that nothing in the shipped shell
+hard-codes a Zone-2/3 path, are tracked as **1.3b** — blocked on 1.1 existing to test against, not
+built here.
+
+### Added — Wave 1.1: storage abstraction — one place computes "where does a workspace live"
+New `lib/storage.mjs`. Before this, `join(root, slugFor(id))` — "root + workspace id → that
+workspace's own directory" — was computed independently in three places:
+`lib/workspace.mjs` (5 call sites), `lib/workspaceStore.mjs` (6), `lib/pactIdeState.mjs` (1). D4
+(self-host only, hosted possible later) needs a future tenant boundary to be able to change
+exactly this computation without a repo-wide hunt; now there's one place to change, not three.
+
+Scoped narrowly and deliberately: pure path computation only, no fs reads/writes. Every Ch.2
+store (`conversationFts.mjs`/`knowledgeStore.mjs`/`skillStore.mjs`) already receives an opaque
+`baseDir` from its caller and computes its own filename internally — that was already the correct
+shape and is untouched. The actual gap was narrower than a first grep suggested: a repo-wide
+sweep for `join(...dir...)` calls turned up 58 hits across 19 files, but all but 8 of those were
+unrelated subsystems (git worktrees, plugin vendoring, snapshot walking) with their own,
+legitimately different `dir` params — not this concern at all. Worth stating plainly: measuring
+scope before designing the interface is what kept this a small, real refactor instead of an
+open-ended one.
+
+`lib/workspaceStore.mjs`'s `workspaceId`/`parseWorkspaceId`/`slugFor` now re-export unchanged from
+`storage.mjs`, so every existing importer keeps working without an edit. `lib/workspace.mjs` (the
+one contended file touched) was migrated one call site at a time, running its 115-test suite after
+each — the roll/archive-specific cases exercise the exact call sites edited.
+
+**Verified both directions, not just "green after":** full suite confirmed green *before* any
+edit (2068/2068), then green *after* with **zero existing test files needing a behavior-pinning
+edit** — every migrated module's suite passed unmodified (`workspaceStore.test.mjs` 44/44,
+`lib/workspace.test.mjs` 115/115, `conversationArchive.test.mjs` 15/15, `pactIdeState.test.mjs`
+10/10, `imageGc.test.mjs` 13/13). A grep for any remaining raw `join(...slugFor(...))` outside
+`storage.mjs` turns up only `slugFor(sessionId)` calls building a session FILENAME inside an
+already-resolved workspace directory — a legitimate, different use of the primitive, not a second
+root+id computation.
+
+7 new tests (`lib/storage.test.mjs`), including one pinning the real on-disk literal values
+(`"_segments"`/`"images"`/`"documents"`) so a future edit to the new constants can't silently
+orphan an existing install's files. Full suite **2075/2075 green**.
+
+### Added — Wave 1.3b: zone as part of the storage interface, checkable not just documented
+`lib/storage.mjs` gains a real `ZONE` enum (`SHELL`/`PRIVATE`/`BRAIN`) and
+`assertZoneRoot(zone, absPath, repoRoot)`: a call site establishing a Zone-2/3 root now states its
+zone explicitly, and a violation throws immediately instead of waiting for an audit to notice it
+months later. `isInsideRepo(absPath, repoRoot)` is the pure check underneath — `path.relative`-
+based, not `startsWith`, so a sibling repo whose name merely shares a string prefix
+(`Claudstermind-other-repo`) isn't misclassified as nested inside `Claudstermind`.
+
+The regression test is pinned to the EXACT real `brainDir` bug from 1.2a/1.3a, not a synthetic
+stand-in: it reconstructs `dashboard/server.mjs`'s actual anchor arithmetic (`dashboardDir` one
+level under the repo root, `MASTER_ROOT` one level further up again — the repo's parent, the same
+anchor `transcriptDir`/`secretsDir` already use correctly) and proves `assertZoneRoot` throws for
+the shipped formula (`resolve(__dir, "..", "brain")`, landing on the repo root) and passes for the
+fix (`resolve(MASTER_ROOT, "brain")`). Deliberately a pinned-invariant test rather than a live
+fresh-clone process test — importing `dashboard/server.mjs` in a unit test would pull in its real
+startup side effects for no added coverage; reconstructing its real path math catches the same bug
+class without that cost.
+
+**Deliberately not wired into the live call sites yet.** Calling `assertZoneRoot` on the real
+`transcriptDir`/`secretsDir`/`brainDir` values, and actually fixing `brainDir`'s formula so it
+stops throwing, is one coherent change — that's **1.4**, which already owns moving `brainDir`.
+This slice built the checkable interface; 1.4 applies it.
+
+5 new tests. Full suite **2080/2080 green**.
+
+### Fixed — Wave 1.4a: brainDir's actual location, plus a guarded migration to move existing data
+`dashboard/server.mjs`'s `BRAIN_DIR` was `resolve(__dir, "..", "brain")` — one level up from
+`dashboard/` is the repo root, not `MASTER_ROOT` — landing Zone-3 content on a Zone-1 path (the
+1.2a/1.3a finding). Fixed to `resolve(MASTER_ROOT, "brain")`, the same anchor
+`transcriptDir`/`secretsDir` already use, and wired through 1.3b's `assertZoneRoot(ZONE.BRAIN,
+...)` at the point it's defined — a future regression now fails loudly at import time instead of
+waiting for another audit. All three call sites that inlined the old formula are fixed; a second
+grep pass (not trusting the first) caught a third one (`/api/brain`) the initial pass missed.
+
+New `lib/brainMigration.mjs` + `scripts/migrate-brain.mjs`: dry-run by default, `--confirm` to
+apply, classifies every file as would-copy / already-present / CONFLICT (never auto-resolved
+either direction), idempotent. **Copy-only — never deletes the old, repo-tracked location.**
+Deleting it is a step toward 1.2b's still-open decision (the audit's remediation tiers), which
+stays the repo owner's call; this script only ever populates the new location.
+
+**Ran the dry run against the real install — and it surfaced a real operational finding, not just
+caution.** `MASTER_ROOT` resolves relative to `dashboard/server.mjs`'s own file location, which
+differs between this worktree and the main checkout (two physically different directories).
+Checked rather than assumed: **the main checkout's `dashboard/server.mjs` and `sessiond` are
+actively running right now** — the live daily chat — and its `brain/` has both newer commits this
+branch predates and currently-uncommitted live writes. Running the real migration from this
+worktree would copy from a stale snapshot to a location the merged, deployed code will never read
+from anyway. **The actual migration is deliberately not run — not from here, not yet** — the
+correct time is after merge, from the checkout that's actually live, not a "let me just try it"
+against a system mid-write. Same boundary the branch's own house rules already draw ("do not
+deploy from this branch"), reached by checking process state directly rather than only citing the
+rule.
+
+10 new tests (`lib/brainMigration.test.mjs`). Full suite **2090/2090 green**.
+
 ## [1.20.0] - 2026-09-12
 ### Added — bee, wasp and nectar ship WITH Claudstermind
 
