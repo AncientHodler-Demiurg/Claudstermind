@@ -1,9 +1,10 @@
 # The exocortex — what it does, today
 
-**Status:** branch `exocortex`, not yet merged to `main`. Everything below exists, is tested
-(`node --test lib/*.test.mjs relay/*.test.mjs` — 2191/2191 green as of this writing), and in most
-cases is already wired into the live chat engine (`lib/workspace.mjs`) — but the branch itself
-has not merged, so none of it is running in production yet. See
+**Status:** branch `exocortex`, not yet merged to `main`. `docs/work/exocortex/plan.md` has zero
+open checkboxes — every task the plan named is built, tested, and wired end to end, UI included.
+Everything below exists, is tested (`node --test lib/*.test.mjs relay/*.test.mjs` — 2218/2218
+green as of this writing), and is wired into the live chat engine and its UI, both Pact and
+Core/ws — but the branch itself has not merged, so none of it is running in production yet. See
 `docs/work/exocortex/HANDOFF.md` for the branch's own ground rules and
 `docs/work/exocortex/plan.md` for the full task-by-task build log this doc summarizes.
 
@@ -28,13 +29,13 @@ JSONL (which stays the source of truth — the index is disposable).
 
 The moment you start a genuinely NEW conversation in a workspace (not a resume), the engine
 silently checks that workspace's own history — both past conversations (recall) and anything
-already recorded in the knowledge store — for anything relevant to your first message, and emits
-a `priorArt` event with what it found.
+already recorded in the knowledge store — for anything relevant to your first message, and shows
+you what it found as a "📎 PRIOR ART" note right in the conversation.
 
-**Built:** `lib/priorArt.mjs`, wired into `lib/workspace.mjs#_prompt`. **Not yet built:** nothing
-in the chat UI renders that event yet (`dashboard/public/app.js` is untouched) — today it's real,
-tested, server-side data with no visible surface. A future small UI pass is all that's needed to
-actually show it to you.
+**Built:** `lib/priorArt.mjs`, wired into `lib/workspace.mjs#_prompt`; rendered in both Pact and
+Core/ws via a dedicated `buildMark` kind in the shared chat-shell package. It's deliberately
+**live-only** — never persisted server-side, so it's gone after a reload, the same way a "note"
+marker already behaves. It's an FYI before you keep typing, not a permanent part of the record.
 
 ## 3. A durable knowledge store — facts, decisions, with provenance on every entry
 
@@ -89,15 +90,16 @@ mechanical summary (first line of each prompt). `lib/wrapHandoff.mjs` + `lib/one
 state, open threads, where to recall from — using a disposable, tool-free call to the same model
 session already running (no new auth surface, no on-disk session file for the draft itself).
 
-This is deliberately **fire-and-forget and off the critical path**: drafting happens early (meant
-to fire at the client's 60%-of-context mark), is cached, and the actual roll just reads whatever's
-cached — falling back to the mechanical summary if nothing fresh is there. A roll can never stall
-waiting on a model call.
+This is deliberately **fire-and-forget and off the critical path**: drafting happens early (fired
+when you open the Wrap dialog, with one follow-up check ~2.5s later in case it was still
+generating), is cached, and the actual roll just reads whatever's cached — falling back to the
+mechanical summary if nothing fresh is there. A roll can never stall waiting on a model call.
 
-**Built:** the full generation/caching/freshness/live-wiring pipeline, server-side, reachable via
-a new `"prepareHandoff"` control action. **Not yet built:** nothing in the client calls that
-action yet (the 60%-mark trigger is a `ChatShell.wrapReadiness`/`app.js` concern), and there's no
-UI to show you the drafted handoff or let you edit it before it's used.
+**Built, end to end, UI included:** opening Wrap (in either Pact or Core/ws) now shows an editable
+box with either the real AI draft or the mechanical fallback — labeled so you know which you're
+looking at. Edit it, or leave it as-is; whatever's in the box when you click "Wrap now" is exactly
+what seeds the fresh window. Your edit is never silently overwritten by a slower draft landing
+underneath you.
 
 ## 7. The code graph — "what calls what," across your whole JS/TS codebase
 
@@ -145,8 +147,10 @@ decision, not yet made (see plan.md 1.2b).
   `graph.json` file built from `lib/codeGraphExtract.mjs` + `lib/codeGraph.mjs#toNodeLink`.
   `scripts/graph-smoke.mjs` shows exactly how to drive it end-to-end headlessly.
 - **See the prior-art check fire for real:** start a brand-new conversation in a workspace that
-  already has recorded facts or archived history — watch for a `priorArt` event (today only
-  visible via the raw event stream; no UI renders it yet).
+  already has recorded facts or archived history — a "📎 PRIOR ART" note appears in the
+  conversation itself.
+- **See the editable handoff:** open Wrap on a conversation heavy enough to offer it — the dialog
+  shows (and lets you edit) exactly what the fresh window will be seeded with.
 
 ## What's deliberately NOT here
 
