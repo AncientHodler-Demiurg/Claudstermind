@@ -531,6 +531,49 @@ rule.
 
 10 new tests (`lib/brainMigration.test.mjs`). Full suite **2090/2090 green**.
 
+### Added — Ch.3.1/3.2/3.3: the code graph — schema, extractor, and the graph itself
+Wave 3 begins. New dependencies: `web-tree-sitter` (pinned EXACT at `0.25.10` — see below),
+`tree-sitter-wasms`, `graphology`, `graphology-communities-louvain`, `graphology-metrics`.
+`npm audit` confirmed zero NEW vulnerabilities from any of the five — every flagged advisory
+traces to pre-existing `electron`/other deps.
+
+**Ch.3.1** — `docs/work/exocortex/code-graph-schema.md` (the written node/edge schema, the full
+node-type and edge-kind vocabulary tables, confidence tags as a REQUIRED field on every edge,
+never defaulted) + new `lib/codeGraphSchema.mjs`: `validateNode`/`validateEdge`/`validateBatch`,
+ALL-OR-NOTHING per batch — one malformed entry fails the whole batch before it ever reaches the
+graph-build stage.
+
+**Ch.3.2** — new `lib/codeGraphExtract.mjs`, a ground-up tree-sitter JS/TS extractor.
+**A real compatibility finding, verified by actually running it, not assumed from docs:**
+`web-tree-sitter@0.27.1` (what a bare `npm install` resolves to) fails to load
+`tree-sitter-wasms@0.1.13`'s grammar bundle at all; `0.25.10` loads and parses both JS and TS
+correctly. Pinned exact in `package.json`.
+
+Avoids Graphify's own `_GO_PREDECLARED_FUNCS` scar (a blocklist born from one method named
+`append` absorbing 330 phantom `calls` edges) **by construction, not by blocklist**: a `calls`
+edge is only ever resolved for a bare identifier call matching a top-level declaration; a
+member-expression call (`obj.foo()`) is never resolved, full stop, and methods are never added to
+the bare-callable namespace at all — so a method literally named `then` or `constructor` cannot
+collide with a same-named top-level function, with no list of dangerous names to maintain.
+Dynamic `import()` with a literal string argument is an `INFERRED` import edge; a non-literal
+argument is skipped (nothing to point at); `require(...)` and `export ... from "..."`
+(re-exports, including `export *`) are both `imports` edges too. Real-world evidence: ran against
+this repo's own 69 real `lib/` files — 774 nodes, 1467 edges, zero validation failures, zero
+thrown errors (not a committed test — the fixture suite deliberately doesn't depend on this
+repo's live state).
+
+**Ch.3.3** — new `lib/codeGraph.mjs`: `buildGraph` into a `MultiDirectedGraph`
+(self-loops allowed for direct recursion; Multi so two independent edges between the same pair
+never collide), idempotent per node id, missing edge endpoints get a bare `external`-typed
+placeholder rather than throwing or silently dropping. `toNodeLink`/`fromNodeLink` emit/accept the
+EXACT NetworkX node-link shape (`links`, never `edges`; flat attributes) — verified different
+from graphology's own native `.export()` shape by calling both, not assumed; this is what makes
+Ch.3.4's viz free. Two algorithms wired end-to-end: Louvain community detection and degree
+centrality (chosen over eigenvector/pagerank for always converging and being hand-verifiable).
+
+36 new tests (9 `lib/codeGraphSchema.test.mjs` + 17 `lib/codeGraphExtract.test.mjs` + 10
+`lib/codeGraph.test.mjs`). Full suite 2172/2172 green.
+
 ## [1.20.0] - 2026-09-12
 ### Added — bee, wasp and nectar ship WITH Claudstermind
 

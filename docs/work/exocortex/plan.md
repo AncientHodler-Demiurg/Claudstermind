@@ -623,42 +623,88 @@ Ground-up Node extractor borrowing Graphify's *shape* (Hermes has no graph — C
 was wrong, per HANDOFF). tree-sitter ships prebuilt WASM (D7): `web-tree-sitter` +
 `tree-sitter-javascript.wasm` / `tree-sitter-typescript.wasm`, zero compiler, zero node-gyp.
 
-- [ ] **3.1 — Pipeline + schema + confidence tags (design, free).**
+- [x] **3.1 — Pipeline + schema + confidence tags (design, free).** *(this session)*
   `detect → extract → build → cluster → analyze → report → export`, the `{nodes, edges}` schema,
   `EXTRACTED`/`INFERRED`/`AMBIGUOUS` confidence tags, validate-before-build. Borrow
   understand-anything's edge taxonomy (structural/behavioral/data-flow/dependency/semantic) and
   node types (`file | function | class | module | concept`) as the vocabulary — the `concept`
   type is what lets Ch.2's knowledge entries join the same graph as code, later.
-  - [ ] Written schema doc (JSON Schema or equivalent) for a node and an edge, with the
-        confidence tag as a required field on every edge, not optional.
-  - [ ] "Validate before build" is a real function: a batch of extracted nodes/edges that fails
-        validation never reaches the graph-build stage, with a test proving a malformed batch is
-        rejected before any graph mutation.
+  - [x] Written schema doc: `docs/work/exocortex/code-graph-schema.md` — node/edge shapes, the
+        full node-type table, the full edge-kind table (only `contains`/`imports`/`calls` are
+        VALIDATED/emitted by 3.2; the rest — `extends`/`implements`/`reads`/`writes`/`tested-by`/
+        `references` — are named now as reserved vocabulary, same "reserve the name, don't build
+        the behavior" move as `facts.scope`'s `'team'` value in Ch.1.3), confidence tag as a
+        REQUIRED field on every edge (never defaulted — directly naming Graphify's own
+        `_GO_PREDECLARED_FUNCS` scar as why).
+  - [x] New `lib/codeGraphSchema.mjs`: `validateNode`/`validateEdge`/`validateBatch`, ALL-OR-
+        NOTHING per batch — one malformed node or edge fails the WHOLE batch, with
+        `nodeErrors`/`edgeErrors` arrays aligned by index for diagnosis. 9 tests
+        (`lib/codeGraphSchema.test.mjs`), including the batch-rejection case.
 
-- [ ] **3.2 — Extractor.**
+- [x] **3.2 — Extractor.** *(this session)*
   JS/TS only, first pass. tree-sitter WASM parse → the node/edge schema from 3.1. Accept upfront
   (per HANDOFF's Graphify verdict) that this starts narrower and rougher than Graphify's own
   32-language extractor — do not chase parity.
-  - [ ] Parses a real multi-file JS/TS sample (this repo's own `lib/` is the obvious corpus) and
-        emits nodes for file/function/class at minimum.
-  - [ ] At least the `calls`, `imports`, `contains` edge kinds populated with correct
-        confidence tags (`EXTRACTED` for a direct AST match, not guessed).
-  - [ ] A known-tricky case is tested explicitly and passes: a re-exported name, a dynamic
-        `import()`, a method name that collides with a global/builtin (the exact class of bug
-        Graphify's `_GO_PREDECLARED_FUNCS` blocklist scar names, translated to the JS/TS
-        equivalent risk — e.g. a method literally named `then` or `constructor`).
-  - [ ] `node --test` on the extractor module, corpus-driven (fixture files in the test, not a
-        dependency on this repo's live state so the test doesn't rot as `lib/` changes).
+  - [x] **A real version-compatibility finding, not assumed from either package's docs:**
+        `web-tree-sitter@0.27.1` (what `npm install web-tree-sitter` resolves to today) FAILS to
+        load `tree-sitter-wasms@0.1.13`'s grammar bundle at all (`getDylinkMetadata` throws) —
+        verified by actually running it, not inferred. `web-tree-sitter@0.25.10` loads and parses
+        both JS and TS correctly (the exact D7 check HANDOFF named, re-verified concretely).
+        Pinned EXACT (no `^`) in `package.json` for that reason. New deps: `web-tree-sitter`
+        (pinned `0.25.10`), `tree-sitter-wasms`, `graphology`, `graphology-communities-louvain`,
+        `graphology-metrics` — `npm audit` confirmed zero NEW vulnerabilities from any of these
+        five (every flagged advisory traces to pre-existing `electron`/other deps).
+  - [x] New `lib/codeGraphExtract.mjs`: `createExtractor()` loads the three grammars
+        (javascript/typescript/tsx) ONCE; `extractFile(path, source)` emits file/function/class
+        nodes + contains/imports/calls edges, schema-valid per 3.1.
+  - [x] **Avoids Graphify's `_GO_PREDECLARED_FUNCS` scar by construction, not by blocklist:** a
+        `calls` edge is ONLY ever resolved for a BARE identifier call (`foo()`) matching a
+        TOP-LEVEL declaration; a member-expression call (`obj.foo()`) is NEVER resolved, full
+        stop. Class/object methods are never added to the bare-callable namespace at all — so a
+        method named `then`/`constructor` cannot collide with a same-named top-level function,
+        with no list of dangerous names to maintain. Verified against BOTH tricky cases
+        explicitly: a bare `then()` call inside a method correctly resolves to the TOP-LEVEL
+        `then` function; `this.then()` never produces an edge, regardless of the name collision.
+  - [x] Dynamic `import()`: a literal-string argument → an `imports` edge, confidence `INFERRED`
+        (per the schema doc's own guidance); a non-literal argument (a variable) → skipped
+        entirely, nothing to point at. `require(...)` and `export ... from "..."` (re-exports,
+        including `export * from`) both produce `imports` edges too; a re-exported name is
+        verified NOT to spuriously create a local function node for a name not actually declared
+        in that file.
+  - [x] Real-world evidence gathered, not just fixtures: ran the extractor against this repo's
+        own `lib/` (69 real files) — **774 nodes, 1467 edges, zero schema-validation failures,
+        zero thrown errors.** Not a committed test (the fixture suite below deliberately doesn't
+        depend on this repo's live state), recorded here as the "parses a real multi-file sample"
+        evidence this task asks for.
+  - [x] 17 tests (`lib/codeGraphExtract.test.mjs`), fixture source strings inline (not this
+        repo's own `lib/`, so the suite can't rot as `lib/` changes) — covering both named tricky
+        cases plus TypeScript/TSX parsing, a syntactically broken file never throwing, a repeated
+        call collapsing to one edge, and direct recursion producing a real self-edge.
 
-- [ ] **3.3 — Graph.**
+- [x] **3.3 — Graph.** *(this session)*
   `graphology` + `graphology-communities-louvain` + `graphology-metrics` cover the ~14-call
   NetworkX surface Graphify actually uses (per HANDOFF's research). No custom graph engine.
-  - [ ] Nodes/edges from 3.2 load into a `graphology` `Graph` instance without loss (round-trip
-        test: build → serialize → reload → same node/edge count).
-  - [ ] At least one algorithm wired end-to-end (Louvain community detection or a centrality
-        metric) and produces a sane result on the 3.2 test corpus (not just "doesn't throw").
-  - [ ] Emits `{nodes, edges}` in NetworkX **node-link** shape deliberately (per HANDOFF, this is
-        what makes 3.4's viz free) — a snapshot test pins the exact shape.
+  - [x] New `lib/codeGraph.mjs`: `buildGraph({nodes, edges})` → a `MultiDirectedGraph`
+        (`allowSelfLoops: true` — direct recursion is a real self-loop; Multi, not plain Directed,
+        because two independent `imports` edges between the same file pair must not collide).
+        Idempotent per node id (`mergeNode`, not `addNode`) so assembling one graph from several
+        files' batches never needs pre-dedup. An edge endpoint with no corresponding node (an
+        external module, or a not-yet-extracted file) gets a bare placeholder (`type: "external"`
+        — not one of 3.1's real `NODE_TYPES`, so a consumer can always tell it apart) rather than
+        throwing or silently dropping the edge.
+  - [x] Round-trip test: build → `toNodeLink` → `fromNodeLink` → same node/edge count AND the same
+        attributes survive (not just counts).
+  - [x] Two algorithms wired end-to-end, not one: `runLouvain` (community detection) and
+        `degreeCentrality` — chosen over eigenvector/pagerank specifically because degree always
+        converges and is trivially hand-verifiable, which the test does (a 3-node star graph's
+        exact expected centrality scores, not just "didn't throw").
+  - [x] `toNodeLink`/`fromNodeLink` emit/accept the EXACT NetworkX node-link shape (`directed`,
+        `multigraph`, `graph: {}`, `nodes: [{id, ...attrs}]`, **`links`** — never `edges`, flat
+        attrs, never nested under an `attributes` key) — verified different from graphology's OWN
+        native `.export()` shape by actually calling both, not assumed. A snapshot test pins the
+        exact shape, including that `"edges"` is never a top-level key.
+  - [x] 10 tests (`lib/codeGraph.test.mjs`). Full suite (`lib/*.test.mjs relay/*.test.mjs`)
+        2172/2172 green.
 
 - [ ] **3.4 — Viz.**
   `graph.html` loading `vis-network@9.1.6` from a CDN, reading the node-link JSON from 3.3 — the
