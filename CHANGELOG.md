@@ -574,6 +574,28 @@ centrality (chosen over eigenvector/pagerank for always converging and being han
 36 new tests (9 `lib/codeGraphSchema.test.mjs` + 17 `lib/codeGraphExtract.test.mjs` + 10
 `lib/codeGraph.test.mjs`). Full suite 2172/2172 green.
 
+### Added — Ch.3.4: the graph viz — a standalone page, verified with a real browser run
+New `dashboard/public/graph.html`: loads `vis-network@9.1.6` from a CDN, reads a
+`lib/codeGraph.mjs#toNodeLink`-shaped JSON file (default `./graph.json`, or `?src=<url>`, or a
+local file picker). Deliberately a standalone page, never touching `dashboard/public/app.js` —
+served automatically by `dashboard/server.mjs`'s existing generic static-file fallback, no route
+change needed.
+
+Confidence tag drives a real visible distinction (`EXTRACTED` solid, `INFERRED` dashed,
+`AMBIGUOUS` dotted, each its own color too); node type drives its own (shape+color per
+file/function/class/module/concept/external) — a placeholder node visibly reads as different
+from a real extracted one.
+
+**Verified with an actual browser run, not just "the file exists":** new
+`scripts/graph-smoke.mjs`, reusing `scripts/mobile-smoke.mjs`'s raw-CDP-over-WebSocket approach —
+a throwaway static server (never the real dashboard) + a real headless Chromium navigated to
+`graph.html` with a fixture graph passed as a `data:` URL. Confirms the exact node/link count in
+the status bar, a real `vis.Network` instance, a canvas with non-zero pixel dimensions, and zero
+console errors. Ran for real and passed on the first attempt.
+
+8 new tests (`lib/exocortexGraphViz.test.mjs`, the same sentinel-marked slice-and-eval convention
+`lib/exocortexUi.test.mjs` already uses for pure `app.js` logic). Full suite 2180/2180 green.
+
 ## [1.20.0] - 2026-09-12
 ### Added — bee, wasp and nectar ship WITH Claudstermind
 

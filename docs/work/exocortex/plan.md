@@ -706,15 +706,37 @@ was wrong, per HANDOFF). tree-sitter ships prebuilt WASM (D7): `web-tree-sitter`
   - [x] 10 tests (`lib/codeGraph.test.mjs`). Full suite (`lib/*.test.mjs relay/*.test.mjs`)
         2172/2172 green.
 
-- [ ] **3.4 — Viz.**
+- [x] **3.4 — Viz.** *(this session)*
   `graph.html` loading `vis-network@9.1.6` from a CDN, reading the node-link JSON from 3.3 — the
   free part, per HANDOFF (graphify's own `graph.html` does exactly this and doesn't care what
   wrote the file).
-  - [ ] A static HTML file that, given a 3.3-shaped `graph.json` file, renders nodes/edges in a
-        browser (verified with a real run — `run` skill / headless load — not just "the file
-        exists").
-  - [ ] Confidence tag drives a visible style distinction (e.g. edge color/dash) so `EXTRACTED`
-        vs `INFERRED` vs `AMBIGUOUS` is legible, not just present in the data.
+  - [x] New `dashboard/public/graph.html` — a standalone static page, deliberately NOT part of
+        `dashboard/public/app.js` (never touches that contended file). Served automatically at
+        `/graph.html` by `dashboard/server.mjs`'s existing generic static-file fallback — no
+        server route change needed, verified by reading `sendFile`'s call sites rather than
+        assumed. Fetches `./graph.json` by default, `?src=<url>` to override, plus a local
+        file-picker needing no server round-trip at all.
+  - [x] Confidence tag drives a visible style distinction: `EXTRACTED` solid, `INFERRED` dashed,
+        `AMBIGUOUS` dotted, each a different color too (not relying on dash alone). Node TYPE
+        drives its own distinction (shape + color per `file`/`function`/`class`/`module`/
+        `concept`/`external`) — a real placeholder (Ch.3.3's `external` type) visibly reads as
+        different from a real extracted node, not just distinguishable in the raw data.
+  - [x] **Verified with a REAL run, not just "the file exists":** new `scripts/graph-smoke.mjs`,
+        reusing `scripts/mobile-smoke.mjs`'s raw-CDP-over-WebSocket approach (not re-invented) —
+        a throwaway static server over `dashboard/public/` (never the real dashboard; no secrets
+        dir, no auth, nothing to interrupt) + a real headless Chromium navigated to `graph.html`
+        with a fixture graph passed as a `data:` URL (no fixture file ever written into
+        `dashboard/public/`). Confirms: the exact node/link count renders in the status bar, a
+        real `vis.Network` instance was constructed, the canvas actually has non-zero pixel
+        dimensions (a rendered graph, not a blank page), and zero console errors/exceptions. **Ran
+        for real, passed on the first real attempt** — the CDN fetch of `vis-network`, the
+        `data:` URL fetch, and the render all worked exactly as designed.
+  - [x] Test: 8 new tests (`lib/exocortexGraphViz.test.mjs`), same sentinel-marked slice-and-eval
+        convention `lib/exocortexUi.test.mjs`/`lib/exocortexMount.test.mjs` already use for pure
+        `app.js` logic that can't be imported — covering the node-link→vis-network transform,
+        the confidence/type style distinctions, and malformed-input tolerance. Full suite
+        2180/2180 green (`node scripts/graph-smoke.mjs` is a real-browser run, same as
+        `mobile-smoke.mjs` — not part of `node --test`).
 
 - [ ] **3.5 — Incremental re-index.**
   git-diff + content hash (crg's pattern, per HANDOFF) — a full re-index per edit does not
