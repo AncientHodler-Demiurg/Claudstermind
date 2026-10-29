@@ -559,19 +559,61 @@ forgotten — pulling any of it in here is exactly the scope creep HANDOFF warns
     real model session, and `lib/workspace.mjs`'s `_performRoll` consulting the cache) — tracked
     as 2.5b.
 
-- [ ] **2.5b — Wire the real handoff into a live roll.** *(deferred follow-up, not forgotten —
-  same split as 2.2a/2.2b, 2.3a/2.3b)*
-  - [ ] A cache slot on the session (or wherever `_archivedPrompts`/`_segmentCount` already live
-        in `lib/workspace.mjs`) holding the last `generateHandoff` result.
-  - [ ] The actual trigger at the 60%-of-context manual-wrap mark (today entirely client-side,
-        `ChatShell.wrapReadiness`'s `manualAt`) calling `generateHandoff` with a real `generate`
-        pointed at a cheap model/session — off the roll's critical path, per 2.5a's design.
-  - [ ] `_performRoll` calls `resolveHandoff` instead of building the mechanical summary inline,
-        feeding its `text` into `buildSeedText`'s `summary` field (or replacing that call
-        entirely, TBD once this is actually wired).
+- [x] **2.5b — Wire the real handoff into a live roll.** *(this session — UI display split off
+  as 2.5c below, same pattern as every other `a`/`b` slice in this branch)*
+  - [x] A cache slot on the session: `s._handoffCache` (holding the last `generateHandoff` result)
+        + `s._handoffGenerating` (an in-flight guard so an overlapping second trigger can't fire a
+        second concurrent draft for the same session).
+  - [x] The actual trigger: new `_prepareHandoff(sessionKey)` in `lib/workspace.mjs`, reachable via
+        a new `"prepareHandoff"` entry in `WS_CONTROL_ACTIONS` (`lib/protocol.mjs`) — the SERVER
+        half of the 60%-of-context mark. The CLIENT half (actually calling it from
+        `ChatShell.wrapReadiness`'s `manualAt`) is NOT built here — that's `dashboard/public/app.js`,
+        the same contended-file boundary 2.5c inherits. `generate` is new `lib/oneShotQuery.mjs`:
+        a minimal, stateless wrapper around the raw SDK `query()` function (the SAME `sdkQuery`/
+        cwd/token the live session already runs under — no new auth/process-spawn surface), tool
+        use always denied (a handoff draft has no business running Bash/Edit). Fire-and-forget by
+        construction: `_prepareHandoff` returns immediately; the promise only ever WRITES
+        `s._handoffCache` later, so a roll can never stall on it.
+  - [x] `_performRoll` now calls `resolveHandoff({ cached: s._handoffCache, currentTurns:
+        slice.length, mechanicalSummary: summary })` and feeds `.text` into `buildSeedText`'s
+        `summary` field — the mechanical computation itself is UNCHANGED and still feeds the
+        ARCHIVE record's own `summary` (that field was never in scope here; only what the FRESH
+        SESSION is seeded with changes). The cache is unconditionally cleared after being read
+        (fresh or stale) — a leftover from this roll must never bleed into the next one's
+        freshness arithmetic.
+  - [x] Caught a real bug by actually running the tests, not trusting the code as written:
+        `countTurns()` (`lib/conversationWindow.mjs`) returns `{promptOffset, responseOffset}`,
+        not a scalar — the wrong shape for `isHandoffFresh`'s arithmetic. `generateHandoff` and
+        `resolveHandoff` both silently no-op (`Number.isFinite` check) rather than throwing, so
+        this surfaced as "the cache is just never populated" with no error anywhere — only caught
+        because the test asserted the cache was actually set, not just that nothing crashed. Fixed
+        by using `slice.length` (the since-last-roll row count) instead, in both call sites.
   - [ ] The generated handoff shown to the user and editable before use (matches the "no
         auto-adoption" spirit running through D6/2.2 — a human can see and correct it) — a
-        `dashboard/public/app.js` UI concern, contended file, own pass.
+        `dashboard/public/app.js` UI concern, contended file, split off as **2.5c** below.
+  - [x] Test: 4 new `lib/oneShotQuery.test.mjs` assertions folded into 8 total (collects/
+        concatenates assistant text blocks; always denies tool use; sends the prompt verbatim;
+        passes model/cwd/fastMode through; null on nothing produced; null on bad input; never
+        throws on a throwing query or a mid-stream failure) + 7 new `lib/workspace.test.mjs`
+        integration tests (too-light never calls the model; a heavy session gets a real cached
+        handoff, asynchronously — not on the same tick; the in-flight guard suppresses an
+        overlapping second call; the `"control"` dispatch path reaches `_prepareHandoff`; a FRESH
+        cache seeds the roll verbatim and is then cleared; a STALE cache still falls back to the
+        mechanical summary AND is still cleared; no cache at all behaves exactly as before 2.5b
+        existed). Full suite 2136/2136 green.
+
+- [ ] **2.5c — Show-and-edit UI for the generated handoff.** *(deferred follow-up, not
+  forgotten — `dashboard/public/app.js` is a contended file, own pass)*
+  - [ ] Surface `s._handoffCache` (or the fact that one was used) somewhere the user can see it —
+        at minimum on the `wrapResult`/`rolling` events `_performRoll` already sends, ideally
+        before the roll commits (mirrors `wrapPreview`'s read-only preview pattern).
+  - [ ] Let the user EDIT the drafted handoff before a roll consumes it — matches the "no
+        auto-adoption" spirit running through D6/Ch.2.2/Ch.2.5: a human can see and correct a
+        generated artifact before it's acted on, same as an `approve`d skill or a `resolve`d
+        decision, never silently applied.
+  - [ ] Test: `lib/exocortexUi.test.mjs`/`lib/exocortexMount.test.mjs`'s slice-and-eval pattern
+        (this repo's existing convention for testing pure `app.js` logic without booting a DOM) —
+        a dedicated suite for whatever pure helpers this UI needs.
 
 ---
 

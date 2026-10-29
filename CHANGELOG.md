@@ -273,6 +273,41 @@ window, matching the "no auto-adoption" spirit running through D6/2.2.
 19 new tests (18 `lib/wrapHandoff.test.mjs` + 1 `renderRows` in `lib/conversationRoll.test.mjs`).
 Full suite 2045/2045 green.
 
+### Added — Ch.2.5b: the real handoff is wired into a live roll
+New `lib/oneShotQuery.mjs`: a minimal, stateless wrapper around the raw Claude Agent SDK `query()`
+function (the same one injected as `WorkspaceManager.sdkQuery`) for a single text-in/text-out
+call — no tool use (always denied), no permission prompts, no on-disk session file, no
+`this.sessions` entry. This is the "which model, which session" decision `generateHandoff`
+deliberately left open: reuse the SAME `sdkQuery`/cwd/token the live session already runs under,
+rather than any new auth or process-spawn surface.
+
+New `lib/workspace.mjs#_prepareHandoff(sessionKey)`, reachable via a new `"prepareHandoff"` entry
+in `WS_CONTROL_ACTIONS` — the server half of the 60%-of-context trigger (the client half, calling
+it from `ChatShell.wrapReadiness`'s `manualAt`, is `dashboard/public/app.js` and stays out of
+scope here, split off as **2.5c**). Fire-and-forget by construction — it returns immediately, the
+draft resolves later and only ever WRITES `s._handoffCache`, guarded by `s._handoffGenerating` so
+an overlapping second trigger can't fire a concurrent second draft. `_performRoll` now calls
+`resolveHandoff({ cached: s._handoffCache, currentTurns: slice.length, mechanicalSummary })` and
+feeds the result into `buildSeedText`'s `summary` field — the archived segment's OWN `summary`
+stays the mechanical one unconditionally (out of scope; only what the fresh session is seeded
+with changes). The cache is unconditionally cleared after being read, fresh or stale, so a
+leftover can never bleed into the next roll's freshness arithmetic.
+
+Caught a real bug via the tests, not by inspection: `lib/conversationWindow.mjs`'s `countTurns()`
+returns `{promptOffset, responseOffset}`, not a scalar — the wrong shape for `isHandoffFresh`'s
+arithmetic. Both `generateHandoff` and `resolveHandoff` degrade silently (a `Number.isFinite`
+guard, not a throw) on a bad `currentTurns`, so this surfaced as "the cache is just never
+populated," with nothing in the way of an error — caught only because a test asserted the cache
+was actually set, not just that nothing crashed. Fixed by using `slice.length` (the
+since-last-roll row count) at both call sites.
+
+12 new tests (8 `lib/oneShotQuery.test.mjs` + 4 folded into the 7 new `lib/workspace.test.mjs`
+integration cases: too-light never calls the model; a heavy session gets a real cached handoff
+asynchronously, not on the same tick; the in-flight guard suppresses an overlapping second call;
+the `"control"` dispatch path reaches `_prepareHandoff`; a FRESH cache seeds the roll verbatim and
+is cleared; a STALE cache still falls back to the mechanical summary and is still cleared; no
+cache behaves exactly as before). Full suite 2136/2136 green.
+
 ### Added — Wave 0.1: image garbage collection (ROADMAP-2.0.md 4.13)
 `workspaceStore.saveImage` has written content-addressed blobs to `<workspace>/images/` since it
 existed, and nothing ever deleted them: `deleteSession` removed only a conversation's JSONL, so
