@@ -386,27 +386,46 @@ forgotten — pulling any of it in here is exactly the scope creep HANDOFF warns
     a different candidate type than a skill, out of scope for a task literally named "skill
     crystallisation." Tracked as 2.2c below if/when it's needed.
 
-- [ ] **2.2b — The nudge/detector.** *(deferred follow-up, not forgotten)*
-  `proposeSkill` takes an already-computed `observationCount` — it does not itself watch
-  conversations for repeated-work patterns or spawn Hermes's background review subagent. That
-  detection loop is genuinely separate machinery (what counts as "the same repeated work"? how
-  are observations clustered? what wakes the reviewer?) and was deliberately not built in 2.2a to
-  keep that slice to storage + the approve verb, matching the "smallest useful slice" pattern
-  already used for 2.0/2.1.
-  - [ ] Define what an "observation" is and where it's recorded (own table? reuses `facts`
-        with `kind:'observation'`?).
-  - [ ] The clustering logic that turns N observations of the same repeated work into a call to
-        `proposeSkill` once the threshold is crossed — and never more than once for the same
-        cluster.
-  - [ ] The background review subagent hookup (Hermes's shape: nudge → subagent drafts/patches
-        the skill content → lands as a `proposeSkill`/`amendSkill` call, still human-approved).
-  - [ ] Test: a cluster below threshold produces no proposal; crossing the threshold produces
-        exactly one; a second observation of an already-proposed cluster amends, not
-        double-proposes.
+- [x] **2.2b — The nudge/detector.** *(this session)*
+  Built as a new layer, `lib/skillNudge.mjs`, sitting above `lib/skillStore.mjs` — same split as
+  `lib/retrieval.mjs` above `lib/knowledgeStore.mjs`.
+  - [x] "Observation" decided as its OWN table (`skill_observations` in `skillStore.mjs`, not
+        `facts` + `kind:'observation'`): clustering needs a `clusterKey` column `facts` doesn't
+        have, and overloading `text` with structured data would have broken `facts`' simple
+        discriminated-by-`kind` shape. Documented in-code why.
+  - [x] `nudgeSkill(db, opts, draft)`: records an observation every call (`recordObservation`),
+        counts per `clusterKey` (`countObservations`), and once count `>= SKILL_CLUSTER_THRESHOLD`
+        AND no skill exists yet for `skillId`, calls `proposeSkill`; every later nudge of the same
+        cluster finds the skill already exists and calls `amendSkill` instead — structurally
+        impossible to double-propose, since the branch is keyed off `getSkill` existing, not off a
+        separate "already proposed" flag that could drift.
+  - [x] Background-subagent hookup: an OPTIONAL injected async `draft(ctx)` callback, called ONLY
+        when a propose/amend is actually about to happen (never on a below-threshold nudge) —
+        same decoupling as `wrapHandoff.mjs`'s `generateHandoff(opts, generate)`. A rejecting or
+        empty-returning draft degrades to `action: "no-content"`, never throws.
+  - [x] Test: below-threshold → no proposal (`getSkill` still null); crossing → exactly one
+        `"proposed"` even replayed across 5 nudges of the same cluster; a second observation of an
+        already-proposed cluster → `"amended"`, one skills row with 2 versions, never a second
+        row; draft called only on propose/amend, never below threshold; explicit `opts.content`
+        bypasses `draft` entirely. 9 new tests (`lib/skillNudge.test.mjs`).
 
-- [ ] **2.2c — Agent-candidate crystallisation.** *(deferred, separate from skills — see 2.2a's note)*
-  D6's other threshold: ≥3 instincts and ≥0.75 average confidence. Not scheduled until 2.2b's
-  observation/instinct model exists to feed it.
+- [x] **2.2c — Agent-candidate crystallisation.** *(this session — built together with 2.2b in
+  `lib/skillNudge.mjs`, since 2.2b's clustering shape turned out to generalize directly)*
+  D6's other threshold: ≥3 instincts and ≥0.75 average confidence — a genuinely different gate
+  (count AND average, not count alone), so `nudgeAgent` is a parallel, NOT unified, function
+  rather than a forced generic abstraction over `nudgeSkill` (same judgment call as Ch.2.4's two
+  distinct decay mechanisms for skills vs. facts).
+  - [x] "Instinct" recorded in its own new table (`agent_instincts` in `skillStore.mjs`) — a
+        `confidence REAL NOT NULL` column most `skill_observations` rows would leave null, so a
+        second table over overloading the first.
+  - [x] Agent candidates share the EXACT SAME `skills`/`skill_versions` state machine as skill
+        candidates — new `skills.kind` column (`'skill'`|`'agent'`, default `'skill'`) distinguishes
+        them, so approve/reject/version/decay are not duplicated for a "different candidate type."
+  - [x] Test: below count → no proposal even at high confidence; at count but below average
+        confidence → no proposal; crossing BOTH → exactly one `"proposed"`, `kind: "agent"`, next
+        nudge of the same cluster `"amended"` not re-proposed; draft callback carries `count` +
+        `avgConfidence` in its context. 5 new tests. Full suite (`lib/*.test.mjs relay/*.test.mjs`)
+        2113/2113 green.
 
 - [x] **2.3a — Retrieval into the agent's context: the ranking/budgeting module.** *(this session
   — 2.3b, wiring it to a live trigger, split off below, same pattern as 2.2a/2.2b)*

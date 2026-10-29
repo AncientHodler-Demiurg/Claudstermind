@@ -105,6 +105,45 @@ candidate type and is out of scope for a task named "skill crystallisation" — 
 19 new tests (14 `lib/skillStore.test.mjs` + 5 `lib/provenance.test.mjs`). Full suite 1993/1993
 green.
 
+### Added — Ch.2.2b/2.2c: the nudge/detector, for both skill and agent candidates
+New `lib/skillNudge.mjs`, sitting above `lib/skillStore.mjs` (same split as `lib/retrieval.mjs`
+above `lib/knowledgeStore.mjs`). Resolves 2.2a's deferred "observation" question: its own table
+(`skill_observations`, new in `skillStore.mjs`) rather than overloading `facts` with
+`kind:'observation'` — clustering needs a `clusterKey` column `facts` has no slot for.
+
+`nudgeSkill(db, opts, draft)` records an observation on every call, counts them per `clusterKey`,
+and calls `proposeSkill` once the count crosses `SKILL_CLUSTER_THRESHOLD` (2) **and** no skill
+exists yet for that `skillId`; every later nudge of the same cluster finds the skill already
+exists and calls `amendSkill` instead — the branch is keyed off `getSkill` existing, not a
+separate "already proposed" flag, so double-proposing the same cluster is structurally
+impossible, not just discouraged by convention.
+
+The background-review-subagent hookup (Hermes's shape, per HANDOFF): an **optional** injected
+async `draft(ctx)` callback, invoked ONLY when a propose/amend is actually about to happen — never
+on a below-threshold nudge, so a subagent is never spun up before the pattern is real. Same
+decoupling `lib/wrapHandoff.mjs`'s `generateHandoff` already uses for "which model" — a rejecting
+or empty-returning draft degrades to `action: "no-content"`, never throws. If `opts.content` is
+already supplied, `draft` is never called at all.
+
+`nudgeAgent(db, opts, draft)` is 2.2c, built alongside 2.2b once its clustering shape turned out
+to generalize directly: D6's separate agent-candidate gate (≥3 "instincts" AND ≥0.75 average
+confidence — a count-AND-average gate, genuinely different from a count-alone gate, so a parallel
+function rather than a forced-generic one, same judgment call as Ch.2.4's two distinct decay
+mechanisms). New `agent_instincts` table (a `confidence REAL NOT NULL` column most observation
+rows would leave null). Agent candidates share the exact same `skills`/`skill_versions` state
+machine as skill candidates via a new `skills.kind` column (`'skill'`|`'agent'`, default
+`'skill'`) rather than duplicating approve/reject/version/decay for a "different candidate type."
+`proposeSkill`/`listSkills` both gained `kind` support.
+
+14 new tests `lib/skillNudge.test.mjs` (9 `nudgeSkill` + 5 `nudgeAgent`) covering: below-threshold
+produces no proposal; crossing produces exactly one even replayed across many nudges; a second
+observation of an already-proposed cluster amends, never double-proposes; the draft callback
+fires only on propose/amend and never below threshold; explicit content bypasses draft entirely;
+nudgeAgent's below-count and at-count-but-below-average cases both correctly produce no proposal.
+Plus 20 new tests in `lib/skillStore.test.mjs` for the new storage primitives (`recordObservation`/
+`countObservations`/`listObservations`/`recordInstinct`/`instinctStats`/`listInstincts`) and the
+`kind` column. Full suite 2113/2113 green.
+
 ### Added — Ch.2.3a: retrieval into the agent's context — ECC's relevance ranking + SessionStart budgeting
 New `lib/retrieval.mjs`, reimplemented (not translated 1:1) from ECC's actual source, read
 directly rather than worked from the HANDOFF summary alone: `scripts/lib/instinct-relevance.js`
