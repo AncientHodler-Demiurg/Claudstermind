@@ -637,6 +637,35 @@ live one) both clean.
 `lib/priorArtUi.test.mjs` for the app.js wiring) + 1 existing test updated
 (`lib/compactionMarker.test.mjs`'s dispatcher-count regex). Full suite 2197/2197 green.
 
+### Added — Ch.2.5c: show-and-edit UI for the generated handoff — WAVE 2 NOW FULLY COMPLETE
+`wrapPreview(sessionKey)` now also returns `handoff: { text, source }`, computed with the SAME
+`resolveHandoff` call `_performRoll` itself would make right now — read-only, never touches
+`s._handoffCache`. New shared `_mechanicalSummary(head)` helper keeps `_performRoll` and
+`wrapPreview` from computing two driftable versions of the fallback text.
+
+Both Pact's and Core/ws's Wrap dialogs now render an editable textarea pre-filled with that text,
+labeled by source (`cached` = a real AI draft; `mechanical` = nothing fresh yet, shown anyway).
+Opening either dialog fires `"prepareHandoff"` alongside `"wrapPreview"`, plus one follow-up
+re-fetch ~2.5s later so a still-generating draft has a chance to land — skipped the instant the
+user starts editing, so a human mid-edit is never silently overwritten (the prior value is
+captured before `replaceChildren()` destroys the old textarea node).
+
+New `manualRoll(sessionKey, { handoffOverride })`, wired through `_sendWrapNow` and the
+`"wrapNow"` control action: whatever's in the box when "Wrap now" is clicked is stamped as a
+fresh `s._handoffCache` entry, so `_performRoll`'s own `resolveHandoff` picks it up unchanged —
+consumed the same way any other handoff is, including the edge case where there's nothing to
+roll (the override is cleared, not left dangling for a later roll).
+
+Caught a real bug via this branch's own `lib/appScopeLeaks.test.mjs`, not by inspection: a new
+constant was declared after the closure referencing it, breaking this file's own established
+"declare before the function" convention. Fixed in both surfaces. `node --check` and a real
+`node scripts/mobile-smoke.mjs` run (a scratch instance, never the live one) both clean.
+
+21 new tests (8 `lib/workspace.test.mjs` + 13 `lib/wrapHandoffUi.test.mjs`). Full suite
+2218/2218 green.
+
+**Wave 2 (the brain) is now fully complete, UI included.**
+
 ## [1.20.0] - 2026-09-12
 ### Added — bee, wasp and nectar ship WITH Claudstermind
 

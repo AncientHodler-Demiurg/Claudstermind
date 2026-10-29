@@ -2183,6 +2183,13 @@ body.pact-wgrip-dragging .pact-wgrip { pointer-events: auto; }
 .ws-wrapmeter { display: inline-block; flex: 0 1 70px; min-width: 36px; height: 6px; border-radius: 3px; background: #0a1020; overflow: hidden; border: 1px solid var(--line); }
 .ws-wrapmeter i { display: block; height: 100%; background: #34d399; }
 .ws-pane-dialog-note { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 11px; color: var(--ink-mute); }
+/* Ch.2.5c — the handoff shown (and editable) in the Wrap dialog, both Core and Pact. Monospace so
+   the markdown headings (## Decisions Made, …) read as structure, not as stray hashes. */
+.ws-pane-dialog-handoff-label { margin-top: 10px; font-size: 11px; color: var(--ink-mute); }
+.ws-pane-dialog-handoff { width: 100%; box-sizing: border-box; margin-top: 4px; resize: vertical;
+  font: 11.5px/1.5 ui-monospace, Consolas, monospace; color: var(--ink); background: var(--chip);
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.ws-pane-dialog-handoff:focus { outline: 1px solid var(--accent); }
 /* Plan usage-limits badge (5h/7d rolling rate-limit utilization) — mirrors the Core cockpit's
    .ws-usage-limits, tinted amber as it nears a limit and red when nearly capped. Full breakdown in title. */
 .pc-usage-limits { flex: 0 0 auto; font-size: 10.5px; color: var(--ink-dim); white-space: nowrap;

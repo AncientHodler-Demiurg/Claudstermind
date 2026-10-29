@@ -610,18 +610,45 @@ forgotten — pulling any of it in here is exactly the scope creep HANDOFF warns
         mechanical summary AND is still cleared; no cache at all behaves exactly as before 2.5b
         existed). Full suite 2136/2136 green.
 
-- [ ] **2.5c — Show-and-edit UI for the generated handoff.** *(deferred follow-up, not
-  forgotten — `dashboard/public/app.js` is a contended file, own pass)*
-  - [ ] Surface `s._handoffCache` (or the fact that one was used) somewhere the user can see it —
-        at minimum on the `wrapResult`/`rolling` events `_performRoll` already sends, ideally
-        before the roll commits (mirrors `wrapPreview`'s read-only preview pattern).
-  - [ ] Let the user EDIT the drafted handoff before a roll consumes it — matches the "no
-        auto-adoption" spirit running through D6/Ch.2.2/Ch.2.5: a human can see and correct a
-        generated artifact before it's acted on, same as an `approve`d skill or a `resolve`d
-        decision, never silently applied.
-  - [ ] Test: `lib/exocortexUi.test.mjs`/`lib/exocortexMount.test.mjs`'s slice-and-eval pattern
-        (this repo's existing convention for testing pure `app.js` logic without booting a DOM) —
-        a dedicated suite for whatever pure helpers this UI needs.
+- [x] **2.5c — Show-and-edit UI for the generated handoff.** *(this session — WAVE 2 NOW FULLY
+  COMPLETE, including every UI follow-up)*
+  - [x] Surfaced via `wrapPreview`'s read-only preview pattern, exactly as this task's own
+        guidance named — not a separate event. `wrapPreview(sessionKey)` now also returns
+        `handoff: { text, source }`, computed with the SAME `resolveHandoff` call `_performRoll`
+        itself would make right now (never touches `s._handoffCache` — still the only place that
+        consumes it; a new shared `_mechanicalSummary(head)` helper keeps `_performRoll` and
+        `wrapPreview` from computing two driftable versions of the fallback text).
+  - [x] The user can EDIT it before a roll consumes it: both Pact's and Core/ws's Wrap dialogs
+        render an editable `<textarea>` pre-filled with the preview's handoff text, labeled by
+        source (`cached` = a real AI draft; `mechanical` = nothing fresh yet, shown anyway so
+        there's always something to review). Opening either dialog now also fires
+        `"prepareHandoff"` (fire-and-forget, Ch.2.5b's existing mechanism) alongside the
+        `"wrapPreview"` request, plus ONE follow-up re-fetch ~2.5s later so a draft that was still
+        generating on first open has a chance to land in the same dialog — skipped the instant the
+        user starts typing in the box, so a human mid-edit is never silently overwritten (the
+        PRIOR textarea value is captured before `replaceChildren()` destroys the old node, and
+        restored verbatim on a refill if the box was edited).
+  - [x] `manualRoll(sessionKey, { handoffOverride })` (wired through `_sendWrapNow` and the
+        `"wrapNow"` control action): whatever text is in the box when "Wrap now" is clicked is
+        stamped as a FRESH `s._handoffCache` entry, so `_performRoll`'s own `resolveHandoff` call
+        picks it up unchanged — no second "the client supplied text directly" code path inside the
+        roll itself. Consumed (cleared) the same way any other handoff is, including the edge case
+        (unreachable from the real dialog, but not assumed) where there's nothing to roll — the
+        override is cleared rather than left dangling for a later, unrelated roll.
+  - [x] Caught a REAL bug via this branch's own dedicated scope-leak lint
+        (`lib/appScopeLeaks.test.mjs`), not just by inspection: the new `WS_HANDOFF_REFRESH_MS`
+        constant was declared AFTER the closure that referenced it — this file's own established
+        convention (see `PACT_WRAP_ARM_MS`/`WS_WRAP_ARM_MS`) is to declare such constants BEFORE
+        the function, and the one place that didn't was flagged automatically. Fixed in both
+        surfaces (Pact's `PACT_HANDOFF_REFRESH_MS` moved too, for consistency, though it happened
+        not to trip the same check).
+  - [x] `node --check` and a real `node scripts/mobile-smoke.mjs` run (against a scratch dashboard
+        instance on a throwaway port, never the live one) both clean.
+  - [x] Test: 8 new `lib/workspace.test.mjs` cases (the server-side `handoff` field and
+        `handoffOverride` behavior, including the override-preferred-over-a-cached-draft and
+        blank-override-is-no-override cases) + 13 new `lib/wrapHandoffUi.test.mjs` cases (the
+        client wiring, same source-presence convention `lib/priorArtUi.test.mjs`/
+        `lib/compactionMarker.test.mjs` already use). Full suite 2218/2218 green.
 
 ---
 
