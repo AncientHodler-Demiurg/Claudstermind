@@ -618,6 +618,25 @@ a full rebuild in disguise. 11 new tests. Full suite 2191/2191 green.
 
 **Wave 3 (the code graph) is now complete: schema, extractor, graph, viz, incremental re-index.**
 
+### Added — Ch.2.3b UI follow-up: the prior-art check is now visible, in both workspaces
+`priorArt` events (live since Ch.2.3b, invisible until now) are rendered in both Pact and
+Core/ws. New `priorArt` kind on `window.ChatShell.buildMark` (`packages/claude-chat-shell`) — its
+own label and styling, deliberately NOT the existing "error"/`tone:"info"` branch, which is
+worded as an engine note about turn/window mechanics and would have been a different wrong
+sentence for this event. Both chat surfaces' event switches now push a `{kind:"priorArt", text,
+at}` row and both row-kind dispatchers route it through the shared `wsMarkNode`, same as
+compacted/wrapped/turnError.
+
+Deliberately NOT persisted server-side, unlike those three — a genuinely live-only row (the server
+only ever `send`s this event, never pushes it to `s.transcript`), gone after a reload, the same
+class of thing as an existing client-only "note" marker. `node --check` and a real `node
+scripts/mobile-smoke.mjs` run (against a scratch dashboard instance on a throwaway port, never the
+live one) both clean.
+
+6 new tests (2 `lib/chatShellPackage.test.mjs` for the new `buildMark` variant + 4
+`lib/priorArtUi.test.mjs` for the app.js wiring) + 1 existing test updated
+(`lib/compactionMarker.test.mjs`'s dispatcher-count regex). Full suite 2197/2197 green.
+
 ## [1.20.0] - 2026-09-12
 ### Added — bee, wasp and nectar ship WITH Claudstermind
 

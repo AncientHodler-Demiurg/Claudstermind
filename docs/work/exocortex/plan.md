@@ -470,9 +470,17 @@ forgotten — pulling any of it in here is exactly the scope creep HANDOFF warns
   - [x] Fires automatically at task start: a brand-new session's first prompt. Deliberately
         SURFACES (emits a `priorArt` event) rather than silently rewriting the text the model
         receives — same "propose, don't auto-adopt" spirit as D6/Ch.2.2/Ch.2.5; a human decides
-        whether to act on it. Rendering it in the UI is a `dashboard/public/app.js` concern, not
-        built here (same boundary 2.5b draws for the handoff UI) — the event is emitted either way
-        so a future UI pass has something to render.
+        whether to act on it.
+  - [x] **UI follow-up, done in a later session:** both workspaces now render it. New `priorArt`
+        kind on `window.ChatShell.buildMark` (own styling, own label — never worded as an "ENGINE
+        NOTE," a different event) in the shared chat-shell package; both Pact's and Core/ws's
+        event switches push a `{kind:"priorArt", text, at}` row and both row-kind dispatchers
+        route it through the same `wsMarkNode` either surface already used for
+        compacted/wrapped/turnError. Deliberately NOT persisted server-side (unlike those three) —
+        a genuinely live-only, one-time "FYI before you keep typing" row, gone after a reload,
+        same class of thing as an existing "note" marker. `node --check` + `node
+        scripts/mobile-smoke.mjs` both clean against a scratch instance (never the live one). 6
+        new tests (2 `lib/chatShellPackage.test.mjs` + 4 `lib/priorArtUi.test.mjs`).
   - [x] `stackKeywords` — still nowhere live; no project-stack detector exists. Deliberately
         omitted (not passed to `retrieveForContext`) rather than guessed at — the project-scope
         boost still applies, only the stack-match boost never fires. Same scope line 2.3a already

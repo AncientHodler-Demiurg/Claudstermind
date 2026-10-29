@@ -9022,6 +9022,15 @@ function pactChatRoute({ kind, sessionKey, data }) {
       pactChatPaint(t);
       pactChatFlashNote((d.subtype === "resume-missing" ? "↻ " : "⚠ Turn failed — ") + (d.message || "the engine ended the turn with an error"));
       return;
+    // "You already solved this" (Ch.2.3b, exocortex) — fires once, at a brand-new conversation's
+    // first prompt, if the workspace's own history/knowledge has anything relevant. NOT persisted
+    // server-side (see lib/workspace.mjs _prompt) — a live-only row, same class of thing as a
+    // "note" marker, gone after a reload. Shown inline rather than as a transient flash: it is
+    // meant to be read before you keep typing, not glanced at for 1.8 seconds.
+    case "priorArt":
+      if (Array.isArray(t.msgs) && d.text) t.msgs.push({ kind: "priorArt", text: d.text, at: d.at });
+      pactChatPaint(t);
+      return;
     // Manual wrap, part 1: the read-only preview the confirm dialog is waiting on.
     case "wrapPreview": pactFillWrapPreview(t, d.preview); return;
     // Manual wrap, part 2: the outcome. Counters are NOT touched here — see the "rolling" case
@@ -9990,6 +9999,12 @@ function wsMarkNode(m) {
       : "error";
     return window.ChatShell.buildMark({ kind: "error", message: m.message, at: m.at, tone });
   }
+  // "You already solved this" (Ch.2.3b, exocortex) — see lib/priorArt.mjs. Its own kind, not
+  // "error"/tone:"info" — that branch is worded as an ENGINE note about turn/window mechanics,
+  // which this is not.
+  if (m && m.kind === "priorArt") {
+    return window.ChatShell.buildMark({ kind: "priorArt", text: m.text, at: m.at });
+  }
   return window.ChatShell.buildMark({
     kind: (m && m.kind === "wrapped") ? "wrap" : "compact",
     preTokens: m && m.preTokens, postTokens: m && m.postTokens,
@@ -10179,7 +10194,8 @@ function pactChatMsgNode(m) {
   }
   if (m.kind === "note") return el("div", { class: "pc-note" }, [m.text]);
   // THE COMPACTION BAR — same shared wording and the same package class Core uses (cs-compacted).
-  if (m.kind === "compacted" || m.kind === "wrapped" || m.kind === "turnError") return wsMarkNode(m);
+  // priorArt (Ch.2.3b, exocortex) rides the SAME shared renderer — see wsMarkNode.
+  if (m.kind === "compacted" || m.kind === "wrapped" || m.kind === "turnError" || m.kind === "priorArt") return wsMarkNode(m);
   // A worktree-migration separator: a full-width labeled line marking where this conversation moved
   // between checkouts (main ⇄ a worktree). Context is unbroken across it — only the agent's cwd changed.
   if (m.kind === "migration") {
@@ -13196,7 +13212,12 @@ function viewWorkspace() {
     // THE COMPACTION BAR — a full-width rule marking where the context window was summarised.
     // Rendered from a PERSISTED row (see workspace.mjs _onEvent), so it survives a reload and shows
     // on every device; the activity-rail line this replaces did neither.
-    if (m.kind === "compacted" || m.kind === "wrapped" || m.kind === "turnError") return wsMarkNode(m);
+    // priorArt (Ch.2.3b, exocortex) rides the SAME shared renderer — see wsMarkNode. Unlike the
+    // other three, this one is NOT persisted server-side (see lib/workspace.mjs's _prompt — it's
+    // a `send`, never a `transcript.push`), so it is genuinely live-only: present on the pane that
+    // was open when it fired, gone after a reload/resync. That is intentional — it is a one-time
+    // "FYI, before you kept typing" aside, not a durable part of the conversation record.
+    if (m.kind === "compacted" || m.kind === "wrapped" || m.kind === "turnError" || m.kind === "priorArt") return wsMarkNode(m);
     return null;
   }
   // Cache each item's rendered node on the message. Transcript items are immutable once added
@@ -15693,6 +15714,17 @@ function viewWorkspace() {
         for (const p of targets) {
           if (Array.isArray(p.transcript)) p.transcript.push({ kind: "turnError", message: data.message || "", subtype: data.subtype || null, at: data.at });
           logActivity(p, (data.subtype === "resume-missing" ? "↻ " : "⚠ Turn failed — ") + (data.message || "the engine ended the turn with an error"), data.subtype === "resume-missing" ? "" : "ws-act-err");
+          schedulePaint(p);
+        }
+        return;
+      }
+      // "You already solved this" (Ch.2.3b, exocortex) — see Pact's identical handling above for
+      // why this is a live-only row, not persisted. Fires once, at a brand-new conversation's
+      // first prompt.
+      if (data.kind === "priorArt") {
+        for (const p of targets) {
+          if (Array.isArray(p.transcript) && data.text) p.transcript.push({ kind: "priorArt", text: data.text, at: data.at });
+          logActivity(p, "📎 Prior art found in this workspace");
           schedulePaint(p);
         }
         return;

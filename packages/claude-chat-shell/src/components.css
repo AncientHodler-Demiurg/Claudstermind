@@ -307,6 +307,15 @@
 .cs-shell .mark.--note::before { border-top: 1px dashed #ffb454aa; }
 .cs-shell .mark.--note .mlbl { background: #2a1f0e; border: 1px solid #ffb454; color: #ffd9a0;
   font-size: 10.5px; padding: 2px 12px; max-width: 92%; white-space: normal; text-align: left; }
+/* "You already solved this" — informational, not a failure or a boundary; its own color (blue,
+ * same family as --compact) so it never reads as an error or a recovery notice. The detail text
+ * is shown in full, wrapped — meant to be read, not discovered by hovering the label. */
+.cs-shell .mark.--priorart::before { border-top: 1px dashed #5aa8f0aa; }
+.cs-shell .mark.--priorart .mlbl { background: #0e1a2e; border: 1px solid #5aa8f066; color: #8fc3ff;
+  font-size: 10.5px; padding: 2px 12px; }
+.cs-shell .mark.--priorart .mark-detail { display: block; margin: 5px auto 0; max-width: 92%;
+  white-space: pre-wrap; text-align: left; font-size: 10.5px; line-height: 1.5; color: #c9d8ea;
+  background: #0e1a2e55; border: 1px solid #5aa8f033; border-radius: 6px; padding: 7px 10px; }
 .cs-shell .roll { display: flex; align-items: center; gap: 8px; margin: 0 9px 6px; padding: 5px 9px; border-radius: 7px;
   background: var(--chip); border: 1px solid var(--line); font-size: 11px; flex-wrap: wrap; row-gap: 5px; }
 .cs-shell .roll.--warn { border-color: #ffb45455; background: #1e1a10; }
