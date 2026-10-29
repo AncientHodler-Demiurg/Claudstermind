@@ -596,9 +596,8 @@ forgotten — pulling any of it in here is exactly the scope creep HANDOFF warns
         this surfaced as "the cache is just never populated" with no error anywhere — only caught
         because the test asserted the cache was actually set, not just that nothing crashed. Fixed
         by using `slice.length` (the since-last-roll row count) instead, in both call sites.
-  - [ ] The generated handoff shown to the user and editable before use (matches the "no
-        auto-adoption" spirit running through D6/2.2 — a human can see and correct it) — a
-        `dashboard/public/app.js` UI concern, contended file, split off as **2.5c** below.
+  - [x] The generated handoff shown to the user and editable before use — split off as **2.5c**
+        below, now also done.
   - [x] Test: 4 new `lib/oneShotQuery.test.mjs` assertions folded into 8 total (collects/
         concatenates assistant text blocks; always denies tool use; sends the prompt verbatim;
         passes model/cwd/fastMode through; null on nothing produced; null on bad input; never
