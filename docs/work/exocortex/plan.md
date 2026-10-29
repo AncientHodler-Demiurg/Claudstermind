@@ -738,18 +738,40 @@ was wrong, per HANDOFF). tree-sitter ships prebuilt WASM (D7): `web-tree-sitter`
         2180/2180 green (`node scripts/graph-smoke.mjs` is a real-browser run, same as
         `mobile-smoke.mjs` — not part of `node --test`).
 
-- [ ] **3.5 — Incremental re-index.**
+- [x] **3.5 — Incremental re-index.** *(this session — WAVE 3 COMPLETE)*
   git-diff + content hash (crg's pattern, per HANDOFF) — a full re-index per edit does not
   scale.
-  - [ ] Given a git diff between two commits, only the changed files (+ files that import/are
-        imported by a changed file, i.e. the impacted set) are re-extracted.
-  - [ ] A content-hash check skips re-extraction entirely when a "changed" file's hash matches
-        what's already indexed (e.g. a touch with no real diff, or two branches converging on
-        identical content).
-  - [ ] Test: a single-file edit in a fixture corpus triggers re-extraction of that file and its
-        direct importers only — every other node/edge in the graph is untouched (identity-equal
-        or explicitly asserted unchanged), proving the "impact radius" is bounded, not a full
-        rebuild in disguise.
+  - [x] New `lib/codeGraphIndex.mjs`. The impacted set is deliberately ONE HOP, matching the test
+        wording exactly: a changed file PLUS its direct importers — never the files it itself
+        imports (their content didn't change) and never a transitive importer-of-an-importer (a
+        different, larger feature this slice does not build). `reverseImporters` scans the
+        current index's stored edges fresh on every call rather than maintaining a dedicated
+        reverse-index structure — "start simple," same judgment call as every other
+        not-yet-necessary optimization already deferred elsewhere in this branch.
+  - [x] `needsReExtract`/`contentHash` (sha256): a "changed" path (per git diff) whose bytes
+        hash-identical to what's already indexed is skipped entirely — and critically, a skipped
+        file does NOT expand to its importers either, since nothing about it actually differs
+        (verified as its own test, not assumed from the single-file-edit case).
+  - [x] `reindexChanged(index, extractor, changedPaths, readSource)` ties it together: hash-check
+        each changed path first, union the impacted set from only the ones that really changed,
+        re-extract exactly that set via the REAL `lib/codeGraphExtract.mjs` extractor (not a
+        fake — genuine end-to-end), write back into `index.files`. `gitDiffFiles(cwd, from, to)`
+        is the one real-I/O wrapper (`git diff --name-only`), kept separate so everything else
+        stays testable with plain injected data; degrades to `[]` on any git failure rather than
+        throwing.
+  - [x] Test: a real fixture corpus (`a.mjs` ← `b.mjs` ← `c.mjs`, plus an unrelated `d.mjs`) run
+        through the REAL extractor — editing `a.mjs` re-extracts exactly `{a.mjs, b.mjs}` (b
+        directly imports a); `c.mjs` (imports b, not a — transitive) and `d.mjs` (unrelated) are
+        asserted **identity-equal** to their pre-edit index entries, not just unchanged-looking —
+        proving the impact radius is genuinely bounded, not a full rebuild in disguise. Plus: the
+        content-hash skip case, a brand-new never-indexed file always re-extracting, multiple
+        simultaneously changed files unioning correctly, and `gitDiffFiles` against a real
+        throwaway git repo. 11 tests (`lib/codeGraphIndex.test.mjs`). Full suite 2191/2191 green.
+
+**Wave 3 is now complete** — schema (3.1), extractor (3.2), graph (3.3), viz (3.4), incremental
+re-index (3.5). Everything the plan named for "the code graph" is built and tested; what's left
+for the FULL vision (per `docs/EXOCORTEX-VISION.md`) is Ch.4+ (publish/multi-user/commons/local
+models/distillation), all explicitly out of scope for this plan — see below.
 
 ---
 

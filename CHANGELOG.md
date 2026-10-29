@@ -596,6 +596,28 @@ console errors. Ran for real and passed on the first attempt.
 8 new tests (`lib/exocortexGraphViz.test.mjs`, the same sentinel-marked slice-and-eval convention
 `lib/exocortexUi.test.mjs` already uses for pure `app.js` logic). Full suite 2180/2180 green.
 
+### Added — Ch.3.5: incremental re-index — WAVE 3 COMPLETE
+New `lib/codeGraphIndex.mjs`. The impacted set is deliberately ONE HOP: a changed file plus its
+DIRECT importers only — never the files it itself imports (unaffected by the edit), never a
+transitive importer-of-an-importer (a different, larger feature, not built here).
+`reverseImporters` scans the current index's stored edges fresh each call rather than maintaining
+a dedicated reverse-index — start simple, same judgment call as every other not-yet-necessary
+optimization already deferred elsewhere in this branch.
+
+`needsReExtract`/`contentHash` (sha256): a "changed" path whose bytes hash-identical to what's
+already indexed is skipped entirely, and critically does NOT expand to its importers either,
+since nothing about it actually differs — verified as its own test, not assumed. `reindexChanged`
+ties it together against the REAL `lib/codeGraphExtract.mjs` extractor (genuine end-to-end, not a
+fake). `gitDiffFiles(cwd, from, to)` is the one real-I/O wrapper, degrading to `[]` on any git
+failure rather than throwing.
+
+Test: a real fixture corpus (`a.mjs` ← `b.mjs` ← `c.mjs`, plus unrelated `d.mjs`) through the REAL
+extractor — editing `a.mjs` re-extracts exactly `{a.mjs, b.mjs}`; `c.mjs` and `d.mjs` are asserted
+**identity-equal** to their pre-edit entries, proving the impact radius is genuinely bounded, not
+a full rebuild in disguise. 11 new tests. Full suite 2191/2191 green.
+
+**Wave 3 (the code graph) is now complete: schema, extractor, graph, viz, incremental re-index.**
+
 ## [1.20.0] - 2026-09-12
 ### Added — bee, wasp and nectar ship WITH Claudstermind
 
