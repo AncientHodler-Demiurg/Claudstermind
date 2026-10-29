@@ -11,6 +11,14 @@ of this branch; the version test reads the first `## [x.y.z]` heading and `[Unre
 match that pattern, so it falls through to `[1.20.0]` and stays green. One bump, to 2.0.0, at the
 merge. See `docs/work/exocortex/HANDOFF.md`.
 
+### Added — Ch.1.2b: tier (a) remediation for the tracked-data leak
+`.gitignore` gained `/brain/`, `/meta/`, `dashboard/data/map.json`, per the 1.2a audit
+(`docs/work/exocortex/secrets-audit.md`). Verified with a real `git check-ignore` probe: a *new*
+file under `brain/`/`meta/` is now correctly ignored. The 110 files already tracked before this
+line existed are **not** affected — `.gitignore` has no retroactive effect on tracked paths — so
+this is explicitly tier (a) only. Tiers (b) (`git rm --cached`) and (c) (history rewrite) stay an
+explicit owner decision, not actioned here; see `docs/work/exocortex/plan.md` 1.2b.
+
 ### Added — Ch.2.0: conversation recall is now SQLite FTS5, not a linear scan
 `lib/conversationArchive.mjs`'s `recallByQuery` no longer does a `text.toLowerCase().includes(...)`
 scan over every row of every archived segment. It now replays `_segments/*.jsonl` into a disposable

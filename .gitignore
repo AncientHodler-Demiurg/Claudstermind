@@ -55,3 +55,13 @@ cm-deploy.tgz
 
 # Per-installation routing preference (runtime-written by lib/routing.mjs). Local state, not source.
 dashboard/data/routing.json
+
+# Zone 3 (shared brain) / org-infra content that was given a Zone-1 (repo) path by mistake —
+# see docs/work/exocortex/secrets-audit.md and docs/work/exocortex/three-zone-model.md (Ch.1.2a/1.3a).
+# Tier (a) remediation only: stops new/modified files here from being staged going forward.
+# The ~99+10+1 files already tracked from before this line existed are NOT removed by this —
+# that is tier (b) (`git rm --cached`) or tier (c) (history rewrite), both explicit owner
+# decisions per 1.2b, not actioned here.
+/brain/
+/meta/
+dashboard/data/map.json

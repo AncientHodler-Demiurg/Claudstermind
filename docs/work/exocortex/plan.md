@@ -199,16 +199,26 @@ forgotten — pulling any of it in here is exactly the scope creep HANDOFF warns
         business/strategic *content*, not API keys/tokens/passwords. Real privacy problem,
         different remediation path (redaction/untracking, not rotation).
 
-- [ ] **1.2b — Remediate.** *(NOT started — a decision for the repo owner, not this audit pass)*
-  Three tiers named in the audit doc, escalating in irreversibility: (a) `.gitignore` entries for
-  `brain/`/`meta/`/`dashboard/data/map.json` — cheap, stops future tracking, does not touch
-  history; (b) `git rm --cached` those paths — removes from the next commit onward, still leaves
-  ~524 commits of history untouched; (c) a full history rewrite (`git filter-repo` or equivalent)
-  — destructive, needs a verified backup and explicit owner sign-off before ever running. The
-  UI/product-identity strings (§6 of the audit) are a Ch.4 generalization task, not a `.gitignore`
-  fix. Given D4 (self-host only, no publishing planned yet), there is no live urgency — but Ch.1's
-  own opening line ("the repo cannot be published without leaking data") is not yet true, and
-  Ch.4 cannot start until this line is checked off for real.
+- [x] **1.2b — Remediate: tier (a) only.** *(this session)* Tier (b)/(c) remain NOT started — a
+  decision for the repo owner, not this pass.
+  Three tiers named in the audit doc, escalating in irreversibility: **(a) `.gitignore` entries for
+  `/brain/`/`/meta/`/`dashboard/data/map.json`** — done, see below; (b) `git rm --cached` those
+  paths — removes from the next commit onward, still leaves ~524 commits of history untouched,
+  NOT done; (c) a full history rewrite (`git filter-repo` or equivalent) — destructive, needs a
+  verified backup and explicit owner sign-off before ever running, NOT done. The UI/product-identity
+  strings (§6 of the audit) are a Ch.4 generalization task, not a `.gitignore` fix.
+  - [x] `.gitignore` gained `/brain/`, `/meta/`, `dashboard/data/map.json`. Verified by probe: a
+        *new* file under `brain/`/`meta/` is now correctly ignored (`git check-ignore -v` matches).
+        **Confirmed limitation, not a bug:** the 110 files already tracked before this line
+        existed are untouched by it — `.gitignore` has no retroactive effect on tracked paths.
+        `git ls-files` still lists all 110; `git check-ignore` reports no match for `map.json`
+        specifically because it's tracked (the other `dashboard/data/*.json` siblings it was
+        modeled on were never tracked in the first place, which is why they show as ignored and
+        this one doesn't).
+  - Given D4 (self-host only, no publishing planned yet), there is no live urgency to go further —
+        but Ch.1's own opening line ("the repo cannot be published without leaking data") is still
+        not fully true after tier (a) alone; tiers (b)/(c) stay an explicit owner decision, not
+        actioned here. Ch.4 cannot start until this line is checked off for real.
 
 - [x] **1.3a — Three-zone model: the design note.** *(this session — 1.3b split off below,
   blocked on 1.1)*
