@@ -8061,6 +8061,22 @@ function pactStateSnapshot() {
   // `ackBase` — the per-worktree acknowledged baseline tree SHAs (Acknowledge diffstat); syncs across devices.
   return { v: 1, editor, chat, collapse, chatNames: PACT_CHAT_NAMES || {}, ackBase: (PACT_ED && PACT_ED._ackBase) || {} };
 }
+// ===== PACT DRAFT RESTORE RACE — pure helper (sliced out for unit tests; see lib/pactDraftRestoreRace.test.mjs)
+// pactRestoreState's "keep what was typed in the meantime" merge (below): drawing the device's last-
+// seen local layout FIRST (so the composer is usable before the slow network fetch lands) makes the
+// box look exactly like any other input, so a real keystroke during that wait must survive the
+// server's answer overwriting the tab a moment later. BUT that local draw is not the user typing — it
+// is just whatever this one device's `localStorage` last held, which can be stale (the save that would
+// have corrected it — e.g. a clear, made on ANY device — never reached this one). Treating "non-empty
+// after the local draw" as proof of real typing cannot tell those two apart, so a stale local draft
+// gets captured as "typed" and stamped back over the server's correctly-cleared value on literally
+// every restore — a clear can never stick. Comparing against the baseline taken right after the local
+// draw (`before`) is what tells them apart: unchanged since then = just the local draw, not typing.
+function pactDraftWasTypedSincePrefetch(before, now) {
+  const b = before || "", n = now || "";
+  return !!n && n !== b;
+}
+// ===== end PACT DRAFT RESTORE RACE pure helper =====
 // Fetch the saved state and rebuild the IDE from it — reopen editor boxes (count/sizes/fonts) and
 // their files, restore chat tabs (name/draft/order/active), and the collapse. Every step is guarded
 // so a missing or malformed field just leaves that part at its fresh default (never throws).
@@ -8085,6 +8101,16 @@ async function pactRestoreState() {
       pactChatRender();
     }
   } catch {}
+  // Baseline, taken the INSTANT the local draw above settles — "nothing has been typed yet this visit".
+  // See the "KEEP WHAT WAS TYPED IN THE MEANTIME" merge below: without this baseline it couldn't tell
+  // "the user typed something during the network wait" apart from "this is just what the local draw
+  // itself put there" — and conflating the two is what let a STALE draft (sitting in THIS DEVICE's
+  // localStorage from however long ago — "extremely old... I erase it every time, it still persists"
+  // was the live report) resurrect itself forever: captured as "typed" every single restore, then
+  // stamped back over the server's correctly-cleared draft, because the server-truth comparison below
+  // only asked "is t.draft now empty?" — never "did this value actually come from real typing?".
+  const preFetchDrafts = new Map();
+  try { for (const t of (PACT_CHAT && PACT_CHAT.tabs) || []) if (t.key) preFetchDrafts.set(t.key, t.draft || ""); } catch {}
   let saved = null;
   for (let attempt = 1; attempt <= 4 && saved === null; attempt++) {
     try { const r = await (await fetch("/api/pact/ide-state")).json(); if (r && r.ok) saved = (r.state && typeof r.state === "object") ? r.state : {}; } catch {}
@@ -8102,9 +8128,17 @@ async function pactRestoreState() {
   /* KEEP WHAT WAS TYPED IN THE MEANTIME. Drawing the local layout first created a window that did not
      exist before: the box is now usable while the authoritative copy is still in flight, and that copy
      REPLACES every tab object. Anything typed in those few seconds would have been thrown away by the
-     correction — a new way to lose a prompt, introduced by a change meant to remove a loading bar. */
+     correction — a new way to lose a prompt, introduced by a change meant to remove a loading bar.
+
+     "Typed in the meantime" means CHANGED since preFetchDrafts above — not merely non-empty. A tab
+     whose draft is unchanged from the local draw was never touched during the wait, so the server's
+     answer must win outright (per pactLayoutLocal's own doc: the local copy exists only to draw
+     immediately, "never to decide what is true") — including when the server says the draft is now
+     EMPTY and the stale local copy still says otherwise. That's the fix: a real clear, made on any
+     device, now actually sticks on the next restore instead of this device's old local cache silently
+     overruling it forever. */
   const typed = new Map();
-  try { for (const t of (PACT_CHAT && PACT_CHAT.tabs) || []) if (t.key && t.draft) typed.set(t.key, t.draft); } catch {}
+  try { for (const t of (PACT_CHAT && PACT_CHAT.tabs) || []) if (t.key && pactDraftWasTypedSincePrefetch(preFetchDrafts.get(t.key), t.draft)) typed.set(t.key, t.draft); } catch {}
   try { if (saved.chat && Array.isArray(saved.chat.tabs) && saved.chat.tabs.length) pactRestoreChat(saved.chat); } catch (e) { console.warn("pact chat restore failed", e); }
   try { for (const t of (PACT_CHAT && PACT_CHAT.tabs) || []) if (t.key && typed.has(t.key) && !t.draft) t.draft = typed.get(t.key); } catch {}
   // …and tell the engine which of them were left with auto-continue on, so a restarted engine

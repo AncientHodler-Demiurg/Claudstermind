@@ -4,6 +4,40 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [1.22.7] - 2026-10-29
+### Fixed — a cleared Pact draft on mobile kept coming back, "extremely old," every single visit
+
+*"Every time I come back to the pact workspace on mobile, this message appears written, although it's
+extremely old and I erase it every time when I'm here on mobile. It still persist somehow. Can you
+check?"* — with a screenshot of a long, clearly ancient half-written message (about an "FVT" table and
+a "Master Collect" button) sitting unsent in the compose box.
+
+**Root cause, confirmed in `pactRestoreState` (app.js):** opening Pact draws the device's last-seen
+LOCAL layout (`localStorage`) immediately — so the compose box is usable before the slow network fetch
+lands — then, once the server's authoritative copy arrives, a "keep what was typed in the meantime"
+merge protects anything typed DURING that wait from being clobbered by the server's answer landing a
+moment later. The merge's bug: it treated "the draft is non-empty right now" as proof the user had just
+typed it — but a draft that's non-empty only because the local draw painted a STALE `localStorage`
+value (one that, for whatever reason, never got corrected on this device) looks identical to real
+typing. So the stale local draft got captured as "typed" and stamped back over the server's correctly
+-cleared value — on literally every restore, forever. A real clear — made on this device or any other —
+could never stick.
+
+**Fix:** a baseline snapshot of each tab's draft is now taken right after the local draw, BEFORE the
+network fetch starts. The merge only protects a draft that's CHANGED since that baseline — unchanged
+means it's just the local draw itself, not real typing, so the server's answer wins outright, including
+when the server correctly says the draft is now empty. Extracted as a small pure function
+(`pactDraftWasTypedSincePrefetch`), matching this codebase's pure-function-plus-thin-wrapper convention,
+with the comparison logic directly unit-testable rather than buried in a 40-line async function.
+
+New tests: `lib/pactDraftRestoreRace.test.mjs` (6 — reproduces the exact reported shape: unchanged since
+baseline is NOT "typed"; real typing during the wait IS protected, including on top of a non-empty local
+draft; a genuine clear during the wait is correctly not re-protected; both-empty is a no-op; and the
+actual call site is pinned so a future edit can't quietly revert to the old bare-truthiness check without
+a test catching it). Full suite: 2089 passing.
+
+**Deploy note: web-only (`app.js`).** No engine restart needed — a page reload picks it up.
+
 ## [1.22.6] - 2026-10-27
 ### Fixed — CRITICAL: ordinary technical conversation ("gas limit", "rate limit", "quota") was false-triggering key failover
 
