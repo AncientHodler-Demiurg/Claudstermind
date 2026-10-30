@@ -9426,6 +9426,15 @@ function pactChatRoute({ kind, sessionKey, data }) {
       pactChatPaint(t);
       pactChatFlashNote("♻ Switched to key “" + (d.to || "?") + "” — “" + (d.from || "previous") + "” hit its usage limit, resending your last message…");
       return;
+    // "You already solved this" (Ch.2.3b, exocortex) — fires once, at a brand-new conversation's
+    // first prompt, if the workspace's own history/knowledge has anything relevant. NOT persisted
+    // server-side (see lib/workspace.mjs _prompt) — a live-only row, same class of thing as a
+    // "note" marker, gone after a reload. Shown inline rather than as a transient flash: it is
+    // meant to be read before you keep typing, not glanced at for 1.8 seconds.
+    case "priorArt":
+      if (Array.isArray(t.msgs) && d.text) t.msgs.push({ kind: "priorArt", text: d.text, at: d.at });
+      pactChatPaint(t);
+      return;
     // Manual wrap, part 1: the read-only preview the confirm dialog is waiting on.
     case "wrapPreview": pactFillWrapPreview(t, d.preview); return;
     // Manual wrap, part 2: the outcome. Counters are NOT touched here — see the "rolling" case
@@ -10441,6 +10450,12 @@ function wsMarkNode(m) {
   // Multi-key OAuth failover: the conversation moved from one configured key to another, right here —
   // automatic, no restart, no lost context. See lib/workspace.mjs's _reconcileKeyFailover.
   if (m && m.kind === "keySwitch") return window.ChatShell.buildMark({ kind: "keySwitch", from: m.from, to: m.to, at: m.at });
+  // "You already solved this" (Ch.2.3b, exocortex) — see lib/priorArt.mjs. Its own kind, not
+  // "error"/tone:"info" — that branch is worded as an ENGINE note about turn/window mechanics,
+  // which this is not.
+  if (m && m.kind === "priorArt") {
+    return window.ChatShell.buildMark({ kind: "priorArt", text: m.text, at: m.at });
+  }
   return window.ChatShell.buildMark({
     kind: (m && m.kind === "wrapped") ? "wrap" : "compact",
     preTokens: m && m.preTokens, postTokens: m && m.postTokens,
@@ -10672,7 +10687,9 @@ function pactChatMsgNode(m) {
   }
   if (m.kind === "note") return el("div", { class: "pc-note" }, [m.text]);
   // THE COMPACTION BAR — same shared wording and the same package class Core uses (cs-compacted).
-  if (m.kind === "compacted" || m.kind === "wrapped" || m.kind === "turnError" || m.kind === "keySwitch") return wsMarkNode(m);
+  // keySwitch (multi-key failover) and priorArt (Ch.2.3b, exocortex) both ride the SAME shared
+  // renderer too — see wsMarkNode.
+  if (m.kind === "compacted" || m.kind === "wrapped" || m.kind === "turnError" || m.kind === "keySwitch" || m.kind === "priorArt") return wsMarkNode(m);
   // A worktree-migration separator: a full-width labeled line marking where this conversation moved
   // between checkouts (main ⇄ a worktree). Context is unbroken across it — only the agent's cwd changed.
   if (m.kind === "migration") {
@@ -11540,6 +11557,11 @@ function pactCompact() {
 // getting heavy, what do I do?"), genuinely different tradeoffs (Compact keeps a summary IN the
 // window; Wrap starts fresh and archives the rest).
 const PACT_WRAP_ARM_MS = 600;
+// How long to wait, after opening the Wrap dialog, before re-asking the server for the preview a
+// SECOND time (Ch.2.5c) — long enough that a draft fired at the same moment usually has a chance
+// to land (lib/oneShotQuery.mjs is one model call, not a multi-turn agent run), short enough that
+// a user who opens the dialog and immediately starts reading isn't kept staring at "no draft yet".
+const PACT_HANDOFF_REFRESH_MS = 2500;
 function pactOpenWrapDialog(t) {
   if (!t || !t.key) { pactChatFlashNote("Pick a repository for this chat first."); return; }
   if (t._wrapDialog) return;
@@ -11575,7 +11597,10 @@ function pactOpenWrapDialog(t) {
   confirmBtn.addEventListener("click", () => {
     if (confirmBtn.disabled) return;
     confirmBtn.disabled = true; confirmBtn.textContent = "Wrapping…";
-    wsPost("control", { action: "wrapNow", args: { sessionKey: t.key } });
+    // Ch.2.5c — whatever is CURRENTLY in the handoff box, edited or not, is what this roll uses.
+    // Not present until the preview has actually filled in (handoffBox lives on t._wrapDialog).
+    const handoffOverride = t._wrapDialog && t._wrapDialog.handoffBox ? t._wrapDialog.handoffBox.value : undefined;
+    wsPost("control", { action: "wrapNow", args: { sessionKey: t.key, handoffOverride } });
   });
   dlg.box.appendChild(el("div", { class: "ws-pane-dialog-btns" }, [cancelBtn, confirmBtn]));
   const openedAt = Date.now();
@@ -11584,7 +11609,15 @@ function pactOpenWrapDialog(t) {
   }, 100);
   const close = () => { clearInterval(armTimer); dlg.close(); t._wrapDialog = null; };
   t._wrapDialog = { close, body, confirmBtn };
+  // Ch.2.5c — ask for a REAL draft (fire-and-forget, off this dialog's critical path) alongside
+  // the read-only preview. The preview below almost certainly answers before the draft does; one
+  // follow-up re-fetch after a short wait gives the draft a chance to land in the SAME dialog —
+  // skipped if the user has already started editing the box (never clobber their own words).
+  wsPost("control", { action: "prepareHandoff", args: { sessionKey: t.key } });
   wsPost("control", { action: "wrapPreview", args: { sessionKey: t.key } });
+  setTimeout(() => {
+    if (t._wrapDialog && !t._wrapDialog.handoffEdited) wsPost("control", { action: "wrapPreview", args: { sessionKey: t.key } });
+  }, PACT_HANDOFF_REFRESH_MS);
 }
 // Why one side of a wrap span can read "none yet" while the other is three figures — asked directly
 // ("why would wrap show 127 answers and no prompts? that can't be right, right?"), so it is answered
@@ -11596,6 +11629,12 @@ const WS_EMPTY_SIDE_WHY =
   + "machine-written and is never stored as one of your prompts.";
 function pactFillWrapPreview(t, preview) {
   if (!t._wrapDialog) return;
+  // Ch.2.5c — this function re-runs on the follow-up refresh too (see pactOpenWrapDialog); a
+  // human already mid-edit must never have their own words silently replaced by a fresher server
+  // answer landing underneath them. Captured BEFORE the wipe below, since the old textarea node
+  // (and its live .value) is about to be destroyed by replaceChildren.
+  const keepHandoff = t._wrapDialog.handoffEdited;
+  const priorHandoffValue = t._wrapDialog.handoffBox ? t._wrapDialog.handoffBox.value : "";
   const body = t._wrapDialog.body; body.replaceChildren();
   if (!preview || preview.empty) {
     body.appendChild(el("div", {}, ["Too light to wrap yet — nothing has rolled off the live window."]));
@@ -11608,6 +11647,17 @@ function pactFillWrapPreview(t, preview) {
   });
   body.appendChild(el("div", {}, ["Responses  " + window.ChatShell.spanLabel("R", span.r)]));
   body.appendChild(el("div", { title: WS_EMPTY_SIDE_WHY }, ["Prompts    " + window.ChatShell.spanLabel("P", span.p)]));
+  // Ch.2.5c — the handoff the fresh window will actually get, shown and editable. "cached" means
+  // a real AI draft landed; "mechanical" means nothing has yet (or the draft failed) — shown
+  // anyway, so there is always something to review rather than a blank box.
+  const handoff = preview.handoff || { text: "", source: "mechanical" };
+  body.appendChild(el("div", { class: "ws-pane-dialog-handoff-label" },
+    [handoff.source === "cached" ? "AI-drafted handoff for the fresh window (edit freely):" : "Handoff for the fresh window (no AI draft ready yet — edit, or leave as-is):"]));
+  const handoffBox = el("textarea", { class: "ws-pane-dialog-handoff", rows: "6" }, []);
+  handoffBox.value = keepHandoff ? priorHandoffValue : handoff.text;
+  handoffBox.addEventListener("input", () => { t._wrapDialog.handoffEdited = true; });
+  body.appendChild(handoffBox);
+  t._wrapDialog.handoffBox = handoffBox;
   body.appendChild(el("div", {}, [span.chars.toLocaleString() + " characters archived · last " + preview.keptTurns + " turns kept verbatim"]));
   body.appendChild(el("div", { class: "ws-pane-dialog-note" }, ["Nothing is deleted — archived turns stay reachable via Recall."]));
 }
@@ -13862,8 +13912,13 @@ function viewWorkspace() {
     if (m.kind === "created") return line("ws-note", [`created ${m.what}: ${m.path}`]);
     // THE COMPACTION BAR — a full-width rule marking where the context window was summarised.
     // Rendered from a PERSISTED row (see workspace.mjs _onEvent), so it survives a reload and shows
-    // on every device; the activity-rail line this replaces did neither.
-    if (m.kind === "compacted" || m.kind === "wrapped" || m.kind === "turnError" || m.kind === "keySwitch") return wsMarkNode(m);
+    // on every device; the activity-rail line this replaces did neither. keySwitch (multi-key
+    // failover) is persisted the same way. priorArt (Ch.2.3b, exocortex) rides the SAME shared
+    // renderer too, but is NOT persisted server-side (see lib/workspace.mjs's _prompt — it's a
+    // `send`, never a `transcript.push`), so it is genuinely live-only: present on the pane that
+    // was open when it fired, gone after a reload/resync. That is intentional — it is a one-time
+    // "FYI, before you kept typing" aside, not a durable part of the conversation record.
+    if (m.kind === "compacted" || m.kind === "wrapped" || m.kind === "turnError" || m.kind === "keySwitch" || m.kind === "priorArt") return wsMarkNode(m);
     return null;
   }
   // Cache each item's rendered node on the message. Transcript items are immutable once added
@@ -16406,6 +16461,17 @@ function viewWorkspace() {
         }
         return;
       }
+      // "You already solved this" (Ch.2.3b, exocortex) — see Pact's identical handling above for
+      // why this is a live-only row, not persisted. Fires once, at a brand-new conversation's
+      // first prompt.
+      if (data.kind === "priorArt") {
+        for (const p of targets) {
+          if (Array.isArray(p.transcript) && data.text) p.transcript.push({ kind: "priorArt", text: data.text, at: data.at });
+          logActivity(p, "📎 Prior art found in this workspace");
+          schedulePaint(p);
+        }
+        return;
+      }
       // Manual wrap, part 1: the read-only preview the confirm dialog is waiting on.
       if (data.kind === "wrapPreview") { for (const p of targets) wsFillWrapPreview(p, data.preview); return; }
       // Manual wrap, part 2: the outcome. The counters themselves are NOT updated here — see the
@@ -16782,6 +16848,8 @@ function viewWorkspace() {
   // a dialog can land the second click on the button that CONFIRMS it, the instant it paints) — see
   // wsDialogArmed. 600ms is long enough to require a second, deliberate click.
   const WS_WRAP_ARM_MS = 600;
+  // See Pact's identical PACT_HANDOFF_REFRESH_MS for why this delay (Ch.2.5c).
+  const WS_HANDOFF_REFRESH_MS = 2500;
   /** Manual wrap: gate on the SAME 60%-of-context threshold the (currently unused) rollup bar math
    *  defines (ChatShell.wrapReadiness) — a wrap below that discards a warm prompt cache for nothing.
    *  Fetches a live preview from the server (never mutates anything) before the user can confirm;
@@ -16805,7 +16873,9 @@ function viewWorkspace() {
     confirmBtn.addEventListener("click", () => {
       if (confirmBtn.disabled) return;
       confirmBtn.disabled = true; confirmBtn.textContent = "Wrapping…";
-      wsPost("control", { action: "wrapNow", args: { sessionKey: p.sessionKey } });
+      // Ch.2.5c — whatever is CURRENTLY in the handoff box, edited or not, is what this roll uses.
+      const handoffOverride = p._wrapDialog && p._wrapDialog.handoffBox ? p._wrapDialog.handoffBox.value : undefined;
+      wsPost("control", { action: "wrapNow", args: { sessionKey: p.sessionKey, handoffOverride } });
     });
     dlg.box.appendChild(el("div", { class: "ws-pane-dialog-btns" }, [cancelBtn, confirmBtn]));
     const openedAt = Date.now();
@@ -16814,12 +16884,23 @@ function viewWorkspace() {
     }, 100);
     const close = () => { clearInterval(armTimer); dlg.close(); p._wrapDialog = null; };
     p._wrapDialog = { close, body, confirmBtn };
+    // Ch.2.5c — same two-request pattern as Pact's pactOpenWrapDialog: ask for a real draft
+    // (fire-and-forget) alongside the read-only preview, then one follow-up re-fetch after a
+    // short wait gives the draft a chance to land — skipped once the user starts editing the box.
+    wsPost("control", { action: "prepareHandoff", args: { sessionKey: p.sessionKey } });
     wsPost("control", { action: "wrapPreview", args: { sessionKey: p.sessionKey } });
+    setTimeout(() => {
+      if (p._wrapDialog && !p._wrapDialog.handoffEdited) wsPost("control", { action: "wrapPreview", args: { sessionKey: p.sessionKey } });
+    }, WS_HANDOFF_REFRESH_MS);
   }
   /** Fill the open wrap dialog with a real preview (or explain why there's nothing to show) —
    *  called from the wrapPreview event handler once the server answers. */
   function wsFillWrapPreview(p, preview) {
     if (!p._wrapDialog) return;
+    // Ch.2.5c — see Pact's identical comment in pactFillWrapPreview: this re-runs on the
+    // follow-up refresh too, and a human mid-edit must never be silently overwritten.
+    const keepHandoff = p._wrapDialog.handoffEdited;
+    const priorHandoffValue = p._wrapDialog.handoffBox ? p._wrapDialog.handoffBox.value : "";
     const body = p._wrapDialog.body; body.replaceChildren();
     if (!preview || preview.empty) {
       body.appendChild(el("div", {}, ["Too light to wrap yet — nothing has rolled off the live window."]));
@@ -16832,6 +16913,14 @@ function viewWorkspace() {
     });
     body.appendChild(el("div", {}, ["Responses  " + window.ChatShell.spanLabel("R", span.r)]));
     body.appendChild(el("div", { title: WS_EMPTY_SIDE_WHY }, ["Prompts    " + window.ChatShell.spanLabel("P", span.p)]));
+    const handoff = preview.handoff || { text: "", source: "mechanical" };
+    body.appendChild(el("div", { class: "ws-pane-dialog-handoff-label" },
+      [handoff.source === "cached" ? "AI-drafted handoff for the fresh window (edit freely):" : "Handoff for the fresh window (no AI draft ready yet — edit, or leave as-is):"]));
+    const handoffBox = el("textarea", { class: "ws-pane-dialog-handoff", rows: "6" }, []);
+    handoffBox.value = keepHandoff ? priorHandoffValue : handoff.text;
+    handoffBox.addEventListener("input", () => { p._wrapDialog.handoffEdited = true; });
+    body.appendChild(handoffBox);
+    p._wrapDialog.handoffBox = handoffBox;
     body.appendChild(el("div", {}, [span.chars.toLocaleString() + " characters archived · last " + preview.keptTurns + " turns kept verbatim"]));
     body.appendChild(el("div", { class: "ws-pane-dialog-note" }, ["Nothing is deleted — archived turns stay reachable via Recall."]));
   }

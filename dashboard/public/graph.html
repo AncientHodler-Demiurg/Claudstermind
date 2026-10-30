@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Claudstermind — code graph</title>
+<!--
+  graph.html — Ch.3.4, the "free part" per docs/work/exocortex/HANDOFF.md: a static HTML file
+  loading vis-network from a CDN and reading a lib/codeGraph.mjs#toNodeLink-shaped JSON file.
+  Graphify's own graph.html does exactly this and does not care what wrote the file — this page
+  doesn't either; it only requires the NetworkX node-link shape (directed, multigraph, nodes[],
+  links[]) that lib/codeGraph.mjs emits.
+
+  Deliberately NOT part of dashboard/public/app.js — a standalone page, so it never touches that
+  contended file. Served automatically at /graph.html by dashboard/server.mjs's generic static
+  file fallback (no route change needed — same mechanism that already serves index.html/app.js).
+
+  Usage: /graph.html (fetches ./graph.json by default) or /graph.html?src=<url-to-a-graph.json>.
+  A "Load file…" picker is also offered for a local file with no server round-trip at all.
+-->
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #0b0d10; color: #e6e6e6; font-family: system-ui, sans-serif; }
+  #bar { position: fixed; top: 0; left: 0; right: 0; height: 44px; display: flex; align-items: center; gap: 12px;
+         padding: 0 14px; background: #14171c; border-bottom: 1px solid #262a31; z-index: 10; box-sizing: border-box; }
+  #bar h1 { font-size: 14px; font-weight: 600; margin: 0; color: #9fb3c8; }
+  #bar input[type="file"] { color: inherit; font-size: 12px; }
+  #status { font-size: 12px; color: #8a8f98; }
+  #legend { display: flex; gap: 14px; font-size: 11px; color: #9fb3c8; margin-left: auto; flex-wrap: wrap; }
+  #legend span { display: inline-flex; align-items: center; gap: 4px; }
+  #legend .swatch { display: inline-block; width: 16px; height: 0; border-top-width: 2px; border-top-style: solid; }
+  #network { position: absolute; top: 44px; left: 0; right: 0; bottom: 0; }
+  #error { position: absolute; top: 60px; left: 14px; color: #ff6b6b; font-size: 13px; max-width: 70vw; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <h1>Claudstermind — code graph</h1>
+  <span id="status">loading…</span>
+  <input id="filePicker" type="file" accept="application/json" />
+  <div id="legend">
+    <span><i class="swatch" style="border-top-color:#9fb3c8"></i>EXTRACTED</span>
+    <span><i class="swatch" style="border-top-color:#5aa9e6; border-top-style:dashed"></i>INFERRED</span>
+    <span><i class="swatch" style="border-top-color:#e6a65a; border-top-style:dotted"></i>AMBIGUOUS</span>
+  </div>
+</div>
+<div id="error"></div>
+<div id="network"></div>
+
+<script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>
+<script>
+// ===== EXOCORTEX GRAPH VIZ — pure helpers (sliced out and eval'd by lib/exocortexGraphViz.test.mjs,
+// same slice-and-eval convention lib/exocortexUi.test.mjs/lib/exocortexMount.test.mjs already use
+// for pure app.js logic that can't be imported because this file boots vis-network on load) =====
+
+var NODE_STYLE = {
+  file:     { shape: "box",      color: "#3a6ea5" },
+  function: { shape: "ellipse",  color: "#4caf7d" },
+  class:    { shape: "diamond",  color: "#9b6bd1" },
+  module:   { shape: "box",      color: "#8a8f98" },
+  concept:  { shape: "star",     color: "#e6c65a" },
+  external: { shape: "dot",      color: "#5a5f66" },
+};
+
+var EDGE_STYLE = {
+  EXTRACTED: { dashes: false, color: "#9fb3c8" },
+  INFERRED:  { dashes: [6, 4], color: "#5aa9e6" },
+  AMBIGUOUS: { dashes: [2, 3], color: "#e6a65a" },
+};
+
+/** nodeLinkToVisData(data) → { nodes: [...], edges: [...] } in vis-network's own dataset shape,
+ *  styled by node TYPE and edge CONFIDENCE — the visible distinction Ch.3.4 requires. Pure: no
+ *  DOM, no vis.* calls — just the data transform, which is what makes it independently testable. */
+function nodeLinkToVisData(data) {
+  var d = (data && typeof data === "object") ? data : {};
+  var rawNodes = Array.isArray(d.nodes) ? d.nodes : [];
+  var rawLinks = Array.isArray(d.links) ? d.links : (Array.isArray(d.edges) ? d.edges : []);
+  var nodes = rawNodes.map(function (n) {
+    var style = NODE_STYLE[n.type] || NODE_STYLE.external;
+    return {
+      id: n.id,
+      label: n.name || n.id,
+      shape: style.shape,
+      color: style.color,
+      title: n.type + ": " + n.id,
+    };
+  });
+  var edges = rawLinks.map(function (l) {
+    var style = EDGE_STYLE[l.confidence] || EDGE_STYLE.EXTRACTED;
+    return {
+      id: l.key || (l.source + "->" + l.target + ":" + l.kind),
+      from: l.source,
+      to: l.target,
+      arrows: "to",
+      dashes: style.dashes,
+      color: { color: style.color },
+      label: l.kind || "",
+      font: { size: 9, color: "#8a8f98" },
+      title: (l.kind || "") + " (" + (l.confidence || "?") + ")",
+    };
+  });
+  return { nodes: nodes, edges: edges };
+}
+
+/** graphStatusText(data) → the status-bar summary string, e.g. "42 nodes, 87 links". Pure. */
+function graphStatusText(data) {
+  var d = (data && typeof data === "object") ? data : {};
+  var nodeCount = Array.isArray(d.nodes) ? d.nodes.length : 0;
+  var linkCount = Array.isArray(d.links) ? d.links.length : (Array.isArray(d.edges) ? d.edges.length : 0);
+  return nodeCount + " node" + (nodeCount === 1 ? "" : "s") + ", " + linkCount + " link" + (linkCount === 1 ? "" : "s");
+}
+// ===== end EXOCORTEX GRAPH VIZ pure helpers =====
+
+function showError(msg) {
+  document.getElementById("error").textContent = msg;
+  document.getElementById("status").textContent = "failed";
+}
+
+function render(data) {
+  document.getElementById("error").textContent = "";
+  document.getElementById("status").textContent = graphStatusText(data);
+  var visData = nodeLinkToVisData(data);
+  var container = document.getElementById("network");
+  var network = new vis.Network(
+    container,
+    { nodes: new vis.DataSet(visData.nodes), edges: new vis.DataSet(visData.edges) },
+    { physics: { stabilization: { iterations: 150 } }, interaction: { hover: true } }
+  );
+  window.__graphNetwork = network; // a hook for a headless smoke check to confirm a real render happened
+}
+
+function loadFromUrl(url) {
+  fetch(url).then(function (r) {
+    if (!r.ok) throw new Error("HTTP " + r.status + " fetching " + url);
+    return r.json();
+  }).then(render).catch(function (e) { showError(String(e && e.message || e)); });
+}
+
+document.getElementById("filePicker").addEventListener("change", function (ev) {
+  var file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function () {
+    try { render(JSON.parse(reader.result)); }
+    catch (e) { showError("Could not parse that file as JSON: " + e.message); }
+  };
+  reader.readAsText(file);
+});
+
+var params = new URLSearchParams(location.search);
+loadFromUrl(params.get("src") || "./graph.json");
+</script>
+</body>
+</html>

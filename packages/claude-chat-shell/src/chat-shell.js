@@ -1161,6 +1161,23 @@
       return el("div", { class: "mark --keyswitch", title: "This conversation automatically moved from the " + (o.from || "previous") + " key to " + (o.to || "the next") + " key because the previous one hit its usage limit, and your last message was automatically resent on the new key — no restart, no lost context, nothing to retype." },
         [el("span", { class: "mlbl" }, [ksLabel])]);
     }
+    // "You already solved this" (Ch.2.3b, exocortex) — prior conversational recall and/or
+    // recorded knowledge surfaced at the start of a brand-new conversation. Deliberately its OWN
+    // kind rather than reusing "error"'s tone:"info" branch: that branch is worded as an ENGINE
+    // note about turn/window mechanics (a pruned resume, a diagnostic) — calling found prior art
+    // an "ENGINE NOTE" would be a different wrong sentence, the same mistake the three error tones
+    // above exist to avoid conflating. Rendered with the full text visible (wrapped, not
+    // truncated) — this is meant to be READ before you keep typing, not discovered by hovering.
+    if (o.kind === "priorArt") {
+      var ptext = o.text || "";
+      var plabel = "📎 PRIOR ART";
+      if (o.at) {
+        var pdate = new Date(o.at);
+        if (!isNaN(pdate.getTime())) plabel += "  ·  " + pdate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      }
+      return el("div", { class: "mark --priorart", title: ptext },
+        [el("span", { class: "mlbl" }, [plabel]), el("div", { class: "mark-detail" }, [ptext])]);
+    }
     var isWrap = o.kind === "wrap";
     var fmt = o.fmtNum || function (n) { return String(n); };
     var pre = Number(o.preTokens) || 0, post = Number(o.postTokens) || 0;

@@ -36,6 +36,7 @@ import { parseOriginUrl, scanSecrets, tokenIdentity } from "../lib/tokenScan.mjs
 import { readRegistry, enrich, groupTokens, tokenTotals } from "../lib/tokenRegistry.mjs";
 import { buildUsageIndex, secretUsage } from "../lib/secretUsage.mjs";
 import { readBrain, scanPackages, cachedActivity } from "../lib/snapshot.mjs";
+import { ZONE, assertZoneRoot } from "../lib/storage.mjs";
 import { executeCommand } from "../lib/commands.mjs";
 import { createBridge } from "../agent/agent.mjs";
 import { WorkspaceManager } from "../lib/workspace.mjs";
@@ -66,8 +67,15 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dir, "public");
 const CHAT_SHELL_DIR = resolve(__dir, "..", "packages", "claude-chat-shell", "src");
 const DATA_DIR = join(__dir, "data");
-const MASTER_ROOT = resolve(__dir, "..", "..");   // D:/_Claude
+const REPO_ROOT = resolve(__dir, "..");           // this repo's own root — Zone 1 (public shell)
+const MASTER_ROOT = resolve(__dir, "..", "..");   // D:/_Claude — one level further up, Zone 2/3's root
 const SECRETS_DIR = join(MASTER_ROOT, ".secrets"); // the single token store for the workspace
+// Ch.1.4: BRAIN_DIR used to be `resolve(__dir, "..", "brain")` — one level up from dashboard/ is
+// REPO_ROOT, not MASTER_ROOT, so distilled per-project knowledge (Zone 3) was landing on a Zone-1
+// (repo) path. Found by the 1.2a audit, confirmed structurally by 1.3a, given a checkable
+// guardrail by 1.3b — anchored to MASTER_ROOT now, the same convention SECRETS_DIR already uses,
+// and asserted so a future regression fails loudly at startup instead of silently shipping again.
+const BRAIN_DIR = assertZoneRoot(ZONE.BRAIN, resolve(MASTER_ROOT, "brain"), REPO_ROOT);
 const FALLBACK_PORT = 3020;
 const todayStr = () => new Date().toLocaleDateString("sv-SE");   // YYYY-MM-DD, local
 
@@ -258,7 +266,7 @@ function startBridgeFromConfig() {
     const loopback = /^wss?:\/\/(127\.0\.0\.1|localhost)(:|\/)/i.test(cfg.url);   // dev-only: ws:// to localhost
     BRIDGE = createBridge({
       url: cfg.url, deviceSecret: secret, allowInsecure: loopback,
-      paths: { root: MASTER_ROOT, dataDir: DATA_DIR, brainDir: resolve(__dir, "..", "brain"), secretsDir: SECRETS_DIR, orchDir: ORCH },
+      paths: { root: MASTER_ROOT, dataDir: DATA_DIR, brainDir: BRAIN_DIR, secretsDir: SECRETS_DIR, orchDir: ORCH },
       log: (...a) => console.log("[bridge]", ...a),
       // Hand the bridge OUR OWN live WorkspaceManager instead of letting it mint a second,
       // independent one — a local browser tab and a relay-forwarded prompt on the same
@@ -1013,7 +1021,7 @@ const handler = async (req, res) => {
   if (path === "/api/distill" && req.method === "POST") {
     const d = await readBody(req);
     const transcriptDir = join(MASTER_ROOT, ".claude", "workspace");
-    const brainDir = resolve(__dir, "..", "brain");
+    const brainDir = BRAIN_DIR;
     const claudeDir = join(MASTER_ROOT, ".claude");
     const mode = d.mode === "claude" ? "claude" : "heuristic";
     try {
@@ -1388,7 +1396,7 @@ const handler = async (req, res) => {
   // ---- brain: per-repo folders (auto state + curated knowledge) ----
   // Shared with the online bridge's snapshot, so both surfaces render identical data.
   if (path === "/api/brain") {
-    return sendJSON(res, 200, readBrain(resolve(__dir, "..", "brain"), join(MASTER_ROOT, ".claude", "workspace")));
+    return sendJSON(res, 200, readBrain(BRAIN_DIR, join(MASTER_ROOT, ".claude", "workspace")));
   }
 
   // ---- orchestrator: on-demand backup to the configured location (idle-gated) ----
