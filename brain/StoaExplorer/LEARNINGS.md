@@ -2074,3 +2074,38 @@ scanning the transactions table (minutes on Kadena), while cumulative totals are
 O(1) aggregates on both sides. A 15-minute sampler writes `comparison_samples`;
 below 2 samples or an hour of span the page says "measuring" rather than
 forecasting from nothing.
+
+## 2026-10-30 — A failed read is not a "no": Ouronet accounts were redirected to Stoa
+
+Searching a real Ouronet account on ouroscan sent the user to the Stoa
+explorer. Two faults stacked:
+
+1. `SearchResolveService.ouronetAccountExists` asked the node and treated a
+   FAILED read as "does not exist". DALOS returns a `'|'` sentinel for an
+   unregistered account — handled — but a **degraded** read returns every field
+   as `null`, and null was indistinguishable from the sentinel. The reported
+   account reads all-null with `notLive: true` while its `nonce` is 6.
+2. Having concluded "not Ouronet", the resolver matched the StoaChain check —
+   which **succeeds**, because Ouronet accounts DO appear in STOA `transfers`
+   (they hold STOA and pay gas) — and returned an external redirect.
+
+Two rules now encoded:
+
+- **Ownership is settled by address FORM, not by a live read.** `Ѻ.` / `Σ.`
+  prefixes exist only on Ouronet; no node response can make one a StoaChain
+  address. `backend/src/modules/ouronet/account-glyphs.ts` is the shared
+  source, mirroring `frontend-ouronet/src/lib/formatAccount.ts`.
+- **Existence falls back to our own index.** `ouronet_activity` rows were
+  extracted from transactions the account actually made, so they cannot be
+  wrong about whether it exists. Covers both an empty read and a timeout.
+
+Glyph gotcha: the standard-account glyph is **U+047A** (Cyrillic capital round
+omega), NOT the visually identical **U+0470**. Build the prefixes with
+`String.fromCodePoint(0x047a)` rather than pasting a literal — it is
+unreviewable by eye, and a source file with no raw multibyte literal stays
+greppable (`sync.service.ts` in this repo is treated as *binary* by grep for
+exactly that reason).
+
+Deliberately unchanged: the Stoa explorer still has its own account page for
+these addresses, because they genuinely hold STOA and appear in its transfers.
+It just no longer wins a search made on Ouronet.
