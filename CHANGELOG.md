@@ -4,12 +4,13 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
-## [Unreleased] — the exocortex work (branch `exocortex`, merges as 2.0.0)
+## [2.0.0] - 2026-10-30
 
-Accumulating here instead of a version per change. `package.json` stays at **1.20.0** for the whole
-of this branch; the version test reads the first `## [x.y.z]` heading and `[Unreleased]` does not
-match that pattern, so it falls through to `[1.20.0]` and stays green. One bump, to 2.0.0, at the
-merge. See `docs/work/exocortex/HANDOFF.md`.
+The exocortex work (branch `exocortex`, merged to `main` as this release). Accumulated under
+`[Unreleased]` for the whole branch — one bump, right here, at the merge, per
+`docs/work/exocortex/HANDOFF.md`. `docs/work/exocortex/plan.md` has the full task-by-task build
+log; `docs/EXOCORTEX-README.md` has the user-facing capability summary. Every entry below landed
+on this branch; nothing here shipped incrementally as its own version.
 
 ### Added — Ch.1.2b: tier (a) remediation for the tracked-data leak
 `.gitignore` gained `/brain/`, `/meta/`, `dashboard/data/map.json`, per the 1.2a audit
