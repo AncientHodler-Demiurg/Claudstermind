@@ -65,3 +65,8 @@ dashboard/data/routing.json
 /brain/
 /meta/
 dashboard/data/map.json
+# Exocortex code graph: generated from a repo's own source by scripts/graph-index.mjs, read by
+# dashboard/public/graph.html. Derived data, not source — and goes stale the moment the indexed
+# repo changes, with no auto-regenerate hook (yet) — so it's never committed, same as the
+# dashboard/data/*.json runtime files above. Re-run the script to refresh it.
+dashboard/public/graph.json

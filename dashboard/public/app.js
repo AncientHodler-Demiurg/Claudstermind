@@ -2663,6 +2663,18 @@ function learningPanel() {
 
 function viewBrain() {
   const wrap = el("div", {}, [el("div", { class: "hint" }, ["Auto-captured by ", el("b", {}, ["brain-sync"]), " on every prompt (Stop hook) — the always-on cross-repo memory. Fresh sessions get this injected via the SessionStart hook, so any repo's session already knows what's been worked on everywhere."])]);
+  // The exocortex code graph (Ch.3.1-3.5): a tree-sitter-extracted node/link graph of a repo's own
+  // code (files, functions, classes, imports/calls), visualized with vis-network. Shipped as its own
+  // standalone static page (dashboard/public/graph.html — "the free part", no SPA routing needed to
+  // view a graph), but nothing anywhere linked TO it — "I don't see the exocortex tab... where is it?"
+  // was the exact, correct question. This card is that entry point.
+  wrap.append(el("div", { class: "repocard", style: "--stripe:#34d399;margin-bottom:10px" }, [
+    el("div", { class: "rc-hd" }, [el("span", { class: "rc-name" }, ["🕸 Exocortex code graph"])]),
+    el("div", { class: "rc-sub" }, ["Files, functions, classes, and their imports/calls — extracted per repo, visualized as a graph. New (Ch.3.1–3.5)."]),
+    el("div", { style: "margin-top:6px" }, [
+      el("a", { href: "/graph.html", target: "_blank", rel: "noopener", class: "gitbtn", style: "text-decoration:none" }, ["↗ Open the code graph"]),
+    ]),
+  ]));
   wrap.append(learningPanel());
   const body = el("div", { id: "brainBody" }, [el("div", { class: "hint" }, ["Loading brain…"])]);
   wrap.append(body);

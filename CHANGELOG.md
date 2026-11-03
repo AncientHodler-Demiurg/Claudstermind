@@ -4,6 +4,45 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [2.1.3] - 2026-11-03
+### Added — the exocortex code graph is now actually reachable, and actually has data to show
+
+*"i dont see the exocortex tab which the other agent said has built me near the brain tab or under
+it. so where is it? i wanted to see how the new exocortex and graphs work."*
+
+**Correct observation — there was no tab.** The code graph feature (Ch.3.1–3.5: extraction, graph
+assembly, incremental re-indexing, a vis-network viewer) was fully built and tested, but shipped as
+`dashboard/public/graph.html` — a standalone static page with ZERO link to it from anywhere in the
+main dashboard. No nav entry, no card, nothing under Brain or anywhere else. It only existed if you
+already knew the exact URL.
+
+**Two gaps, not one:**
+1. **Discoverability** — added a card to the Brain tab ("🕸 Exocortex code graph", linking to
+   `/graph.html`), exactly where the user expected it.
+2. **Data** — even with a link, the page had nothing to show: `graph.html` only ever reads a
+   `graph.json` file, and nothing in the codebase produced one for a REAL repo.
+   `scripts/graph-smoke.mjs` (the only thing that fed the viewer any data at all) is a headless-
+   browser render check against a hardcoded 4-node fixture — its job is confirming the viewer
+   renders, not producing real data. The actual "walk a repo, extract every file, assemble one
+   graph" step — the thing that makes this feature usable at all — never existed.
+
+New: `scripts/graph-index.mjs <repoPath> [outputPath]` — walks a repo's `.js`/`.jsx`/`.mjs`/`.ts`/
+`.tsx` files, extracts each with the existing `lib/codeGraphExtract.mjs`, assembles one graph with
+`lib/codeGraph.mjs#buildGraph` (built for exactly this — idempotent per node id, designed to merge
+many files' batches), and writes the node-link JSON `graph.html` already knows how to read.
+Defaults to `dashboard/public/graph.json`, so the page's own default fetch picks it up with no
+`?src=` needed.
+
+Run for real against this repo's own `lib/` (256 files): 1,393 nodes, 3,280 links, zero extraction
+failures — written to `dashboard/public/graph.json` now, so the new Brain card has real data to show
+immediately, not an empty page. `graph.json` is generated, derived data (goes stale the moment
+`lib/` changes, no auto-regenerate hook yet) — gitignored, same as the existing `dashboard/data/*.json`
+runtime files, not committed.
+
+**Deploy note: web-only (`app.js`) plus a new script — no engine restart needed.** The graph.json
+written on this box is local to it; running the indexer elsewhere needs its own `node
+scripts/graph-index.mjs <repoPath>` pass.
+
 ## [2.1.2] - 2026-11-03
 ### Fixed — CRITICAL, round three: an EXTERNAL service's own rate-limit error was still false-triggering key failover
 
