@@ -46,6 +46,7 @@ import * as store from "../lib/workspaceStore.mjs";
 import { readVersion } from "../lib/version.mjs";
 import { runDeploy } from "../lib/deploy.mjs";
 import { runHeuristicDistill, runClaudeDistill, readDistillConfig, writeDistillConfig, readDistillUsage } from "../lib/distill.mjs";
+import { aggregateByRepo, overviewTotals, factsForRepo, decisionsForRepo, skillsForRepo, skillRuns, searchRepo, listRepos, listWorkspaces } from "../lib/exocortexStatus.mjs";
 import { readClaudeToken } from "../lib/workspace.mjs";
 import { cleanClaudeEnv } from "../lib/claudeSession.mjs";
 import { nextVersion, changelogEntry, insertChangelog } from "../lib/release.mjs";
@@ -197,7 +198,12 @@ function runProc(cmd, argv, opts = {}) {
 
 // Machine-local actions: they act on THIS disk, so the live deployment refuses them
 // outright — no role can grant them remotely. `ancient` is the second lock, not the only one.
-export const LOCAL_ONLY = new Set(["/api/backup", "/api/restore", "/api/master-pollinate", "/api/deploy", "/api/release", "/api/distill", "/api/distill/toggle", "/api/dashboard/restart"]);
+export const LOCAL_ONLY = new Set(["/api/backup", "/api/restore", "/api/master-pollinate", "/api/deploy", "/api/release", "/api/distill", "/api/distill/toggle", "/api/dashboard/restart",
+  // Exocortex dashboard: reads knowledge.sqlite3/skills.sqlite3/_fts.sqlite3 straight off the work
+  // machine's own filesystem (lib/exocortexStatus.mjs) — same reason /api/distill is local-only:
+  // there is no relay-side snapshot of these files (unlike /api/brain, which IS mirrored to the
+  // bridge's snapshot), so a remote viewer has nothing to read even if the route were open.
+  "/api/exocortex/overview", "/api/exocortex/knowledge", "/api/exocortex/skills", "/api/exocortex/skillruns", "/api/exocortex/search", "/api/exocortex/repos"]);
 
 // The context handed to executeCommand — the SAME single command path the online
 // bridge uses. Local buttons and relayed commands run through one whitelist + executor,
@@ -1397,6 +1403,44 @@ const handler = async (req, res) => {
   // Shared with the online bridge's snapshot, so both surfaces render identical data.
   if (path === "/api/brain") {
     return sendJSON(res, 200, readBrain(BRAIN_DIR, join(MASTER_ROOT, ".claude", "workspace")));
+  }
+
+  // ---- exocortex dashboard: read-only visibility into the knowledge store, skills/agents, recall
+  // index, and ingestion activity — lib/exocortexStatus.mjs walks every workspace directory under
+  // transcriptDir and aggregates. Local-only (see LOCAL_ONLY above): no relay snapshot of this exists.
+  if (path === "/api/exocortex/overview") {
+    const transcriptDir = join(MASTER_ROOT, ".claude", "workspace");
+    const perRepo = aggregateByRepo(transcriptDir);
+    return sendJSON(res, 200, { ok: true, totals: overviewTotals(perRepo), repos: perRepo });
+  }
+  if (path === "/api/exocortex/repos") {
+    return sendJSON(res, 200, { ok: true, repos: listRepos(join(MASTER_ROOT, ".claude", "workspace")) });
+  }
+  if (path === "/api/exocortex/knowledge") {
+    const repo = url.searchParams.get("repo");
+    if (!repo) return sendJSON(res, 400, { ok: false, message: "repo is required" });
+    const transcriptDir = join(MASTER_ROOT, ".claude", "workspace");
+    return sendJSON(res, 200, { ok: true, facts: factsForRepo(transcriptDir, repo), decisions: decisionsForRepo(transcriptDir, repo) });
+  }
+  if (path === "/api/exocortex/skills") {
+    const repo = url.searchParams.get("repo");
+    if (!repo) return sendJSON(res, 400, { ok: false, message: "repo is required" });
+    return sendJSON(res, 200, { ok: true, skills: skillsForRepo(join(MASTER_ROOT, ".claude", "workspace"), repo) });
+  }
+  if (path === "/api/exocortex/skillruns") {
+    const repo = url.searchParams.get("repo"), worktree = url.searchParams.get("worktree") || "main", skillId = url.searchParams.get("skillId");
+    const slot = Number(url.searchParams.get("slot")) || 0;
+    if (!repo || !skillId) return sendJSON(res, 400, { ok: false, message: "repo and skillId are required" });
+    const transcriptDir = join(MASTER_ROOT, ".claude", "workspace");
+    const id = slot ? `${repo}@${worktree}#${slot}` : `${repo}@${worktree}`;
+    const w = listWorkspaces(transcriptDir).find((x) => x.id === id);
+    if (!w) return sendJSON(res, 200, { ok: true, runs: [] });
+    return sendJSON(res, 200, { ok: true, runs: skillRuns(w.dir, skillId) });
+  }
+  if (path === "/api/exocortex/search") {
+    const repo = url.searchParams.get("repo"), q = url.searchParams.get("q");
+    if (!repo || !q) return sendJSON(res, 200, { ok: true, hits: [] });
+    return sendJSON(res, 200, { ok: true, hits: searchRepo(join(MASTER_ROOT, ".claude", "workspace"), repo, q) });
   }
 
   // ---- orchestrator: on-demand backup to the configured location (idle-gated) ----

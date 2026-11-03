@@ -315,7 +315,14 @@ const SECTIONS = [
     { id: "cascade", label: "Cascade", icon: "🌊", short: "Cascade", view: "cascade" },
     { id: "git", label: "Git state", icon: "🌿", short: "Git", view: "git" },
   ] },
-  { id: "brain", label: "Brain", icon: "🧠", view: "brain" },
+  { id: "exocortex", label: "Exocortex", icon: "🧠", subs: [
+    { id: "exoOverview", label: "Overview", icon: "📡", short: "Overview", view: "exoOverview" },
+    { id: "exoKnowledge", label: "Knowledge base", icon: "📚", short: "Knowledge", view: "exoKnowledge" },
+    { id: "exoSkills", label: "Skills & agents", icon: "🛠", short: "Skills", view: "exoSkills" },
+    { id: "exoCodeGraph", label: "Code graph", icon: "🕸", short: "Graph", view: "exoCodeGraph" },
+    { id: "exoSearch", label: "Recall search", icon: "🔎", short: "Search", view: "exoSearch" },
+    { id: "brain", label: "Memory", icon: "💾", short: "Memory", view: "brain" },
+  ] },
   { id: "workspace", label: "Workspace", icon: "💬", view: "workspace", gate: () => ME.canExecute && (ME.mode === "live" || ME.mode === "local"), subs: [
     { id: "core", label: "Core", icon: "💬", short: "Core", view: "workspace" },
     { id: "pact", label: "Pact", icon: "⬡", short: "Pact", view: "pact" },
@@ -1050,6 +1057,11 @@ function render() {
     else if (VIEW === "workspace") v.replaceChildren(viewWorkspace());
     else if (VIEW === "pact") v.replaceChildren(viewPact());
     else if (VIEW === "brain") v.replaceChildren(viewBrain());
+    else if (VIEW === "exoOverview") v.replaceChildren(viewExoOverview());
+    else if (VIEW === "exoKnowledge") v.replaceChildren(viewExoKnowledge());
+    else if (VIEW === "exoSkills") v.replaceChildren(viewExoSkills());
+    else if (VIEW === "exoCodeGraph") v.replaceChildren(viewExoCodeGraph());
+    else if (VIEW === "exoSearch") v.replaceChildren(viewExoSearch());
     else if (VIEW === "tree") v.replaceChildren(viewTree());
     else if (VIEW === "admin") v.replaceChildren(viewAdmin(ADMIN_SECTION));
     else if (VIEW === "mirror") v.replaceChildren(viewMirror());
@@ -2662,19 +2674,7 @@ function learningPanel() {
 }
 
 function viewBrain() {
-  const wrap = el("div", {}, [el("div", { class: "hint" }, ["Auto-captured by ", el("b", {}, ["brain-sync"]), " on every prompt (Stop hook) — the always-on cross-repo memory. Fresh sessions get this injected via the SessionStart hook, so any repo's session already knows what's been worked on everywhere."])]);
-  // The exocortex code graph (Ch.3.1-3.5): a tree-sitter-extracted node/link graph of a repo's own
-  // code (files, functions, classes, imports/calls), visualized with vis-network. Shipped as its own
-  // standalone static page (dashboard/public/graph.html — "the free part", no SPA routing needed to
-  // view a graph), but nothing anywhere linked TO it — "I don't see the exocortex tab... where is it?"
-  // was the exact, correct question. This card is that entry point.
-  wrap.append(el("div", { class: "repocard", style: "--stripe:#34d399;margin-bottom:10px" }, [
-    el("div", { class: "rc-hd" }, [el("span", { class: "rc-name" }, ["🕸 Exocortex code graph"])]),
-    el("div", { class: "rc-sub" }, ["Files, functions, classes, and their imports/calls — extracted per repo, visualized as a graph. New (Ch.3.1–3.5)."]),
-    el("div", { style: "margin-top:6px" }, [
-      el("a", { href: "/graph.html", target: "_blank", rel: "noopener", class: "gitbtn", style: "text-decoration:none" }, ["↗ Open the code graph"]),
-    ]),
-  ]));
+  const wrap = el("div", {}, [el("div", { class: "hint" }, ["Auto-captured by ", el("b", {}, ["brain-sync"]), " on every prompt (Stop hook) — the always-on cross-repo memory. Fresh sessions get this injected via the SessionStart hook, so any repo's session already knows what's been worked on everywhere. (The newer exocortex knowledge base — facts/decisions/skills — has its own tabs alongside this one.)"])]);
   wrap.append(learningPanel());
   const body = el("div", { id: "brainBody" }, [el("div", { class: "hint" }, ["Loading brain…"])]);
   wrap.append(body);
@@ -2747,6 +2747,251 @@ function viewBrain() {
     );
   })();
   return wrap;
+}
+
+/* ---------- Exocortex: visibility into the knowledge store, skills/agents, code graph, and recall
+   search — "otherwise it is a feedbackless functionality of the system, i would have no way of
+   knowing if it works as intended or if it works at all." Every sub-tab here is READ-ONLY: nothing
+   on this page writes to the stores, it only shows what the engine has already done on its own
+   (the knowledge/skill stores are written by the live conversation pipeline, not by this dashboard).
+   Backed by lib/exocortexStatus.mjs via the /api/exocortex/* routes (local-only — see LOCAL_ONLY in
+   dashboard/server.mjs — these read raw SQLite files off the work machine's own disk). ---------- */
+const EXO_FMT_DT = (ms) => ms ? new Date(ms).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "never";
+function exoAgo(ms) {
+  if (!ms) return "never";
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+}
+/** Shared across every exocortex sub-tab so picking a repo on one page carries over to the next. */
+let EXO_SELECTED_REPO = null;
+/** A repo <select> + "Refresh" button, wired to call `onPick(repo)` whenever the selection changes
+ *  (including once, automatically, the moment the repo list arrives) — the one piece every
+ *  repo-scoped sub-tab (Knowledge/Skills/Search) needs, built once instead of three times. */
+function exoRepoPicker(onChange) {
+  const sel = el("select", { class: "repo-sel" }, [el("option", { value: "" }, ["Loading repos…"])]);
+  const refreshBtn = el("button", { class: "ghost" }, ["↻"]);
+  async function load() {
+    let d; try { d = await (await fetch("/api/exocortex/repos")).json(); } catch { d = { repos: [] }; }
+    const repos = (d && d.repos) || [];
+    if (!repos.length) { sel.replaceChildren(el("option", { value: "" }, ["No exocortex data yet"])); onChange(null); return; }
+    sel.replaceChildren(...repos.map((r) => el("option", { value: r }, [r])));
+    const want = EXO_SELECTED_REPO && repos.includes(EXO_SELECTED_REPO) ? EXO_SELECTED_REPO : repos[0];
+    sel.value = want;
+    EXO_SELECTED_REPO = want;
+    onChange(want);
+  }
+  sel.addEventListener("change", () => { EXO_SELECTED_REPO = sel.value; onChange(sel.value || null); });
+  refreshBtn.addEventListener("click", load);
+  load();
+  return el("div", { style: "display:flex;gap:6px;align-items:center;margin-bottom:10px" }, [
+    el("span", { class: "hint" }, ["Repo:"]), sel, refreshBtn,
+  ]);
+}
+
+/** Overview — the aggregate "is this thing alive" dashboard: totals across every repo, then one row
+ *  per repo so a specific one going quiet is visible at a glance, not just the grand total. */
+function viewExoOverview() {
+  const wrap = el("div", {}, [
+    el("div", { class: "hint" }, ["Aggregated from every repo's own knowledge/skills/recall stores on this machine — this is what the exocortex has actually captured, not a plan of what it could capture."]),
+  ]);
+  const body = el("div", {}, [el("div", { class: "hint", style: "padding:12px" }, ["Loading…"])]);
+  wrap.append(body);
+  (async () => {
+    let d; try { d = await (await fetch("/api/exocortex/overview")).json(); } catch { body.replaceChildren(el("div", { class: "hint" }, ["Exocortex overview unavailable."])); return; }
+    if (!d || !d.ok) { body.replaceChildren(el("div", { class: "hint" }, ["Exocortex overview unavailable."])); return; }
+    const T = d.totals || {};
+    const rows = d.repos || [];
+    const table = el("table", { class: "pkgtable" }, [
+      el("thead", {}, [el("tr", {}, ["Repo", "Facts", "Decisions", "Skills (pending/approved)", "Agents (pending/approved)", "Stale", "Recall rows", "Last activity"].map((h) => el("th", {}, [h])))]),
+      el("tbody", {}, rows.length ? rows.map((r) => el("tr", {}, [
+        el("td", {}, [el("b", {}, [r.repo])]),
+        el("td", {}, [String(r.facts)]),
+        el("td", {}, [String(r.decisions)]),
+        el("td", {}, [`${r.skillsPending} / ${r.skillsApproved}`]),
+        el("td", {}, [`${r.agentsPending} / ${r.agentsApproved}`]),
+        el("td", { style: r.staleSkills ? "color:#fbbf24" : "" }, [String(r.staleSkills)]),
+        el("td", {}, [String(r.ftsRows)]),
+        el("td", { class: "hint", title: EXO_FMT_DT(r.lastActivityAt) }, [exoAgo(r.lastActivityAt)]),
+      ])) : [el("tr", {}, [el("td", { colSpan: 8, class: "hint" }, ["Nothing captured yet — the knowledge store fills in as you use the exocortex-enabled engine."])])]),
+    ]);
+    body.replaceChildren(
+      el("div", { class: "statbar" }, [
+        el("div", { class: "stat" }, [el("div", { class: "n" }, [String(T.repos || 0)]), el("div", { class: "l" }, ["repos with data"])]),
+        el("div", { class: "stat" }, [el("div", { class: "n", style: "color:var(--accent)" }, [String(T.facts || 0)]), el("div", { class: "l" }, ["facts"])]),
+        el("div", { class: "stat" }, [el("div", { class: "n" }, [String(T.decisions || 0)]), el("div", { class: "l" }, ["decisions"])]),
+        el("div", { class: "stat" }, [el("div", { class: "n" }, [String((T.skillsApproved || 0) + (T.agentsApproved || 0))]), el("div", { class: "l" }, ["approved skills+agents"])]),
+        el("div", { class: "stat" }, [el("div", { class: "n", style: (T.staleSkills || 0) ? "color:#fbbf24" : "" }, [String(T.staleSkills || 0)]), el("div", { class: "l" }, ["stale/decayed"])]),
+        el("div", { class: "stat" }, [el("div", { class: "n" }, [String(T.ftsRows || 0)]), el("div", { class: "l" }, ["recall-indexed rows"])]),
+        el("div", { class: "stat" }, [el("div", { class: "n" }, [exoAgo(T.lastActivityAt)]), el("div", { class: "l" }, ["last activity, anywhere"])]),
+      ]),
+      el("div", { class: "hint", style: "margin-top:12px" }, ["Per repo (worktrees/conversation slots merged into one row), most recently active first:"]),
+      table,
+    );
+  })();
+  return wrap;
+}
+
+/** Knowledge base — the facts + decisions one repo has accumulated, with provenance (which
+ *  conversation/turn each came from) so "where did this come from" is always answerable. */
+function viewExoKnowledge() {
+  const list = el("div", {}, [el("div", { class: "hint", style: "padding:12px" }, ["Pick a repo."])]);
+  async function load(repo) {
+    if (!repo) { list.replaceChildren(el("div", { class: "hint", style: "padding:12px" }, ["No exocortex data on this machine yet."])); return; }
+    list.replaceChildren(el("div", { class: "hint", style: "padding:12px" }, ["Loading…"]));
+    let d; try { d = await (await fetch("/api/exocortex/knowledge?repo=" + encodeURIComponent(repo))).json(); } catch { d = null; }
+    if (!d || !d.ok) { list.replaceChildren(el("div", { class: "hint" }, ["Knowledge data unavailable."])); return; }
+    const factRow = (f) => el("div", { class: "repocard", style: `--stripe:${f.status === "stale" ? "#64748b" : "#34d399"}` }, [
+      el("div", { class: "rc-hd" }, [
+        el("span", { class: "rc-name" }, [f.kind || "fact"]),
+        f.confidence != null ? el("span", { class: "hint", style: "margin-left:8px" }, [`confidence ${Math.round(f.confidence * 100)}%`]) : "",
+        f.status === "stale" ? el("span", { class: "hint", style: "margin-left:8px;color:#fbbf24" }, ["⚠ stale"]) : "",
+      ]),
+      el("div", {}, [f.text]),
+      el("div", { class: "rc-sub" }, [`${f.scope || "project"} · ${EXO_FMT_DT(f.createdAt)} · from ${f.turnKind || "?"} #${f.turnNumber ?? "?"} (${f.conversationId || "?"})`]),
+    ]);
+    const decisionRow = (dd) => el("div", { class: "repocard", style: `--stripe:${dd.status === "superseded" ? "#64748b" : "#8b5cf6"}` }, [
+      el("div", { class: "rc-hd" }, [el("span", { class: "rc-name" }, [dd.title]), dd.status === "superseded" ? el("span", { class: "hint", style: "margin-left:8px" }, ["↻ superseded"]) : ""]),
+      dd.rationale ? el("div", {}, [dd.rationale]) : "",
+      el("div", { class: "rc-sub" }, [`${EXO_FMT_DT(dd.createdAt)} · from ${dd.turnKind || "?"} #${dd.turnNumber ?? "?"} (${dd.conversationId || "?"})`]),
+    ]);
+    list.replaceChildren(
+      el("div", { class: "hint" }, [`${d.facts.length} fact(s), ${d.decisions.length} decision(s) for ${repo}.`]),
+      el("div", { class: "learn-hd", style: "margin-top:10px" }, [el("b", {}, ["Decisions"])]),
+      ...(d.decisions.length ? d.decisions.map(decisionRow) : [el("div", { class: "hint" }, ["none yet"])]),
+      el("div", { class: "learn-hd", style: "margin-top:14px" }, [el("b", {}, ["Facts"])]),
+      ...(d.facts.length ? d.facts.map(factRow) : [el("div", { class: "hint" }, ["none yet"])]),
+    );
+  }
+  return el("div", {}, [
+    el("div", { class: "hint" }, ["Every durable fact and decision the exocortex has recorded for a repo, newest first — with exactly which conversation/turn it came from."]),
+    exoRepoPicker(load),
+    list,
+  ]);
+}
+
+const EXO_DECAY_COLOR = { fresh: "#34d399", stale: "#fbbf24" };
+const EXO_STATUS_COLOR = { pending: "#60a5fa", approved: "#34d399", rejected: "#f87171" };
+/** Skills & agents — the propose → approve/reject → decay lifecycle, visibly. Clicking a row loads
+ *  its run ledger (success/failure history), the evidence `decayStatus` is actually computed from. */
+function viewExoSkills() {
+  const list = el("div", {}, [el("div", { class: "hint", style: "padding:12px" }, ["Pick a repo."])]);
+  const runsBox = el("div", {});
+  async function loadRuns(repo, s) {
+    runsBox.replaceChildren(el("div", { class: "hint", style: "padding:8px" }, ["Loading run history for " + s.skillId + "…"]));
+    const q = `/api/exocortex/skillruns?repo=${encodeURIComponent(repo)}&worktree=${encodeURIComponent(s._worktree || "main")}&slot=${s._slot || 0}&skillId=${encodeURIComponent(s.skillId)}`;
+    let d; try { d = await (await fetch(q)).json(); } catch { d = null; }
+    const runs = (d && d.ok && d.runs) || [];
+    runsBox.replaceChildren(
+      el("div", { class: "learn-hd" }, [el("b", {}, ["Run history — " + s.skillId])]),
+      runs.length ? el("table", { class: "pkgtable" }, [
+        el("thead", {}, [el("tr", {}, ["When", "Outcome", "Note"].map((h) => el("th", {}, [h])))]),
+        el("tbody", {}, runs.map((r) => el("tr", {}, [
+          el("td", { class: "hint" }, [EXO_FMT_DT(r.at)]),
+          el("td", { style: `color:${r.outcome === "success" ? "#34d399" : r.outcome === "failure" ? "#f87171" : "#fbbf24"}` }, [r.outcome]),
+          el("td", {}, [r.failureReason || r.userFeedback || ""]),
+        ]))),
+      ]) : el("div", { class: "hint" }, ["No runs recorded yet — decay status is 'fresh' by default until enough runs exist to judge."]),
+    );
+  }
+  async function load(repo) {
+    runsBox.replaceChildren();
+    if (!repo) { list.replaceChildren(el("div", { class: "hint", style: "padding:12px" }, ["No exocortex data on this machine yet."])); return; }
+    list.replaceChildren(el("div", { class: "hint", style: "padding:12px" }, ["Loading…"]));
+    let d; try { d = await (await fetch("/api/exocortex/skills?repo=" + encodeURIComponent(repo))).json(); } catch { d = null; }
+    if (!d || !d.ok) { list.replaceChildren(el("div", { class: "hint" }, ["Skills data unavailable."])); return; }
+    const row = (s) => {
+      const r = el("div", { class: "repocard", style: `--stripe:${EXO_STATUS_COLOR[s.status] || "#64748b"};cursor:pointer` }, [
+        el("div", { class: "rc-hd" }, [
+          el("span", { class: "rc-name" }, [(s.kind === "agent" ? "🤖 " : "🛠 ") + s.skillId]),
+          el("span", { class: "hint", style: "margin-left:8px" }, ["v" + (s.currentVersion || 1)]),
+          el("span", { style: `margin-left:auto;color:${EXO_STATUS_COLOR[s.status] || "#94a3b8"}` }, [s.status]),
+          s.decayStatus === "stale" ? el("span", { style: "margin-left:8px;color:" + EXO_DECAY_COLOR.stale }, ["⚠ decayed"]) : "",
+        ]),
+        el("div", { class: "rc-sub" }, [`proposed ${EXO_FMT_DT(s.createdAt)} · from ${s.turnKind || "?"} #${s.turnNumber ?? "?"}`]),
+      ]);
+      const { worktree } = parseWsId(s.workspaceId); s._worktree = worktree; s._slot = parseWsId(s.workspaceId).slot;
+      r.addEventListener("click", () => loadRuns(repo, s));
+      return r;
+    };
+    const skills = d.skills.filter((s) => s.kind === "skill"), agents = d.skills.filter((s) => s.kind === "agent");
+    list.replaceChildren(
+      el("div", { class: "hint" }, [`${skills.length} skill(s), ${agents.length} agent(s) for ${repo}. Click one to see its run history.`]),
+      el("div", { class: "learn-hd", style: "margin-top:10px" }, [el("b", {}, ["Skills"])]),
+      ...(skills.length ? skills.map(row) : [el("div", { class: "hint" }, ["none yet — proposed once the same pattern is observed twice in a conversation"])]),
+      el("div", { class: "learn-hd", style: "margin-top:14px" }, [el("b", {}, ["Agents"])]),
+      ...(agents.length ? agents.map(row) : [el("div", { class: "hint" }, ["none yet — a stricter gate than skills (≥3 confident instincts)"])]),
+    );
+  }
+  // workspaceId is "repo@worktree" or "repo@worktree#slot" — the exact shape lib/storage.mjs#parseWorkspaceId reads; reimplemented client-side (no shared import across the browser/server boundary) rather than guessing at worktree="main".
+  function parseWsId(id) {
+    const s = String(id || ""); const hash = s.lastIndexOf("#");
+    const slot = hash > -1 && /^\d+$/.test(s.slice(hash + 1)) ? Number(s.slice(hash + 1)) : 0;
+    const base = slot ? s.slice(0, hash) : s; const at = base.lastIndexOf("@");
+    return at === -1 ? { worktree: "main", slot } : { worktree: base.slice(at + 1) || "main", slot };
+  }
+  return el("div", {}, [
+    el("div", { class: "hint" }, ["Skills and agents the engine has proposed from repeated patterns — always starting 'pending', never auto-adopted. A skill decays to 'stale' on its own from a run of failures, and recovers on its own if it starts succeeding again."]),
+    exoRepoPicker(load),
+    list,
+    runsBox,
+  ]);
+}
+
+/** Code graph — the tree-sitter node/link graph of a repo's own code. The viewer is a standalone
+ *  page (graph.html); indexing a repo for real is a script (graph-index.mjs) — no "index this repo"
+ *  button exists yet because the indexer isn't wired to run server-side (it's a CLI step today). */
+function viewExoCodeGraph() {
+  return el("div", {}, [
+    el("div", { class: "hint" }, ["Files, functions, classes, and their imports/calls, extracted per repo with tree-sitter and visualized as a graph (Ch.3.1–3.5)."]),
+    el("div", { class: "repocard", style: "--stripe:#34d399;margin-top:10px" }, [
+      el("div", { class: "rc-hd" }, [el("span", { class: "rc-name" }, ["🕸 Open the viewer"])]),
+      el("div", { class: "rc-sub" }, ["Reads dashboard/public/graph.json, served alongside this dashboard. Opens in a new tab."]),
+      el("div", { style: "margin-top:6px" }, [
+        el("a", { href: "/graph.html", target: "_blank", rel: "noopener", class: "gitbtn", style: "text-decoration:none" }, ["↗ Open the code graph"]),
+      ]),
+    ]),
+    el("div", { class: "repocard", style: "--stripe:#64748b;margin-top:10px" }, [
+      el("div", { class: "rc-hd" }, [el("span", { class: "rc-name" }, ["Indexing a repo"])]),
+      el("div", { class: "rc-sub" }, ["No automatic \"keep the graph fresh\" daemon exists yet — run the indexer by hand whenever you want an up-to-date graph:"]),
+      el("pre", { style: "margin:6px 0 0;padding:8px;background:var(--chip);border-radius:8px;font-size:12px;overflow-x:auto" }, ["node scripts/graph-index.mjs <repoPath> [outputPath]"]),
+      el("div", { class: "hint", style: "margin-top:4px" }, ["Defaults to writing dashboard/public/graph.json, which the viewer above reads with no extra setup. Pass a second path to build one without touching the live graph (e.g. to compare two repos via graph.html?src=…)."]),
+    ]),
+  ]);
+}
+
+/** Recall search — a live tester for the FTS5 index: type a query, see exactly what "total recall"
+ *  would surface, the same ranked results lib/priorArt.mjs's live check draws from. */
+function viewExoSearch() {
+  const input = el("input", { type: "text", placeholder: "search this repo's conversation history…",
+    style: "flex:1;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px 10px;font-size:13px" });
+  const btn = el("button", { class: "gitbtn" }, ["Search"]);
+  const results = el("div", { style: "margin-top:10px" }, []);
+  let repo = null;
+  async function run() {
+    const q = input.value.trim();
+    if (!repo || !q) { results.replaceChildren(el("div", { class: "hint" }, ["Pick a repo and type a query."])); return; }
+    results.replaceChildren(el("div", { class: "hint" }, ["Searching…"]));
+    let d; try { d = await (await fetch(`/api/exocortex/search?repo=${encodeURIComponent(repo)}&q=${encodeURIComponent(q)}`)).json(); } catch { d = null; }
+    const hits = (d && d.ok && d.hits) || [];
+    results.replaceChildren(
+      el("div", { class: "hint" }, [hits.length ? `${hits.length} hit(s), best match first:` : "No hits."]),
+      ...hits.map((h) => el("div", { class: "repocard", style: "--stripe:#60a5fa;margin-top:6px" }, [
+        el("div", { class: "rc-hd" }, [el("span", { class: "rc-name" }, [h.kind === "response" ? "assistant" : h.kind]), el("span", { class: "hint", style: "margin-left:8px" }, [EXO_FMT_DT(h.at)])]),
+        el("div", {}, [String(h.text || "").slice(0, 400)]),
+      ])),
+    );
+  }
+  btn.addEventListener("click", run);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") run(); });
+  return el("div", {}, [
+    el("div", { class: "hint" }, ["Every archived conversation is BM25-indexed for instant recall — this is the exact search lib/priorArt.mjs's \"you already solved this\" check draws from, live, before you've typed anything."]),
+    exoRepoPicker((r) => { repo = r; }),
+    el("div", { style: "display:flex;gap:6px" }, [input, btn]),
+    results,
+  ]);
 }
 
 /* ---------- cascade: live master-pollinate progress ----------

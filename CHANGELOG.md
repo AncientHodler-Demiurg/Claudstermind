@@ -4,6 +4,59 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [2.2.0] - 2026-11-03
+### Added — the Exocortex tab: a real monitoring dashboard for the knowledge store, skills/agents, code graph, and recall search
+
+*"i need a sort of dashboard of the exocortex replacing the Brain Tab, which now becomes exocortex,
+which has as subtabs, all the needed pages, that are needed to visualise and get feedback from all
+of its subsystems [...] otherwise it is a feedbackless functionality of the system, i would have no
+way of knowing if it works as intended or if it works at all."*
+
+Correct diagnosis. The exocortex merge (2.1.0) shipped a knowledge store, a skill/agent lifecycle,
+a recall search index, and a code graph — all tested, all wired into the live engine — with **zero
+way to see any of it from the dashboard**. The previous Brain tab (`brain-sync`'s cross-repo context
++ the older `_distilled.md` learning loop) is a DIFFERENT, older system; none of its UI touched the
+new stores at all.
+
+**The main nav "Brain" entry is now "Exocortex"**, with six sub-tabs (same `subs:` pattern this
+dashboard already uses for Map/Pipeline/Workspace):
+- **Overview** — aggregate totals (facts, decisions, approved skills/agents, stale/decayed count,
+  recall-indexed rows) across every repo with exocortex data, plus a per-repo table sorted by most
+  recently active, so one repo going quiet is visible at a glance.
+- **Knowledge base** — every fact and decision a repo has accumulated, newest first, each one
+  showing exactly which conversation/turn it came from.
+- **Skills & agents** — the propose → pending → approve/reject lifecycle, visibly, with decay
+  status; click a row to see its actual run ledger (the success/failure history `decayStatus` is
+  computed from).
+- **Code graph** — the viewer link (moved here from the old Brain card) plus the
+  `scripts/graph-index.mjs` instructions.
+- **Recall search** — a live tester for the FTS5 index: type a query, see exactly what "you already
+  solved this" would surface.
+- **Memory** — the original Brain tab's content (`brain-sync` + the Learning-loop distill panel),
+  unchanged, just relocated as a sibling rather than removed.
+
+**New `lib/exocortexStatus.mjs`** is the aggregation layer underneath all of this: every exocortex
+store (knowledge/skills/FTS) lives PER WORKSPACE (one SQLite file per `<repo>@<worktree>[#slot]`,
+`lib/storage.mjs`'s own layout) — there is no single global database, so "what does the exocortex
+know across my whole multi-repo workspace" only exists if something walks every workspace directory
+and adds it up. Read-only and best-effort throughout: a missing/corrupt store for one workspace
+degrades to zeros for it, never throws, never blocks the others — a monitoring dashboard must never
+itself become a new way for the engine to look broken. New `/api/exocortex/*` routes
+(`dashboard/server.mjs`, local-only — same as `/api/distill`, since these read raw SQLite files off
+the work machine's own disk with no relay-side snapshot).
+
+**Verified against this machine's real data, not just synthetic fixtures**: a scratch server
+instance against the actual `.claude/workspace` tree reports 417 facts and 44 decisions across 18
+repos — the exact corpus from the earlier "feeding system" pilot conversation, now actually visible.
+
+New tests: `lib/exocortexStatus.test.mjs` (9 — every aggregation function, writing through the REAL
+store functions — `addFact`/`addDecision`/`proposeSkill`/`upsertRow` — into real temp SQLite files,
+not hand-rolled fixtures). Full suite: 2387 passing.
+
+**Deploy note: this touches BOTH `dashboard/server.mjs` (new API routes) and `dashboard/public/app.js`
+(new tab) — needs the DASHBOARD service restarted (`claudstermind.service`), not the engine
+(`claudstermind-sessiond` — that one's untouched by this release).**
+
 ## [2.1.4] - 2026-11-03
 ### Fixed — a queued message typed in one conv-slot tab could be sent into a DIFFERENT one after a tab switch
 
