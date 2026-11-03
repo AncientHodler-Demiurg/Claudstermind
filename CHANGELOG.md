@@ -4,6 +4,36 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [2.1.1] - 2026-11-03
+### Fixed — CRITICAL, round two: `resultText` was STILL false-triggering key failover after the 1.22.6 fix
+
+*"why do i got the message that claude code key is limited? there is no 5 hours limit any more on the
+max plan! what the fuck is going on?"* — on an Ultra plan, 22% weekly usage (nowhere near exhausted, no
+session limit even shown anymore), the circuit breaker still refused to send: "Every configured Claude
+key is currently rate-limited. The soonest resets 1:18 PM."
+
+**Root cause: 1.22.6 only closed half the hole.** It tightened the match against `ev.text` (an
+`assistant` event's reply) but left `ev.resultText` — the SDK's own `result` field on a `result` event —
+bundled into the OLD loose `SDK_LIMIT_RE` check, on the assumption that it's structured SDK diagnostic
+text, not conversation. It is not: `result.result` carries the turn's own final output text, including
+on a completely successful turn — the exact same free-form content `ev.text` carries, just reachable
+through a different field. The visible conversation (a blockchain chained-transaction/TTL discussion)
+contained the ordinary sentence *"Serial was the conservative default against rate-limiting"* — which
+`resultText` picked up, and the loose `rate.?limit` pattern matched "rate-limiting" inside it, marking a
+perfectly healthy key exhausted for a full hour (hence "resets 1:18 PM" on an account with no actual
+limit anywhere near hit).
+
+**Fix, in `lib/workspace.mjs`:** `resultText` now goes through the SAME tight, short-reply-only check as
+`ev.text` (`looksLikeUsageLimitNotice`) instead of the loose `SDK_LIMIT_RE`. Only `ev.errors` (the SDK's
+own structured error list) and a genuine thrown exception's `.message` — text the SDK ACTUALLY generates
+itself, never conversation — still get the broader match.
+
+New tests pin: a successful turn whose `resultText` mentions "rate-limiting" as an ordinary technical
+term does not false-trigger (the exact reported shape); a genuine structured SDK error in `ev.errors`
+still does trigger, confirming the real detection path wasn't weakened. Full suite: 2091 passing.
+
+**Deploy note: `lib/`-touching (workspace.mjs) — needs an engine restart, urgently.**
+
 ## [2.1.0] - 2026-10-30
 
 Merges two lines that diverged from the same point (`main` at the old `1.20.0`): the exocortex
