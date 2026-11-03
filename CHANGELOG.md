@@ -4,6 +4,37 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [2.1.2] - 2026-11-03
+### Fixed — CRITICAL, round three: an EXTERNAL service's own rate-limit error was still false-triggering key failover
+
+*"it happened again, i had to restart it. to make this prompt work. what the fuck happened?"* —
+confirmed the 2.1.1 fix WAS already running (the process restarted after the fix was committed), so this
+was a genuinely new leak, not a stale process.
+
+**Root cause:** `ev.errors` (the SDK's own structured error list on a `result` event) was still matched
+with the old loose `SDK_LIMIT_RE` — reasoned, at the time, that this text is "SDK diagnostic, not
+conversation" and therefore safe. That reasoning missed one thing: `errors` is populated whenever the
+SDK flags the WHOLE TURN `is_error`, which can happen for reasons that have nothing to do with Claude's
+own account — this user's work is blockchain/RPC-heavy, and a tool call hitting an external chain RPC
+endpoint's OWN "429 Too Many Requests" / "rate limit exceeded" is completely ordinary there. That text
+landing in `ev.errors` matched the same generic `rate.?limit|429|too many requests` pattern that was
+already too loose for conversational text in rounds one and two — just reached through the one
+remaining field that still trusted generic terms on their own.
+
+**Fix, in `lib/workspace.mjs`:** `SDK_LIMIT_RE` now requires either an Anthropic API error-TYPE token
+(`rate_limit_error`, `overloaded_error` — the literal `error.type` values Anthropic's own API returns,
+which an unrelated service's error body would not happen to contain) or a generic term appearing near
+the word "anthropic" — never a bare generic term alone. Three rounds of this bug, three different
+fields (`ev.text` → `resultText` → `ev.errors`), same underlying lesson: no field reachable by arbitrary
+tool/API output can be trusted with loose keyword matching, no matter how "structured" it looks on paper.
+
+New tests pin: an external RPC's own 429 text in `ev.errors` does NOT false-trigger (the exact reported
+shape); the real Anthropic error-type tokens alone still DO trigger, confirming detection wasn't
+weakened. Existing tests using generic placeholder error text updated to realistic Anthropic-sourced
+wording. Full suite: 2372 passing.
+
+**Deploy note: `lib/`-touching (workspace.mjs) — needs an engine restart, urgently.**
+
 ## [2.1.1] - 2026-11-03
 ### Fixed — CRITICAL, round two: `resultText` was STILL false-triggering key failover after the 1.22.6 fix
 
