@@ -4,6 +4,41 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [2.1.4] - 2026-11-03
+### Fixed — a queued message typed in one conv-slot tab could be sent into a DIFFERENT one after a tab switch
+
+*"also i had this text here, sitting as orange text [...] and then i switched to the other tab,
+exocortex, and then those orange bubbles were suddenly there as well, and were applied there, so
+this jumping between tab must also be a bug that needs fixing."*
+
+**Root cause, confirmed in `wsSwitchConvSlot` (app.js):** Core's multi-chat conv-slots already
+isolate a pane's transcript (`p._slotTx`) and draft (`p._slotDraft`) per tab on every switch — but
+the QUEUE (`p._queue`, the orange "queued — sending when this turn finishes" bubbles, for a message
+typed while that conversation was busy) was never added to that isolation. It stayed pane-level, so
+a message queued because Master was busy survived a switch to another tab sitting right there in
+`p._queue` — and since drain-time sending reads the PANE's CURRENT repo/worktree/sessionKey, not
+whatever it was when the message was typed, the queued message fired into whichever conversation
+happened to be active once the original turn finished, not the one it was actually meant for.
+
+**Fix:** `p._queue` is now stashed and restored per slot exactly like `_slotTx`/`_slotDraft` —
+leaving a tab stashes its queue under that slot number; arriving at a tab restores (or clears)
+`p._queue` for THAT slot, routed through the existing `wsQueueSet` setter so the "queue changes in
+exactly one place" invariant (`lib/mobileCockpitWiring.test.mjs`, from the original 1.16.4 queue-
+durability fix) still holds. `wsQueueSave`/`wsQueueRestore` (the `localStorage` persistence used to
+survive a view switch/reload) are now slot-aware too — with backward-compat for a pre-fix save's old
+flat-array shape, read back as that pane's slot 0 rather than silently dropped. A new
+`wsQueueClearAll(p)` wipes every slot's stash at the three sites where the pane's WHOLE identity
+changes (repo pick, × clear-pane, mobile repo picker) — deliberately NOT used by the ordinary
+per-turn drain or a single-slot worktree change, either of which would otherwise cross-wipe every
+OTHER tab's legitimately queued message. Closing a tab (×) now also drops that slot's stashed queue,
+so a later-reused slot number can't resurrect a closed tab's stale one.
+
+New tests: `lib/convSlotQueueIsolation.test.mjs` (6 — the stash/restore wiring, slot-aware
+save/restore with backward compat, the clear-all vs. single-slot vs. ordinary-drain distinction,
+tab-close cleanup). Full suite: 2378 passing.
+
+**Deploy note: web-only (`app.js`) — no engine restart needed.**
+
 ## [2.1.3] - 2026-11-03
 ### Added — the exocortex code graph is now actually reachable, and actually has data to show
 

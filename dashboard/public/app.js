@@ -13052,9 +13052,22 @@ function viewWorkspace() {
     p._slotDraft = p._slotDraft || {};
     const _ui = paneUI.get(p.id);
     p._slotDraft[wsPaneSlot(p)] = _ui && _ui.promptEl ? _ui.promptEl.value : (p.draft || "");
+    /* A QUEUED MESSAGE BELONGS TO THE CONVERSATION IT WAS QUEUED FOR, same as the draft and the
+     * transcript just above — and until now it was the one piece of per-conversation state this
+     * function forgot. `p._queue` (the orange "queued — sending when this turn finishes" bubbles)
+     * is pane-level, not slot-level, so a message queued because Master was busy stayed in
+     * `p._queue` straight through a switch to another tab — and since every send site reads the
+     * PANE's current `p.repo`/`p.worktree`/`p.sessionKey` at drain time, draining later fired it
+     * into whichever conversation happened to be active BY THEN, not the one it was typed for.
+     * Reported live: a message meant for Master landed in Exocortex after a tab switch. Stash the
+     * leaving slot's queue and restore the arriving slot's, exactly like `_slotTx`/`_slotDraft`. */
+    p._slotQueue = p._slotQueue || {};
+    if (Array.isArray(p._queue) && p._queue.length) p._slotQueue[wsPaneSlot(p)] = p._queue;
+    else delete p._slotQueue[wsPaneSlot(p)];
     p.convSlot = slot; p.worktree = wt; p.sessionKey = newKey;
     p.transcript = Array.isArray(p._slotTx[slot]) ? p._slotTx[slot] : [];
     p.draft = typeof p._slotDraft[slot] === "string" ? p._slotDraft[slot] : "";
+    wsQueueSet(p, p._slotQueue[slot]);   // THE one place p._queue is ever assigned — restores the arriving slot's queue (or clears it) and saves, together
     p._turnCache = null; p._domLead = []; p.status = "idle"; p.readonly = false;
     /* paintPane deliberately never writes the box's value — doing so on every event would clobber
        your typing mid-sentence — so the handover has to put it there itself, and size the box to what
@@ -13072,6 +13085,7 @@ function viewWorkspace() {
     const r = wsRemoveConvSlotEntry(p.convSlots, slot);
     if (!r.removed) return;
     if (p._slotTx) delete p._slotTx[slot];
+    if (p._slotQueue) delete p._slotQueue[slot];   // a reused slot number must never resurrect a closed tab's stale queued message
     p.convSlots = r.slots;
     if ((p.convSlot || 0) === slot) wsSwitchConvSlot(p, r.slot);   // leave the tab we just closed
     else { paintPane(p); saveLayout(); }
@@ -13213,12 +13227,32 @@ function viewWorkspace() {
     wsQueueSave();
   }
   function wsQueuePush(p, item) { wsQueueSet(p, (p._queue || []).concat([item])); }
+  /** The pane's whole identity is changing (a different repo/worktree/session — not a conv-slot
+   *  switch within the SAME conversation set), so every stashed per-slot queue goes with it: an old
+   *  slot's queued message belonged to the ABANDONED conversation, and the pane is about to mint a
+   *  wholly new set of slots anyway. Distinct from `wsQueueSet(p, null)` on its own (used by
+   *  drainQueue for the ordinary per-turn case), which must NOT touch `_slotQueue` — that would wipe
+   *  every OTHER tab's legitimately queued message every time any one tab's turn finishes. */
+  function wsQueueClearAll(p) { p._slotQueue = {}; wsQueueSet(p, null); }
+  // PER-SLOT, not just per-pane: a pane with multi-chat on can hold a queued message for EVERY tab at
+  // once (one busy in Master while you're typing in Exocortex), and the inactive ones only live in
+  // `p._slotQueue` (see wsSwitchConvSlot) — `p._queue` alone is just whichever slot happens to be
+  // active right now. Saved as `{ [paneId]: { [slot]: items } }`; a bare array under a pane id is the
+  // OLD (pre-slot-aware) shape, read back as "that pane's slot 0" so an in-flight save from before
+  // this fix still restores correctly rather than being silently dropped.
   function wsQueueSave() {
     const build = (withImages) => {
       const map = {};
-      for (const p of st.panes) if (p._queue && p._queue.length) {
-        const items = p._queue.filter((q) => q && typeof q.text === "string" && q.text).map((q) => ({ text: q.text, images: withImages && Array.isArray(q.images) ? q.images : [] }));
-        if (items.length) map[p.id] = items;
+      for (const p of st.panes) {
+        const bySlot = { ...(p._slotQueue || {}) };
+        if (Array.isArray(p._queue) && p._queue.length) bySlot[wsPaneSlot(p)] = p._queue;   // the active slot's queue lives on p._queue until the next switch folds it into _slotQueue
+        const entries = {};
+        for (const [slot, items] of Object.entries(bySlot)) {
+          if (!Array.isArray(items) || !items.length) continue;
+          const cleaned = items.filter((q) => q && typeof q.text === "string" && q.text).map((q) => ({ text: q.text, images: withImages && Array.isArray(q.images) ? q.images : [] }));
+          if (cleaned.length) entries[slot] = cleaned;
+        }
+        if (Object.keys(entries).length) map[p.id] = entries;
       }
       return map;
     };
@@ -13229,17 +13263,28 @@ function viewWorkspace() {
       catch { localStorage.setItem(WS_QUEUE_KEY, JSON.stringify(build(false))); }   // images too big for the quota — keep at least the text
     } catch { /* private mode / quota — nothing more we can do */ }
   }
-  // Consume-once: read the stranded queue back onto its pane, then DELETE the key so a later unrelated
-  // reload can't resurrect a stale queue. Called once at boot, before the stream opens.
+  // Consume-once: read the stranded queue back onto its pane (the ACTIVE slot straight onto p._queue,
+  // any OTHER slot into p._slotQueue so wsSwitchConvSlot picks it up the moment that tab is opened),
+  // then DELETE the key so a later unrelated reload can't resurrect a stale queue. Called once at
+  // boot, before the stream opens.
   function wsQueueRestore() {
     let map = null;
     try { map = JSON.parse(localStorage.getItem(WS_QUEUE_KEY) || "null"); localStorage.removeItem(WS_QUEUE_KEY); } catch { map = null; }
     if (!map || typeof map !== "object") return;
     for (const p of st.panes) {
-      const q = map[p.id];
-      if (Array.isArray(q) && q.length) {
+      const saved = map[p.id];
+      if (!saved) continue;
+      // Old shape (pre-slot-aware): a bare array = that pane's slot 0.
+      const bySlot = Array.isArray(saved) ? { 0: saved } : (typeof saved === "object" ? saved : null);
+      if (!bySlot) continue;
+      p._slotQueue = p._slotQueue || {};
+      for (const [slotStr, q] of Object.entries(bySlot)) {
+        const slot = Number(slotStr) || 0;
+        if (!Array.isArray(q) || !q.length) continue;
         const items = q.filter((x) => x && typeof x.text === "string" && x.text).map((x) => ({ text: x.text, images: Array.isArray(x.images) ? x.images : [] }));
-        if (items.length) wsQueueSet(p, (p._queue || []).concat(items));
+        if (!items.length) continue;
+        if (slot === wsPaneSlot(p)) wsQueueSet(p, (p._queue || []).concat(items));
+        else p._slotQueue[slot] = (p._slotQueue[slot] || []).concat(items);
       }
     }
   }
@@ -14566,7 +14611,7 @@ function viewWorkspace() {
     // never started a turn, so a stale "thinking" carried over from the old identity would spin
     // the busy indicator forever (no event for the OLD session can ever arrive to correct it once
     // sessionKey has moved on).
-    repoSel.addEventListener("change", () => { p.repo = repoSel.value; p.worktree = "main"; p.readonly = false; p.resume = null; p.status = "idle"; wsQueueSet(p, null); p._gen = (p._gen || 0) + 1; assignKey(p); wsOpenPaneConversation(p, "conv-switch"); paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p); if (p.repo) wsPost("control", { action: "worktrees", args: { repo: p.repo } }); });
+    repoSel.addEventListener("change", () => { p.repo = repoSel.value; p.worktree = "main"; p.readonly = false; p.resume = null; p.status = "idle"; wsQueueClearAll(p); p._gen = (p._gen || 0) + 1; assignKey(p); wsOpenPaneConversation(p, "conv-switch"); paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p); if (p.repo) wsPost("control", { action: "worktrees", args: { repo: p.repo } }); });
     wtSel.addEventListener("change", () => {
       const v = wtSel.value;
       if (v === "__new__") {   // "+ new worktree…" — create one, then switch this pane to it
@@ -14583,6 +14628,10 @@ function viewWorkspace() {
       // and no other chat in the box moves with it. A write to ★ Master is a no-op (wsSetSlotWorktree).
       p.convSlots = wsSetSlotWorktree(p.convSlots, wsPaneSlot(p), v || "main");
       p.worktree = wsSlotWorktree(p.convSlots, wsPaneSlot(p));
+      // Only THIS slot's session identity moved (worktree change) — "no other chat in the box moves
+      // with it" (comment above) applies to the queue too: clear this slot's own stash, not every
+      // other tab's.
+      if (p._slotQueue) delete p._slotQueue[wsPaneSlot(p)];
       p.readonly = false; p.resume = null; p.status = "idle"; wsQueueSet(p, null); p._gen = (p._gen || 0) + 1; assignKey(p);
       wsOpenPaneConversation(p, "conv-switch");
       paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p);
@@ -15744,7 +15793,7 @@ function viewWorkspace() {
     endSessions([p.sessionKey]);
     p.sessionKey = wsUuid(); p.transcript = []; p.usage = {}; p.status = "idle"; p.readonly = false; p.resume = null;
     p._expandedGroups = new Set();   // a cleared pane starts a fresh transcript — stale group keys don't apply
-    wsQueueSet(p, null);   // anything queued for the OLD session must never fire into the fresh one
+    wsQueueClearAll(p);   // anything queued for the OLD session — on ANY slot — must never fire into the fresh one
     p._gen = (p._gen || 0) + 1;   // invalidate any in-flight open still targeting the OLD identity
     paintPane(p); setUsageTotal(); saveLayout();
   }
@@ -15871,7 +15920,7 @@ function viewWorkspace() {
     // fixes the key in memory on send but never persisted it, so a refresh reattached to the stale uuid →
     // "could not open" → the conversation vanished (yet still showed in History under its real repo@worktree
     // key, which is why reopening from there worked). THE root cause of "my stoa-explorer chat disappears".
-    p.repo = localPath; p.worktree = "main"; p.readonly = false; p.resume = null; p.status = "idle"; wsQueueSet(p, null); p._gen = (p._gen || 0) + 1;
+    p.repo = localPath; p.worktree = "main"; p.readonly = false; p.resume = null; p.status = "idle"; wsQueueClearAll(p); p._gen = (p._gen || 0) + 1;
     assignKey(p);
     paintPane(p); saveLayout(); reportAttach(); onRepoChosen(p);
     if (p.repo) wsPost("control", { action: "worktrees", args: { repo: p.repo } });
