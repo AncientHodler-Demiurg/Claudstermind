@@ -4,6 +4,56 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [2.3.0] - 2026-11-04
+### Added — the real, committed knowledge-ingestion engine (and a real bug it caught)
+
+*"so thats what i means as the ingestion engine that distill existing conversation into exocortex
+knowledge base or something."*
+
+A prior session piloted this exact idea LIVE against two real workspaces (Mnemosyne, Khronoton —
+$3.5741 total, 212 facts/decisions extracted, using the real Claude Agent SDK and the real OAuth
+token) — but the script that did it was never committed. Traced the actual transcript (read directly
+off disk, `Claudstermind@exocortex`'s own conversation) to confirm the exact mechanics and numbers,
+then rebuilt it as real, tested, reusable code.
+
+**New `lib/knowledgeIngest.mjs`** reads a workspace's already-archived conversation history (from
+`lib/conversationFts.mjs`'s `segment_rows` — the same index "Total recall" already builds), chunks
+it (200 rows/chunk, matching the original pilot), and calls Claude once per chunk (summary-only, no
+tools, same posture as the existing `lib/distill.mjs`) asking for strict-JSON facts/decisions, each
+one CITING which single row it came from. That citation resolves back to the row's REAL
+`conversationId`/`turnKind`/`turnNumber`/`at` — genuine per-item provenance, not a chunk-level
+guess, satisfying `lib/provenance.mjs`'s "never store without real provenance" contract properly. A
+citation that doesn't match anything in the chunk falls back to the chunk's last row rather than
+being dropped outright.
+
+**New `scripts/ingest-knowledge.mjs --repo <repo> [--confirm]`** — dry-run by default (shows row/
+chunk counts and a cost estimate from the pilot's own measured rate; changes nothing), requires
+`--confirm` to actually spend money, reports live per-chunk progress and real cost as it runs.
+
+**A real bug surfaced testing this against production data, not synthetic fixtures**: the very first
+real dry-run (`Mnemosyne@main`) reported **zero** archived rows — despite a real archived segment
+sitting on disk. Root cause: the FTS mirror (`segment_rows`) that recall search is built from only
+gets populated lazily, as a side effect of an actual search (`recallByQuery` calls the sync step
+internally) — a workspace with archived history that was never SEARCHED even once had a segment file
+on disk and an index entry, but an empty `segment_rows` table. Fixed by exporting that sync step
+(`conversationArchive.mjs#syncArchiveIntoFts`, previously private) and calling it explicitly before
+reading — `readWorkspaceRows` now self-heals a stale FTS mirror instead of silently reading nothing.
+This bug would have affected "Total recall" too, for any workspace in the same state, independent of
+this new feature.
+
+Verified end to end against this machine's real data (dry-run only, no money spent): Mnemosyne 911
+rows/5 chunks/~$1.24, Khronoton 803 rows/5 chunks/~$1.10, StoaExplorer 4,450 rows/23 chunks/~$6.07,
+OuronetUI 2,206 rows/12 chunks/~$3.01.
+
+New tests: `lib/knowledgeIngest.test.mjs` (13 — every pure function, plus `runKnowledgeIngest` against
+a mock SDK verified by reading the REAL writes back out of a real knowledge store: correct chunking,
+correct provenance resolution including the hallucinated-citation fallback, cost accumulation across
+chunks, live progress reporting, and a mid-run chunk failure that doesn't kill the rest of the batch).
+Full suite: 2400 passing.
+
+**Deploy note: `lib/`-touching (new modules + the `conversationArchive.mjs` export) but nothing the
+live engine calls automatically — no restart needed to use the CLI script.**
+
 ## [2.2.0] - 2026-11-03
 ### Added — the Exocortex tab: a real monitoring dashboard for the knowledge store, skills/agents, code graph, and recall search
 
