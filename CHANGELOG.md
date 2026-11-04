@@ -4,6 +4,44 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [2.3.1] - 2026-11-04
+### Fixed — CRITICAL: a real Pact conversation ("Explorer") could silently vanish from the tab list, no close button involved
+
+*"i had an explorer conversation on the pact workspace, it has disappeared from the UI... what the
+fuck is going on"* — followed, after the user manually resumed it from History, by the key
+clarification: *"the thing is, i never retired it, so thats the bug, someone retired it for me."*
+
+**Confirmed — the user was right, and traced to a real root cause, not user error.** "Retired" in
+Pact's history panel isn't a stored flag — it's computed: a chat is "retired" simply by NOT being
+one of the currently open tabs. So a tab vanishing from the OPEN list is functionally identical to
+"someone closed it," even though nobody clicked ×.
+
+**Root cause, confirmed in `pactChatInit`/`pactRestoreState` (app.js):** opening Pact always wipes
+`PACT_CHAT` to a single fresh tab FIRST (`pactChatInit`), then `pactRestoreState()`'s fetch — with
+retries, genuinely several seconds on a slow link — corrects it with the real saved tab list.
+`PACT_STATE_READY` stays `false` for exactly that window specifically so nothing can persist the
+temporary single-tab stub over the real data. **Sending a message is fast enough to land inside that
+window** — and the send-dispatch path's own `pactStateFlush()` call, unlike the other two call sites
+(`pactChatStop` on leaving the view, the `pagehide`/`visibilitychange` handler), had **no
+`PACT_STATE_READY` guard at all**. It flushed the single-fresh-tab stub straight to the server,
+silently overwriting a real multi-tab list (Master + Explorer) down to just the one tab the send
+happened in — a real conversation, discarded, with no "× closed" anywhere in the trail.
+
+**Two fixes, in `dashboard/public/app.js`:**
+1. The send-dispatch flush is now gated the same way the other two already were — closing the actual
+   hole.
+2. Defense in depth on the READ side too: a brand-new tab that gets created AND genuinely sent a
+   message during the restore window is now tracked separately and re-appended if the server's
+   (older) answer doesn't yet know about it — so even a different timing of the same race can no
+   longer discard real, sent work.
+
+New tests: `lib/pactDraftRestoreRace.test.mjs` (+3 — the specific fixed call site, a blanket
+invariant that EVERY `pactStateFlush()` call site must be `PACT_STATE_READY`-gated so this exact class
+of regression can't quietly reappear at a fourth call site later, and the new-tab preservation logic
+with correct before/after ordering). Full suite: 2403 passing.
+
+**Deploy note: web-only (`app.js`) — no engine restart needed, a page reload picks it up.**
+
 ## [2.3.0] - 2026-11-04
 ### Added — the real, committed knowledge-ingestion engine (and a real bug it caught)
 

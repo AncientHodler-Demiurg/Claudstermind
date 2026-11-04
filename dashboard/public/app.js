@@ -8368,6 +8368,13 @@ async function pactRestoreState() {
   // only asked "is t.draft now empty?" — never "did this value actually come from real typing?".
   const preFetchDrafts = new Map();
   try { for (const t of (PACT_CHAT && PACT_CHAT.tabs) || []) if (t.key) preFetchDrafts.set(t.key, t.draft || ""); } catch {}
+  // Same baseline idea, for a whole TAB rather than just its draft: a tab created DURING the network
+  // wait (the local draw above doesn't know about it — it's seeded from a PAST snapshot) that goes on
+  // to genuinely SEND a message before the server's answer lands must not simply vanish when that
+  // answer (fetched before the tab even existed) replaces the tabs array below. See the restore step
+  // further down ("KEEP A TAB...") for where this baseline actually gets used.
+  const preFetchTabKeys = new Set();
+  try { for (const t of (PACT_CHAT && PACT_CHAT.tabs) || []) if (t.key) preFetchTabKeys.add(t.key); } catch {}
   let saved = null;
   for (let attempt = 1; attempt <= 4 && saved === null; attempt++) {
     try { const r = await (await fetch("/api/pact/ide-state")).json(); if (r && r.ok) saved = (r.state && typeof r.state === "object") ? r.state : {}; } catch {}
@@ -8396,8 +8403,22 @@ async function pactRestoreState() {
      overruling it forever. */
   const typed = new Map();
   try { for (const t of (PACT_CHAT && PACT_CHAT.tabs) || []) if (t.key && pactDraftWasTypedSincePrefetch(preFetchDrafts.get(t.key), t.draft)) typed.set(t.key, t.draft); } catch {}
+  // KEEP A TAB THAT GENUINELY SENT SOMETHING DURING THE WAIT, the same protection as drafts above,
+  // one level up: a brand-new tab (not in preFetchTabKeys — created after the local draw) that already
+  // has a REAL sent message (not just a draft) by the time the server's answer lands represents actual
+  // work, not a stray empty tab — the exact shape of a live-reported bug ("I had an explorer
+  // conversation on the pact workspace, it has disappeared... I never retired it"): sent fast enough
+  // to land inside this window, on a connection slow enough to still be fetching. Captured BEFORE the
+  // replace below (which would otherwise simply discard it) and re-appended after if it's missing.
+  const newTabsWithRealSends = [];
+  try {
+    for (const t of (PACT_CHAT && PACT_CHAT.tabs) || []) {
+      if (t.key && !preFetchTabKeys.has(t.key) && Array.isArray(t.msgs) && t.msgs.some((m) => m && m.role === "user")) newTabsWithRealSends.push(t);
+    }
+  } catch {}
   try { if (saved.chat && Array.isArray(saved.chat.tabs) && saved.chat.tabs.length) pactRestoreChat(saved.chat); } catch (e) { console.warn("pact chat restore failed", e); }
   try { for (const t of (PACT_CHAT && PACT_CHAT.tabs) || []) if (t.key && typed.has(t.key) && !t.draft) t.draft = typed.get(t.key); } catch {}
+  try { for (const t of newTabsWithRealSends) if (PACT_CHAT && Array.isArray(PACT_CHAT.tabs) && !PACT_CHAT.tabs.some((x) => x.key === t.key)) PACT_CHAT.tabs.push(t); } catch {}
   // …and tell the engine which of them were left with auto-continue on, so a restarted engine
   // re-arms the loop instead of leaving a lit switch with nothing behind it.
   try { for (const t of (PACT_CHAT && PACT_CHAT.tabs) || []) wsAssertAuto(t.key, t._autoContinue); } catch {}
@@ -9972,7 +9993,20 @@ async function pactChatDispatch(t, text, images, opts) {
   // re-queue rather than drop them. Cleared once the prompt is accepted (assistant/result) or errors.
   t._pendingText = text; t._pendingImages = images;
   pactChatRender();   // reflect a fresh auto-name on the tab (also re-paints the active conversation)
-  pactStateFlush();   // persist the just-sent tab/key IMMEDIATELY so it's restorable even if you navigate away at once
+  // REGRESSION, found live: "I had an explorer conversation on the pact workspace, it has
+  // disappeared... I never retired it, so that's the bug, someone retired it for me." Root cause —
+  // this flush was the ONE call site of pactStateFlush() with no PACT_STATE_READY guard (pactChatStop
+  // and the pagehide/visibilitychange handler both correctly check it first). pactChatInit() wipes
+  // PACT_CHAT to a single fresh tab on every mount, BEFORE pactRestoreState()'s fetch (with retries,
+  // genuinely several seconds on a slow link) has a chance to correct it with the real saved tabs —
+  // PACT_STATE_READY stays false for exactly that window so nothing can persist the temporary stub
+  // over the real data. Sending a message fast enough to land inside that window — easily done,
+  // typing doesn't wait for a fetch — reached this UNGUARDED flush, which happily wrote the
+  // single-fresh-tab stub to the server, silently overwriting a real multi-tab list (Master +
+  // Explorer) down to just the one tab the send happened in. Guarded now, matching the other two
+  // call sites: skip the flush entirely until restore has genuinely completed; the debounced
+  // pactStateSave() (already gated the same way) picks up the real state once it's ready.
+  if (PACT_STATE_READY) pactStateFlush();
   t._forceBottom = true;   // your own just-sent message lands at the bottom + re-pins, even if you'd scrolled up
   pactChatPaint(t);
   // `scoped: true` — a Pact tab is ALWAYS one specific conversation. The engine must seed/replay AND
