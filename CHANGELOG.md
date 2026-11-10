@@ -4,6 +4,37 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [2.3.2] - 2026-11-10
+### Fixed — mobile Pact file viewer had no "copy whole file" button (desktop had one)
+
+*"When visualizing a pact file on mobile, I can open it and see it, but I do not have exposed a copy
+all code button. I want for example to open it and copy all the code to bring in execute console for
+a deploy. I'm missing that button, that copies all the text in clipboard of the whole opened file.
+Very important. Can you add it. It exists in desktop view but not on mobile view."* — confirmed with a
+screenshot of the phone box view (a `.pact` deploy file open read-only, hamburger menu, "▲ Files (15)"
+riser) showing no copy control anywhere.
+
+**Root cause, confirmed in `dashboard/public/app.js`:** the desktop editor box's control-row footer
+has a ⧉ "copy the WHOLE file" button (reads `active.content`, so it's the whole file regardless of
+scroll position, gated to `.pact`/`.repl`/`.md`). The phone re-layout (`viewPactMobile`'s `boxStage`)
+never renders that footer at all — a mobile box view is just the editor body plus the "▲ Files (N)"
+riser that opens the per-box file-switcher sheet. There was no path to a whole-file copy short of
+switching to desktop.
+
+**Fix:** added a matching ⧉ button, docked beside the files riser in a new `pactm-filebar` row (so
+it's reachable without opening the hamburger menu — the exact friction reported), gated the same way
+as the desktop button, reading the same `active.content`, using the same
+`navigator.clipboard.writeText` + `wsCopyFallback` mechanism and the same ✓/✗-for-1200ms flash
+feedback. CSS added in `dashboard/public/styles.css` (`.pactm-filebar`, `.pactm-handle-copy`).
+
+New tests: `lib/pactCopyAllMobile.test.mjs` (3 tests — the button's presence and wiring into the
+filebar row, that it's gated by the same `.pact`/`.repl`/`.md` check as the desktop button, and that
+it copies the full `active.content` via the same clipboard path and feedback UX). Full suite: 2406
+passing.
+
+**Deploy note: web-only (`app.js` + `styles.css`) — no engine restart needed, a page reload picks it
+up.**
+
 ## [2.3.1] - 2026-11-04
 ### Fixed — CRITICAL: a real Pact conversation ("Explorer") could silently vanish from the tab list, no close button involved
 

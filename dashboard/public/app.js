@@ -12601,7 +12601,29 @@ function viewPactMobile() {
     const openFiles = () => openBoxFiles(g);
     riser.addEventListener("click", openFiles);
     riser.addEventListener("touchend", (e) => { e.preventDefault(); openFiles(); });   // README §9: kill the ghost-tap double-fire
-    return el("div", { class: "pactm-boxwrap" }, [body, riser]);
+    const filebar = el("div", { class: "pactm-filebar" }, [riser]);
+    // Mirrors the desktop box footer's "⧉ Copy the WHOLE file" button (app.js ~line 6720), which has no
+    // equivalent on the phone re-layout at all — reported live: "I can open it and see it, but I do not
+    // have exposed a copy all code button... It exists in desktop view but not on mobile view." Same
+    // data source (active.content, the whole file regardless of scroll position) and same copy mechanism
+    // (navigator.clipboard.writeText with the wsCopyFallback escape hatch), docked beside the files riser
+    // so it's reachable without opening the hamburger menu — the exact friction the report was about.
+    const an = active ? active.name.toLowerCase() : "";
+    if (active && (an.endsWith(".pact") || an.endsWith(".repl") || an.endsWith(".md"))) {
+      const copyAll = el("button", { class: "pactm-handle-copy", type: "button", "aria-label": "Copy the whole file",
+        title: "Copy the WHOLE file to the clipboard — every line, no scrolling" }, ["⧉"]);
+      const doCopy = (e) => {
+        if (e) e.preventDefault();
+        const text = String(active.content || "");
+        const done = (ok) => { copyAll.textContent = ok ? "✓" : "✗"; copyAll.classList.toggle("--on", ok); setTimeout(() => { copyAll.textContent = "⧉"; copyAll.classList.remove("--on"); }, 1200); };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => done(true), () => wsCopyFallback(text, done));
+        else wsCopyFallback(text, done);
+      };
+      copyAll.addEventListener("click", doCopy);
+      copyAll.addEventListener("touchend", doCopy);   // README §9: kill the ghost-tap double-fire
+      filebar.appendChild(copyAll);
+    }
+    return el("div", { class: "pactm-boxwrap" }, [body, filebar]);
   }
   // ---- M2: full-screen sheet (overlays the stage; reused by the donut picker in M3). ----
   let sheetEl = null;
