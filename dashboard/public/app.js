@@ -8264,6 +8264,16 @@ let PACT_STATE_TIMER = null;
 let PACT_RESTORE_STATE = "ok";   // "loading" | "ok" | "failed" — drives the boot restore cue (see pactSyncCue)
 let PACT_CHAT_NAMES = {};
 let PACT_HIST_TAB = "open";   // "open" | "retired" — which half of the history panel is showing; reset to "open" each time the panel is (re)opened
+// Every chat-tab key THIS browser has ever been shown — seeded from every restore, grown on every
+// locally-created tab. Sent with every save so the server's foreign-tab guard (lib/pactIdeState.mjs's
+// mergeForeignTabs) can tell "I've genuinely never heard of this tab" (another, newer device made it —
+// protect it) apart from "I've seen this tab and chose to close it" (a real close — honour it). See the
+// REGRESSION: "if i have two chats opened on pact workspace, and i reload the page, only the master
+// chat is kept, the other one is closed" — caught live, a workspace's _ide-state.json observed
+// dropping from 3 tabs to 1 between two reads with no deliberate close in between. NEVER shrinks on a
+// close (closing a tab doesn't make this browser forget it once existed — forgetting is exactly what
+// would make the next save look like it never knew about it, undoing its own close via the guard).
+let PACT_IDE_KNOWN_KEYS = new Set();
 // A debounced (~800ms) snapshot of the whole IDE layout, PUT to the shared store. No-op until a
 // restore has completed (or a fresh view is ready), so a burst of layout changes coalesces into one
 // write. A read-only remote viewer's PUT is refused server-side (403) and simply ignored here.
@@ -8275,7 +8285,32 @@ function pactStatePut(state, keepalive) {
      do nothing. Measured: a warm transcript cache still showed a loading bar 2s into a fresh load.
      Small (names, keys, drafts — no transcripts), so localStorage is the right size of tool. */
   try { localStorage.setItem(PACT_LAYOUT_KEY, JSON.stringify(state)); } catch {}
-  fetch("/api/pact/ide-state", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state }), keepalive: !!keepalive }).catch(() => {});
+  fetch("/api/pact/ide-state", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ state, knownKeys: [...PACT_IDE_KNOWN_KEYS] }), keepalive: !!keepalive })
+    .then((r) => r.json()).then((r) => { if (r && r.ok && r.merged && Array.isArray(r.recoveredTabs) && r.recoveredTabs.length) pactAdoptRecoveredTabs(r.recoveredTabs); })
+    .catch(() => {});
+}
+// The foreign-tab guard's live-side counterpart: the server just told us our own save would otherwise
+// have silently dropped one or more tabs another device created since we last synced — adopt them into
+// THIS browser's live view right now, instead of only fixing the file and leaving the open tab blind
+// to it until its next reload. Skips anything already present (belt + suspenders against a double
+// adopt from two saves landing close together) and never overwrites the user's current selection.
+function pactAdoptRecoveredTabs(recovered) {
+  if (!PACT_CHAT || !Array.isArray(recovered) || !recovered.length) return;
+  const have = new Set(PACT_CHAT.tabs.map((t) => t.key));
+  const added = [];
+  for (const ts of recovered) {
+    if (!ts || typeof ts.key !== "string" || have.has(ts.key)) continue;
+    const t = pactLiveTabFromSaved(ts);
+    PACT_CHAT.tabs.push(t);
+    PACT_IDE_KNOWN_KEYS.add(t.key);
+    added.push(t);
+  }
+  if (!added.length) return;
+  pactChatRender();
+  if (typeof pactEdSaveStatus === "function") {
+    const names = added.map((t) => '"' + (t.name || "Untitled") + '"').join(", ");
+    pactEdSaveStatus("↺ recovered " + (added.length === 1 ? "a conversation" : added.length + " conversations") + " opened elsewhere: " + names, false);
+  }
 }
 /** The last layout this device saw. Used to DRAW immediately; never to decide what is true. */
 function pactLayoutLocal() {
@@ -8426,6 +8461,12 @@ async function pactRestoreState() {
      restored from the device cache never gets a loader; one with no cached rows gets it here. */
   try { for (const t of (PACT_CHAT && PACT_CHAT.tabs) || []) if (t.key && !(t.msgs && t.msgs.length)) pactChatSetLoading(t, true); } catch {}
   try { if (saved.collapse) pactRestoreCollapse(saved.collapse); } catch {}
+  // Every tab this restore ended up with (the server's own list, plus any locally-created ones just
+  // re-appended above) is now a tab this browser has genuinely SEEN — seed PACT_IDE_KNOWN_KEYS so this
+  // device's very first save can't look like a stale write and get its own current, correct tabs
+  // treated as "foreign" by some OTHER device's guard (knownKeys only protects tabs the SERVER already
+  // has that WE are about to omit; it never affects tabs we already hold).
+  try { for (const t of (PACT_CHAT && PACT_CHAT.tabs) || []) if (t.key) PACT_IDE_KNOWN_KEYS.add(t.key); } catch {}
   PACT_RESTORE_STATE = "ok";
   PACT_STATE_READY = true;   // from here on, user changes persist — only AFTER a confirmed load, never after a failure
 }
@@ -8448,41 +8489,47 @@ function pactRestoreEditor(ed) {
   });
   pactEdSyncTreeToActiveBox();   // if the restored active box is on a worktree, show its tree straight away (guarded on treeBody)
 }
+// Builds ONE live runtime tab object from a persisted/saved shape (`ts`) — shared by the full restore
+// below AND by pactAdoptRecoveredTabs (the foreign-tab guard's live-side counterpart: a tab another
+// device created and the server handed back to us because OUR OWN save would otherwise have silently
+// dropped it — see lib/pactIdeState.mjs's mergeForeignTabs). Mints a fresh runtime id every call, so
+// callers must not cache/reuse the result across more than one adoption.
+function pactLiveTabFromSaved(ts) {
+  const id = ++PACT_CHAT.seq;
+  const key = (typeof ts.key === "string" && ts.key) ? ts.key : wsUuid();
+  return { id, name: ts.name || PACT_CHAT_NAMES[key] || ("Chat " + id), key,
+    // Seeded from the render cache when we have this conversation's rows already — the fresh copy
+    // still arrives and replaces them; this is what you read while it does.
+    msgs: (PACT_MSG_CACHE.get(key) || {}).msgs || [], live: "", status: "idle",
+    // A restored tab's backend session already received the orienting preamble in its prior life —
+    // don't re-inject it on the next message. (Full transcript rehydration + resume is P3.)
+    started: true, perm: null, draft: typeof ts.draft === "string" ? ts.draft : "",
+    // a resumed/loaded tab keeps its SDK resume target across reloads so continuing still has context —
+    // but never a resume equal to the tab's own key (a bogus id that fails "No conversation found")
+    resume: pactResumeIdOk(ts.resume, key),
+    // the worktree this conversation runs in survives reloads (Stage-2 binding); null/"main" → primary checkout
+    worktree: (ts.worktree && ts.worktree !== "main") ? ts.worktree : undefined,
+    // the per-conversation model override survives reloads — otherwise a chat you deliberately moved to
+    // Opus would silently fall back to the default on the next page load
+    model: (typeof ts.model === "string" && ts.model) ? ts.model : undefined,
+    // recorded worktree-migration markers, re-injected into the transcript on rehydrate (see pactChatReinjectMigrations)
+    migrations: Array.isArray(ts.migrations) ? ts.migrations.filter((m) => m && typeof m.at === "number") : [],
+    // interrupted/discarded prompt states ({ <at>: "i" | "d" }) survive reloads (and sync via IDE state)
+    promptStates: (ts.promptStates && typeof ts.promptStates === "object" && !Array.isArray(ts.promptStates)) ? ts.promptStates : {},
+    bookmarks: Array.isArray(ts.bookmarks) ? ts.bookmarks.filter((x) => typeof x === "number") : [],   // starred responses (sync via IDE state)
+    // Auto-continue survives reloads: the state + round count are restored so the bar shows "Auto on" again
+    // and the loop re-arms (and you can still switch it off). Otherwise a reload silently killed the loop.
+    _autoContinue: !!ts.autoContinue, _autoCount: (typeof ts.autoCount === "number" ? ts.autoCount : 0), _autoCap: (typeof ts.autoCap === "number" && ts.autoCap > 0 ? ts.autoCap : PACT_AUTO_CAP),
+    // Effort / ultracode are per-tab settings like model and draft, so they survive a reload too —
+    // otherwise ticking ultracode and coming back would silently drop you to the default level.
+    effort: ts.effort || null, ultracode: !!ts.ultracode,
+    // the prime (undeletable) conversation flag survives reloads; ensurePrime backfills older layouts
+    prime: !!ts.prime };
+}
 function pactRestoreChat(ch) {
   const tabs = ch.tabs.slice(0, 16).filter((t) => t && typeof t === "object");
   if (!tabs.length) return;
-  PACT_CHAT.tabs = tabs.map((ts) => {
-    const id = ++PACT_CHAT.seq;
-    const key = (typeof ts.key === "string" && ts.key) ? ts.key : wsUuid();
-    return { id, name: ts.name || PACT_CHAT_NAMES[key] || ("Chat " + id), key,
-      // Seeded from the render cache when we have this conversation's rows already — the fresh copy
-      // still arrives and replaces them; this is what you read while it does.
-      msgs: (PACT_MSG_CACHE.get(key) || {}).msgs || [], live: "", status: "idle",
-      // A restored tab's backend session already received the orienting preamble in its prior life —
-      // don't re-inject it on the next message. (Full transcript rehydration + resume is P3.)
-      started: true, perm: null, draft: typeof ts.draft === "string" ? ts.draft : "",
-      // a resumed/loaded tab keeps its SDK resume target across reloads so continuing still has context —
-      // but never a resume equal to the tab's own key (a bogus id that fails "No conversation found")
-      resume: pactResumeIdOk(ts.resume, key),
-      // the worktree this conversation runs in survives reloads (Stage-2 binding); null/"main" → primary checkout
-      worktree: (ts.worktree && ts.worktree !== "main") ? ts.worktree : undefined,
-      // the per-conversation model override survives reloads — otherwise a chat you deliberately moved to
-      // Opus would silently fall back to the default on the next page load
-      model: (typeof ts.model === "string" && ts.model) ? ts.model : undefined,
-      // recorded worktree-migration markers, re-injected into the transcript on rehydrate (see pactChatReinjectMigrations)
-      migrations: Array.isArray(ts.migrations) ? ts.migrations.filter((m) => m && typeof m.at === "number") : [],
-      // interrupted/discarded prompt states ({ <at>: "i" | "d" }) survive reloads (and sync via IDE state)
-      promptStates: (ts.promptStates && typeof ts.promptStates === "object" && !Array.isArray(ts.promptStates)) ? ts.promptStates : {},
-      bookmarks: Array.isArray(ts.bookmarks) ? ts.bookmarks.filter((x) => typeof x === "number") : [],   // starred responses (sync via IDE state)
-      // Auto-continue survives reloads: the state + round count are restored so the bar shows "Auto on" again
-      // and the loop re-arms (and you can still switch it off). Otherwise a reload silently killed the loop.
-      _autoContinue: !!ts.autoContinue, _autoCount: (typeof ts.autoCount === "number" ? ts.autoCount : 0), _autoCap: (typeof ts.autoCap === "number" && ts.autoCap > 0 ? ts.autoCap : PACT_AUTO_CAP),
-      // Effort / ultracode are per-tab settings like model and draft, so they survive a reload too —
-      // otherwise ticking ultracode and coming back would silently drop you to the default level.
-      effort: ts.effort || null, ultracode: !!ts.ultracode,
-      // the prime (undeletable) conversation flag survives reloads; ensurePrime backfills older layouts
-      prime: !!ts.prime };
-  });
+  PACT_CHAT.tabs = tabs.map((ts) => pactLiveTabFromSaved(ts));
   pactChatEnsurePrime();
   const ai = Number.isInteger(ch.activeIndex) && ch.activeIndex >= 0 && ch.activeIndex < PACT_CHAT.tabs.length ? ch.activeIndex : 0;
   PACT_CHAT.activeId = PACT_CHAT.tabs[ai].id;
@@ -8958,6 +9005,7 @@ function pactChatOpenSaved(r, adopt) {
   const name = pactHistName(r);
   const t = { id, name, key, msgs: [], live: "", status: "idle", started: true, perm: null, draft: "", resume: pactResumeIdOk(r.realSessionId, key), worktree: (r.worktree && r.worktree !== "main") ? r.worktree : undefined };
   if (key) PACT_CHAT_NAMES[key] = name;
+  if (key) PACT_IDE_KNOWN_KEYS.add(key);   // this browser now knows this tab — its own future close of it must stick (see PACT_IDE_KNOWN_KEYS)
   PACT_CHAT.tabs.push(t);
   PACT_CHAT.activeId = id;
   PACT_CHAT._pendingOpen = PACT_CHAT._pendingOpen || {};
@@ -9378,7 +9426,9 @@ function pactChatNewTab() {
   // `_queue`/`_pendingText` start empty and are only ever tied to THIS fresh session key — every tab
   // is a new object with its own key, so a message queued mid-turn can never fire into another
   // session (the Core cockpit resets p._queue on repo/worktree switch for the same reason).
-  PACT_CHAT.tabs.push({ id, name: pactNextChatName(PACT_CHAT.tabs), key: wsUuid(), msgs: [], live: "", status: "idle", started: false, perm: null, draft: "", attachedImages: [], model: routingDefaultModel(), autoWrap: true, _queue: null, _pendingText: null, _pendingImages: null });
+  const freshKey = wsUuid();
+  PACT_IDE_KNOWN_KEYS.add(freshKey);   // this browser minted this tab — its own future close of it must stick (see PACT_IDE_KNOWN_KEYS)
+  PACT_CHAT.tabs.push({ id, name: pactNextChatName(PACT_CHAT.tabs), key: freshKey, msgs: [], live: "", status: "idle", started: false, perm: null, draft: "", attachedImages: [], model: routingDefaultModel(), autoWrap: true, _queue: null, _pendingText: null, _pendingImages: null });
   PACT_CHAT.activeId = id;
   pactChatRender();
   pactStateSave();

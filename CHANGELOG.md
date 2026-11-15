@@ -4,6 +4,59 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [2.3.3] - 2026-11-15
+### Fixed — CRITICAL: a stale device's reload/autosave could silently close a Pact conversation another device had open
+
+*"if i have two chats opened on pact workspace, and i reload the page, only the master chat is kept,
+the other one is closed, and i think that messes up its flow."*
+
+**Caught live, mid-investigation**: this workspace's own `_ide-state.json` was directly observed going
+from 3 chat tabs (Master, Chat 2, Explorer) down to 1 (Master only) between two reads taken about two
+minutes apart — no `×` close, no user action in between, matching the report exactly.
+
+**Root cause, confirmed in `lib/pactIdeState.mjs`:** the Pact IDE layout (open files, editor boxes,
+and — critically — the chat tab list) lives in ONE file shared across every device/browser-tab
+viewing the workspace, written by a blind full-replace `PUT`. Any two clients open at once — one that
+just created a second/third chat tab, and an older one (localhost + the remote website, or just a
+browser tab that's been sitting open since before the new tabs existed) — will each eventually save
+their own view (any keystroke, drag, or periodic resync triggers it). The older client's snapshot
+still only has the one tab it has ever known about, and since a `PUT` is a full replace, saving it
+overwrites the richer file straight back down to one tab. No "× closed" anywhere in the trail because
+nothing was ever deliberately closed — an honest, ordinary save from a client with a smaller, truthful
+view of its OWN state did it.
+
+**The fix — a foreign-tab guard, not a lock:** every browser now tracks `PACT_IDE_KNOWN_KEYS` — every
+chat-tab key it has ever been shown (seeded on every restore, grown on every tab it creates or
+resumes). Every save now sends that set along. `lib/pactIdeState.mjs`'s new `mergeForeignTabs` compares
+it against what's already on disk: a tab that exists on disk but is in NEITHER the incoming save NOR
+`knownKeys` can only mean "another client made this since I last synced" — it is spliced back onto the
+end of the incoming tab list instead of being dropped. A tab the writer DOES know about but has simply
+omitted (a real `×` close) is never protected — closing still works exactly as before, because
+closing requires having seen the tab first, which puts its key in `knownKeys`. An older client that
+hasn't picked up this fix yet (no `knownKeys` field at all) gets the exact pre-fix behaviour — the
+guard only arms when a writer explicitly opts in, so a mixed-version rollout can't make real closes
+look stuck.
+
+Recovery isn't just a file fix for next reload either: the server's response now reports which tabs it
+had to protect, and the browser that almost dropped them (`pactAdoptRecoveredTabs`) adopts them into
+its own live view immediately, with a footer toast ("↺ recovered a conversation opened elsewhere:
+…") — so the "lost" conversation reappears in the SAME session that almost lost it, not just the next
+time someone reloads.
+
+Wired through both write paths that can reach the store: the local dashboard's `PUT /api/pact/ide-state`
+(`dashboard/server.mjs`) and the remote website's tunnelled `pactIdeStatePut` command (`agent/agent.mjs`).
+
+New tests: `lib/pactIdeState.test.mjs` (+8 — `mergeForeignTabs` pure-function coverage: foreign-tab
+protection, deliberate-close-stays-closed, activeIndex recomputation, true no-op fast path, and
+`writeIdeState`'s `opts.knownKeys` wiring end to end) and `lib/pactIdeStateTabRecovery.test.mjs` (new,
+6 tests — the frontend wiring: every save carries `knownKeys`, a reported recovery is adopted live,
+every tab-creation path marks its key known, restore seeds the known set before arming saves). Full
+suite: 2420 passing.
+
+**Deploy note: engine-adjacent — `lib/pactIdeState.mjs` is loaded by both `dashboard/server.mjs` and
+`agent/agent.mjs` (the relay bridge), both part of the `claudstermind` service (not `sessiond`).
+Restart `claudstermind`; a page reload alone is not enough for this one.**
+
 ## [2.3.2] - 2026-11-10
 ### Fixed — mobile Pact file viewer had no "copy whole file" button (desktop had one)
 

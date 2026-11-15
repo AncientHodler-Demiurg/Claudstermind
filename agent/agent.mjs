@@ -335,7 +335,10 @@ export function createBridge(opts = {}) {
       const a = frame.cmd.args || {};
       const result = frame.cmd.type === "pactIdeStateGet"
         ? { ok: true, state: pactReadIdeState(dir) }
-        : pactWriteIdeState(dir, a.state || {});
+        // `knownKeys` arms the foreign-tab guard (lib/pactIdeState.mjs) — same as the local dashboard's
+        // own PUT route, so a remote-site client gets the same cross-device tab protection a localhost
+        // client does, not a weaker tunnelled path.
+        : pactWriteIdeState(dir, a.state || {}, { knownKeys: a.knownKeys });
       if (sock && sock.readyState === 1) sock.send(JSON.stringify({ t: FRAME.RESULT, id: frame.id, result }));
       return;
     }

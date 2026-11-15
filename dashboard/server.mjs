@@ -1271,7 +1271,10 @@ const handler = async (req, res) => {
     if (!who.localActionsAvailable) return sendJSON(res, 403, { ok: false, reason: "local-only", message: "Saving Pact IDE state is local-only." });
     if (!who.canExecute) return sendJSON(res, 403, { ok: false, reason: "read-only", message: "Execute permission required." });
     const b = await readBody(req);
-    return sendJSON(res, 200, pactWriteIdeState(join(MASTER_ROOT, ".claude", "workspace"), b.state || {}));
+    // `knownKeys` arms pactWriteIdeState's foreign-tab guard (see lib/pactIdeState.mjs) — every chat
+    // tab key THIS writer has ever seen, so a client that's been open since before another device
+    // created a tab can never silently overwrite it back out of existence on its next save.
+    return sendJSON(res, 200, pactWriteIdeState(join(MASTER_ROOT, ".claude", "workspace"), b.state || {}, { knownKeys: b.knownKeys }));
   }
   // ---- Pact IDE: continuous write-back — append a note to the pact brain (brain/OuronetPact). ----
   // ---- Pact IDE: run a .repl and stream stdout/stderr live (SSE). Local-only + canExecute (it
