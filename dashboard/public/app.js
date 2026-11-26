@@ -14042,16 +14042,48 @@ function viewWorkspace() {
   // fence's true boundaries; nested fences (fewer backticks than the opener) stay raw content inside
   // it, never separately parsed — matching real CommonMark, and matching a reply's own stated intent
   // when it reaches for a longer fence ("since there's a nested code block inside").
+  //
+  // REGRESSION — SAME-LENGTH NESTING: "i asked for an agent for a copy paste handoff in a copy paste
+  // box, but i think the parses stumbled" — a real handoff wrapped its ENTIRE multi-section reply in
+  // an outer ```markdown fence, but the ONE code block nested inside it (```tsx) used the SAME 3-tick
+  // length rather than a longer wrapper. The close search used to be a bare, unanchored `` `{N,} ``
+  // scan — it doesn't just match a close LINE, it matches backticks ANYWHERE, including the inner
+  // fence's own OPEN ("```tsx" itself has 3 backticks). That matched the inner open as the outer
+  // fence's close, truncating "MARKDOWN" there and leftover text — including the real trailing prose
+  // — got swept into a second, bogus "CODE" fence starting from the inner block's own close. Two
+  // fixes, together: (1) a close must be a LINE containing NOTHING but the backtick run (CommonMark's
+  // real rule, matching md-mini.js's own already-correct per-line test — an open line like "```tsx"
+  // can never qualify, lang tag or not); (2) a ```markdown/```md wrapper — the one shape this
+  // codebase's own replies use specifically to say "treat my whole reply as one copyable document" —
+  // that has a NESTED fence-open before its first candidate close is exactly this same-length-nesting
+  // shape, so it extends to the LAST candidate close in the text instead of the first. Scoped tight:
+  // only fires when (a) the tag is markdown/md AND (b) a nested open genuinely precedes the first
+  // close, so two separate, non-nesting ```markdown blocks in one reply still split normally (test:
+  // lib/wsFindFences.test.mjs).
   function wsFindFences(text) {
     const fences = []; const openRe = /(`{3,})([\w+-]*)[ \t]*\n?/g;
+    const lineStarts = [0];
+    for (let i = 0; i < text.length; i++) if (text[i] === "\n") lineStarts.push(i + 1);
     let m;
     while ((m = openRe.exec(text))) {
       const tickLen = m[1].length, lang = m[2] || "", contentStart = m.index + m[0].length;
-      const closeRe = new RegExp("`{" + tickLen + ",}", "g");
-      closeRe.lastIndex = contentStart;
-      const close = closeRe.exec(text);
+      const candidates = [];
+      for (const ls of lineStarts) {
+        if (ls < contentStart) continue;
+        const nl = text.indexOf("\n", ls);
+        const line = nl === -1 ? text.slice(ls) : text.slice(ls, nl);
+        const bm = /^(`{3,})[ \t]*$/.exec(line);
+        if (bm && bm[1].length >= tickLen) candidates.push({ index: ls, len: bm[1].length });
+      }
+      let close = candidates.length ? candidates[0] : null;
+      if (close && candidates.length > 1 && /^(markdown|md)$/i.test(lang)) {
+        const nestedOpenRe = /`{3,}[\w+-]+/g;
+        nestedOpenRe.lastIndex = contentStart;
+        const nm = nestedOpenRe.exec(text);
+        if (nm && nm.index < close.index) close = candidates[candidates.length - 1];
+      }
       const contentEnd = close ? close.index : text.length;
-      const end = close ? close.index + close[0].length : text.length;
+      const end = close ? close.index + close.len : text.length;
       fences.push({ start: m.index, end, lang, code: text.slice(contentStart, contentEnd).replace(/\n$/, "") });
       openRe.lastIndex = end;
     }

@@ -4,6 +4,52 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [2.3.4] - 2026-11-26
+### Fixed — a "copy the whole handoff as one block" reply could get split into a truncated box plus a bogus mislabeled one
+
+*"i asked for an agent for a copy paste handoff in a copy paste box, but i think the parses stumbled.
+look, can you look it up ? and fix it, i think thats an UI issue"* — a screenshot showed a markdown
+handoff document rendered as two boxes: a "MARKDOWN" box that cut off mid-document, and a second,
+wrongly-labeled "CODE" box containing the REST of the document as plain, un-highlighted prose.
+
+**Root cause, traced to the exact production message** (pulled verbatim off disk — a khronoton-core
+package-agent handoff in the Khronoton workspace): the reply wrapped its ENTIRE multi-section document
+in an outer ` ```markdown ` fence — this codebase's own established shape for "treat my whole reply as
+one copyable unit" (the same technique a prior fix, `890a6f2`, made safe when the outer wrapper uses a
+LONGER fence than anything nested inside it, e.g. ````` around ```). This reply's one nested code
+block (```tsx) used the SAME 3-backtick length as its outer wrapper instead of a longer one.
+
+Two separate renderers share this root cause, each broken differently:
+- **Core chat** (`dashboard/public/app.js`'s `wsFindFences`): its close search was an *unanchored*
+  scan for "any run of ≥N backticks anywhere forward of the content start" — not a true CommonMark
+  close ("a LINE containing nothing but the backticks"). The inner fence's own OPEN line (`` ```tsx ``
+  — 3 backticks, same length) satisfied that scan and got mistaken for the outer fence's close,
+  truncating the "MARKDOWN" box right there. Everything after — including the real trailing prose —
+  got swept into a second, bogus fence starting from the inner block's own close, with no language tag
+  (`f.lang || "code"` → the "CODE" label, CSS-uppercased).
+- **Pact's `.md` renderer** (`dashboard/public/md-mini.js`): its close search WAS already correctly
+  line-anchored, but still took the *first* matching close line — the inner block's own close — ending
+  the outer `<pre>` there too. Less visibly broken (no stray mislabeled box, since this renderer never
+  attaches block-type headers at all) but just as wrong: the entire preamble lost every heading/bold/
+  table it should have rendered, dumped instead as one raw, unformatted code block.
+
+**The fix, in both renderers:** a ` ```markdown `/` ```md ` wrapper whose first candidate close is
+preceded by a nested fence-open (one with its own language tag) is recognized as exactly this
+same-length-nesting shape — intent is "everything, to the end" — so it now extends to the LAST
+matching close in the text instead of the first, swallowing the nested fence and all trailing content
+as one coherent block. Scoped tight on purpose: only fires for markdown/md-tagged wrappers that
+genuinely nest something, so two ordinary same-length fences of any other language, or two
+independent, non-nesting ` ```markdown ` blocks in one reply, still split normally. `wsFindFences`
+also picked up the same line-anchoring correctness `md-mini.js` already had, as a byproduct.
+
+New tests: `lib/wsFindFences.test.mjs` (+5 — the verbatim live-report repro, the same-length-nesting
+shape in isolation, the markdown/md scoping guard, the nested-open guard, and inline-backtick safety)
+and `lib/mdMini.test.mjs` (+3 — the same repro, the lang-scoping guard, the no-nested-open guard). Full
+suite: 2428 passing.
+
+**Deploy note: web-only (`app.js` + `md-mini.js`) — no engine restart needed, a page reload picks it
+up.**
+
 ## [2.3.3] - 2026-11-15
 ### Fixed — CRITICAL: a stale device's reload/autosave could silently close a Pact conversation another device had open
 

@@ -39,7 +39,7 @@
     var i = 0, n = lines.length;
     while (i < n) {
       var line = lines[i];
-      var fenceOpen = line.match(/^(`{3,})/);
+      var fenceOpen = line.match(/^(`{3,})([\w+-]*)/);
       if (fenceOpen) {                                             // fenced code
         // CommonMark: a fence of N backticks is closed ONLY by a line whose OWN run of backticks is
         // AT LEAST N — that's what lets a reply nest a real ``` code block inside a longer wrapper
@@ -49,11 +49,35 @@
         // reply correctly used the longer-fence-for-nesting technique. ("The UI thinks they're
         // multiple when it's one and the same.") A `\s*$` after the run also requires the closing
         // line to be JUST the fence, matching the spec more precisely than "starts with backticks".
-        var tickLen = fenceOpen[1].length;
+        var tickLen = fenceOpen[1].length, fenceLang = fenceOpen[2] || "";
         var closeRe = new RegExp("^`{" + tickLen + ",}\\s*$");
+        // SAME-LENGTH NESTING: a ```markdown/```md wrapper — this codebase's own shape for "treat my
+        // whole reply as one copyable document" — sometimes nests a real code block at the SAME tick
+        // length instead of a longer one. That inner block's own close line then satisfies closeRe
+        // just as validly as the wrapper's true close, so a naive "stop at the first match" ends the
+        // wrapper right there, and everything after — including real trailing prose — renders as
+        // raw, unformatted fence content too (or, on the Core chat side, a second bogus fence; see
+        // lib/wsFindFences.test.mjs for that half of this fix). A whole-document wrapper's evident
+        // intent is "everything, to the end" — so when ANY nested fence-open line (one with a
+        // language tag of its own) appears before the first matching close, keep scanning for the
+        // LAST matching close instead and swallow the lot as this one block's content. Scoped to
+        // markdown/md so two real, independently-closed same-length fences of any OTHER language are
+        // never merged just because a later same-length fence happens to exist further down.
+        var wantsWhole = /^(markdown|md)$/i.test(fenceLang);
+        var closeAt = -1;
+        if (wantsWhole) {
+          var firstClose = -1, lastClose = -1, sawNestedOpen = false;
+          for (var k = i + 1; k < n; k++) {
+            if (closeRe.test(lines[k])) { if (firstClose === -1) firstClose = k; lastClose = k; continue; }
+            if (firstClose === -1 && /^`{3,}[\w+-]+/.test(lines[k])) sawNestedOpen = true;
+          }
+          closeAt = (sawNestedOpen && lastClose !== -1) ? lastClose : firstClose;
+        } else {
+          for (var j = i + 1; j < n; j++) { if (closeRe.test(lines[j])) { closeAt = j; break; } }
+        }
         var buf = []; i++;
-        while (i < n && !closeRe.test(lines[i])) { buf.push(esc(lines[i])); i++; }
-        i++;                                                       // consume closing fence
+        while (i < n && i !== closeAt) { buf.push(esc(lines[i])); i++; }
+        i++;                                                       // consume closing fence (a no-op past the end if unterminated)
         out.push('<pre class="md-pre"><code>' + buf.join("\n") + "</code></pre>");
         continue;
       }
