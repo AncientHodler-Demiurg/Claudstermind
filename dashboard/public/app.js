@@ -14090,16 +14090,31 @@ function viewWorkspace() {
     return fences;
   }
   // ===== end WS FIND FENCES pure helper =====
-  function renderAssistantText(text) {
+  // `depth` guards recursion for a ```markdown fence (see below) — each level strictly shrinks the
+  // text (it always drops at least the fence markers), so this can only ever recurse as deep as the
+  // reply's own real nesting; the cap just bounds a pathological/hostile input, not real replies.
+  function renderAssistantText(text, depth) {
     if (typeof text !== "string") return [text];
     if (!text.includes("```")) return renderProseBlock(text);
     const parts = []; let last = 0;
     for (const f of wsFindFences(text)) {
       if (f.start > last) parts.push(...renderProseBlock(text.slice(last, f.start)));
-      parts.push(el("div", { class: "ws-codeblock" }, [
-        el("div", { class: "ws-codeblock-hd" }, [el("span", {}, [f.lang || "code"]), copyBtn(() => f.code)]),
-        el("pre", { class: "ws-codeblock-body" }, [f.code]),
-      ]));
+      if (/^(markdown|md)$/i.test(f.lang) && (depth || 0) < 8) {
+        // "he probably wanted to designate that block of text as code" — a ```markdown/```md fence is
+        // the model's own "this whole passage IS markdown" wrapper, not literal content to show
+        // verbatim. Showing it as one raw, unformatted box (the previous fix's own behaviour) lost
+        // every heading/bold/table in the surrounding document just to protect a single nested code
+        // snippet that was never the thing meant to be shown as code. Unwrap it instead — render its
+        // CONTENT through this same pass — so a REAL nested fence inside (e.g. ```tsx) still gets its
+        // own proper, separately-copyable code box, and everything else renders as normal styled
+        // prose, exactly as if the outer ```markdown wrapper had never been there.
+        parts.push(...renderAssistantText(f.code, (depth || 0) + 1));
+      } else {
+        parts.push(el("div", { class: "ws-codeblock" }, [
+          el("div", { class: "ws-codeblock-hd" }, [el("span", {}, [f.lang || "code"]), copyBtn(() => f.code)]),
+          el("pre", { class: "ws-codeblock-body" }, [f.code]),
+        ]));
+      }
       last = f.end;
     }
     if (last < text.length) parts.push(...renderProseBlock(text.slice(last)));

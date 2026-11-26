@@ -4,6 +4,46 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [2.3.5] - 2026-11-26
+### Fixed — follow-up: the "whole handoff as one block" fix flattened the entire reply instead of just protecting the one real code snippet
+
+*"he probably wanted to designate that block of text as code. look how its looking now"* — a
+screenshot, immediately after 2.3.4 shipped, showed the FULL handoff document rendering as one giant
+literal block: every `#` heading, every `**bold**` marker, and the real ```tsx snippet all showing up
+as raw, unformatted text with the backtick fences themselves visible.
+
+**2.3.4 found the right BOUNDARIES but the wrong RENDERING.** It correctly identified that a
+```markdown-wrapped reply with a same-length nested fence is "one document, read to the end" — but
+then rendered that whole document as one opaque, unformatted code box (headed "MARKDOWN" on the Core
+side), to protect the one real nested snippet from being mis-split. That over-corrected: the ENTIRE
+preamble — headings, bold, bullet lists, the trailing "Verification"/"The ask" sections — lost all its
+formatting too, not just the part that needed protecting.
+
+**The actual fix:** a ```markdown/```md fence is the model's own "this whole passage IS markdown"
+signal — not "show this verbatim." Both renderers now UNWRAP it instead of boxing it: the fence's
+content is run back through the very same markdown pass that renders everything else. That recursion
+is what makes the user's actual want fall out for free — the real nested ```tsx snippet, found again
+by the same pass, still gets its own proper, distinct, highlighted/copyable code box (exactly what
+should "be designated as code"), while the surrounding document renders as normal styled markdown
+(real `<h1>`/`<h2>` headings, real `<strong>` bold, real bullet lists) instead of one flattened wall of
+text. A depth cap (8) bounds the recursion against a pathological reply; a bare fence with no language
+tag (the ORIGINAL 890a6f2 "longer wrapper" case) is untouched — only an explicit markdown/md tag
+unwraps.
+
+Verified against the exact production message that triggered both this fix and 2.3.4's (pulled
+verbatim off disk): now renders with a real heading, real bold labels, exactly one code block
+(containing only the `<ChainedBuilder>` snippet), and the trailing "Verification"/"The ask" sections
+as real markdown — not one undifferentiated block.
+
+New tests: `lib/wsRenderMarkdownFence.test.mjs` (new, 4 tests — source-pinned, since Core's renderer is
+DOM-producing; the fence-boundary logic it builds on is already covered by real execution in
+`lib/wsFindFences.test.mjs`) and 3 tests in `lib/mdMini.test.mjs` rewritten/added to match the corrected
+behavior (the earlier 2.3.4 tests asserted the now-replaced "one raw box" shape). Full suite: 2433
+passing.
+
+**Deploy note: web-only (`app.js` + `md-mini.js`) — no engine restart needed, a page reload picks it
+up.**
+
 ## [2.3.4] - 2026-11-26
 ### Fixed — a "copy the whole handoff as one block" reply could get split into a truncated box plus a bogus mislabeled one
 

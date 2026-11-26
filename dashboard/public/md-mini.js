@@ -33,7 +33,7 @@
     }).join("");
   }
 
-  function mdRender(src) {
+  function mdRender(src, depth) {
     var lines = String(src == null ? "" : src).replace(/\r\n?/g, "\n").split("\n");
     var out = [];
     var i = 0, n = lines.length;
@@ -75,10 +75,20 @@
         } else {
           for (var j = i + 1; j < n; j++) { if (closeRe.test(lines[j])) { closeAt = j; break; } }
         }
-        var buf = []; i++;
-        while (i < n && i !== closeAt) { buf.push(esc(lines[i])); i++; }
+        var rawBuf = []; i++;
+        while (i < n && i !== closeAt) { rawBuf.push(lines[i]); i++; }
         i++;                                                       // consume closing fence (a no-op past the end if unterminated)
-        out.push('<pre class="md-pre"><code>' + buf.join("\n") + "</code></pre>");
+        // "he probably wanted to designate that block of text as code. look how its looking now" — a
+        // ```markdown/```md fence is the model's own "this whole passage IS markdown" wrapper, not
+        // literal content to show verbatim. Dumping it as one raw, unformatted `<pre>` (this fix's own
+        // first pass) lost every heading/bold/table in the real document just to protect a single
+        // nested snippet that was never the thing meant to look like code. Unwrap it instead — run its
+        // CONTENT back through mdRender — so a REAL nested fence inside (e.g. ```tsx) still renders as
+        // its own proper code block, and everything else renders as normal styled markdown, exactly as
+        // if the outer wrapper had never been there. `depth` bounds the recursion (always strictly
+        // shrinks the text, so a real reply terminates fast; the cap only guards a pathological input).
+        if (wantsWhole && (depth || 0) < 8) out.push(mdRender(rawBuf.join("\n"), (depth || 0) + 1));
+        else out.push('<pre class="md-pre"><code>' + rawBuf.map(esc).join("\n") + "</code></pre>");
         continue;
       }
       if (/^\s*$/.test(line)) { i++; continue; }                  // blank
