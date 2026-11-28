@@ -6118,6 +6118,136 @@ function pactRunRepl(rel) {
   // Native connection error (server end / drop). Guarded so a clean exit doesn't print a spurious line.
   es.addEventListener("error", () => { if (PACT_RUN_ES) { pactTermAppend("\n[disconnected]\n", "pt-err"); pactStopRun(); } });
 }
+
+// ---- Pact REPL terminal: AMBIENT activity (not just the manual ▶ Run above). "During a working
+// session the agent runs, often concurrently... From the UI there is NO indication any of it is
+// happening -- the chat just goes quiet for six minutes. The operator cannot tell a long gate from a
+// stalled agent." Polls GET /api/pact/repl-activity (lib/replActivity.mjs does the actual process/log/
+// gate detection on the work machine) and renders: running processes (command/cwd/elapsed), the
+// REPL/tools/_gate.py table + a green/red verdict chip once something's finished (or a live
+// completion-count progress bar while it's still running), and a small history strip of past runs.
+// Lives ABOVE the existing manual-run `.pact-terminal` output — that pane is UNTOUCHED, still exactly
+// what ▶ Run drives.
+// ===== PACT ACTIVITY PANEL — pure helpers (sliced for unit tests; see lib/pactActivityPanel.test.mjs)
+function pactActivityProcLabel(cmdline) {
+  const c = String(cmdline || "");
+  const pactM = c.match(/\bpact\s+(\S+)/);
+  if (pactM) return "pact " + pactM[1].split("/").pop();
+  if (/_gate\.py/.test(c)) return "gate (full suite)";
+  if (/_suite_stats\.py/.test(c)) return "suite stats";
+  const toolM = c.match(/tools\/(_[^/\s]*\.py)/);
+  if (toolM) return toolM[1];
+  const last = c.trim().split(/\s+/).pop();
+  return last || "(unknown)";
+}
+function pactActivityElapsed(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60), s = totalSec % 60;
+  return m > 0 ? (m + "m " + String(s).padStart(2, "0") + "s") : (s + "s");
+}
+// ===== end PACT ACTIVITY PANEL pure helpers =====
+
+let PACT_ACTIVITY_TIMER = null;
+let PACT_ACTIVITY_RENDER = null;   // the currently-mounted panel's render fn — desktop XOR mobile, never both at once
+
+/** Builds the activity panel DOM once; `render(data)` repaints it from a /api/pact/repl-activity poll.
+ *  Shared by desktop (viewPact) and mobile (termStage) — same data, same renderer, no second copy to
+ *  drift. Starts in a calm "nothing detected" state (render(null)) so it never flashes empty. */
+function pactActivityPanel() {
+  const procsEl = el("div", { class: "pact-activity-procs" }, []);
+  const gateEl = el("div", { class: "pact-activity-gate" }, []);
+  const histEl = el("div", { class: "pact-activity-hist" }, []);
+  const idleEl = el("div", { class: "pact-activity-idle hint" }, ["No Pact/REPL activity detected."]);
+  const root = el("div", { class: "pact-activity" }, [procsEl, gateEl, histEl, idleEl]);
+
+  function renderProcs(processes) {
+    if (!processes || !processes.length) { procsEl.replaceChildren(); procsEl.hidden = true; return; }
+    procsEl.hidden = false;
+    procsEl.replaceChildren(...processes.map((p) => el("div", { class: "pact-activity-proc" }, [
+      el("span", { class: "pact-activity-dot" }, []),
+      el("span", { class: "pact-activity-proc-label" }, [pactActivityProcLabel(p.cmdline)]),
+      el("span", { class: "pact-activity-proc-cwd", title: p.cwd || "" }, [p.cwd ? p.cwd.split("/").slice(-2).join("/") : ""]),
+      el("span", { class: "pact-activity-proc-elapsed" }, [pactActivityElapsed(p.elapsedMs)]),
+    ])));
+  }
+
+  function gateTable(rows) {
+    if (!rows || !rows.length) return null;
+    const head = el("div", { class: "pact-activity-row pact-activity-row-hd" }, [
+      el("span", {}, ["secs"]), el("span", {}, ["+"]), el("span", {}, ["−"]), el("span", {}, ["fail"]), el("span", {}, ["entrypoint"]),
+    ]);
+    const body = rows.map((r) => el("div", { class: "pact-activity-row" + (r.broken ? " --broken" : "") }, [
+      el("span", {}, [r.secs.toFixed(1)]),
+      el("span", {}, [String(r.positive)]),
+      el("span", {}, [String(r.negative)]),
+      el("span", {}, [String(r.failures)]),
+      el("span", { class: "pact-activity-row-path" }, [r.path]),
+    ]));
+    return el("div", { class: "pact-activity-table" }, [head, ...body]);
+  }
+
+  function renderGate(gate, progress) {
+    gateEl.replaceChildren();
+    if (progress) {
+      gateEl.hidden = false;
+      const pct = progress.total ? Math.max(0, Math.min(100, Math.round((progress.completed / progress.total) * 100))) : 0;
+      const bar = el("div", { class: "pact-activity-bar" }, [el("div", { class: "pact-activity-bar-fill", style: "width:" + pct + "%" }, [])]);
+      const label = el("div", { class: "pact-activity-progress-label" }, [
+        progress.completed + "/" + progress.total + " entrypoints · " + progress.path + " (" + progress.secs.toFixed(1) + "s, " + progress.asserts + " asserts)"
+        + (progress.failingSoFar ? "  ⚠ " + progress.failingSoFar + " failing so far" : ""),
+      ]);
+      gateEl.append(bar, label);
+      return;
+    }
+    if (!gate) { gateEl.hidden = true; return; }
+    gateEl.hidden = false;
+    const parts = [];
+    if (gate.verdict) {
+      const green = gate.verdict === "GREEN";
+      parts.push(el("div", { class: "pact-gate-chip " + (green ? "--green" : "--red") },
+        [green ? "🟢 GATE GREEN" : "🔴 GATE FAILED" + (gate.reason ? ": " + gate.reason : "")]));
+    }
+    if (gate.summary) {
+      parts.push(el("div", { class: "pact-activity-summary" }, [
+        "wall " + gate.summary.wallSeconds.toFixed(1) + "s · " + gate.summary.assertions + " assertions ("
+        + gate.summary.positive + " positive, " + gate.summary.negative + " negative)",
+      ]));
+    }
+    const table = gateTable(gate.rows);
+    if (table) parts.push(table);
+    gateEl.replaceChildren(...parts);
+  }
+
+  function renderHistory(history) {
+    if (!history || !history.length) { histEl.replaceChildren(); histEl.hidden = true; return; }
+    histEl.hidden = false;
+    histEl.replaceChildren(el("span", { class: "pact-activity-hist-lbl" }, ["History:"]), ...history.map((h) => {
+      const green = h.verdict === "GREEN";
+      const when = h.at ? new Date(h.at).toLocaleTimeString() : "";
+      const tip = when + (h.summary ? " · " + h.summary.assertions + " assertions" : "") + (h.reason ? " · " + h.reason : "");
+      return el("span", { class: "pact-activity-hist-chip " + (green ? "--green" : "--red"), title: tip }, [green ? "🟢" : "🔴"]);
+    }));
+  }
+
+  function render(data) {
+    const d = data || {};
+    renderProcs(d.processes);
+    renderGate(d.gate, d.progress);
+    renderHistory(d.history);
+    const nothing = !(d.processes && d.processes.length) && !d.gate && !d.progress;
+    idleEl.hidden = !nothing;
+  }
+  render(null);
+  return { el: root, render };
+}
+
+/** One poll of /api/pact/repl-activity, repainting whichever panel (desktop or mobile) is currently
+ *  mounted. A read-only GET — a 403 (remote viewer, local-only) or a network hiccup just skips this
+ *  tick silently; the next one tries again. */
+function pactActivityPoll() {
+  fetch("/api/pact/repl-activity").then((r) => r.json()).then((j) => { if (j && j.ok && PACT_ACTIVITY_RENDER) PACT_ACTIVITY_RENDER(j); }).catch(() => {});
+}
 // ---- Multi-group tabbed editor (Zone A). Up to 6 boxes, each with its own tabs; the tree opens a
 // file into the ACTIVE box; ⊞ splits (adds a box), × closes it. Content is fetched once per tab and
 // cached, so switching tabs is instant. Files render per type: .pact/.repl → StoicSyntax coloring,
@@ -9206,6 +9336,9 @@ function pactChatInit(host) {
   PACT_TICK_TIMER = setInterval(pactChatTickTimer, 1000);   // live "thinking… M:SS" elapsed readout
   clearInterval(PACT_HEAL_TIMER);
   PACT_HEAL_TIMER = setInterval(pactChatSelfHeal, 4000);    // recover a stuck tab even if the stream stops delivering heartbeats (~8s with the WS_HEAL_ACTIVE_QUIET_MS throttle)
+  clearInterval(PACT_ACTIVITY_TIMER);
+  PACT_ACTIVITY_TIMER = setInterval(pactActivityPoll, 4000);   // ambient REPL/gate activity — see pactActivityPanel
+  pactActivityPoll();   // don't make the panel wait out the first 4s tick to show anything
 }
 // Ask the server for the authoritative state of any tab that's stuck (marked busy but silent), or the
 // active tab that looks idle right after a turn (a dropped deepwork status). Runs on the SSE heartbeat AND
@@ -9384,6 +9517,10 @@ function pactTabsDisplayOrder(tabs) {
 function pactChatDetachUI() {
   pactCacheTabs();                                          // keep the rows for the return trip
   clearInterval(PACT_TICK_TIMER); PACT_TICK_TIMER = null;   // an elapsed readout nobody can see
+  // Unlike PACT_HEAL_TIMER (protects live conversation state, kept running in the background even
+  // while the view is detached), the activity panel has nothing left to paint — its DOM goes with the
+  // rest of the detached IDE — so there's no reason to keep polling the server every 4s for it.
+  clearInterval(PACT_ACTIVITY_TIMER); PACT_ACTIVITY_TIMER = null;
   document.getElementById("pact-sync-cue")?.remove();   // don't leave the sync banner orphaned
 }
 function pactChatStop() {
@@ -9401,6 +9538,7 @@ function pactChatStop() {
      always nulled these; this is the same discipline on Pact's side. */
   clearInterval(PACT_HEAL_TIMER); PACT_HEAL_TIMER = null;
   clearInterval(PACT_TICK_TIMER); PACT_TICK_TIMER = null;
+  clearInterval(PACT_ACTIVITY_TIMER); PACT_ACTIVITY_TIMER = null; PACT_ACTIVITY_RENDER = null;
   document.getElementById("pact-sync-cue")?.remove();   // don't leave the sync banner orphaned after leaving Pact
   if (PACT_CHAT && PACT_CHAT.es) { try { PACT_CHAT.es.close(); } catch {} PACT_CHAT.es = null; }
 }
@@ -12472,8 +12610,13 @@ function viewPact() {
   termClear.addEventListener("click", () => termOut.replaceChildren());
   const termCollapse = el("button", { class: "pact-ed-ico pact-collapse pcx-term" }, ["▾"]);
   termCollapse.addEventListener("click", () => pactToggleCollapse("term"));
+  // Ambient activity — ABOVE the manual-run output, which stays exactly as it was. See
+  // pactActivityPanel's own doc comment; polling starts in pactChatInit (below, via rightEl → chatEl).
+  const activityPanel = pactActivityPanel();
+  PACT_ACTIVITY_RENDER = activityPanel.render;
   const termEl = el("div", { class: "pact-term" }, [
     el("div", { class: "pact-zone-hd" }, ["❯ REPL terminal", el("span", { class: "ws-spacer" }, []), termClear, termCollapse]),
+    activityPanel.el,
     termOut,
   ]);
   const rightEl = el("div", { class: "pact-right" }, [chatEl, termEl]);
@@ -13190,8 +13333,13 @@ function viewPactMobile() {
       const out = el("pre", { class: "pact-terminal" }, ["Open a .repl file and press ▶ Run to stream it here.\n"]);
       const clear = el("button", { class: "pact-term-clear", type: "button", title: "Clear the terminal" }, ["clear"]);
       clear.addEventListener("click", () => out.replaceChildren());
+      // Same ambient-activity panel as desktop — one implementation, shared. Mounted ABOVE the manual
+      // runner's output; polling itself starts in pactChatInit (same timer, either layout).
+      const activityPanel = pactActivityPanel();
+      PACT_ACTIVITY_RENDER = activityPanel.render;
       cache.term = el("div", { class: "pact-term pactm-pane" }, [
         el("div", { class: "pact-zone-hd" }, ["❯ REPL terminal", el("span", { class: "ws-spacer" }, []), clear]),
+        activityPanel.el,
         out,
       ]);
     }

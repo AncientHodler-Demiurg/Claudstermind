@@ -28,6 +28,7 @@ import { gitChangedFiles as pactChangedFiles, gitFileAtHead as pactFileAtHead, d
 import { readCoreBookmarks, setCoreBookmarks } from "../lib/coreBookmarks.mjs";
 import { readIdeState as pactReadIdeState, writeIdeState as pactWriteIdeState } from "../lib/pactIdeState.mjs";
 import { pactRunSpec } from "../lib/pactRun.mjs";
+import { createReplActivityTracker } from "../lib/replActivity.mjs";
 import { readBackupConfig, writeBackupConfig, isBackupDue, browseDir } from "../orchestrator/backupConfig.mjs";
 import { readCascade } from "../lib/cascade.mjs";
 import { allReposGitStatus, repoGitStatus } from "../lib/gitStatus.mjs";
@@ -71,6 +72,10 @@ const DATA_DIR = join(__dir, "data");
 const REPO_ROOT = resolve(__dir, "..");           // this repo's own root — Zone 1 (public shell)
 const MASTER_ROOT = resolve(__dir, "..", "..");   // D:/_Claude — one level further up, Zone 2/3's root
 const SECRETS_DIR = join(MASTER_ROOT, ".secrets"); // the single token store for the workspace
+// One tracker for the whole process's lifetime — its `history` ring (last few finished gate runs) only
+// means anything if it survives across polls, which a fresh tracker per request would not. See
+// lib/replActivity.mjs; real I/O (its defaults) reads /proc and /tmp directly on this machine.
+const REPL_ACTIVITY = createReplActivityTracker();
 // Ch.1.4: BRAIN_DIR used to be `resolve(__dir, "..", "brain")` — one level up from dashboard/ is
 // REPO_ROOT, not MASTER_ROOT, so distilled per-project knowledge (Zone 3) was landing on a Zone-1
 // (repo) path. Found by the 1.2a audit, confirmed structurally by 1.3a, given a checkable
@@ -1303,6 +1308,17 @@ const handler = async (req, res) => {
     const hb = setInterval(() => { try { res.write(": keep-alive\n\n"); } catch {} }, 25000); hb.unref?.();
     req.on("close", () => { clearInterval(hb); clearTimeout(cap); try { child.kill("SIGKILL"); } catch {} });
     return;
+  }
+
+  // ---- Pact IDE: REPL terminal ambient activity — "is a gate/suite running, or is the agent just
+  // quiet". Polled (not SSE: a gate run is minutes long, a few-second poll is plenty responsive and
+  // far simpler than a push channel for this). Read-only observability of THIS machine's own
+  // processes/tmp files — canRead, not canExecute (nothing is spawned or mutated here). See
+  // lib/replActivity.mjs for the actual detection/parsing. ----
+  if (path === "/api/pact/repl-activity" && req.method === "GET") {
+    if (!who.localActionsAvailable) return sendJSON(res, 403, { ok: false, reason: "local-only", message: "REPL activity is local-only." });
+    if (!who.canRead) return sendJSON(res, 403, { ok: false, reason: "read-only" });
+    return sendJSON(res, 200, { ok: true, ...REPL_ACTIVITY.poll() });
   }
 
   // ---- backup retention: keep the newest N, delete the rest (local-only mutation) ----

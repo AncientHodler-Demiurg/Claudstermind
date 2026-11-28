@@ -4,6 +4,75 @@ All notable changes to Claudstermind. The newest version's number must match
 `package.json` (`changelog-version.test.mjs` enforces it — a bump can't merge undocumented).
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are semver.
 
+## [2.4.0] - 2026-11-28
+### Added — the Pact REPL terminal now shows ambient agent activity, not just manual runs
+
+*"wire the REPL terminal to show Pact/REPL activity as it happens... During a working session the
+agent runs, often concurrently: `python3 REPL/tools/_gate.py` (~375s, the full suite, 110
+entrypoints), `pact AQP-FULL.repl` / `Stage02_Tester.repl` / etc. (~150s each),
+`python3 REPL/tools/_suite_stats.py --gate` (~550s, runs the gate inside itself), one-off throwaway
+.repl files. ... From the UI there is NO indication any of it is happening -- the chat just goes
+quiet for six minutes. The operator cannot tell a long gate from a stalled agent, and cannot see
+which suite is running or how far along it is."*
+
+Implements priorities 1+3 ("most of the value") in full, plus 2 and a light version of 4 — all four
+requested pieces, smallest first:
+
+**1. Detect + list.** New `lib/replActivity.mjs#scanReplProcesses` reads `/proc` directly (no native
+deps) for any process whose argv matches the request's own four patterns (`pact `, `_gate.py`,
+`_suite_stats.py`, `tools/_*.py`), reporting command, cwd, and real elapsed time (derived from
+`/proc/[pid]/stat`'s start-ticks + `/proc/stat`'s boot time — correctly handling a `comm` field that
+itself contains spaces/parens). Each shows as its own pulsing row in the REPL terminal pane — several
+can be listed at once, matching the request's own "several overlap" scenario.
+
+**2. Stream.** The newest `/tmp/*.log` is tailed (capped at 20KB) and shown as the ambient live feed.
+
+**3. Parse the gate's real shape — "the single highest-value piece."** Read the ACTUAL installed
+`REPL/tools/_gate.py` (not guessed) to get its exact print format byte-for-byte: the per-file
+`secs + - fail entrypoint` table, the `wall NNNs executed N assertions (...)` summary, and the bare
+`GATE GREEN` / `GATE FAILED` verdict — plus a SEPARATE early-failure shape
+(`GATE FAILED: <reason>`, no table at all, for a pre-flight check that short-circuits before any
+entrypoint runs). Both parse into a green/red verdict chip + the full per-file table. The gate also
+writes its own fixed-path receipt (`/tmp/.ouronet-gate-receipt.log` — the same constant the real
+script uses, specifically so neither it nor this feature has to guess which ad-hoc log redirect was
+the gate's), read as the authoritative "last finished run" when nothing fresher is still live. A
+`--live` run's OWN streaming format (`[ 42/110] ok 12.3s 45 asserts bar.repl`) is ALSO parsed
+separately into an in-flight progress bar + "N/Total · latest file · ⚠ N failing so far" — answering
+the "how far along it is" half of the request directly, before any verdict exists.
+
+**4. History (light version).** The tracker keeps the last 5 finished gate results in memory,
+shown as a small strip of green/red chips so a failure can be compared against the previous green.
+
+**Caught and fixed two real bugs against LIVE production data on this box, not just synthetic
+fixtures** (a gate had just finished while this was being built): a naive "stop at the first log with
+rows or a verdict" scan let the gate's OWN receipt file — which also ends in `.log`, so it's one of
+the scanned logs too, and always carries a verdict but never a row table — win over the real,
+richer table sitting one slot back the instant the receipt was the newer file. Fixed to specifically
+prefer any log with an actual row table over a verdict-only match, wherever it sits in the list.
+
+**The manual runner is untouched** — the existing ▶ Run / `.pact-terminal` output, `pactRunRepl`, and
+`/api/pact/run` are exactly as they were; the new panel sits ABOVE that output, in the same pane, on
+both desktop and mobile (one shared implementation).
+
+New route: `GET /api/pact/repl-activity` (local-only + canRead — read-only observability of this
+machine's own `/proc`/`/tmp`, nothing spawned or mutated), polled every 4s while the Pact view is
+open; the poll stops on leaving the view (same lifecycle as the existing self-heal timer) rather than
+running forever in the background.
+
+New tests: `lib/replActivity.mjs` (+42 — process/log/receipt parsing, both real gate failure shapes,
+the `--live` progress format, the history ring, and the two live-data-driven regression tests above,
+verified against actual production `/tmp` files during development), `lib/pactActivityPanel.test.mjs`
+(+14 — real rendered-DOM behavioral tests via a minimal fake-DOM harness, not just source pinning),
+`lib/pactActivityWiring.test.mjs` (+7 — poll lifecycle, both mount points, manual-runner
+non-regression). Also caught and fixed a real instance of this codebase's own composited-animations
+performance rule (`lib/compositedAnimations.test.mjs`) along the way — the first draft of the process
+dot's pulse animated `box-shadow` directly; fixed to the established opacity-on-a-pseudo-element
+pattern (`wsWorkPulse`, reused rather than reinvented). Full suite: 2496 passing.
+
+**Deploy note: `lib/replActivity.mjs` + `dashboard/server.mjs` need the engine-adjacent
+`claudstermind` service restarted (not `sessiond` — this never touches `lib/workspace.mjs`); `app.js`
++ `styles.css` are web-only, a page reload picks those up.**
+
 ## [2.3.5] - 2026-11-26
 ### Fixed — follow-up: the "whole handoff as one block" fix flattened the entire reply instead of just protecting the one real code snippet
 
